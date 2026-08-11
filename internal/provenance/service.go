@@ -288,6 +288,99 @@ func (s *Service) IssueEvidenceReceipt(req IssueReceiptRequest) (*models.Evidenc
 	return receipt, nil
 }
 
+// CodeSpanLookup looks up provenance by file path and line range (PRD §19.1, Phase 2 gate).
+// This answers: "who wrote this code, when, using which model, in which session?"
+type CodeSpanLookup struct {
+	Spans      []models.ProvenanceSpan `json:"spans"`
+	Sessions   map[string]models.Session `json:"sessions"`
+	Users      map[string]models.User `json:"users"`
+	Harnesses  map[string]models.Harness `json:"harnesses"`
+	Models     map[string]models.ModelPackage `json:"models"`
+	Endpoints  map[string]models.InferenceEndpoint `json:"endpoints"`
+	ChangeSets map[string]models.ChangeSet `json:"change_sets"`
+}
+
+// LookupCodeSpan finds all provenance spans for a file path and optional line range.
+func (s *Service) LookupCodeSpan(orgID, repoID, filePath string, startLine, endLine int) (*CodeSpanLookup, error) {
+	result := &CodeSpanLookup{
+		Sessions:   make(map[string]models.Session),
+		Users:      make(map[string]models.User),
+		Harnesses:  make(map[string]models.Harness),
+		Models:     make(map[string]models.ModelPackage),
+		Endpoints:  make(map[string]models.InferenceEndpoint),
+		ChangeSets: make(map[string]models.ChangeSet),
+	}
+
+	// Find spans matching the file path
+	query := s.db.Model(&models.ProvenanceSpan{}).
+		Where("organization_id = ? AND repository_id = ? AND file_path = ?", orgID, repoID, filePath)
+
+	if startLine > 0 && endLine > 0 {
+		// Find spans that overlap with the requested line range
+		query = query.Where("start_line <= ? AND end_line >= ?", endLine, startLine)
+	}
+
+	if err := query.Order("created_at DESC").Find(&result.Spans).Error; err != nil {
+		return nil, fmt.Errorf("provenance: lookup code span: %w", err)
+	}
+
+	// Hydrate related entities
+	seenSessions := make(map[string]bool)
+	seenUsers := make(map[string]bool)
+	seenHarnesses := make(map[string]bool)
+	seenModels := make(map[string]bool)
+	seenEndpoints := make(map[string]bool)
+	seenChangeSets := make(map[string]bool)
+
+	for _, span := range result.Spans {
+		if span.SessionID != "" && !seenSessions[span.SessionID] {
+			seenSessions[span.SessionID] = true
+			var sess models.Session
+			if s.db.Where("session_id = ?", span.SessionID).First(&sess).Error == nil {
+				result.Sessions[span.SessionID] = sess
+			}
+		}
+		if span.UserID != "" && !seenUsers[span.UserID] {
+			seenUsers[span.UserID] = true
+			var user models.User
+			if s.db.Where("id = ?", span.UserID).First(&user).Error == nil {
+				result.Users[span.UserID] = user
+			}
+		}
+		if span.HarnessID != "" && !seenHarnesses[span.HarnessID] {
+			seenHarnesses[span.HarnessID] = true
+			var harness models.Harness
+			if s.db.Where("id = ? OR harness_id = ?", span.HarnessID, span.HarnessID).First(&harness).Error == nil {
+				result.Harnesses[span.HarnessID] = harness
+			}
+		}
+		if span.ModelPackageID != "" && !seenModels[span.ModelPackageID] {
+			seenModels[span.ModelPackageID] = true
+			var pkg models.ModelPackage
+			if s.db.Where("package_id = ?", span.ModelPackageID).First(&pkg).Error == nil {
+				result.Models[span.ModelPackageID] = pkg
+			}
+		}
+		if span.EndpointID != "" && !seenEndpoints[span.EndpointID] {
+			seenEndpoints[span.EndpointID] = true
+			var ep models.InferenceEndpoint
+			if s.db.Where("endpoint_id = ?", span.EndpointID).First(&ep).Error == nil {
+				result.Endpoints[span.EndpointID] = ep
+			}
+		}
+		if span.ChangeSetID != "" && !seenChangeSets[span.ChangeSetID] {
+			seenChangeSets[span.ChangeSetID] = true
+			var cs models.ChangeSet
+			if s.db.Where("id = ?", span.ChangeSetID).First(&cs).Error == nil {
+				result.ChangeSets[span.ChangeSetID] = cs
+			}
+		}
+	}
+
+	return result, nil
+}
+
+
 // GetProvenanceChain retrieves the full provenance chain for a session or exchange.
 func (s *Service) GetProvenanceChain(orgID, sessionID string) (*ProvenanceChain, error) {
 	chain := &ProvenanceChain{}
