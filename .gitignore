@@ -1,2 +1,20 @@
-# Nested worktree of the patty-code repo — never commit
+# Build artifacts
+bin/
+.data/
+.keys/
+
+# Node
+web/node_modules/
+web/dist/
+
+# OS files
+.DS_Store
+
+# Patty Code Harness worktree (separate repo)
 patty-code-pccp/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

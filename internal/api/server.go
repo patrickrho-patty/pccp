@@ -1,0 +1,968 @@
+package api
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+	"github.com/patrickrho-patty/pccp/internal/identity"
+	"github.com/patrickrho-patty/pccp/internal/models"
+	"github.com/patrickrho-patty/pccp/internal/policy"
+	"github.com/patrickrho-patty/pccp/internal/provenance"
+	"github.com/patrickrho-patty/pccp/internal/registry"
+	"gorm.io/gorm"
+)
+
+// Server is the Control Plane HTTP API server.
+type Server struct {
+	db         *gorm.DB
+	identity   *identity.Service
+	auth       *identity.AuthService
+	registry   *registry.Service
+	policy     *policy.Service
+	provenance *provenance.Service
+	router     *chi.Mux
+}
+
+// New creates a new API server.
+func New(db *gorm.DB, jwtSecret string) (*Server, error) {
+	idSvc, err := identity.New(db)
+	if err != nil {
+		return nil, fmt.Errorf("api: init identity: %w", err)
+	}
+	authSvc := identity.NewAuthService(db, jwtSecret)
+	regSvc, err := registry.New(db)
+	if err != nil {
+		return nil, fmt.Errorf("api: init registry: %w", err)
+	}
+	polSvc, err := policy.New(db)
+	if err != nil {
+		return nil, fmt.Errorf("api: init policy: %w", err)
+	}
+	provSvc, err := provenance.New(db, "pccp-relay-1")
+	if err != nil {
+		return nil, fmt.Errorf("api: init provenance: %w", err)
+	}
+
+	s := &Server{
+		db:         db,
+		identity:   idSvc,
+		auth:       authSvc,
+		registry:   regSvc,
+		policy:     polSvc,
+		provenance: provSvc,
+	}
+	s.setupRouter()
+	return s, nil
+}
+
+func (s *Server) setupRouter() {
+	r := chi.NewRouter()
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.RequestID)
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"*"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
+
+	// Health check
+	r.Get("/health", s.handleHealth)
+
+	// Auth routes (no auth required)
+	r.Route("/api/auth", func(r chi.Router) {
+		r.Post("/login", s.handleLogin)
+		r.Post("/bootstrap", s.handleBootstrap)
+	})
+
+	// Authenticated API routes
+	r.Route("/api", func(r chi.Router) {
+		r.Use(s.authMiddleware)
+
+		// Organizations
+		r.Route("/organizations", func(r chi.Router) {
+			r.Get("/", s.handleListOrganizations)
+			r.Post("/", s.handleCreateOrganization)
+			r.Get("/{id}", s.handleGetOrganization)
+		})
+
+		// Users
+		r.Route("/users", func(r chi.Router) {
+			r.Get("/", s.handleListUsers)
+			r.Post("/", s.handleCreateUser)
+			r.Get("/{id}", s.handleGetUser)
+		})
+
+		// Harnesses
+		r.Route("/harnesses", func(r chi.Router) {
+			r.Get("/", s.handleListHarnesses)
+			r.Post("/enroll", s.handleEnrollHarness)
+			r.Get("/{id}", s.handleGetHarness)
+			r.Post("/{id}/revoke", s.handleRevokeHarness)
+		})
+
+		// Projects
+		r.Route("/projects", func(r chi.Router) {
+			r.Get("/", s.handleListProjects)
+			r.Post("/", s.handleCreateProject)
+			r.Get("/{id}", s.handleGetProject)
+		})
+
+		// Repositories
+		r.Route("/repositories", func(r chi.Router) {
+			r.Get("/", s.handleListRepositories)
+			r.Post("/", s.handleRegisterRepository)
+			r.Get("/{id}", s.handleGetRepository)
+			r.Post("/{id}/baselines", s.handleCreateBaseline)
+		})
+
+		// Sessions
+		r.Route("/sessions", func(r chi.Router) {
+			r.Get("/", s.handleListSessions)
+			r.Post("/", s.handleOpenSession)
+			r.Get("/{id}", s.handleGetSession)
+			r.Post("/{id}/close", s.handleCloseSession)
+			r.Get("/{id}/provenance", s.handleGetProvenance)
+		})
+
+		// Model registry
+		r.Route("/models", func(r chi.Router) {
+			r.Get("/", s.handleListModelPackages)
+			r.Post("/", s.handleRegisterModelPackage)
+			r.Get("/{id}", s.handleGetModelPackage)
+			r.Post("/{id}/publish", s.handlePublishModel)
+			r.Post("/{id}/recall", s.handleRecallModel)
+		})
+
+		// Endpoints
+		r.Route("/endpoints", func(r chi.Router) {
+			r.Get("/", s.handleListEndpoints)
+			r.Post("/enroll", s.handleEnrollEndpoint)
+			r.Post("/{id}/lease", s.handleIssueEndpointLease)
+			r.Get("/{id}", s.handleGetEndpoint)
+		})
+
+		// Policy
+		r.Route("/policy", func(r chi.Router) {
+			r.Get("/epochs", s.handleListEpochs)
+			r.Post("/epochs", s.handleCreateEpoch)
+			r.Get("/leases", s.handleListLeases)
+			r.Post("/leases", s.handleIssueLease)
+		})
+
+		// Audit
+		r.Route("/audit", func(r chi.Router) {
+			r.Get("/", s.handleListAuditEvents)
+		})
+
+		// Dashboard
+		r.Get("/dashboard", s.handleDashboard)
+	})
+
+	// Serve the React frontend (static files)
+	r.Handle("/*", http.FileServer(http.Dir("web/dist")))
+
+	s.router = r
+}
+
+// ServeHTTP implements http.Handler.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.router.ServeHTTP(w, r)
+}
+
+// ListenAndServe starts the API server.
+func (s *Server) ListenAndServe(addr string) error {
+	log.Printf("api: listening on %s", addr)
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      s.router,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+	return srv.ListenAndServe()
+}
+
+// --- Middleware ---
+
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Allow OPTIONS for CORS preflight
+		if r.Method == "OPTIONS" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		authHeader := r.Header.Get("Authorization")
+		claims, err := s.auth.AuthMiddleware(authHeader)
+		if err != nil {
+			// For dev convenience, allow unauthenticated access when no admin exists
+			var count int64
+			s.db.Raw("SELECT count(*) FROM admin_credentials").Scan(&count)
+			if count == 0 {
+				next.ServeHTTP(w, r)
+				return
+			}
+			writeError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+
+		// Inject claims into context
+		ctx := ctxWithClaims(r.Context(), claims)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// --- Helpers ---
+
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+func decodeJSON(r *http.Request, v interface{}) error {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	return dec.Decode(v)
+}
+
+func getOrgID(r *http.Request) string {
+	if claims, ok := claimsFromCtx(r.Context()); ok {
+		return claims.OrganizationID
+	}
+	return ""
+}
+
+func getRole(r *http.Request) string {
+	if claims, ok := claimsFromCtx(r.Context()); ok {
+		return claims.Role
+	}
+	return ""
+}
+
+// --- Handlers ---
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":     "ok",
+		"timestamp":  time.Now().Format(time.RFC3339),
+		"service":    "pccp-control-plane",
+		"version":    "0.1.0",
+		"ca_pubkey":  s.identity.CAPublicKeyHex(),
+	})
+}
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	token, err := s.auth.Login(req.Email, req.Password)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "로그인 실패 / invalid credentials")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"token": token,
+	})
+}
+
+func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		OrgName  string `json:"org_name"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Create default org
+	org, err := s.identity.CreateOrganization(req.OrgName, req.OrgName, "default", "enterprise")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Bootstrap admin
+	if err := s.auth.BootstrapAdmin(req.Email, req.Password, org.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"organization_id": org.ID,
+		"message":         "부트스트랩 완료",
+	})
+}
+
+// Generic CRUD handlers
+func (s *Server) handleListOrganizations(w http.ResponseWriter, r *http.Request) {
+	var orgs []models.Organization
+	result := s.db.Find(&orgs)
+	if result.Error != nil {
+		writeError(w, http.StatusInternalServerError, result.Error.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, orgs)
+}
+
+func (s *Server) handleCreateOrganization(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name    string `json:"name"`
+		NameKo  string `json:"name_ko"`
+		Slug    string `json:"slug"`
+		Profile string `json:"profile"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Profile == "" {
+		req.Profile = "enterprise"
+	}
+	org, err := s.identity.CreateOrganization(req.Name, req.NameKo, req.Slug, req.Profile)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, org)
+}
+
+func (s *Server) handleGetOrganization(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var org models.Organization
+	if err := s.db.First(&org, "id = ?", id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "조직을 찾을 수 없습니다")
+		return
+	}
+	writeJSON(w, http.StatusOK, org)
+}
+
+func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var users []models.User
+	q := s.db.Model(&models.User{})
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Find(&users)
+	writeJSON(w, http.StatusOK, users)
+}
+
+func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrganizationID string `json:"organization_id"`
+		Email          string `json:"email"`
+		Name           string `json:"name"`
+		NameKo         string `json:"name_ko"`
+		AuthMethod     string `json:"auth_method"`
+		Title          string `json:"title"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.AuthMethod == "" {
+		req.AuthMethod = "local"
+	}
+	orgID := req.OrganizationID
+	if orgID == "" {
+		orgID = getOrgID(r)
+	}
+	user, err := s.identity.CreateUser(orgID, req.Email, req.Name, req.NameKo, req.AuthMethod, "")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if req.Title != "" {
+		user.Title = req.Title
+		s.db.Save(user)
+	}
+	writeJSON(w, http.StatusCreated, user)
+}
+
+func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var user models.User
+	if err := s.db.First(&user, "id = ?", id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "사용자를 찾을 수 없습니다")
+		return
+	}
+	writeJSON(w, http.StatusOK, user)
+}
+
+func (s *Server) handleListHarnesses(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var harnesses []models.Harness
+	q := s.db.Model(&models.Harness{})
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Order("created_at DESC").Find(&harnesses)
+	writeJSON(w, http.StatusOK, harnesses)
+}
+
+func (s *Server) handleEnrollHarness(w http.ResponseWriter, r *http.Request) {
+	var req identity.EnrollHarnessRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.EnrollmentMode == "" {
+		req.EnrollmentMode = "sso"
+	}
+	harness, cred, err := s.identity.EnrollHarness(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"harness":    harness,
+		"credential": cred,
+	})
+}
+
+func (s *Server) handleGetHarness(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var harness models.Harness
+	if err := s.db.Where("id = ? OR harness_id = ?", id, id).First(&harness).Error; err != nil {
+		writeError(w, http.StatusNotFound, "하네스를 찾을 수 없습니다")
+		return
+	}
+	writeJSON(w, http.StatusOK, harness)
+}
+
+func (s *Server) handleRevokeHarness(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var harness models.Harness
+	if err := s.db.Where("id = ? OR harness_id = ?", id, id).First(&harness).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if r.Body != http.NoBody {
+		decodeJSON(r, &req)
+	}
+	if err := s.identity.RevokeHarness(harness.OrganizationID, harness.HarnessID, req.Reason); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+}
+
+func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var projects []models.Project
+	q := s.db.Model(&models.Project{})
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Find(&projects)
+	writeJSON(w, http.StatusOK, projects)
+}
+
+func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrganizationID string   `json:"organization_id"`
+		Name           string   `json:"name"`
+		NameKo         string   `json:"name_ko"`
+		Slug           string   `json:"slug"`
+		AllowedModels  []string `json:"allowed_models"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	orgID := req.OrganizationID
+	if orgID == "" {
+		orgID = getOrgID(r)
+	}
+	proj, err := s.identity.CreateProject(orgID, req.Name, req.NameKo, req.Slug, req.AllowedModels)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, proj)
+}
+
+func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var proj models.Project
+	if err := s.db.First(&proj, "id = ?", id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
+		return
+	}
+	writeJSON(w, http.StatusOK, proj)
+}
+
+func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var repos []models.Repository
+	q := s.db.Model(&models.Repository{})
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Find(&repos)
+	writeJSON(w, http.StatusOK, repos)
+}
+
+func (s *Server) handleRegisterRepository(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrganizationID string `json:"organization_id"`
+		ProjectID      string `json:"project_id"`
+		Name           string `json:"name"`
+		FullName       string `json:"full_name"`
+		DefaultBranch  string `json:"default_branch"`
+		Sensitivity    string `json:"sensitivity"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	orgID := req.OrganizationID
+	if orgID == "" {
+		orgID = getOrgID(r)
+	}
+	if req.DefaultBranch == "" {
+		req.DefaultBranch = "main"
+	}
+	if req.Sensitivity == "" {
+		req.Sensitivity = "internal"
+	}
+	repo, err := s.identity.RegisterRepository(orgID, req.ProjectID, req.Name, req.FullName, req.DefaultBranch, req.Sensitivity)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, repo)
+}
+
+func (s *Server) handleGetRepository(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var repo models.Repository
+	if err := s.db.First(&repo, "id = ?", id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "저장소를 찾을 수 없습니다")
+		return
+	}
+	writeJSON(w, http.StatusOK, repo)
+}
+
+func (s *Server) handleCreateBaseline(w http.ResponseWriter, r *http.Request) {
+	repoID := chi.URLParam(r, "id")
+	var req struct {
+		Branch       string `json:"branch"`
+		CommitSHA    string `json:"commit_sha"`
+		CommitMessage string `json:"commit_message"`
+		AuthorName   string `json:"author_name"`
+		AuthorEmail  string `json:"author_email"`
+		CommittedAt  string `json:"committed_at"`
+		TreeDigest   string `json:"tree_digest"`
+		SessionID    string `json:"session_id"`
+		OrgID        string `json:"org_id"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	baseline, err := s.identity.CreateBaseline(req.OrgID, repoID, req.Branch, req.CommitSHA,
+		req.CommitMessage, req.AuthorName, req.AuthorEmail, req.CommittedAt, req.TreeDigest, req.SessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, baseline)
+}
+
+func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var sessions []models.Session
+	q := s.db.Model(&models.Session{})
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Order("created_at DESC").Find(&sessions)
+	writeJSON(w, http.StatusOK, sessions)
+}
+
+func (s *Server) handleOpenSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrganizationID string `json:"organization_id"`
+		HarnessID      string `json:"harness_id"`
+		UserID         string `json:"user_id"`
+		ProjectID      string `json:"project_id"`
+		RepositoryID   string `json:"repository_id"`
+		Branch         string `json:"branch"`
+		BaselineID     string `json:"baseline_id"`
+		Title          string `json:"title"`
+		TaskPurpose    string `json:"task_purpose"`
+		ModelClass     string `json:"model_class"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	orgID := req.OrganizationID
+	if orgID == "" {
+		orgID = getOrgID(r)
+	}
+	sess, err := s.identity.OpenSession(orgID, req.HarnessID, req.UserID, req.ProjectID,
+		req.RepositoryID, req.Branch, req.BaselineID, req.Title, req.TaskPurpose, req.ModelClass)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, sess)
+}
+
+func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var sess models.Session
+	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+		writeError(w, http.StatusNotFound, "세션을 찾을 수 없습니다")
+		return
+	}
+	writeJSON(w, http.StatusOK, sess)
+}
+
+func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var sess models.Session
+	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err := s.identity.CloseSession(sess.SessionID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "closed"})
+}
+
+func (s *Server) handleGetProvenance(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var sess models.Session
+	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	chain, err := s.provenance.GetProvenanceChain(sess.OrganizationID, sess.SessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, chain)
+}
+
+func (s *Server) handleListModelPackages(w http.ResponseWriter, r *http.Request) {
+	var pkgs []models.ModelPackage
+	s.db.Order("created_at DESC").Find(&pkgs)
+	writeJSON(w, http.StatusOK, pkgs)
+}
+
+func (s *Server) handleRegisterModelPackage(w http.ResponseWriter, r *http.Request) {
+	// Use a raw map to accept mixed types, then convert to model fields
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	pkg := models.ModelPackage{}
+	// Simple string fields
+	for field, jsonKey := range map[string]string{} {
+		_ = field
+		_ = jsonKey
+	}
+	if v, ok := raw["package_id"]; ok { json.Unmarshal(v, &pkg.PackageID) }
+	if v, ok := raw["model_id"]; ok { json.Unmarshal(v, &pkg.ModelID) }
+	if v, ok := raw["name"]; ok { json.Unmarshal(v, &pkg.Name) }
+	if v, ok := raw["name_ko"]; ok { json.Unmarshal(v, &pkg.NameKo) }
+	if v, ok := raw["family"]; ok { json.Unmarshal(v, &pkg.Family) }
+	if v, ok := raw["version"]; ok { json.Unmarshal(v, &pkg.Version) }
+	if v, ok := raw["release"]; ok { json.Unmarshal(v, &pkg.Release) }
+	if v, ok := raw["weights_merkle_root"]; ok { json.Unmarshal(v, &pkg.WeightsMerkleRoot) }
+	if v, ok := raw["tokenizer_digest"]; ok { json.Unmarshal(v, &pkg.TokenizerDigest) }
+	if v, ok := raw["config_digest"]; ok { json.Unmarshal(v, &pkg.ConfigDigest) }
+	if v, ok := raw["entitlement_class"]; ok { json.Unmarshal(v, &pkg.EntitlementClass) }
+	if v, ok := raw["minimum_endpoint_assurance"]; ok { json.Unmarshal(v, &pkg.MinAssuranceLevel) }
+	if v, ok := raw["state"]; ok { json.Unmarshal(v, &pkg.State) }
+	if v, ok := raw["context_window"]; ok { json.Unmarshal(v, &pkg.ContextWindow) }
+	// Array fields → store as JSON string
+	if v, ok := raw["capabilities"]; ok { pkg.CapabilitiesJSON = string(v) }
+	if v, ok := raw["weights_shards"]; ok { pkg.WeightsShardsJSON = string(v) }
+	if v, ok := raw["adapters"]; ok { pkg.AdaptersJSON = string(v) }
+	if v, ok := raw["serving_engines"]; ok { pkg.ServingEnginesJSON = string(v) }
+	if v, ok := raw["allowed_data_classes"]; ok { pkg.AllowedDataClasses = string(v) }
+
+	if err := s.registry.RegisterModelPackage(&pkg); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, pkg)
+}
+
+func (s *Server) handleGetModelPackage(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var pkg models.ModelPackage
+	if err := s.db.Where("id = ? OR package_id = ?", id, id).First(&pkg).Error; err != nil {
+		writeError(w, http.StatusNotFound, "모델 패키지를 찾을 수 없습니다")
+		return
+	}
+	writeJSON(w, http.StatusOK, pkg)
+}
+
+func (s *Server) handlePublishModel(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var pkg models.ModelPackage
+	if err := s.db.Where("id = ? OR package_id = ?", id, id).First(&pkg).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err := s.registry.PublishModelPackage(pkg.PackageID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "published"})
+}
+
+func (s *Server) handleRecallModel(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var pkg models.ModelPackage
+	if err := s.db.Where("id = ? OR package_id = ?", id, id).First(&pkg).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err := s.registry.RecallModelPackage(pkg.PackageID, "manual recall"); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "recalled"})
+}
+
+func (s *Server) handleListEndpoints(w http.ResponseWriter, r *http.Request) {
+	var endpoints []models.InferenceEndpoint
+	s.db.Order("created_at DESC").Find(&endpoints)
+	writeJSON(w, http.StatusOK, endpoints)
+}
+
+func (s *Server) handleEnrollEndpoint(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrganizationID   string `json:"organization_id"`
+		PIAPeerID        string `json:"pia_peer_id"`
+		ModelPackageID   string `json:"model_package_id"`
+		ServingEngine    string `json:"serving_engine"`
+		ServingEngineVer string `json:"serving_engine_version"`
+		PublicKeyHex     string `json:"public_key_hex"`
+		NodeIdentity     string `json:"node_identity"`
+		AssuranceLevel   string `json:"assurance_level"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.AssuranceLevel == "" {
+		req.AssuranceLevel = "L1"
+	}
+	if req.ServingEngine == "" {
+		req.ServingEngine = "vllm"
+	}
+	orgID := req.OrganizationID
+	if orgID == "" {
+		orgID = getOrgID(r)
+	}
+	endpoint, err := s.registry.EnrollEndpoint(orgID, req.PIAPeerID, req.ModelPackageID,
+		req.ServingEngine, req.ServingEngineVer, req.PublicKeyHex, req.NodeIdentity, req.AssuranceLevel)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, endpoint)
+}
+
+func (s *Server) handleGetEndpoint(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var ep models.InferenceEndpoint
+	if err := s.db.Where("id = ? OR endpoint_id = ?", id, id).First(&ep).Error; err != nil {
+		writeError(w, http.StatusNotFound, "엔드포인트를 찾을 수 없습니다")
+		return
+	}
+	writeJSON(w, http.StatusOK, ep)
+}
+
+func (s *Server) handleIssueEndpointLease(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var ep models.InferenceEndpoint
+	if err := s.db.Where("id = ? OR endpoint_id = ?", id, id).First(&ep).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var req struct {
+		ValidityHours int `json:"validity_hours"`
+	}
+	if r.Body != http.NoBody {
+		decodeJSON(r, &req)
+	}
+	if req.ValidityHours == 0 {
+		req.ValidityHours = 1
+	}
+	lease, err := s.registry.IssueEndpointLease(ep.OrganizationID, ep.EndpointID,
+		time.Duration(req.ValidityHours)*time.Hour)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, lease)
+}
+
+func (s *Server) handleListEpochs(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var epochs []models.PolicyEpoch
+	q := s.db.Model(&models.PolicyEpoch{})
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Order("epoch_number DESC").Find(&epochs)
+	writeJSON(w, http.StatusOK, epochs)
+}
+
+func (s *Server) handleCreateEpoch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrganizationID string   `json:"organization_id"`
+		AllowedModels  []string `json:"allowed_models"`
+		TransitionMode string   `json:"transition_mode"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	orgID := req.OrganizationID
+	if orgID == "" {
+		orgID = getOrgID(r)
+	}
+	if req.TransitionMode == "" {
+		req.TransitionMode = "immediate"
+	}
+	epoch, err := s.policy.CreatePolicyEpoch(orgID, req.AllowedModels, req.TransitionMode)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, epoch)
+}
+
+func (s *Server) handleListLeases(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var leases []models.CapabilityLease
+	q := s.db.Model(&models.CapabilityLease{})
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Order("created_at DESC").Find(&leases)
+	writeJSON(w, http.StatusOK, leases)
+}
+
+func (s *Server) handleIssueLease(w http.ResponseWriter, r *http.Request) {
+	var req policy.IssueLeaseRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Validity == 0 {
+		req.Validity = 1 * time.Hour
+	}
+	lease, err := s.policy.IssueCapabilityLease(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, lease)
+}
+
+func (s *Server) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var events []models.AuditEvent
+	q := s.db.Model(&models.AuditEvent{})
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Order("occurred_at DESC").Limit(200).Find(&events)
+	writeJSON(w, http.StatusOK, events)
+}
+
+func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	dash := map[string]interface{}{}
+
+	var userCount, harnessCount, sessionCount, endpointCount int64
+	q := s.db.Model(&models.User{})
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Count(&userCount)
+
+	q = s.db.Model(&models.Harness{})
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Count(&harnessCount)
+
+	q = s.db.Model(&models.Session{})
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Count(&sessionCount)
+
+	q = s.db.Model(&models.InferenceEndpoint{})
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Count(&endpointCount)
+
+	dash["users"] = userCount
+	dash["harnesses"] = harnessCount
+	dash["sessions"] = sessionCount
+	dash["endpoints"] = endpointCount
+
+	// Active sessions
+	var activeSessions []models.Session
+	q = s.db.Model(&models.Session{}).Where("status = 'active'")
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Order("opened_at DESC").Limit(10).Find(&activeSessions)
+	dash["active_sessions"] = activeSessions
+
+	// Recent audit events
+	var recentEvents []models.AuditEvent
+	q = s.db.Model(&models.AuditEvent{})
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Order("occurred_at DESC").Limit(20).Find(&recentEvents)
+	dash["recent_events"] = recentEvents
+
+	writeJSON(w, http.StatusOK, dash)
+}
+

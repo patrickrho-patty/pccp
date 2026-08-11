@@ -1,0 +1,56 @@
+import { Routes, Route, Navigate } from 'react-router-dom'
+import { useAuth } from './hooks/useAuth'
+import Login from './pages/Login'
+import Layout from './components/Layout'
+import Dashboard from './pages/Dashboard'
+import Users from './pages/Users'
+import Harnesses from './pages/Harnesses'
+import Projects from './pages/Projects'
+import Repositories from './pages/Repositories'
+import Sessions from './pages/Sessions'
+import Models from './pages/Models'
+import Endpoints from './pages/Endpoints'
+import Policy from './pages/Policy'
+import Provenance from './pages/Provenance'
+import Audit from './pages/Audit'
+import Bootstrap from './pages/Bootstrap'
+
+export default function App() {
+  const { isAuthenticated, loading } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-gray-500">로딩 중...</div>
+      </div>
+    )
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <Routes>
+        <Route path="/bootstrap" element={<Bootstrap />} />
+        <Route path="*" element={<Login />} />
+      </Routes>
+    )
+  }
+
+  return (
+    <Layout>
+      <Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/users" element={<Users />} />
+        <Route path="/harnesses" element={<Harnesses />} />
+        <Route path="/projects" element={<Projects />} />
+        <Route path="/repositories" element={<Repositories />} />
+        <Route path="/sessions" element={<Sessions />} />
+        <Route path="/sessions/:id/provenance" element={<Provenance />} />
+        <Route path="/models" element={<Models />} />
+        <Route path="/endpoints" element={<Endpoints />} />
+        <Route path="/policy" element={<Policy />} />
+        <Route path="/audit" element={<Audit />} />
+        <Route path="*" element={<Navigate to="/" />} />
+      </Routes>
+    </Layout>
+  )
+}
