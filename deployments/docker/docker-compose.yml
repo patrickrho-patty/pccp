@@ -1,0 +1,62 @@
+version: "3.9"
+
+services:
+  control-plane:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+    command: server
+    ports:
+      - "8080:8080"
+    environment:
+      - PCCP_HTTP_ADDR=:8080
+      - PCCP_DB_DRIVER=sqlite
+      - PCCP_DB_DSN=/data/pccp.db
+      - PCCP_DEFAULT_LOCALE=ko-KR
+      - PCCP_ADMIN_EMAIL=admin@patty.dev
+      - PCCP_ADMIN_PASSWORD=admin123
+    volumes:
+      - pccp-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  relay:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+    command: relay
+    ports:
+      - "8090:8090"
+    environment:
+      - PCCP_RELAY_HTTP_ADDR=:8090
+      - PCCP_DB_DRIVER=sqlite
+      - PCCP_DB_DSN=/data/pccp.db
+    volumes:
+      - pccp-data:/data
+    depends_on:
+      control-plane:
+        condition: service_healthy
+
+  pia:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+    command: pia
+    ports:
+      - "9090:9090"
+    environment:
+      - PCCP_PIA_HTTP_ADDR=:9090
+      - PCCP_PIA_ENGINE=mock
+      - PCCP_DB_DRIVER=sqlite
+      - PCCP_DB_DSN=/data/pccp.db
+    volumes:
+      - pccp-data:/data
+    depends_on:
+      relay:
+        condition: service_started
+
+volumes:
+  pccp-data:

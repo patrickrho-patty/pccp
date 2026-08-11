@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pccp-relay
+  namespace: pccp
+  labels:
+    app: pccp-relay
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: pccp-relay
+  template:
+    metadata:
+      labels:
+        app: pccp-relay
+    spec:
+      containers:
+        - name: relay
+          image: pccp:latest
+          command: ["relay"]
+          ports:
+            - containerPort: 8090
+              name: relay-http
+          env:
+            - name: PCCP_RELAY_HTTP_ADDR
+              value: ":8090"
+            - name: PCCP_DB_DRIVER
+              value: "postgres"
+            - name: PCCP_DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: pccp-db-secret
+                  key: dsn
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "2000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pccp-relay
+  namespace: pccp
+spec:
+  selector:
+    app: pccp-relay
+  ports:
+    - port: 8090
+      targetPort: 8090
+      name: relay

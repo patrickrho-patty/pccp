@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pccp-control-plane
+  namespace: pccp
+  labels:
+    app: pccp-control-plane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pccp-control-plane
+  template:
+    metadata:
+      labels:
+        app: pccp-control-plane
+    spec:
+      containers:
+        - name: control-plane
+          image: pccp:latest
+          command: ["server"]
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: PCCP_HTTP_ADDR
+              value: ":8080"
+            - name: PCCP_DB_DRIVER
+              value: "postgres"
+            - name: PCCP_DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: pccp-db-secret
+                  key: dsn
+            - name: PCCP_DEFAULT_LOCALE
+              value: "ko-KR"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pccp-control-plane
+  namespace: pccp
+spec:
+  selector:
+    app: pccp-control-plane
+  ports:
+    - port: 80
+      targetPort: 8080
+      name: http
