@@ -77,6 +77,7 @@ type PolicyPack struct {
 // AllModels returns all model types for auto-migration.
 func AllModels() []interface{} {
 	return []interface{}{
+		// Identity
 		&Organization{},
 		&BusinessUnit{},
 		&User{},
@@ -85,27 +86,40 @@ func AllModels() []interface{} {
 		&Device{},
 		&Harness{},
 		&EnrollmentCode{},
+		// Projects & Repos
 		&Project{},
 		&Repository{},
 		&Branch{},
 		&RepoBaseline{},
 		&Session{},
 		&PromptExchange{},
+		// Model registry
 		&ModelPackage{},
 		&InferenceEndpoint{},
 		&EndpointAttestation{},
 		&EndpointLease{},
+		// Policy
 		&PolicyEpoch{},
 		&CapabilityLease{},
+		// Provenance
 		&ActionEnvelope{},
 		&ChangeSet{},
 		&ProvenanceSpan{},
 		&CommitBinding{},
 		&AuditEvent{},
 		&EvidenceReceipt{},
+		// Security
 		&Tool{},
 		&Approval{},
 		&SecurityFinding{},
 		&PolicyPack{},
+		// Communications (Phase 3)
+		&Conversation{},
+		&Message{},
+		&Presence{},
+		&FileTransfer{},
+		&Broadcast{},
+		// Usage (Phase 4)
+		&UsageRecord{},
 	}
 }
