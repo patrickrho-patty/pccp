@@ -11,7 +11,9 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/patrickrho-patty/pccp/internal/identity"
+	"github.com/patrickrho-patty/pccp/internal/communications"
 	"github.com/patrickrho-patty/pccp/internal/security"
+	"github.com/patrickrho-patty/pccp/internal/workintel"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/policy"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
@@ -28,6 +30,8 @@ type Server struct {
 	policy     *policy.Service
 	provenance *provenance.Service
 	security   *security.Service
+	comms      *communications.Service
+	workintel  *workintel.Service
 	router     *chi.Mux
 }
 
@@ -48,6 +52,8 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 	}
 	provSvc, err := provenance.New(db, "pccp-relay-1")
 	secSvc := security.New(db)
+	commsSvc := communications.New(db)
+	wiSvc := workintel.New(db)
 	if err != nil {
 		return nil, fmt.Errorf("api: init provenance: %w", err)
 	}
@@ -60,6 +66,8 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 		policy:     polSvc,
 		provenance: provSvc,
 		security:   secSvc,
+		comms:      commsSvc,
+		workintel:  wiSvc,
 	}
 	s.setupRouter()
 	return s, nil
@@ -161,6 +169,26 @@ func (s *Server) setupRouter() {
 			r.Post("/epochs", s.handleCreateEpoch)
 			r.Get("/leases", s.handleListLeases)
 			r.Post("/leases", s.handleIssueLease)
+		})
+
+		// Communications
+		r.Route("/communications", func(r chi.Router) {
+			r.Get("/conversations", s.handleListConversations)
+			r.Post("/conversations", s.handleCreateConversation)
+			r.Get("/conversations/{id}/messages", s.handleListMessages)
+			r.Post("/conversations/{id}/messages", s.handleSendMessage)
+			r.Get("/presence", s.handleGetPresence)
+			r.Post("/presence", s.handleUpdatePresence)
+			r.Post("/broadcasts", s.handleSendBroadcast)
+		})
+
+		// Work Intelligence
+		r.Route("/analytics", func(r chi.Router) {
+			r.Get("/usage", s.handleGetUsageSummary)
+			r.Get("/engineering", s.handleGetEngineeringMetrics)
+			r.Get("/security", s.handleGetSecurityMetrics)
+			r.Get("/scorecard", s.handleGetScorecard)
+			r.Get("/export", s.handleExportMetrics)
 		})
 
 		// Security
@@ -917,6 +945,185 @@ func (s *Server) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
 	q.Order("occurred_at DESC").Limit(200).Find(&events)
 	writeJSON(w, http.StatusOK, events)
 }
+
+// --- Communications Handlers ---
+
+func (s *Server) handleListConversations(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	// For now, return all org conversations
+	var convs []models.Conversation
+	s.db.Where("organization_id = ?", orgID).Order("last_message_at DESC").Find(&convs)
+	writeJSON(w, http.StatusOK, convs)
+}
+
+func (s *Server) handleCreateConversation(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Type         string   `json:"type"`
+		Title        string   `json:"title"`
+		Participants []string `json:"participants"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	orgID := getOrgID(r)
+	conv, err := s.comms.CreateConversation(orgID, req.Type, req.Title, req.Participants)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, conv)
+}
+
+func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
+	convID := chi.URLParam(r, "id")
+	messages, err := s.comms.ListMessages(convID, 100)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, messages)
+}
+
+func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
+	convID := chi.URLParam(r, "id")
+	var req struct {
+		SenderID   string `json:"sender_id"`
+		SenderType string `json:"sender_type"`
+		Content    string `json:"content"`
+		ParentID   string `json:"parent_id,omitempty"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.SenderType == "" {
+		req.SenderType = "user"
+	}
+	msg, err := s.comms.SendMessage(convID, req.SenderID, req.SenderType, "text", req.Content, req.ParentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, msg)
+}
+
+func (s *Server) handleGetPresence(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	presences, err := s.comms.GetPresence(orgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, presences)
+}
+
+func (s *Server) handleUpdatePresence(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID   string `json:"user_id"`
+		Status   string `json:"status"`
+		Activity string `json:"activity"`
+		HarnessID string `json:"harness_id"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	orgID := getOrgID(r)
+	if err := s.comms.UpdatePresence(orgID, req.UserID, req.Status, req.Activity, req.HarnessID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) handleSendBroadcast(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Severity    string `json:"severity"`
+		Title       string `json:"title"`
+		TitleKo     string `json:"title_ko"`
+		Body        string `json:"body"`
+		BodyKo      string `json:"body_ko"`
+		TargetType  string `json:"target_type"`
+		TargetID    string `json:"target_id"`
+		RequiresAck bool   `json:"requires_ack"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	orgID := getOrgID(r)
+	if req.TargetType == "" {
+		req.TargetType = "all"
+	}
+	bc, err := s.comms.SendBroadcast(orgID, req.Severity, req.Title, req.TitleKo, req.Body, req.BodyKo, req.TargetType, req.TargetID, req.RequiresAck)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, bc)
+}
+
+// --- Work Intelligence Handlers ---
+
+func (s *Server) handleGetUsageSummary(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	days := 30
+	summary, err := s.workintel.GetUsageSummary(orgID, days)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
+func (s *Server) handleGetEngineeringMetrics(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	userID := r.URL.Query().Get("user_id")
+	metrics, err := s.workintel.GetEngineeringMetrics(orgID, userID, 30)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, metrics)
+}
+
+func (s *Server) handleGetSecurityMetrics(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	metrics, err := s.workintel.GetSecurityMetrics(orgID, 30)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, metrics)
+}
+
+func (s *Server) handleGetScorecard(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	userID := r.URL.Query().Get("user_id")
+	period := r.URL.Query().Get("period")
+	if period == "" {
+		period = time.Now().Format("2006-01")
+	}
+	scorecard, err := s.workintel.GenerateScorecard(orgID, userID, period)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, scorecard)
+}
+
+func (s *Server) handleExportMetrics(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	data, err := s.workintel.ExportMetricsJSON(orgID, 30)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
+}
+
 
 func (s *Server) handleSecurityCheck(w http.ResponseWriter, r *http.Request) {
 	var req struct {
