@@ -14,6 +14,7 @@ const navItems = [
   { path: '/analytics', label: '분석', labelEn: 'Analytics', icon: '📊' },
   { path: '/communications', label: '커뮤니케이션', labelEn: 'Comms', icon: '💬' },
   { path: '/policy', label: '정책', labelEn: 'Policy', icon: '⚖' },
+  { path: '/fleet', label: '플릿 관리', labelEn: 'Fleet', icon: '⛶' },
   { path: '/audit', label: '감사 로그', labelEn: 'Audit', icon: '☰' },
 ]
 
