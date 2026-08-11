@@ -13,6 +13,7 @@ import (
 
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/security"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
 	"gorm.io/gorm"
 )
@@ -24,6 +25,7 @@ import (
 type Service struct {
 	db           *gorm.DB
 	provenance   *provenance.Service
+	security     *security.Service
 	cpURL        string
 	relayID      string
 	httpClient   *http.Client
@@ -60,6 +62,7 @@ func New(db *gorm.DB, cpURL, relayID string) (*Service, error) {
 	return &Service{
 		db:         db,
 		provenance: provSvc,
+		security:   security.New(db),
 		cpURL:      cpURL,
 		relayID:    relayID,
 		httpClient: &http.Client{Timeout: 120 * time.Second},

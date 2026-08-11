@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/patrickrho-patty/pccp/internal/identity"
+	"github.com/patrickrho-patty/pccp/internal/security"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/policy"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
@@ -26,6 +27,7 @@ type Server struct {
 	registry   *registry.Service
 	policy     *policy.Service
 	provenance *provenance.Service
+	security   *security.Service
 	router     *chi.Mux
 }
 
@@ -45,6 +47,7 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 		return nil, fmt.Errorf("api: init policy: %w", err)
 	}
 	provSvc, err := provenance.New(db, "pccp-relay-1")
+	secSvc := security.New(db)
 	if err != nil {
 		return nil, fmt.Errorf("api: init provenance: %w", err)
 	}
@@ -56,6 +59,7 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 		registry:   regSvc,
 		policy:     polSvc,
 		provenance: provSvc,
+		security:   secSvc,
 	}
 	s.setupRouter()
 	return s, nil
@@ -158,6 +162,9 @@ func (s *Server) setupRouter() {
 			r.Get("/leases", s.handleListLeases)
 			r.Post("/leases", s.handleIssueLease)
 		})
+
+		// Security
+		r.Post("/security/check", s.handleSecurityCheck)
 
 		// Audit
 		r.Route("/audit", func(r chi.Router) {
@@ -910,6 +917,20 @@ func (s *Server) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
 	q.Order("occurred_at DESC").Limit(200).Find(&events)
 	writeJSON(w, http.StatusOK, events)
 }
+
+func (s *Server) handleSecurityCheck(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	orgID := getOrgID(r)
+	result := s.security.CheckContext(orgID, req.Text)
+	writeJSON(w, http.StatusOK, result)
+}
+
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
