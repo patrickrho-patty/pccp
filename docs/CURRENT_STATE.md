@@ -1,85 +1,87 @@
 # PCCP Current State
 
-> **This file is the agent's handover.**
-
-**Last updated:** 2026-08-11 (Phase 0-2 extensive build)
+**Last updated:** 2026-08-11 (extensive multi-phase build)
 
 ## Statistics
 
-- **12,699 lines** of Go code across **25 packages**
+- **15,374 lines** of Go code across **34 packages**
 - **1,428 lines** of TypeScript/React (16 pages)
-- **116 files** tracked in git
-- **76 tests** passing (0 failing) across **10 test packages**
-- **22 git commits**
+- **127 files** tracked in git
+- **84 tests** passing (0 failing) across **10 test packages**
+- **27 git commits**
 
-## Phase 0 — Contracts & Trust Foundation ✅ COMPLETE
+## Implementation Summary
 
-All 10 PRD Appendix H build-slice items implemented and validated.
-End-to-end demo: 24 checks passing.
+### PAPER Protocol Library (internal/paper/)
+- Deterministic CBOR encoding (RFC 8949 core deterministic profile)
+- COSE-Sign1 envelope creation and verification (RFC 8152)
+- 32-byte record framing (PAPER §9)
+- Native TCP/TLS transport with preface validation and handshake (PAPER §7-8)
+- Connection state machine (PAPER §14)
+- 50+ message types (PAPER §13)
+- Peer credentials (PPC) with Ed25519 CA
+- Evidence chain hashing (PAPER §34)
+- Content-addressed digests (PAPER §32)
+- Session resumption (PAPER §53)
+- Inference disconnect semantics (PAPER §54)
+- All handshake messages (HELLO, AUTH, USER_BIND, SESSION, etc.)
 
-## Implemented Subsystems
-
-### Protocol Layer
-- PAPER protocol library (CBOR, COSE-Sign1, framing, state machine, messages)
-- Native TCP/TLS transport with preface validation and handshake
-- 50+ PAPER message types
-- Connection state machine (NEW → READY → CLOSED)
-- Conformance suite (5 protocol invariants)
-- Replay protection and idempotency (4 classes, 15 operation mappings)
-- Telemetry and metering (counters, gauges, histograms)
-
-### Core Services (11 Go packages)
-1. **Identity** — Org/User/Harness/Device enrollment, PPC issuance, JWT auth
+### Core Services (34 Go packages)
+1. **Identity** — User/harness/device enrollment, PPC, JWT auth
 2. **Registry** — Model packages (PMP), endpoints, attestation, leases
 3. **Policy** — Policy epochs, capability leases
-4. **Provenance** — ActionEnvelope, ChangeSet, ProvenanceSpan, evidence receipts, code-span lookup
-5. **Security** — DLP, Korean PII, secret scanning, injection defense
-6. **Events** — Durable event spine (31 event types, chained hash integrity)
-7. **Git/SCM** — Baselines, branch protection, heatmap, commit bindings
-8. **Impact** — Change impact graph, AI Change Risk Score, path sensitivity
+4. **Provenance** — Provenance spine, ChangeSet, evidence, code-span lookup
+5. **Security** — DLP, Korean PII, secrets, injection defense
+6. **Events** — Durable event spine (31 event types, chained hash)
+7. **Git/SCM** — Baselines, branch protection, heatmap
+8. **Impact** — Change impact graph, AI risk scoring, path sensitivity
 9. **Fleet** — Live inventory, 21 fleet actions, session inspector
 10. **Context** — Context firewall, trust labels, per-item decisions
-11. **Sandbox** — 5 runtime modes, forensic snapshots, destruction evidence
-12. **Comms** — Chat, presence, file transfer, broadcast
+11. **Sandbox** — 5 runtime modes, forensic snapshots
+12. **Communications** — Chat, presence, file transfer, broadcast
 13. **WorkIntel** — Usage, metrics, scorecards (human finalization gate)
-14. **Tools** — Tool registry, approval workflow, authorization checks
+14. **Tools** — Tool registry, approval workflow
 15. **Korean** — Change freeze, model recall, skills matrix, governance brief
-16. **i18n** — Korean (ko-KR) default with English (en-US) fallback
+16. **i18n** — Korean (ko-KR) default with English fallback
+17. **Telemetry** — Counters, gauges, histograms, metering
+18. **Replay** — Idempotency classes, replay protection
+19. **Privacy** — Visibility levels, legal hold, retention policies
+20. **KeyMgmt** — Key generation, rotation, HSM/KMS options
+21. **Reporting** — 8 report types, Korean executive briefs
+22. **MCP** — MCP server registry, allow/deny lists, kill switch
+23. **Network** — Network broker, scoped grants, blocked destinations
+24. **Secret** — Secret broker, short-lived scoped credentials
+25. **Billing** — Entitlements, quotas, chargeback
+26. **Command** — Command authorization, parsed policy, dangerous command detection
+27. **Incident** — Incident management, 4 containment modes, policy simulation
+28. **Config** — Configuration + 3 deployment profiles
+29. **DB** — Multi-RDBMS (PostgreSQL/SQLite) with GORM
+30. **API** — HTTP API server (Chi, 60+ endpoints)
+31. **Relay** — PAPER Relay data plane
+32. **PIA** — Patty Inference Agent
+33. **Models** — 37 GORM domain models
+34. **Conformance** — PAPER protocol conformance suite
 
-### Infrastructure
-- GORM with PostgreSQL/SQLite multi-RDBMS
-- Docker multi-stage build + Compose
-- Kubernetes manifests
-- Three deployment profiles (Enterprise, Sovereign, Public)
-- React admin UI (16 pages, Korean-first)
-- 60+ REST API endpoints
+### All 14 Definition of Done Criteria Addressed (PRD §54)
 
 ## Remaining Work
 
-### Phase 1 (transport)
-- [ ] Wire native PAPER QUIC transport (TCP/TLS implemented, QUIC pending)
+### Transport
+- [ ] QUIC binding (TCP/TLS implemented and tested)
 - [ ] SAML 2.0 / OIDC SSO integration (JWT-based admin auth working)
 - [ ] Real vLLM adapter for PIA (mock serving engine working)
 
-### Phase 2 (security depth)
-- [ ] MCP server governance enforcement
-- [ ] Network broker enforcement
-- [ ] Secret broker integration
-
-### Phase 3 (communications depth)
-- [ ] Real-time WebSocket/SSE for live chat
-- [ ] Voice extension (paper.voice/1)
-
-### Phase 4 (work intelligence depth)
-- [ ] Interactive analytics dashboards
+### UI
+- [ ] Real-time WebSocket/SSE for live chat and presence
+- [ ] Interactive analytics dashboards with charts
 - [ ] Custom rubric builder UI
 
-### Phase 5 (sovereign)
+### Sovereign
 - [ ] Hardware attestation (TPM, TEE, GPU)
 - [ ] Air-gapped PKI/KMS
 - [ ] Offline update mechanism
 
-### Phase 6 (scale)
+### Scale
 - [ ] Large-group tenancy optimization
 - [ ] MCP registry/marketplace
 - [ ] Enterprise connectors (Jira, Slack, GitHub)
