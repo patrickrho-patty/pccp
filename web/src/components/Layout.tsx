@@ -11,6 +11,8 @@ const navItems = [
   { path: '/sessions', label: '세션', labelEn: 'Sessions', icon: '◐' },
   { path: '/models', label: '모델', labelEn: 'Models', icon: '◆' },
   { path: '/endpoints', label: '엔드포인트', labelEn: 'Endpoints', icon: '◇' },
+  { path: '/analytics', label: '분석', labelEn: 'Analytics', icon: '📊' },
+  { path: '/communications', label: '커뮤니케이션', labelEn: 'Comms', icon: '💬' },
   { path: '/policy', label: '정책', labelEn: 'Policy', icon: '⚖' },
   { path: '/audit', label: '감사 로그', labelEn: 'Audit', icon: '☰' },
 ]

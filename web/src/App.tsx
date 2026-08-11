@@ -13,6 +13,8 @@ import Endpoints from './pages/Endpoints'
 import Policy from './pages/Policy'
 import Provenance from './pages/Provenance'
 import Audit from './pages/Audit'
+import Analytics from './pages/Analytics'
+import Communications from './pages/Communications'
 import Bootstrap from './pages/Bootstrap'
 
 export default function App() {
@@ -49,6 +51,8 @@ export default function App() {
         <Route path="/endpoints" element={<Endpoints />} />
         <Route path="/policy" element={<Policy />} />
         <Route path="/audit" element={<Audit />} />
+        <Route path="/analytics" element={<Analytics />} />
+        <Route path="/communications" element={<Communications />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Layout>
