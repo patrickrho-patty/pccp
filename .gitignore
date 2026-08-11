@@ -18,3 +18,4 @@ patty-code-pccp/
 .vscode/
 *.swp
 *.swo
+bin/
