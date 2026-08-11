@@ -12,6 +12,12 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/communications"
+	"github.com/patrickrho-patty/pccp/internal/context"
+	"github.com/patrickrho-patty/pccp/internal/events"
+	"github.com/patrickrho-patty/pccp/internal/fleet"
+	"github.com/patrickrho-patty/pccp/internal/gitscm"
+	"github.com/patrickrho-patty/pccp/internal/impact"
+	"github.com/patrickrho-patty/pccp/internal/sandbox"
 	"github.com/patrickrho-patty/pccp/internal/security"
 	"github.com/patrickrho-patty/pccp/internal/workintel"
 	"github.com/patrickrho-patty/pccp/internal/models"
@@ -32,6 +38,12 @@ type Server struct {
 	security   *security.Service
 	comms      *communications.Service
 	workintel  *workintel.Service
+	events     *events.Service
+	gitscm     *gitscm.Service
+	impact     *impact.Service
+	fleet      *fleet.Service
+	context    *context.Service
+	sandbox    *sandbox.Service
 	router     *chi.Mux
 }
 
@@ -54,6 +66,12 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 	secSvc := security.New(db)
 	commsSvc := communications.New(db)
 	wiSvc := workintel.New(db)
+	evtSvc, _ := events.New(db)
+	gitSvc := gitscm.New(db)
+	impactSvc := impact.New(db)
+	fleetSvc := fleet.New(db)
+	ctxSvc := context.New(db, secSvc)
+	sandboxSvc := sandbox.New(db)
 	if err != nil {
 		return nil, fmt.Errorf("api: init provenance: %w", err)
 	}
@@ -68,6 +86,12 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 		security:   secSvc,
 		comms:      commsSvc,
 		workintel:  wiSvc,
+		events:     evtSvc,
+		gitscm:     gitSvc,
+		impact:     impactSvc,
+		fleet:      fleetSvc,
+		context:    ctxSvc,
+		sandbox:    sandboxSvc,
 	}
 	s.setupRouter()
 	return s, nil
@@ -193,6 +217,44 @@ func (s *Server) setupRouter() {
 
 		// Security
 		r.Post("/security/check", s.handleSecurityCheck)
+
+		// Fleet Operations
+		r.Route("/fleet", func(r chi.Router) {
+			r.Get("/inventory", s.handleFleetInventory)
+			r.Get("/sessions/{id}/inspect", s.handleInspectSession)
+			r.Post("/actions", s.handleFleetAction)
+		})
+
+		// Git/SCM
+		r.Route("/scm", func(r chi.Router) {
+			r.Get("/heatmaps", s.handleRepositoryHeatmap)
+			r.Post("/baselines", s.handleCreateBaselineSCM)
+			r.Post("/branch-protection", s.handleSetBranchProtection)
+		})
+
+		// Impact Analysis
+		r.Route("/impact", func(r chi.Router) {
+			r.Post("/analyze", s.handleAnalyzeChange)
+		})
+
+		// Context Firewall
+		r.Route("/context", func(r chi.Router) {
+			r.Post("/evaluate", s.handleEvaluateContext)
+		})
+
+		// Sandbox
+		r.Route("/sandboxes", func(r chi.Router) {
+			r.Get("/", s.handleListSandboxes)
+			r.Post("/", s.handleCreateSandbox)
+			r.Post("/{id}/destroy", s.handleDestroySandbox)
+			r.Post("/{id}/snapshot", s.handleForensicSnapshot)
+		})
+
+		// Events
+		r.Route("/events", func(r chi.Router) {
+			r.Get("/", s.handleQueryEvents)
+			r.Post("/", s.handleEmitEvent)
+		})
 
 		// Audit
 		r.Route("/audit", func(r chi.Router) {
@@ -1122,6 +1184,198 @@ func (s *Server) handleExportMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(data)
+}
+
+
+// --- Fleet Handlers ---
+
+func (s *Server) handleFleetInventory(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	inventory, err := s.fleet.GetFleetInventory(orgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, inventory)
+}
+
+func (s *Server) handleInspectSession(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	inspector, err := s.fleet.InspectSession(orgID, sessionID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, inspector)
+}
+
+func (s *Server) handleFleetAction(w http.ResponseWriter, r *http.Request) {
+	var req fleet.ActionRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := s.fleet.PerformAction(req); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "executed"})
+}
+
+// --- Git/SCM Handlers ---
+
+func (s *Server) handleRepositoryHeatmap(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	heatmap, err := s.gitscm.GetRepositoryHeatmap(orgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, heatmap)
+}
+
+func (s *Server) handleCreateBaselineSCM(w http.ResponseWriter, r *http.Request) {
+	var req gitscm.BaselineRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	baseline, err := s.gitscm.CreateBaseline(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, baseline)
+}
+
+func (s *Server) handleSetBranchProtection(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RepositoryID     string `json:"repository_id"`
+		Branch           string `json:"branch"`
+		Level            string `json:"level"`
+		RequiresApproval bool   `json:"requires_approval"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := s.gitscm.SetBranchProtection(req.RepositoryID, req.Branch, gitscm.BranchProtection(req.Level), req.RequiresApproval); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// --- Impact Handlers ---
+
+func (s *Server) handleAnalyzeChange(w http.ResponseWriter, r *http.Request) {
+	var req impact.AnalyzeRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	graph, score, err := s.impact.AnalyzeChange(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"impact_graph": graph,
+		"risk_score":   score,
+	})
+}
+
+// --- Context Handlers ---
+
+func (s *Server) handleEvaluateContext(w http.ResponseWriter, r *http.Request) {
+	var manifest context.ContextManifest
+	if err := decodeJSON(r, &manifest); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	orgID := getOrgID(r)
+	decisions := s.context.EvaluateManifest(orgID, &manifest)
+	writeJSON(w, http.StatusOK, decisions)
+}
+
+// --- Sandbox Handlers ---
+
+func (s *Server) handleListSandboxes(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	sandboxes, err := s.sandbox.ListSandboxes(orgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, sandboxes)
+}
+
+func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
+	var req sandbox.CreateRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	sb, err := s.sandbox.CreateSandbox(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, sb)
+}
+
+func (s *Server) handleDestroySandbox(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	sb, err := s.sandbox.DestroySandbox(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, sb)
+}
+
+func (s *Server) handleForensicSnapshot(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	snapshotID, err := s.sandbox.ForensicSnapshot(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"snapshot_id": snapshotID})
+}
+
+// --- Events Handlers ---
+
+func (s *Server) handleQueryEvents(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	filter := events.QueryFilter{
+		OrganizationID: orgID,
+		EventType:      r.URL.Query().Get("type"),
+		SessionID:      r.URL.Query().Get("session_id"),
+		UserID:         r.URL.Query().Get("user_id"),
+		Limit:          100,
+	}
+	evts, err := s.events.Query(filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, evts)
+}
+
+func (s *Server) handleEmitEvent(w http.ResponseWriter, r *http.Request) {
+	var req events.EmitRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	envelope, err := s.events.Emit(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, envelope)
 }
 
 
