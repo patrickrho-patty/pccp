@@ -104,3 +104,68 @@
     @apply text-sm font-semibold text-gray-700 mb-3;
   }
 }
+
+
+/* Custom Scrollbars — thin, subtle, enterprise-grade */
+/* WebKit (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 2px;
+  transition: background 0.2s;
+}
+
+:hover::-webkit-scrollbar-thumb,
+:hover *::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25) !important;
+}
+
+/* Sidebar (dark bg) */
+.sidebar-scroll::-webkit-scrollbar-thumb,
+.sidebar-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Main content (light bg) */
+.main-scroll::-webkit-scrollbar-thumb,
+.main-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.main-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+*:hover {
+  scrollbar-color: rgba(128, 128, 128, 0.3) transparent;
+}
+
+.sidebar-scroll {
+  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+}
+
+.main-scroll {
+  scrollbar-color: rgba(0, 0, 0, 0.08) transparent;
+}

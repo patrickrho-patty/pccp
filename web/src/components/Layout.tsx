@@ -105,7 +105,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         </div>
 
         {/* Nav sections */}
-        <nav className="flex-1 overflow-y-auto py-2">
+        <nav className="flex-1 overflow-y-auto py-2 sidebar-scroll">
           {navSections.map((section) => (
             <div key={section.titleEn} className="mb-1">
               <div className="px-4 py-1.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
@@ -142,7 +142,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto main-scroll">
         <div className="p-6 max-w-[1600px] mx-auto">
           {children}
         </div>

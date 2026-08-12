@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.15)  12 AUG 2026 11:59
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.15)  12 AUG 2026 12:10
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -559,59 +559,61 @@ LaTeX Font Info:    External font `lmex10' loaded for size
 (Font)              <7> on input line 46.
 LaTeX Font Info:    External font `lmex10' loaded for size
 (Font)              <5> on input line 46.
+LaTeX Font Info:    Trying to load font information for TS1+lmr on input line 5
+4.
 
-Underfull \vbox (badness 10000) has occurred while \output is active []
-
-<figures/qwen-governed-exchange.png, id=133, 2055.68pt x 1156.32pt>
+(/usr/local/texlive/2026/texmf-dist/tex/latex/lm/ts1lmr.fd
+File: ts1lmr.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
+)
+<figures/qwen-governed-exchange.png, id=141, 2055.68pt x 1156.32pt>
 File: figures/qwen-governed-exchange.png Graphic file (type png)
 <use figures/qwen-governed-exchange.png>
 Package pdftex.def Info: figures/qwen-governed-exchange.png  used on input line
- 59.
+ 70.
 (pdftex.def)             Requested size: 489.8204pt x 275.51105pt.
+
+Underfull \vbox (badness 10000) has occurred while \output is active []
+
  [1{/usr/local/texlive/2026/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/usr/
 local/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}
 
 
-{/usr/local/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc}] [2 <./fi
-gures/qwen-governed-exchange.png (PNG copy)>]
-Underfull \hbox (badness 3930) in paragraph at lines 94--95
+{/usr/local/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc}{/usr/loca
+l/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-ts1.enc}]
+Underfull \vbox (badness 10000) has occurred while \output is active []
+
+ [2 <./figures/qwen-governed-exchange.png (PNG copy)>]
+Underfull \hbox (badness 3930) in paragraph at lines 117--118
  []\T1/lmr/bx/n/10 (+20) Identity and cryp-to-graphic build-ing blocks.[]
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 96--96
+Underfull \hbox (badness 10000) in paragraph at lines 121--121
 []\T1/lmr/bx/n/14.4 (+20) Requirements and Threat
  []
 
-
-Underfull \hbox (badness 5316) in paragraph at lines 141--141
-[]\T1/lmr/bx/n/14.4 (+20) Governance-Native Ex-change
- []
-
-
-Underfull \hbox (badness 1127) in paragraph at lines 143--143
+[3]
+Underfull \hbox (badness 1127) in paragraph at lines 176--176
 []\T1/lmr/bx/n/12 (+20) Identity, ses-sions, and Ca-pa-bil-ity
  []
 
 Package microtype Info: Character `029' is missing
 (microtype)             in font `T1/lmr/m/sc/10'.
 (microtype)             Ignoring protrusion settings for this character.
-
-Underfull \vbox (badness 1112) has occurred while \output is active []
-
- [3]
-LaTeX Font Info:    Trying to load font information for T1+lmss on input line 1
-73.
-
-(/usr/local/texlive/2026/texmf-dist/tex/latex/lm/t1lmss.fd
+[4]
+LaTeX Font Info:    Trying to load font information for T1+lmss on input line 2
+08.
+ (/usr/local/texlive/2026/texmf-dist/tex/latex/lm/t1lmss.fd
 File: t1lmss.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             `lmss' (encoding: T1).
 (microtype)             For optimal results, create family-specific settings.
 (microtype)             See the microtype manual for details.
-LaTeX Font Info:    Trying to load font information for T1+lmtt on input line 1
-86.
+ [5{/usr/local/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc}{/usr/l
+ocal/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}]
+LaTeX Font Info:    Trying to load font information for T1+lmtt on input line 2
+23.
 
 (/usr/local/texlive/2026/texmf-dist/tex/latex/lm/t1lmtt.fd
 File: t1lmtt.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
@@ -621,43 +623,32 @@ Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             For optimal results, create family-specific settings.
 (microtype)             See the microtype manual for details.
 
-Underfull \hbox (badness 10000) in paragraph at lines 186--187
-\T1/lmr/m/n/10 (+20) The pro-to-type is im-ple-mented in Go
- []
-
-
-Underfull \hbox (badness 10000) in paragraph at lines 186--187
-\T1/lmr/m/n/10 (+20) and eval-u-ated at repos-i-tory com-mit
- []
-
-
-Underfull \hbox (badness 10000) in paragraph at lines 186--187
-\T1/lmtt/m/n/10 0234034b51fb6f1a5127280ce1e9c209b8198004\T1/lmr/m/n/10 (+20) . 
-It
- []
-
-
-Underfull \hbox (badness 3168) in paragraph at lines 186--187
-\T1/lmr/m/n/10 (+20) model/catalog schemas, pol-icy and lease ser-vices,
- []
-
-[4{/usr/local/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc}{/usr/lo
-cal/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}]
-Underfull \hbox (badness 3815) in paragraph at lines 222--223
+Underfull \hbox (badness 3815) in paragraph at lines 259--260
 []\T1/lmr/m/n/10 (+20) End-to-end ex-per-i-ments must re-port con-nec-tion
  []
 
 
-Underfull \hbox (badness 1173) in paragraph at lines 222--223
+Underfull \hbox (badness 1173) in paragraph at lines 259--260
 \T1/lmr/m/n/10 (+20) NIC, RTT, topol-ogy, OS, Go and QUIC ver-sions,
  []
 
-[5] [6]
-Underfull \hbox (badness 10000) in paragraph at lines 327--328
+[6]
+Underfull \vbox (badness 6741) has occurred while \output is active []
+
+ [7]
+Underfull \vbox (badness 10000) has occurred while \output is active []
+
+ [8]
+Underfull \hbox (badness 1776) in paragraph at lines 367--368
+\T1/lmr/m/n/10 (+20) The arXiv source pack-age con-tains the ex-act La-
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 370--371
 []\T1/lmtt/m/n/9 go test ./internal/paper -run '[]$' -bench
  []
 
-[7] (./PAPER_arXiv.bbl
+[9] (./PAPER_arXiv.bbl
 Underfull \hbox (badness 1472) in paragraph at lines 4--7
 []\T1/lmr/m/n/10 (+20) A2A Project.  Agent2agent pro-to-col spec-i-fi-ca-
  []
@@ -678,7 +669,7 @@ Underfull \hbox (badness 10000) in paragraph at lines 47--50
  . io /
  []
 
-) [8] [9
+) [10] [11
 
 
 ] (./PAPER_arXiv.aux)
@@ -687,16 +678,16 @@ LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
 Package rerunfilecheck Info: File `PAPER_arXiv.out' has not changed.
-(rerunfilecheck)             Checksum: A37280B8E09A50168A96C40938033535;5494.
+(rerunfilecheck)             Checksum: 52BDB2E0A5621466D6F7C8DC7216AE5B;7305.
  ) 
 Here is how much of TeX's memory you used:
- 13485 strings out of 467525
- 210758 string characters out of 5418982
- 689514 words of memory out of 5000000
- 41902 multiletter control sequences out of 15000+600000
- 715620 words of font info for 191 fonts, out of 8000000 for 9000
+ 13533 strings out of 467525
+ 211883 string characters out of 5418982
+ 689352 words of memory out of 5000000
+ 41939 multiletter control sequences out of 15000+600000
+ 716031 words of font info for 193 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 75i,10n,79p,1001b,612s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,10n,79p,1001b,478s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></usr/lo
 cal/texlive/2026/texmf-dist/fonts/type1/public/lm/lmbx12.pfb></usr/local/texliv
 e/2026/texmf-dist/fonts/type1/public/lm/lmbx9.pfb></usr/local/texlive/2026/texm
@@ -712,10 +703,10 @@ onts/type1/public/lm/lmri10.pfb></usr/local/texlive/2026/texmf-dist/fonts/type1
 /lmsy10.pfb></usr/local/texlive/2026/texmf-dist/fonts/type1/public/lm/lmsy7.pfb
 ></usr/local/texlive/2026/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/loc
 al/texlive/2026/texmf-dist/fonts/type1/public/lm/lmtt9.pfb>
-Output written on PAPER_arXiv.pdf (9 pages, 2960909 bytes).
+Output written on PAPER_arXiv.pdf (11 pages, 2978615 bytes).
 PDF statistics:
- 383 PDF objects out of 1000 (max. 8388607)
- 332 compressed objects within 4 object streams
- 88 named destinations out of 1000 (max. 500000)
- 50438 words of extra memory for PDF output out of 51595 (max. 10000000)
+ 405 PDF objects out of 1000 (max. 8388607)
+ 351 compressed objects within 4 object streams
+ 92 named destinations out of 1000 (max. 500000)
+ 52502 words of extra memory for PDF output out of 61914 (max. 10000000)
 
