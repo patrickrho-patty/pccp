@@ -68,6 +68,8 @@ func (s *Service) CreateAccount(email, displayName, displayNameKo, plan string) 
 	// Create subscription if plan specified
 	if plan != "" {
 		s.CreateSubscription(account.ID, plan)
+		// Refresh account to get updated subscription status
+		s.db.First(account, "id = ?", account.ID)
 	}
 
 	return account, nil
