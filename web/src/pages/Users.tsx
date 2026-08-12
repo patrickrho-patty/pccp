@@ -50,7 +50,7 @@ export default function Users() {
   const [harnesses, setHarnesses] = useState<any[]>([])
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null)
   const [form, setForm] = useState({
-    email: '', name: '', name_ko: '', title: '', auth_method: 'local',
+    email: '', name: '', name_ko: '', title: '', auth_method: 'local', business_unit_id: '',
   })
 
   const load = () => {
@@ -66,7 +66,7 @@ export default function Users() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
-      await api.createUser(form)
+      await api.createUser({ ...form, business_unit_id: form.business_unit_id })
       setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local' })
       setShowForm(false)
       load()
@@ -78,6 +78,7 @@ export default function Users() {
     setForm({
       email: user.email || '', name: user.name || '', name_ko: user.name_ko || '',
       title: user.title || '', auth_method: user.auth_method || 'local',
+      business_unit_id: user.business_unit_id || '',
     })
     setShowForm(true)
   }
@@ -86,7 +87,7 @@ export default function Users() {
     e.preventDefault()
     if (!editingId) return
     try {
-      await api.updateUser(editingId, form)
+      await api.updateUser(editingId, { ...form, business_unit_id: form.business_unit_id })
       setEditingId(null)
       setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local' })
       setShowForm(false)
@@ -171,6 +172,20 @@ export default function Users() {
                 {AUTH_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
               </select>
             </div>
+            <div>
+              <label className="label">부서 · Department</label>
+              <select className="input" value={form.business_unit_id} onChange={e => setForm({ ...form, business_unit_id: e.target.value })}>
+                <option value="">선택 안함</option>
+                <option value="dev">개발팀 · Development</option>
+                <option value="qa">QA팀 · Quality Assurance</option>
+                <option value="devops">데브옵스팀 · DevOps</option>
+                <option value="security">보안팀 · Security</option>
+                <option value="data">데이터팀 · Data</option>
+                <option value="infra">인프라팀 · Infrastructure</option>
+                <option value="product">프로덕트팀 · Product</option>
+                <option value="exec">경영진 · Executive</option>
+              </select>
+            </div>
           </div>
           <button type="submit" className="btn-primary">{editingId ? '수정 · Save' : '생성 · Create'}</button>
         </form>
@@ -192,7 +207,7 @@ export default function Users() {
           </thead>
           <tbody>
             {paged.length === 0 ? (
-              <tr><td colSpan={7} className="py-8 text-center text-gray-400">
+              <tr><td colSpan={8} className="py-8 text-center text-gray-400">
                 {filters.search ? '검색 결과가 없습니다' : '등록된 사용자가 없습니다'}
               </td></tr>
             ) : paged.map(u => (
@@ -217,7 +232,7 @@ export default function Users() {
                 </tr>
                 {expandedUserId === u.id && (
                     <tr className="bg-gray-50">
-                      <td colSpan={7} className="p-4">
+                      <td colSpan={8} className="p-4">
                         <div className="grid grid-cols-3 gap-6">
                           {/* Sessions */}
                           <div>
