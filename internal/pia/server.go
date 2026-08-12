@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -71,8 +72,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify lease before processing
-	// In direct-proxy mode (no CP URL), skip lease check and proxy directly
-	if !s.svc.HasValidLease() && s.svc.CPURL() != "" {
+	// In direct-proxy mode (PCCP_PIA_DIRECT=1), skip lease check
+	directMode := os.Getenv("PCCP_PIA_DIRECT") == "1"
+	if !directMode && !s.svc.HasValidLease() {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
 		if err := s.svc.RequestLease(ctx); err != nil {
