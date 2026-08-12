@@ -24,12 +24,11 @@ const navSections = [
     ]
   },
   {
-    title: '라이브 운영',
-    titleEn: 'Live Operations',
+    title: 'AI 세션',
+    titleEn: 'AI Sessions',
     items: [
-      { path: '/live', label: '실시간 뷰', labelEn: 'Live Wall', icon: '🔴' },
-      { path: '/sessions', label: 'AI 세션', labelEn: 'AI Sessions', icon: '◐' },
-      { path: '/fleet', label: '플릿 관리', labelEn: 'Fleet', icon: '⛶' },
+      { path: '/sessions', label: '세션', labelEn: 'Sessions', icon: '◐' },
+      { path: '/fleet', label: '하네스 관리', labelEn: 'Harness Fleet', icon: '⛶' },
     ]
   },
   {
@@ -62,6 +61,13 @@ const navSections = [
     items: [
       { path: '/communications', label: '커뮤니케이션', labelEn: 'Comms', icon: '💬' },
       { path: '/sandboxes', label: '샌드박스', labelEn: 'Sandboxes', icon: '📦' },
+    ]
+  },
+  {
+    title: '엔터프라이즈',
+    titleEn: 'Enterprise',
+    items: [
+      { path: '/enterprise', label: '하네스 기능', labelEn: 'Harness Features', icon: '🏢' },
     ]
   },
   {

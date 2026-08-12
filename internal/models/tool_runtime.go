@@ -128,5 +128,8 @@ func AllModels() []interface{} {
 		&Account{},
 		&Subscription{},
 		&AccountCapacityLease{},
+		// Enterprise harness features (§33)
+		&EnterpriseHarnessFeature{},
+		&EnterpriseFeatureViolation{},
 	}
 }

@@ -32,6 +32,7 @@ import CodeExplorer from './pages/CodeExplorer'
 import Analytics from './pages/Analytics'
 import Communications from './pages/Communications'
 import Sandboxes from './pages/Sandboxes'
+import EnterpriseFeatures from './pages/EnterpriseFeatures'
 
 export default function App() {
   return (

@@ -37,6 +37,9 @@ export default function Sessions() {
   const [repos, setRepos] = useState<any[]>([])
   const [harnesses, setHarnesses] = useState<any[]>([])
   const [showForm, setShowForm] = useState(false)
+  const [viewMode, setViewMode] = useState<'table' | 'cards'>('table')
+  const [timeline, setTimeline] = useState<any>(null)
+  const [inspectorSession, setInspectorSession] = useState<any>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [provenance, setProvenance] = useState<any>(null)
   const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
@@ -51,7 +54,12 @@ export default function Sessions() {
     api.listRepositories().then(data => setRepos(Array.isArray(data) ? data : []))
     api.listHarnesses().then(data => setHarnesses(Array.isArray(data) ? data : []))
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+    // Auto-refresh for live updates
+    const interval = setInterval(load, 10000)
+    return () => clearInterval(interval)
+  }, [])
 
   const filtered = useFilteredData(sessions, filters, FILTER_CONFIG)
   const paged = filtered.slice((page - 1) * pageSize, page * pageSize)
@@ -81,6 +89,11 @@ export default function Sessions() {
     try {
       const res = await fetch(`/api/sessions/${session.id}/usage`, { headers: authHeaders() })
       if (res.ok) { const usage = await res.json(); setUsageData(prev => ({ ...prev, [session.id]: usage })) }
+    } catch {}
+    // Fetch timeline
+    try {
+      const res = await fetch(`/api/sessions/${session.id}/timeline`, { headers: authHeaders() })
+      if (res.ok) { const tl = await res.json(); setTimeline(tl) }
     } catch {}
   }
 
@@ -134,6 +147,41 @@ export default function Sessions() {
         </form>
       )}
 
+      {/* View mode toggle */}
+      <div className="flex items-center gap-2 mb-4">
+        <button onClick={() => setViewMode('table')} className={`btn-sm ${viewMode === 'table' ? 'btn-primary' : 'btn-secondary'}`}>표</button>
+        <button onClick={() => setViewMode('cards')} className={`btn-sm ${viewMode === 'cards' ? 'btn-primary' : 'btn-secondary'}`}>실시간 카드</button>
+        <span className="text-xs text-gray-400 ml-auto">🟢 {sessions.filter(s => s.status === 'active').length}개 활성 · {sessions.length}개 전체</span>
+      </div>
+
+      {/* Card view (live sessions) */}
+      {viewMode === 'cards' && (
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          {sessions.filter(s => s.status === 'active' || s.status === 'paused').map(s => (
+            <div key={s.id} className="card cursor-pointer hover:shadow-md transition-shadow" onClick={() => toggleExpand(s)}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${s.status === 'active' ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
+                  <span className="text-sm font-medium">{s.title || '제목 없음'}</span>
+                </div>
+              </div>
+              <div className="text-xs text-gray-500 mb-2">
+                <Link to="/users" className="text-blue-600 hover:underline" onClick={e => e.stopPropagation()}>{getUserName(s.user_id)}</Link>
+                <span className="text-gray-400 ml-1">· {s.model_class}</span>
+              </div>
+              <div className="bg-gray-900 rounded p-3 font-mono text-[11px] text-gray-300 min-h-[50px]">
+                <div className={s.status === 'active' ? 'text-green-400' : 'text-yellow-400'}>▸ {statusLabel(s.status)}</div>
+                <div className="text-gray-500 mt-1">지속: {formatDuration(s.opened_at, s.closed_at)}</div>
+                <div className="text-gray-500">브랜치: {s.branch || '-'}</div>
+              </div>
+            </div>
+          ))}
+          {sessions.filter(s => s.status === 'active' || s.status === 'paused').length === 0 && (
+            <div className="col-span-3 card text-center py-12"><p className="text-gray-400">활성 세션이 없습니다</p></div>
+          )}
+        </div>
+      )}
+
       <FilterBar config={FILTER_CONFIG} onChange={setFilters} />
 
       <div className="card">
@@ -165,6 +213,7 @@ export default function Sessions() {
                       <div className="flex gap-2 justify-end">
                         {s.status === 'active' && (<><button onClick={() => handlePause(s.id)} className="text-yellow-600 text-xs hover:underline">일시정지</button><button onClick={() => handleClose(s.id)} className="text-red-600 text-xs hover:underline">종료</button></>)}
                         {s.status === 'paused' && <button onClick={() => handleResume(s.id)} className="text-green-600 text-xs hover:underline">재개</button>}
+                        <button onClick={() => setInspectorSession(s)} className="text-blue-600 text-xs hover:underline">상세 검사</button>
                         <Link to={`/sessions/${s.id}/provenance`} className="text-blue-600 text-xs hover:underline">프로바이던스</Link>
                       </div>
                     </td>
@@ -173,7 +222,8 @@ export default function Sessions() {
                     <tr className="bg-gray-50"><td colSpan={7} className="p-4">
                       <div className="grid grid-cols-3 gap-4 text-sm">
                         <div><span className="text-gray-500">세션 ID:</span> <span className="font-mono text-xs">{s.session_id?.slice(0, 30)}</span></div>
-                        <div><span className="text-gray-500">하네스:</span> <span className="font-mono text-xs">{s.harness_id}</span></div>
+                        <div><span className="text-gray-500">하네스:</span> <Link to="/harnesses" className="font-mono text-xs text-blue-600 hover:underline">{s.harness_id}</Link></div>
+                        <div><span className="text-gray-500">개발자:</span> <Link to="/users" className="text-blue-600 hover:underline">{getUserName(s.user_id)}</Link></div>
                         <div><span className="text-gray-500">시작:</span> <span className="text-xs">{s.opened_at?.slice(0, 19)}</span></div>
                       </div>
                       {usageData[s.id] && (
@@ -200,6 +250,92 @@ export default function Sessions() {
         )}
       </div>
       <Pagination total={filtered.length} page={page} pageSize={pageSize} onPageChange={setPage} />
+
+      {/* Session Inspector Modal */}
+      {inspectorSession && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setInspectorSession(null)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full mx-4 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
+              <div>
+                <h3 className="font-semibold">세션 검사기 · Session Inspector</h3>
+                <p className="text-xs text-gray-500">{inspectorSession.title} · {inspectorSession.session_id?.slice(0, 20)}</p>
+              </div>
+              <button onClick={() => setInspectorSession(null)} className="text-gray-400 hover:text-gray-600">✕</button>
+            </div>
+            <div className="p-5 space-y-4">
+              {/* Summary */}
+              <div className="grid grid-cols-4 gap-3">
+                <div className="bg-gray-50 rounded p-3">
+                  <div className="text-xs text-gray-500">개발자</div>
+                  <Link to="/users" className="text-sm font-medium text-blue-600 hover:underline">{getUserName(inspectorSession.user_id)}</Link>
+                </div>
+                <div className="bg-gray-50 rounded p-3">
+                  <div className="text-xs text-gray-500">모델</div>
+                  <div className="text-sm font-medium">{inspectorSession.model_class || '-'}</div>
+                </div>
+                <div className="bg-gray-50 rounded p-3">
+                  <div className="text-xs text-gray-500">상태</div>
+                  <span className={statusBadge(inspectorSession.status)}>{statusLabel(inspectorSession.status)}</span>
+                </div>
+                <div className="bg-gray-50 rounded p-3">
+                  <div className="text-xs text-gray-500">지속 시간</div>
+                  <div className="text-sm font-medium">{formatDuration(inspectorSession.opened_at, inspectorSession.closed_at)}</div>
+                </div>
+              </div>
+
+              {/* Timeline */}
+              {timeline && (
+                <>
+                  {timeline.actions?.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-semibold text-gray-600 mb-2">액션 타임라인 · Actions ({timeline.actions.length})</h4>
+                      <div className="space-y-1 max-h-48 overflow-y-auto">
+                        {timeline.actions.slice(0, 20).map((a: any, i: number) => (
+                          <div key={i} className="flex items-center gap-3 text-xs py-1 px-2 bg-gray-50 rounded">
+                            <span className="font-mono text-gray-400 w-16">{a.occurred_at?.slice(11, 19)}</span>
+                            <span className="font-medium w-32 truncate">{a.action_type || a.action || '-'}</span>
+                            <span className="text-gray-500 truncate flex-1">{a.tool_name || a.description || '-'}</span>
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] ${a.outcome === 'success' ? 'bg-green-100 text-green-700' : a.outcome === 'error' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>{a.outcome || a.policy_decision || '-'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {timeline.change_sets?.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-semibold text-gray-600 mb-2">코드 변경 · Change Sets ({timeline.change_sets.length})</h4>
+                      <div className="space-y-1">
+                        {timeline.change_sets.slice(0, 10).map((cs: any, i: number) => (
+                          <div key={i} className="flex items-center gap-2 text-xs p-2 bg-gray-50 rounded">
+                            <span className={`px-1.5 py-0.5 rounded ${cs.ai_generated ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{cs.ai_generated ? 'AI' : 'Human'}</span>
+                            <span className="font-mono">{cs.commit_sha?.slice(0, 12) || '-'}</span>
+                            <span className="text-gray-500 truncate">{cs.message || cs.title || '-'}</span>
+                            <span className="text-gray-400 ml-auto">+{cs.additions || 0} -{cs.deletions || 0}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {timeline.findings?.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-semibold text-gray-600 mb-2">보안 발견 · Findings ({timeline.findings.length})</h4>
+                      <div className="space-y-1">
+                        {timeline.findings.map((f: any, i: number) => (
+                          <div key={i} className="flex items-center gap-2 text-xs p-2 bg-red-50 rounded">
+                            <span className={`px-1.5 py-0.5 rounded ${f.severity === 'critical' ? 'bg-red-200 text-red-800' : 'bg-yellow-200 text-yellow-800'}`}>{f.severity}</span>
+                            <span className="font-medium">{f.finding_type}</span>
+                            <Link to="/security" className="text-blue-600 hover:underline">{f.title_ko || f.title || '-'}</Link>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

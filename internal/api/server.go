@@ -186,6 +186,7 @@ func (s *Server) setupRouter() {
 			r.Post("/{id}/resume", s.handleResumeSession)
 			r.Get("/{id}/provenance", s.handleGetProvenance)
 			r.Get("/{id}/usage", s.handleGetSessionUsage)
+			r.Get("/{id}/timeline", s.handleGetSessionTimeline)
 		})
 
 		// Model registry
@@ -283,6 +284,15 @@ func (s *Server) setupRouter() {
 		r.Route("/events", func(r chi.Router) {
 			r.Get("/", s.handleQueryEvents)
 			r.Post("/", s.handleEmitEvent)
+		})
+
+		// Enterprise Harness Features (§33)
+		r.Route("/enterprise", func(r chi.Router) {
+			r.Get("/features", s.handleListEnterpriseFeatures)
+			r.Put("/features/{id}", s.handleUpdateEnterpriseFeature)
+			r.Get("/violations", s.handleListEnterpriseViolations)
+			r.Put("/violations/{id}", s.handleResolveViolation)
+			r.Post("/features/seed", s.handleSeedEnterpriseFeatures)
 		})
 
 		// Audit
@@ -973,6 +983,44 @@ func (s *Server) handleCompatChatCompletions(w http.ResponseWriter, r *http.Requ
 		}
 
 		writeJSON(w, http.StatusOK, resp)
+	}
+
+func (s *Server) handleGetSessionTimeline(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		var sess models.Session
+		if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+
+		// Load actions (tool calls, commands, model requests)
+		var actions []models.ActionEnvelope
+		s.db.Where("session_id = ?", sess.SessionID).Order("occurred_at DESC").Limit(100).Find(&actions)
+
+		// Load change sets (code changes)
+		var changeSets []models.ChangeSet
+		s.db.Where("session_id = ?", sess.SessionID).Order("created_at DESC").Find(&changeSets)
+
+		// Load security findings
+		var findings []models.SecurityFinding
+		s.db.Where("session_id = ?", sess.SessionID).Order("occurred_at DESC").Find(&findings)
+
+		// Load approvals
+		var approvals []models.Approval
+		s.db.Where("session_id = ?", sess.SessionID).Order("created_at DESC").Find(&approvals)
+
+		// Load usage records
+		var usageRecords []models.UsageRecord
+		s.db.Where("session_id = ?", sess.SessionID).Order("occurred_at DESC").Limit(50).Find(&usageRecords)
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"session":        sess,
+			"actions":        actions,
+			"change_sets":    changeSets,
+			"findings":       findings,
+			"approvals":      approvals,
+			"usage_records":  usageRecords,
+		})
 	}
 
 func (s *Server) handleGetSessionUsage(w http.ResponseWriter, r *http.Request) {
@@ -2031,6 +2079,100 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 
 func min(a, b int) int {
-	if a < b { return a }
+	if a < b {
+		return a
+	}
 	return b
+}
+
+// --- Enterprise Harness Feature Handlers ---
+
+func (s *Server) handleListEnterpriseFeatures(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var features []models.EnterpriseHarnessFeature
+	s.db.Where("organization_id = ?", orgID).Order("category, feature_key").Find(&features)
+	writeJSON(w, http.StatusOK, features)
+}
+
+func (s *Server) handleUpdateEnterpriseFeature(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Enabled  bool `json:"enabled"`
+		Enforced bool `json:"enforced"`
+		Config   string `json:"config"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	s.db.Model(&models.EnterpriseHarnessFeature{}).Where("id = ?", id).
+		Updates(map[string]interface{}{"enabled": req.Enabled, "enforced": req.Enforced, "config": req.Config})
+	var feature models.EnterpriseHarnessFeature
+	s.db.Where("id = ?", id).First(&feature)
+	writeJSON(w, http.StatusOK, feature)
+}
+
+func (s *Server) handleListEnterpriseViolations(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var violations []models.EnterpriseFeatureViolation
+	s.db.Where("organization_id = ? AND resolved = false", orgID).Order("occurred_at DESC").Limit(100).Find(&violations)
+	writeJSON(w, http.StatusOK, violations)
+}
+
+func (s *Server) handleResolveViolation(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	s.db.Model(&models.EnterpriseFeatureViolation{}).Where("id = ?", id).Update("resolved", true)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "resolved"})
+}
+
+func (s *Server) handleSeedEnterpriseFeatures(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	defaults := []struct {
+		Key, Name, NameKo, Category, PRD string
+		Enforced bool
+	}{
+		{"code_review", "Policy-Enforced Code Review", "정책 기반 코드 리뷰", "governance", "§33.4", true},
+		{"code_signing", "Mandatory Code Signing", "의무 코드 서명", "security", "§18.6", true},
+		{"coding_standards", "Compliance-Aware Coding Standards", "컴플라이언스 코딩 표준", "compliance", "§33.11", false},
+		{"audit_export", "Audit Trail Export", "감사 증거 내보내기", "audit", "§40.3", true},
+		{"sso_binding", "SSO/SCIM Identity Binding", "SSO/SCIM 신원 연결", "identity", "§32.1", true},
+		{"device_attestation", "Device Posture Attestation", "기기 보안 상태 증명", "security", "§14.1", true},
+		{"sandbox_execution", "Mandatory Sandbox Execution", "의무 샌드박스 실행", "security", "§31.2", false},
+		{"data_classification", "Data Classification Tagging", "데이터 분류 태깅", "governance", "§16", true},
+		{"supply_chain", "Supply Chain Validation", "공급망 검증", "security", "§15.3", true},
+		{"network_egress", "Network Egress Control", "네트워크 송신 제어", "security", "§17.4", true},
+		{"secret_broker", "Key/Secret Brokering", "키/비밀정보 브로커링", "security", "§17.5", true},
+		{"forensic_snapshot", "Forensic Snapshot", "포렌식 스냅샷", "audit", "§14.2", false},
+		{"exception_workflow", "Policy Exception Workflow", "정책 예외 워크플로", "governance", "§33.8", false},
+		{"mandatory_ack", "Mandatory Acknowledgement", "의무 승인 확인", "governance", "§33.6", true},
+		{"change_freeze", "Change-Freeze Mode", "변경 동결 모드", "governance", "§33.13", false},
+		{"ai_attribution", "AI Code Attribution", "AI 코드 기여 추적", "audit", "§19", true},
+		{"command_auth", "Command Authorization", "명령어 인가", "security", "§17.3", true},
+		{"mcp_allowlist", "MCP Server Allowlist", "MCP 서버 허용 목록", "security", "§17.2", true},
+		{"model_recall", "Emergency Model Recall", "긴급 모델 리콜", "governance", "§33.9", true},
+		{"project_offboard", "Project Offboarding", "프로젝트 오프보딩", "audit", "§33.14", false},
+	}
+
+	inserted := 0
+	for _, d := range defaults {
+		feature := &models.EnterpriseHarnessFeature{
+			Base: models.Base{},
+			OrganizationID: orgID,
+			FeatureKey:     d.Key,
+			FeatureName:    d.Name,
+			FeatureNameKo:  d.NameKo,
+			Category:       d.Category,
+			PRDRef:         d.PRD,
+			Enabled:        true,
+			Enforced:       d.Enforced,
+			Status:         "active",
+		}
+		if err := s.db.Create(feature).Error; err != nil {
+			log.Printf("enterprise seed: failed to create %s: %v", d.Key, err)
+			continue
+		}
+		inserted++
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "seeded", "count": inserted})
 }
