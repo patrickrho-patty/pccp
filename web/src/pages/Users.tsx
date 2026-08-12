@@ -1,5 +1,33 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
+import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
+
+const FILTER_CONFIG: FilterConfig = {
+  searchFields: ['name', 'name_ko', 'email', 'auth_method', 'title'],
+  searchPlaceholder: '이름, 이메일, 인증 방식, 직함으로 검색...',
+  dropdowns: [
+    {
+      key: 'auth_method',
+      label: '인증',
+      options: [
+        { value: 'local', label: 'Local' },
+        { value: 'oidc', label: 'OIDC' },
+        { value: 'saml', label: 'SAML' },
+        { value: 'ldap', label: 'LDAP' },
+        { value: 'scim', label: 'SCIM' },
+      ],
+    },
+    {
+      key: 'status',
+      label: '상태',
+      options: [
+        { value: 'active', label: '활성' },
+        { value: 'suspended', label: '정지' },
+        { value: 'offboarded', label: '퇴사' },
+      ],
+    },
+  ],
+}
 
 const AUTH_METHODS = [
   { value: 'local', label: 'Local (로컬)' },
@@ -13,7 +41,11 @@ export default function Users() {
   const [users, setUsers] = useState<any[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
+  const [filters, setFilters] = useState({
+    search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string>,
+  })
+  const [page, setPage] = useState(1)
+  const pageSize = 25
   const [form, setForm] = useState({
     email: '', name: '', name_ko: '', title: '', auth_method: 'local',
   })
@@ -21,14 +53,8 @@ export default function Users() {
   const load = () => api.listUsers().then(data => setUsers(Array.isArray(data) ? data : []))
   useEffect(() => { load() }, [])
 
-  const filtered = users.filter(u => {
-    if (!searchQuery) return true
-    const q = searchQuery.toLowerCase()
-    return (u.name_ko || '').toLowerCase().includes(q) ||
-      (u.name || '').toLowerCase().includes(q) ||
-      (u.email || '').toLowerCase().includes(q) ||
-      (u.auth_method || '').toLowerCase().includes(q)
-  })
+  const filtered = useFilteredData(users, filters, FILTER_CONFIG)
+  const paged = filtered.slice((page - 1) * pageSize, page * pageSize)
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -62,32 +88,23 @@ export default function Users() {
   }
 
   const handleStatusChange = async (user: any, newStatus: string) => {
-    try {
-      await api.updateUser(user.id, { status: newStatus })
-      load()
-    } catch (err: any) { alert('상태 변경 실패: ' + err.message) }
+    try { await api.updateUser(user.id, { status: newStatus }); load() }
+    catch (err: any) { alert('상태 변경 실패: ' + err.message) }
   }
 
   const handleDelete = async (user: any) => {
     if (!confirm(`${user.name_ko || user.name}을(를) 퇴사 처리하시겠습니까?`)) return
-    try {
-      await api.deleteUser(user.id)
-      load()
-    } catch (err: any) { alert('삭제 실패: ' + err.message) }
+    try { await api.deleteUser(user.id); load() }
+    catch (err: any) { alert('삭제 실패: ' + err.message) }
   }
 
-  const statusBadge = (status: string) => {
-    const map: Record<string, string> = {
-      active: 'badge-green', suspended: 'badge-yellow', offboarded: 'badge-gray',
-    }
-    return map[status] || 'badge-gray'
+  const statusBadge = (s: string) => {
+    const map: Record<string, string> = { active: 'badge-green', suspended: 'badge-yellow', offboarded: 'badge-gray' }
+    return map[s] || 'badge-gray'
   }
-
-  const statusLabel = (status: string) => {
-    const map: Record<string, string> = {
-      active: '활성', suspended: '정지', offboarded: '퇴사',
-    }
-    return map[status] || status
+  const statusLabel = (s: string) => {
+    const map: Record<string, string> = { active: '활성', suspended: '정지', offboarded: '퇴사' }
+    return map[s] || s
   }
 
   return (
@@ -95,10 +112,7 @@ export default function Users() {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">사용자 <span className="text-gray-400 text-lg font-normal">Users</span></h1>
         <button onClick={() => {
-          if (editingId) {
-            setEditingId(null)
-            setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local' })
-          }
+          if (editingId) { setEditingId(null); setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local' }) }
           setShowForm(!showForm)
         }} className="btn-primary">
           {showForm ? '취소' : '+ 사용자 추가'}
@@ -134,21 +148,11 @@ export default function Users() {
               </select>
             </div>
           </div>
-          <button type="submit" className="btn-primary">
-            {editingId ? '수정 · Save' : '생성 · Create'}
-          </button>
+          <button type="submit" className="btn-primary">{editingId ? '수정 · Save' : '생성 · Create'}</button>
         </form>
       )}
 
-      <div className="flex gap-3 mb-4">
-        <input
-          className="input flex-1"
-          placeholder="이름, 이메일, 인증 방식으로 검색 · Search by name, email, auth method..."
-          value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
-        />
-        <span className="text-sm text-gray-500 self-center">{filtered.length}명</span>
-      </div>
+      <FilterBar config={FILTER_CONFIG} onChange={setFilters} />
 
       <div className="card">
         <table className="w-full">
@@ -163,11 +167,11 @@ export default function Users() {
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 ? (
+            {paged.length === 0 ? (
               <tr><td colSpan={6} className="py-8 text-center text-gray-400">
-                {searchQuery ? '검색 결과가 없습니다' : '등록된 사용자가 없습니다'}
+                {filters.search ? '검색 결과가 없습니다' : '등록된 사용자가 없습니다'}
               </td></tr>
-            ) : filtered.map((u) => (
+            ) : paged.map(u => (
               <tr key={u.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30">
                 <td className="py-3">
                   <div className="font-medium text-sm">{u.name_ko || u.name}</div>
@@ -180,15 +184,9 @@ export default function Users() {
                 <td className="py-3">
                   <div className="flex gap-2 justify-end">
                     <button onClick={() => handleEdit(u)} className="text-blue-600 text-xs hover:underline">수정</button>
-                    {u.status === 'active' && (
-                      <button onClick={() => handleStatusChange(u, 'suspended')} className="text-yellow-600 text-xs hover:underline">정지</button>
-                    )}
-                    {u.status === 'suspended' && (
-                      <button onClick={() => handleStatusChange(u, 'active')} className="text-green-600 text-xs hover:underline">활성화</button>
-                    )}
-                    {u.status !== 'offboarded' && (
-                      <button onClick={() => handleDelete(u)} className="text-red-600 text-xs hover:underline">퇴사</button>
-                    )}
+                    {u.status === 'active' && <button onClick={() => handleStatusChange(u, 'suspended')} className="text-yellow-600 text-xs hover:underline">정지</button>}
+                    {u.status === 'suspended' && <button onClick={() => handleStatusChange(u, 'active')} className="text-green-600 text-xs hover:underline">활성화</button>}
+                    {u.status !== 'offboarded' && <button onClick={() => handleDelete(u)} className="text-red-600 text-xs hover:underline">퇴사</button>}
                   </div>
                 </td>
               </tr>
@@ -196,6 +194,8 @@ export default function Users() {
           </tbody>
         </table>
       </div>
+
+      <Pagination total={filtered.length} page={page} pageSize={pageSize} onPageChange={setPage} />
     </div>
   )
 }

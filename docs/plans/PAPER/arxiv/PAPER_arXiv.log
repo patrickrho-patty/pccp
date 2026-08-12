@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.15)  12 AUG 2026 12:33
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.15)  12 AUG 2026 13:00
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -1315,95 +1315,101 @@ LaTeX Font Info:    Font shape `T1/ntxtlf/b/n' will be
 (Font)              scaled to size 12.0pt on input line 92.
 LaTeX Font Info:    Font shape `T1/ntxtlf/b/n' will be
 (Font)              scaled to size 10.0pt on input line 97.
- [2 <./figures/qwen-governed-exchange.png (PNG copy)>] [3] [4] [5]
+ [2 <./figures/qwen-governed-exchange.png (PNG copy)>] [3] [4]
+LaTeX Font Info:    Font shape `OT1/minntx/m/n' will be
+(Font)              scaled to size 10.0pt on input line 185.
+LaTeX Font Info:    Font shape `OT1/minntx/m/n' will be
+(Font)              scaled to size 7.3pt on input line 185.
+LaTeX Font Info:    Font shape `OML/ntxmi/m/it' will be
+(Font)              scaled to size 10.0pt on input line 185.
+LaTeX Font Info:    Font shape `OML/ntxmi/m/it' will be
+(Font)              scaled to size 7.3pt on input line 185.
+LaTeX Font Info:    Font shape `LMS/ntxsy/m/n' will be
+(Font)              scaled to size 10.0pt on input line 185.
+LaTeX Font Info:    Font shape `LMS/ntxsy/m/n' will be
+(Font)              scaled to size 7.3pt on input line 185.
+LaTeX Font Info:    Font shape `LMX/ntxexx/m/n' will be
+(Font)              scaled to size 10.0pt on input line 185.
+LaTeX Font Info:    Font shape `LMX/ntxexx/m/n' will be
+(Font)              scaled to size 7.3pt on input line 185.
+LaTeX Font Info:    Font shape `U/ntxmia/m/it' will be
+(Font)              scaled to size 10.0pt on input line 185.
+LaTeX Font Info:    Font shape `U/ntxmia/m/it' will be
+(Font)              scaled to size 7.3pt on input line 185.
+LaTeX Font Info:    Font shape `U/ntxsym/m/n' will be
+(Font)              scaled to size 10.0pt on input line 185.
+LaTeX Font Info:    Font shape `U/ntxsym/m/n' will be
+(Font)              scaled to size 7.3pt on input line 185.
+LaTeX Font Info:    Font shape `U/ntxsyc/m/n' will be
+(Font)              scaled to size 10.0pt on input line 185.
+LaTeX Font Info:    Font shape `U/ntxsyc/m/n' will be
+(Font)              scaled to size 7.3pt on input line 185.
+LaTeX Font Info:    Font shape `U/ntxexa/m/n' will be
+(Font)              scaled to size 10.0pt on input line 185.
+LaTeX Font Info:    Font shape `U/ntxexa/m/n' will be
+(Font)              scaled to size 7.3pt on input line 185.
+ [5{/usr/local/texlive/2026/texmf-dist/fonts/enc/dvips/newtx/ntx-ot1-tlf.enc}]
 LaTeX Font Info:    Font shape `T1/ntxtlf/m/sc' will be
-(Font)              scaled to size 10.0pt on input line 203.
+(Font)              scaled to size 10.0pt on input line 213.
 Package microtype Info: Character `029' is missing
 (microtype)             in font `T1/ntxtlf/m/sc/10'.
 (microtype)             Ignoring protrusion settings for this character.
- (./figures/governed-exchange-lifecycle.tex
+<figures/governed-exchange-lifecycle.png, id=225, 1990.43625pt x 795.97375pt>
+File: figures/governed-exchange-lifecycle.png Graphic file (type png)
+<use figures/governed-exchange-lifecycle.png>
+Package pdftex.def Info: figures/governed-exchange-lifecycle.png  used on input
+ line 221.
+(pdftex.def)             Requested size: 469.75502pt x 187.85547pt.
+ [6{/usr/local/texlive/2026/texmf-dist/fonts/enc/dvips/newtx/ntx-ec-tlf-pc.enc}
+]
+LaTeX Font Info:    Font shape `T1/ntxtlf/m/n' will be
+(Font)              scaled to size 7.3pt on input line 231.
+LaTeX Font Info:    Font shape `T1/ntxtlf/m/n' will be
+(Font)              scaled to size 5.5pt on input line 231.
+ (./figures/model-identity-chain.tex
 LaTeX Font Info:    Font shape `T1/ntxtlf/m/n' will be
 (Font)              scaled to size 7.0pt on input line 19.
-)
-[6{/usr/local/texlive/2026/texmf-dist/fonts/enc/dvips/newtx/ntx-ec-tlf-pc.enc}]
-LaTeX Font Info:    Font shape `OT1/minntx/m/n' will be
-(Font)              scaled to size 10.0pt on input line 220.
-LaTeX Font Info:    Font shape `OT1/minntx/m/n' will be
-(Font)              scaled to size 7.3pt on input line 220.
-LaTeX Font Info:    Font shape `OML/ntxmi/m/it' will be
-(Font)              scaled to size 10.0pt on input line 220.
-LaTeX Font Info:    Font shape `OML/ntxmi/m/it' will be
-(Font)              scaled to size 7.3pt on input line 220.
-LaTeX Font Info:    Font shape `LMS/ntxsy/m/n' will be
-(Font)              scaled to size 10.0pt on input line 220.
-LaTeX Font Info:    Font shape `LMS/ntxsy/m/n' will be
-(Font)              scaled to size 7.3pt on input line 220.
-LaTeX Font Info:    Font shape `LMX/ntxexx/m/n' will be
-(Font)              scaled to size 10.0pt on input line 220.
-LaTeX Font Info:    Font shape `LMX/ntxexx/m/n' will be
-(Font)              scaled to size 7.3pt on input line 220.
-LaTeX Font Info:    Font shape `U/ntxmia/m/it' will be
-(Font)              scaled to size 10.0pt on input line 220.
-LaTeX Font Info:    Font shape `U/ntxmia/m/it' will be
-(Font)              scaled to size 7.3pt on input line 220.
-LaTeX Font Info:    Font shape `U/ntxsym/m/n' will be
-(Font)              scaled to size 10.0pt on input line 220.
-LaTeX Font Info:    Font shape `U/ntxsym/m/n' will be
-(Font)              scaled to size 7.3pt on input line 220.
-LaTeX Font Info:    Font shape `U/ntxsyc/m/n' will be
-(Font)              scaled to size 10.0pt on input line 220.
-LaTeX Font Info:    Font shape `U/ntxsyc/m/n' will be
-(Font)              scaled to size 7.3pt on input line 220.
-LaTeX Font Info:    Font shape `U/ntxexa/m/n' will be
-(Font)              scaled to size 10.0pt on input line 220.
-LaTeX Font Info:    Font shape `U/ntxexa/m/n' will be
-(Font)              scaled to size 7.3pt on input line 220.
-LaTeX Font Info:    Font shape `T1/ntxtlf/m/n' will be
-(Font)              scaled to size 7.3pt on input line 221.
-LaTeX Font Info:    Font shape `T1/ntxtlf/m/n' will be
-(Font)              scaled to size 5.5pt on input line 221.
-(./figures/model-identity-chain.tex)
-LaTeX Font Info:    Trying to load font information for T1+qhv on input line 24
+) [7 <./figures/governed-exchange-lifecycle.png (PNG copy)>]
+LaTeX Font Info:    Trying to load font information for T1+qhv on input line 25
 3.
 
 (/usr/local/texlive/2026/texmf-dist/tex/latex/tex-gyre/t1qhv.fd
 File: t1qhv.fd 2009/09/25 v1.2 font definition file for T1/qhv
 )
 LaTeX Font Info:    Font shape `T1/qhv/m/n' will be
-(Font)              scaled to size 9.40002pt on input line 243.
+(Font)              scaled to size 9.40002pt on input line 253.
 Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             `qhv' (encoding: T1).
 (microtype)             For optimal results, create family-specific settings.
 (microtype)             See the microtype manual for details.
- [7{/usr/local/texlive/2026/texmf-dist/fonts/enc/dvips/newtx/ntx-ot1-tlf.enc}{/
-usr/local/texlive/2026/texmf-dist/fonts/enc/dvips/tex-gyre/q-ec.enc}]
 LaTeX Font Info:    Trying to load font information for T1+ntxtt on input line 
-258.
+268.
 
 (/usr/local/texlive/2026/texmf-dist/tex/latex/newtx/t1ntxtt.fd
 File: t1ntxtt.fd 2012/04/20 v3.1
 )
 LaTeX Font Info:    Font shape `T1/ntxtt/m/n' will be
-(Font)              scaled to size 10.0pt on input line 258.
+(Font)              scaled to size 10.0pt on input line 268.
 Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             `ntxtt' (encoding: T1).
 (microtype)             For optimal results, create family-specific settings.
 (microtype)             See the microtype manual for details.
- [8] [9]
+ [8{/usr/local/texlive/2026/texmf-dist/fonts/enc/dvips/tex-gyre/q-ec.enc}] [9] 
+[10]
 (./figures/primitive-latency-plot.tex
 PGFPlots: reading {benchmark-data/core-primitives.tsv}
-Package pgfplots info on input line 26: Using 'lua backend=false' for axis: ymo
+Package pgfplots info on input line 27: Using 'lua backend=false' for axis: ymo
 de=log unsupported (yet).
-) [10] [11] [12]
+) [11] [12] [13]
 LaTeX Font Info:    Font shape `T1/ntxtt/m/n' will be
-(Font)              scaled to size 9.0pt on input line 414.
+(Font)              scaled to size 9.0pt on input line 451.
  (./PAPER_arXiv.bbl
 Underfull \hbox (badness 1755) in paragraph at lines 4--7
 []\T1/ntxtlf/m/n/10 (+20) A2A Project.  Agent2agent pro-to-col spec-i-fi-ca-tio
 n, 2026.  []$\T1/ntxtt/m/n/10 https : / / a2a-[]protocol . org / latest /
  []
 
-[13]) [14] [15
+[14]) [15] [16
 
 
 ] (./PAPER_arXiv.aux)
@@ -1415,11 +1421,11 @@ Package rerunfilecheck Info: File `PAPER_arXiv.out' has not changed.
 (rerunfilecheck)             Checksum: 52BDB2E0A5621466D6F7C8DC7216AE5B;7305.
  ) 
 Here is how much of TeX's memory you used:
- 40337 strings out of 467525
- 900571 string characters out of 5418982
- 1409955 words of memory out of 5000000
- 68256 multiletter control sequences out of 15000+600000
- 730384 words of font info for 257 fonts, out of 8000000 for 9000
+ 40252 strings out of 467525
+ 899119 string characters out of 5418982
+ 1411883 words of memory out of 5000000
+ 68167 multiletter control sequences out of 15000+600000
+ 731490 words of font info for 259 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
  84i,11n,117p,1001b,2393s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026/texmf-dist/fonts/type1/public/newtx/NewTXMI.pfb></us
@@ -1427,15 +1433,16 @@ r/local/texlive/2026/texmf-dist/fonts/type1/public/newtx/NewTXMI7.pfb></usr/loc
 al/texlive/2026/texmf-dist/fonts/type1/public/tex-gyre/qhvr.pfb></usr/local/tex
 live/2026/texmf-dist/fonts/type1/public/tex-gyre/qtmr.pfb></usr/local/texlive/2
 026/texmf-dist/fonts/type1/public/txfonts/t1xtt.pfb></usr/local/texlive/2026/te
-xmf-dist/fonts/type1/public/newtx/txmiaX.pfb></usr/local/texlive/2026/texmf-dis
-t/fonts/type1/public/newtx/txsys.pfb></usr/local/texlive/2026/texmf-dist/fonts/
-type1/public/newtx/ztmb.pfb></usr/local/texlive/2026/texmf-dist/fonts/type1/pub
-lic/newtx/ztmr.pfb></usr/local/texlive/2026/texmf-dist/fonts/type1/public/newtx
-/ztmri.pfb>
-Output written on PAPER_arXiv.pdf (15 pages, 2826370 bytes).
+xmf-dist/fonts/type1/public/newtx/txexs.pfb></usr/local/texlive/2026/texmf-dist
+/fonts/type1/public/newtx/txmiaX.pfb></usr/local/texlive/2026/texmf-dist/fonts/
+type1/public/newtx/txsys.pfb></usr/local/texlive/2026/texmf-dist/fonts/type1/pu
+blic/newtx/ztmb.pfb></usr/local/texlive/2026/texmf-dist/fonts/type1/public/newt
+x/ztmr.pfb></usr/local/texlive/2026/texmf-dist/fonts/type1/public/newtx/ztmri.p
+fb>
+Output written on PAPER_arXiv.pdf (16 pages, 3733380 bytes).
 PDF statistics:
- 395 PDF objects out of 1000 (max. 8388607)
- 351 compressed objects within 4 object streams
- 99 named destinations out of 1000 (max. 500000)
- 45858 words of extra memory for PDF output out of 51595 (max. 10000000)
+ 411 PDF objects out of 1000 (max. 8388607)
+ 363 compressed objects within 4 object streams
+ 104 named destinations out of 1000 (max. 500000)
+ 45863 words of extra memory for PDF output out of 51595 (max. 10000000)
 

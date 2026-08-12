@@ -182,6 +182,16 @@ Account Capacity Lease & capacity authority & Coordinates distributed workload s
 
 A log schema can describe an allow decision. It cannot require that the decision precede disclosure, model allocation, or tool execution. A protocol state machine can. PAPER therefore makes the evidence-worthy boundaries---identity binding, lease presentation, epoch binding, verdict, dispatch, tool authorization, and closure---observable transitions that peers must complete in order. This ordering is the core distinction between governance-aware middleware and governance-native communication.
 
+More precisely, let $a$ be a protected action attempted during exchange $x$ at time $t$. PAPER permits the corresponding state transition only when
+
+\begin{equation}
+\operatorname{advance}(x,a,t) = P_x \land S_x \land L_x(a,t)
+  \land E_x \land V_x(a) \land R_x(a),
+\label{eq:advance}
+\end{equation}
+
+where $P_x$ and $S_x$ denote valid peer and session bindings, $L_x(a,t)$ is an unexpired Capability Lease covering $a$, $E_x$ is a recognized immutable Policy Epoch, and $V_x(a)$ is an allowing Relay verdict. $R_x(a)$ collects action-specific authority: inference requires an approved model package and live endpoint lease, while a side effect requires independent tool authorization. Equation~\ref{eq:advance} is a protocol acceptance condition, not a formal security proof; failure of any conjunct blocks the protected transition.
+
 \subsection{Transport and representation}
 
 QUIC is the preferred binding because independent streams reduce head-of-line coupling; TLS~1.3 over TCP is the fallback. Both use the same application semantics and ALPN identity. Records contain a fixed prelude, canonical header, payload, logical lane identifier, and lane sequence. Deterministic CBOR provides reproducible object encoding. COSE signatures protect credentials, leases, epochs, model manifests, and receipts where object-level verification is required.
@@ -208,7 +218,7 @@ Figure~\ref{fig:lifecycle} makes the ordering explicit. The optional branch is w
 
 \begin{figure}[H]
   \centering
-  \input{figures/governed-exchange-lifecycle.tex}
+  \includegraphics[width=\textwidth]{figures/governed-exchange-lifecycle.png}
   \caption{Protocol-design view of a Governed Exchange. Protected work advances through ordered authority gates; a model-generated tool proposal enters an optional branch but requires an independent authorization transition before execution. This figure specifies intended semantics, not measured implementation coverage.}
   \label{fig:lifecycle}
 \end{figure}
@@ -303,6 +313,16 @@ Negative tests include an unknown peer, expired/replayed lease, unknown Policy E
 
 Our first question is intentionally modest: before building the complete B0--B4 experiment, are PAPER's basic framing and evidence operations already expensive enough to invalidate the design? Measurements ran locally on an Apple M4 Pro with 14 logical CPUs and 48~GiB RAM, macOS~27.0, arm64, and Go~1.26.5. Each Go benchmark was repeated five times; Table~\ref{tab:microbench} reports the median. No network, database, model, GPU, policy classifier, or token generation was involved.
 
+For operation $o$, the reported latency is
+
+\begin{equation}
+\widetilde{t}_o = \operatorname{median}
+  \left\{t_o^{(1)},t_o^{(2)},\ldots,t_o^{(5)}\right\}.
+\label{eq:median}
+\end{equation}
+
+Only $\widetilde{t}_o$ was retained in the artifact. The five individual observations were not retained, so the paper does not report dispersion, confidence intervals, or statistical significance.
+
 \begin{table}[t]
 \centering
 \caption{Preliminary in-memory primitive medians over five runs. Record tests include encode and decode.}
@@ -323,7 +343,24 @@ Ed25519 sign+verify & 42.7 $\mu$s & 64 & 1 \\
 \end{tabular}
 \end{table}
 
-The immediate answer is no: none of the measured primitives is an obvious showstopper. Record encode/decode scales approximately linearly across the measured sizes, reaching 97.0~$\mu$s for a 1~MiB payload. The 73.05~ns evidence-chain update is small enough to apply per evidence event, and a 42.7~$\mu$s sign-and-verify operation is plausible at exchange or receipt boundaries rather than per token. The benchmark allocates an encoded buffer and decoded record on every iteration; bytes allocated are therefore roughly twice the large payload size and identify a concrete optimization target.
+The immediate answer is no: none of the measured primitives is an obvious showstopper. Record encode/decode reaches 97.0~$\mu$s for a 1~MiB payload, while its time per byte falls across the three measured sizes as fixed work is amortized. For record payload size $s$, we define size-normalized cost and effective payload throughput as
+
+\begin{align}
+c(s) &= \frac{\widetilde{t}_{\mathrm{record}}(s)}{s},
+  & q(s) &= \frac{s}{\widetilde{t}_{\mathrm{record}}(s)}.
+\label{eq:normalized}
+\end{align}
+
+The measured $c(s)$ decreases from 0.283~ns/byte at 1~KiB to 0.0925~ns/byte at 1~MiB; equivalently, $q(s)$ rises from 3.53 to 10.81~GB/s. This is in-memory encode/decode payload throughput, not network or application throughput. The 73.05~ns evidence-chain update is small enough to apply per evidence event, and a 42.7~$\mu$s sign-and-verify operation is plausible at exchange or receipt boundaries rather than per token.
+
+To expose memory cost separately, let $B_{\mathrm{op}}(s)$ be bytes allocated per record benchmark operation. Its allocation amplification is
+
+\begin{equation}
+A(s) = \frac{B_{\mathrm{op}}(s)}{s}.
+\label{eq:allocation}
+\end{equation}
+
+$A(s)$ falls from 2.33 at 1~KiB to 2.01 at 1~MiB. The benchmark allocates an encoded buffer and decoded record on every iteration; the large-payload allocation is therefore approximately twice the payload size and identifies a concrete optimization target.
 
 Figure~\ref{fig:primitive-latency} makes the four-order-of-magnitude range visible; Table~\ref{tab:microbench} remains the exact-value record.
 
@@ -404,7 +441,7 @@ The state machine and invariants are candidates for formal modeling, but no form
 
 Evidence about prompts, files, tool use, edits, and human decisions can improve incident response and accountability while also enabling disproportionate monitoring. The protocol therefore supports retention and export profiles, but technical configurability is insufficient. Deployments should establish lawful purpose, employee notice, access review, appeal, data-subject handling, and a separation between security investigations and performance management. Public deployments should default to operationally minimal traces; regulated deployments should justify deeper retention per policy domain.
 
-Generated conceptual artwork is used only for Figure~\ref{fig:overview}; it communicates architecture and contains no measurement or factual comparison. Figures~\ref{fig:lifecycle} and~\ref{fig:model-identity} are LaTeX-native protocol-design diagrams. Figure~\ref{fig:primitive-latency} and the empirical tables are derived from the checked-in benchmark dataset; raw per-run output remains a requirement for a complete empirical release.
+Generated conceptual artwork is used for Figures~\ref{fig:overview} and~\ref{fig:lifecycle}; both communicate protocol architecture and contain no measurement or factual comparison. Figure~\ref{fig:model-identity} is a LaTeX-native protocol-design diagram. Figure~\ref{fig:primitive-latency} and the empirical tables are derived from the checked-in benchmark dataset; raw per-run output remains a requirement for a complete empirical release.
 
 \section{Reproducibility}
 

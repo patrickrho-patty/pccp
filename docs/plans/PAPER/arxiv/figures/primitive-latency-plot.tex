@@ -8,7 +8,7 @@
   ymode=log,
   log basis y=10,
   ymin=50,
-  ymax=200000,
+  ymax=500000,
   ylabel={Median latency (ns/op, log scale)},
   xtick=data,
   xticklabels={Record 1K,Record 64K,Record 1M,CBOR Hello,Evidence chain,1K digest,Ed25519},
@@ -20,7 +20,8 @@
   axis line style={draw=paperink},
   tick style={draw=paperink},
   nodes near coords,
-  nodes near coords style={font=\scriptsize, rotate=90, anchor=west, text=paperink},
+  nodes near coords style={font=\scriptsize, rotate=90, anchor=west,
+    yshift=2pt, text=paperink},
   point meta=explicit symbolic,
   enlarge x limits=0.08,
 ]
