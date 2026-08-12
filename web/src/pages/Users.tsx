@@ -168,7 +168,7 @@ export default function Users() {
           </thead>
           <tbody>
             {paged.length === 0 ? (
-              <tr><td colSpan={6} className="py-8 text-center text-gray-400">
+              <tr><td colSpan={7} className="py-8 text-center text-gray-400">
                 {filters.search ? '검색 결과가 없습니다' : '등록된 사용자가 없습니다'}
               </td></tr>
             ) : paged.map(u => (

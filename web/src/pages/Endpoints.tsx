@@ -73,15 +73,16 @@ export default function Endpoints() {
         ) : (
           <table className="w-full">
             <thead><tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
-              <th className="pb-3">엔드포인트 ID</th><th className="pb-3">PIA Peer</th><th className="pb-3">엔진</th><th className="pb-3">보증</th><th className="pb-3">상태</th><th className="pb-3 text-right">작업</th>
+              <th className="pb-3">엔드포인트 ID</th><th className="pb-3">PIA Peer</th><th className="pb-3">엔진</th><th className="pb-3">모델</th><th className="pb-3">보증</th><th className="pb-3">상태</th><th className="pb-3 text-right">작업</th>
             </tr></thead>
             <tbody>
               {paged.map(e => (
                 <>
                   <tr key={e.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer" onClick={() => setExpandedId(expandedId === e.id ? null : e.id)}>
-                    <td className="py-3 font-mono text-xs">{e.endpoint_id?.slice(0, 25)}</td>
+                    <td className="py-3"><div className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${e.status === 'active' ? 'bg-green-500' : e.status === 'draining' ? 'bg-yellow-500' : e.status === 'revoked' ? 'bg-red-500' : 'bg-gray-300'}`} /><span className="font-mono text-xs">{e.endpoint_id?.slice(0, 25)}</span></div></td>
                     <td className="py-3 font-mono text-xs">{e.pia_peer_id}</td>
                     <td className="py-3 text-sm">{e.serving_engine}</td>
+                    <td className="py-3 text-xs font-mono text-gray-500">{e.model_package_id?.slice(0, 20)}</td>
                     <td className="py-3"><span className={assuranceBadge(e.assurance_level)}>{e.assurance_level}</span></td>
                     <td className="py-3"><span className={statusBadge(e.status)}>{statusLabel(e.status)}</span></td>
                     <td className="py-3" onClick={ev => ev.stopPropagation()}>
@@ -92,7 +93,7 @@ export default function Endpoints() {
                     </td>
                   </tr>
                   {expandedId === e.id && (
-                    <tr className="bg-gray-50"><td colSpan={6} className="p-4">
+                    <tr className="bg-gray-50"><td colSpan={7} className="p-4">
                       <div className="grid grid-cols-3 gap-4 text-sm">
                         <div><span className="text-gray-500">모델 패키지:</span> {e.model_package_id}</div>
                         <div><span className="text-gray-500">노드 ID:</span> {e.node_identity?.slice(0, 30)}</div>

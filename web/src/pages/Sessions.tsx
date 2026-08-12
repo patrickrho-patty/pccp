@@ -82,6 +82,19 @@ export default function Sessions() {
     return u?.name_ko || u?.name || userId?.slice(0, 8)
   }
 
+  const formatDuration = (openedAt: string, closedAt?: string) => {
+    if (!openedAt) return '-'
+    const start = new Date(openedAt).getTime()
+    const end = closedAt && closedAt !== '0001-01-01T00:00:00Z' ? new Date(closedAt).getTime() : Date.now()
+    const diff = end - start
+    const mins = Math.floor(diff / 60000)
+    if (mins < 60) return `${mins}분`
+    const hours = Math.floor(mins / 60)
+    if (hours < 24) return `${hours}시간 ${mins % 60}분`
+    const days = Math.floor(hours / 24)
+    return `${days}일 ${hours % 24}시간`
+  }
+
   const statusBadge = (s: string) => {
     const map: Record<string, string> = { active: 'badge-green', pending: 'badge-yellow', closed: 'badge-gray', terminated: 'badge-red', paused: 'badge-yellow' }
     return map[s] || 'badge-gray'
@@ -139,6 +152,7 @@ export default function Sessions() {
                     <td className="py-3 text-sm">{getUserName(s.user_id)}</td>
                     <td className="py-3 text-sm">{s.model_class}</td>
                     <td className="py-3 text-sm font-mono">{s.branch || '-'}</td>
+                    <td className="py-3 text-xs text-gray-500">{formatDuration(s.opened_at, s.closed_at)}</td>
                     <td className="py-3"><span className={statusBadge(s.status)}>{statusLabel(s.status)}</span></td>
                     <td className="py-3" onClick={e => e.stopPropagation()}>
                       <div className="flex gap-2 justify-end">
@@ -149,7 +163,7 @@ export default function Sessions() {
                     </td>
                   </tr>
                   {expandedId === s.id && (
-                    <tr className="bg-gray-50"><td colSpan={6} className="p-4">
+                    <tr className="bg-gray-50"><td colSpan={7} className="p-4">
                       <div className="grid grid-cols-3 gap-4 text-sm">
                         <div><span className="text-gray-500">세션 ID:</span> <span className="font-mono text-xs">{s.session_id?.slice(0, 30)}</span></div>
                         <div><span className="text-gray-500">하네스:</span> <span className="font-mono text-xs">{s.harness_id}</span></div>

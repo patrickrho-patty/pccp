@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the English manuscript immutable and create a parallel XeLaTeX entry point. Reuse empirical data, bibliography, equations, and conceptual PNGs; localize editable diagram/chart sources and all manuscript prose.
 
-**Tech Stack:** XeLaTeX, kotex, fontspec, Noto CJK KR, BibTeX, PGFPlots, TikZ, Poppler.
+**Tech Stack:** XeLaTeX, kotex, fontspec, NanumMyeongjo, Noto Sans CJK KR, BibTeX, PGFPlots, TikZ, Poppler.
 
 ## Global Constraints
 
@@ -25,18 +25,18 @@
 - Create: `docs/plans/PAPER/arxiv/figures/model-identity-chain-ko.tex`
 - Create: `docs/plans/PAPER/arxiv/figures/primitive-latency-plot-ko.tex`
 
-- [ ] Configure XeLaTeX, kotex, Noto Serif CJK KR, and Noto Sans CJK KR.
-- [ ] Localize editable figure and chart labels without changing data or topology.
-- [ ] Preserve the existing conceptual PNGs and translate their captions.
+- [x] Configure XeLaTeX, kotex, NanumMyeongjo, and Noto Sans CJK KR.
+- [x] Localize editable figure and chart labels without changing data or topology.
+- [x] Preserve the existing conceptual PNGs and translate their captions.
 
 ### Task 2: Adapt the complete manuscript into Korean academic prose
 
 **Files:**
 - Complete: `docs/plans/PAPER/arxiv/main_ko.tex`
 
-- [ ] Translate title, abstract, body, tables, captions, ethics, reproducibility, conclusion, and appendix.
-- [ ] Preserve all equations, labels, citations, measurements, caveats, and evidence boundaries.
-- [ ] Run terminology and coverage checks against `main.tex`.
+- [x] Translate title, abstract, body, tables, captions, ethics, reproducibility, conclusion, and appendix.
+- [x] Preserve all equations, labels, citations, measurements, caveats, and evidence boundaries.
+- [x] Run terminology and coverage checks against `main.tex`.
 
 ### Task 3: Build and inspect the Korean PDF
 

@@ -1,0 +1,98 @@
+\begin{thebibliography}{10}
+
+\bibitem{a2a2026}
+{A2A Project}.
+\newblock Agent2agent protocol specification, 2026.
+\newblock \url{https://a2a-protocol.org/latest/specification/}.
+
+\bibitem{rfc9180}
+R.~Barnes, K.~Bhargavan, and C.~A. Wood.
+\newblock Hybrid public key encryption.
+\newblock Technical Report RFC 9180, IETF, Feb. 2022.
+\newblock \url{https://www.rfc-editor.org/info/rfc9180}.
+
+\bibitem{rfc9943}
+H.~Birkholz, A.~Delignat-Lavaud, C.~Fournet, Y.~Deshpande, and S.~Lasker.
+\newblock An architecture for trustworthy and transparent digital supply
+  chains.
+\newblock Technical Report RFC 9943, IETF, June 2026.
+\newblock \url{https://www.rfc-editor.org/info/rfc9943}.
+
+\bibitem{rfc8949}
+C.~Bormann and P.~Hoffman.
+\newblock Concise binary object representation ({CBOR}).
+\newblock Technical Report RFC 8949, IETF, Dec. 2020.
+\newblock \url{https://www.rfc-editor.org/info/rfc8949}.
+
+\bibitem{debenedetti2024agentdojo}
+E.~Debenedetti, J.~Zhang, M.~Balunovi{\'c}, L.~Beurer-Kellner, M.~Fischer, and
+  F.~Tram{\`e}r.
+\newblock {AgentDojo}: A dynamic environment to evaluate prompt injection
+  attacks and defenses for llm agents.
+\newblock {\em arXiv preprint arXiv:2406.13352}, 2024.
+\newblock \url{https://arxiv.org/abs/2406.13352}.
+
+\bibitem{fan2026granularity}
+L.~Fan, Z.~Li, Y.~Tian, Y.~Wang, R.~Li, and X.~Wang.
+\newblock The granularity mismatch in agent security: Argument-level provenance
+  solves enforcement and isolates the llm reasoning bottleneck.
+\newblock {\em arXiv preprint arXiv:2605.11039}, 2026.
+\newblock \url{https://arxiv.org/abs/2605.11039}.
+
+\bibitem{intoto}
+{in-toto Project}.
+\newblock in-toto specification v1.0, 2023.
+\newblock \url{https://in-toto.io/docs/specs/}.
+
+\bibitem{rfc9000}
+J.~Iyengar and M.~Thomson.
+\newblock {QUIC}: A {UDP}-based multiplexed and secure transport.
+\newblock Technical Report RFC 9000, IETF, May 2021.
+\newblock \url{https://www.rfc-editor.org/info/rfc9000}.
+
+\bibitem{mcp2025}
+{Model Context Protocol Project}.
+\newblock Model context protocol specification, 2025-06-18 revision, 2025.
+\newblock \url{https://modelcontextprotocol.io/specification/2025-06-18}.
+
+\bibitem{rfc9846}
+E.~Rescorla.
+\newblock The transport layer security (tls) protocol version 1.3.
+\newblock Technical Report RFC 9846, IETF, July 2026.
+\newblock \url{https://www.rfc-editor.org/info/rfc9846}.
+
+\bibitem{rfc9052}
+J.~Schaad.
+\newblock {CBOR} object signing and encryption ({COSE}): Structures and
+  process.
+\newblock Technical Report RFC 9052, IETF, Aug. 2022.
+\newblock \url{https://www.rfc-editor.org/info/rfc9052}.
+
+\bibitem{slsa12}
+{SLSA Project}.
+\newblock {SLSA} specification v1.2, 2026.
+\newblock \url{https://slsa.dev/spec/v1.2/}.
+
+\bibitem{spiffe}
+{SPIFFE Project}.
+\newblock Secure production identity framework for everyone standard, 2026.
+\newblock \url{https://spiffe.io/docs/latest/spiffe-specs/spiffe/}.
+
+\bibitem{rfc9942}
+O.~Steele, H.~Birkholz, A.~Delignat-Lavaud, and C.~Fournet.
+\newblock {CBOR} object signing and encryption ({COSE}) receipts.
+\newblock Technical Report RFC 9942, IETF, June 2026.
+\newblock \url{https://www.rfc-editor.org/info/rfc9942}.
+
+\bibitem{torresarias2019intoto}
+S.~Torres-Arias, H.~Afzali, T.~K. Kuppusamy, R.~Curtmola, and J.~Cappos.
+\newblock in-toto: Providing farm-to-table guarantees for bits and bytes.
+\newblock In {\em 28th USENIX Security Symposium}, pages 1393--1410, 2019.
+
+\bibitem{wang2025mi9}
+C.~L. Wang, T.~Singhal, A.~Kelkar, and J.~Tuo.
+\newblock {MI9}: An integrated runtime governance framework for agentic ai.
+\newblock {\em arXiv preprint arXiv:2508.03858}, 2025.
+\newblock \url{https://arxiv.org/abs/2508.03858}.
+
+\end{thebibliography}
