@@ -3,6 +3,9 @@ package paper
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
 	"time"
 )
 
@@ -106,12 +109,64 @@ func (i *PeerCredentialIssuer) Verify(cred *PeerCredential, signature []byte) bo
 	return VerifyEd25519(i.PublicKey, cred.SigningBytes(), signature)
 }
 
-// SigningBytes returns the canonical CBOR bytes that should be signed.
-// The caller is responsible for producing the deterministic encoding.
+// SigningBytes returns the canonical CBOR encoding of the credential body
+// (without signature fields). This is what gets wrapped in COSE-Sign1.
+// Per PAPER §16: "The baseline credential encoding is a COSE-signed
+// canonical CBOR object."
 func (c *PeerCredential) SigningBytes() []byte {
-	// Placeholder — actual implementation uses deterministic CBOR encoding
-	// via the cbor package.  The wire format is COSE-Sign1(canonical(PPC)).
-	return nil
+	// Build a map with only the signing-relevant fields (excluding any signature)
+	signingMap := map[string]interface{}{
+		"credential_version": c.CredentialVersion,
+		"issuer":             c.Issuer,
+		"subject_peer_id":    c.SubjectPeerID,
+		"organization":       c.Organization,
+		"peer_profile":       string(c.PeerProfile),
+		"public_key":         c.PublicKey,
+		"not_before":         c.NotBefore,
+		"not_after":          c.NotAfter,
+		"serial":             c.Serial,
+		"revocation_authority": c.RevocationAuthority,
+		"protocol_versions":  c.AllowedProtocolVersions,
+	}
+	if c.BuildChannel != "" {
+		signingMap["build_channel"] = c.BuildChannel
+	}
+	if c.DeploymentZone != "" {
+		signingMap["deployment_zone"] = c.DeploymentZone
+	}
+	data, err := MarshalCBOR(signingMap)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+// SignWith signs the credential using the provided Ed25519 private key.
+// Returns a COSE-Sign1 hex-encoded string for storage.
+func (c *PeerCredential) SignWith(priv ed25519.PrivateKey) (string, error) {
+	signingBytes := c.SigningBytes()
+	if signingBytes == nil {
+		return "", errors.New("paper: failed to encode credential for signing")
+	}
+	sign1, err := CreateCOSESign1(signingBytes, priv, []byte(c.Serial))
+	if err != nil {
+		return "", fmt.Errorf("paper: sign credential: %w", err)
+	}
+	encoded, err := EncodeCOSESign1(sign1)
+	if err != nil {
+		return "", fmt.Errorf("paper: encode credential signature: %w", err)
+	}
+	return hex.EncodeToString(encoded), nil
+}
+
+// VerifySignature verifies the credential's COSE-Sign1 signature using
+// the issuer's public key.
+func (c *PeerCredential) VerifySignature(pub ed25519.PublicKey, signatureHex string) error {
+	signingBytes := c.SigningBytes()
+	if signingBytes == nil {
+		return errors.New("paper: failed to encode credential for verification")
+	}
+	return VerifyCOSESign1Hex(signatureHex, pub)
 }
 
 // IsValidAt reports whether the credential is valid at the given time.

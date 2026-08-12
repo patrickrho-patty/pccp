@@ -277,10 +277,18 @@ func (s *Service) IssueEvidenceReceipt(req IssueReceiptRequest) (*models.Evidenc
 		IssuedAt:       time.Now().Format(time.RFC3339),
 	}
 
-	// Relay signs the receipt
-	receiptData := fmt.Sprintf("%s|%s|%s|%s|%s", receipt.ExchangeID, receipt.FinalState, receipt.ChainRoot, receipt.RelayIdentity, receipt.IssuedAt)
-	sig := ed25519.Sign(s.signingKey, []byte(receiptData))
-	receipt.Signature = hex.EncodeToString(sig)
+	// Relay signs the receipt using COSE-Sign1 (PAPER §34)
+	receiptData := s.buildReceiptSigningData(receipt)
+	sign1, err := paper.CreateCOSESign1(receiptData, s.signingKey, []byte(s.relayID))
+	if err != nil {
+		return nil, fmt.Errorf("provenance: sign receipt: %w", err)
+	}
+	encoded, err := paper.EncodeCOSESign1(sign1)
+	if err != nil {
+		return nil, fmt.Errorf("provenance: encode receipt: %w", err)
+	}
+	receipt.Signature = hex.EncodeToString(encoded)
+	receipt.KeyAlgorithm = "ed25519+cose-sign1"
 
 	if err := s.db.Create(receipt).Error; err != nil {
 		return nil, fmt.Errorf("provenance: issue receipt: %w", err)
@@ -422,6 +430,13 @@ type ProvenanceChain struct {
 	ChangeSets []models.ChangeSet     `json:"change_sets"`
 	Spans      []models.ProvenanceSpan `json:"spans"`
 	Receipts   []models.EvidenceReceipt `json:"receipts"`
+}
+
+func (s *Service) buildReceiptSigningData(receipt *models.EvidenceReceipt) []byte {
+	data := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", receipt.ExchangeID, receipt.FinalState,
+		receipt.ChainRoot, receipt.RelayIdentity, receipt.PolicyEpochID,
+		receipt.ModelPackageID, receipt.IssuedAt)
+	return []byte(data)
 }
 
 func (s *Service) computeEnvelopeDigest(env *models.ActionEnvelope) string {
