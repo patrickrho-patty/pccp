@@ -42,6 +42,15 @@ export default function PortalLayout({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="px-4 py-3 border-t border-gray-800 flex-shrink-0 space-y-2">
+          <select
+            className="w-full bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700"
+            value="portal"
+            onChange={(e) => setProfile(e.target.value as any)}
+          >
+            <option value="patty_ops">📡 Patty Ops Console</option>
+            <option value="customer">🏢 Enterprise/Govt Console</option>
+            <option value="portal">👤 Account Portal</option>
+          </select>
           <div className="text-xs text-gray-400">{email}</div>
           <button onClick={logout} className="text-xs text-gray-500 hover:text-gray-300">로그아웃</button>
         </div>

@@ -30,6 +30,9 @@ export default function ServiceCommandCenter() {
   const totalAccounts = accounts.length
   const activeSubs = accounts.filter(a => a.subscription_status === 'active').length
   const graceSubs = accounts.filter(a => a.subscription_status === 'grace').length
+  const pastDueSubs = accounts.filter(a => a.subscription_status === 'past_due').length
+  const cancelledSubs = accounts.filter(a => a.subscription_status === 'cancelled').length
+  const expiredSubs = accounts.filter(a => a.subscription_status === 'expired').length
   const integrityFlags = accounts.filter(a => a.account_integrity_state !== 'normal').length
   const tsFlags = accounts.filter(a => a.trust_safety_state !== 'normal').length
   const capacityFlags = accounts.filter(a => a.capacity_state !== 'normal').length
@@ -39,20 +42,52 @@ export default function ServiceCommandCenter() {
       <h1 className="text-2xl font-bold mb-1">서비스 커맨드 센터 <span className="text-gray-400 text-lg font-normal">Service Command Center</span></h1>
       <p className="text-xs text-gray-400 mb-6">퍼블릭 클라우드 서비스 운영 현황 · Aggregate service health (PRD §7.1) — 개별 세션 콘텐츠 표시 안함</p>
 
-      {/* Top-level stat cards */}
-      <div className="grid grid-cols-6 gap-3 mb-6">
-        <div className="card py-3 px-4">
-          <div className="text-2xl font-bold text-blue-600">{totalAccounts}</div>
-          <div className="text-xs text-gray-500">총 계정 · Accounts</div>
+      {/* Subscription Status Breakdown */}
+      <div className="card mb-6">
+        <h3 className="text-sm font-semibold mb-1">구독 상태 분포 · Subscription Status</h3>
+        <p className="text-xs text-gray-400 mb-4">퍼블릭 클라우드 구독자 결제/상태 현황 (PRD §8.9)</p>
+        <div className="grid grid-cols-6 gap-3">
+          <div className="text-center p-3 bg-blue-50 rounded-lg">
+            <div className="text-2xl font-bold text-blue-600">{totalAccounts}</div>
+            <div className="text-xs font-medium text-gray-700 mt-1">총 계정</div>
+            <div className="text-[10px] text-gray-400">Total Accounts</div>
+            <div className="text-[10px] text-gray-400 mt-1">등록된 모든 사용자</div>
+          </div>
+          <div className="text-center p-3 bg-green-50 rounded-lg">
+            <div className="text-2xl font-bold text-green-600">{activeSubs}</div>
+            <div className="text-xs font-medium text-gray-700 mt-1">활성</div>
+            <div className="text-[10px] text-gray-400">Active</div>
+            <div className="text-[10px] text-gray-400 mt-1">결제 완료, 정상 이용 중</div>
+          </div>
+          <div className="text-center p-3 bg-yellow-50 rounded-lg">
+            <div className="text-2xl font-bold text-yellow-600">{graceSubs}</div>
+            <div className="text-xs font-medium text-gray-700 mt-1">미납</div>
+            <div className="text-[10px] text-gray-400">Unpaid (Grace)</div>
+            <div className="text-[10px] text-gray-400 mt-1">결제 실패, 일시적 이용 가능</div>
+          </div>
+          <div className="text-center p-3 bg-orange-50 rounded-lg">
+            <div className="text-2xl font-bold text-orange-600">{pastDueSubs}</div>
+            <div className="text-xs font-medium text-gray-700 mt-1">연체</div>
+            <div className="text-[10px] text-gray-400">Past Due</div>
+            <div className="text-[10px] text-gray-400 mt-1">미납 기간 종료, 접근 제한</div>
+          </div>
+          <div className="text-center p-3 bg-gray-100 rounded-lg">
+            <div className="text-2xl font-bold text-gray-500">{cancelledSubs}</div>
+            <div className="text-xs font-medium text-gray-700 mt-1">취소</div>
+            <div className="text-[10px] text-gray-400">Cancelled</div>
+            <div className="text-[10px] text-gray-400 mt-1">사용자 취소</div>
+          </div>
+          <div className="text-center p-3 bg-red-50 rounded-lg">
+            <div className="text-2xl font-bold text-red-600">{expiredSubs}</div>
+            <div className="text-xs font-medium text-gray-700 mt-1">만료</div>
+            <div className="text-[10px] text-gray-400">Expired</div>
+            <div className="text-[10px] text-gray-400 mt-1">구독 완전 만료</div>
+          </div>
         </div>
-        <div className="card py-3 px-4">
-          <div className="text-2xl font-bold text-green-600">{activeSubs}</div>
-          <div className="text-xs text-gray-500">활성 구독 · Active Subs</div>
-        </div>
-        <div className="card py-3 px-4">
-          <div className="text-2xl font-bold text-yellow-600">{graceSubs}</div>
-          <div className="text-xs text-gray-500">유예 · Grace</div>
-        </div>
+      </div>
+
+      {/* Infrastructure Overview */}
+      <div className="grid grid-cols-3 gap-3 mb-6">
         <div className="card py-3 px-4">
           <div className="text-2xl font-bold text-purple-600">{dash?.harnesses || 0}</div>
           <div className="text-xs text-gray-500">하네스 · Harnesses</div>
