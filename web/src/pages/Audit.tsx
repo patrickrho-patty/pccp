@@ -94,6 +94,46 @@ export default function Audit() {
       </div>
 
       {/* Filters */}
+      {/* Quick time presets */}
+      <div className="flex gap-1 mb-3">
+        {[
+          { label: '오늘', labelEn: 'Today', days: 0, fromToday: true },
+          { label: '어제', labelEn: 'Yesterday', days: 1, fromToday: false },
+          { label: '최근 7일', labelEn: '7 days', days: 7, fromToday: true },
+          { label: '최근 30일', labelEn: '30 days', days: 30, fromToday: true },
+        ].map(preset => (
+          <button
+            key={preset.label}
+            onClick={() => {
+              const now = new Date()
+              const from = new Date()
+              if (preset.days === 0 && preset.fromToday) {
+                from.setHours(0, 0, 0, 0)
+              } else if (preset.days === 1 && !preset.fromToday) {
+                from.setDate(now.getDate() - 1)
+                from.setHours(0, 0, 0, 0)
+                const to = new Date()
+                to.setHours(0, 0, 0, 0)
+                setFilters({ ...filters, dateFrom: from.toISOString().slice(0, 10), dateTo: to.toISOString().slice(0, 10) })
+                return
+              } else {
+                from.setDate(now.getDate() - preset.days)
+              }
+              setFilters({ ...filters, dateFrom: from.toISOString().slice(0, 10), dateTo: now.toISOString().slice(0, 10) })
+            }}
+            className="btn-sm btn-secondary"
+          >
+            {preset.label}
+          </button>
+        ))}
+        <button
+          onClick={() => setFilters({ ...filters, dateFrom: '', dateTo: '' })}
+          className="btn-sm btn-secondary"
+        >
+          전체
+        </button>
+      </div>
+
       <FilterBar config={FILTER_CONFIG} onChange={setFilters} />
 
       {/* Table */}

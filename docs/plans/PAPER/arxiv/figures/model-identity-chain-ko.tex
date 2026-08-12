@@ -1,0 +1,29 @@
+\begin{tikzpicture}[
+  font=\small,
+  identity/.style={draw=paperblueedge, fill=paperblue, rounded corners=2pt,
+    minimum width=2.65cm, minimum height=1.12cm, align=center,
+    text=paperink, font=\small\bfseries},
+  runtime/.style={draw=paperink, fill=papergray, rounded corners=2pt,
+    minimum width=2.65cm, minimum height=1.12cm, align=center,
+    text=paperink, font=\small\bfseries},
+  resolve/.style={-{Latex[length=2.2mm]}, very thick, draw=paperink},
+  local/.style={-{Latex[length=2.2mm]}, thick, dashed, draw=paperblueedge},
+  kind/.style={font=\scriptsize, text=paperblueedge, align=center}
+]
+  \node[identity] (catalog) {Catalog Model};
+  \node[identity, right=0.52cm of catalog] (pmp) {서명된 PMP};
+  \node[identity, right=0.52cm of pmp] (lease) {Endpoint Lease};
+  \node[runtime, right=0.52cm of lease] (pia) {등록된 PIA};
+  \node[runtime, right=0.52cm of pia] (engine) {서빙 엔진};
+
+  \node[kind, below=0.16cm of catalog] {제품 식별자\\사용자에게 표시};
+  \node[kind, below=0.16cm of pmp] {아티팩트 식별자\\서명된 구성};
+  \node[kind, below=0.16cm of lease] {배포 식별자\\시간 제한};
+  \node[kind, below=0.16cm of pia] {PAPER 피어\\라우팅 대상};
+  \node[kind, below=0.16cm of engine] {로컬 어댑터\\Harness에 비공개};
+
+  \draw[resolve] (catalog) -- (pmp);
+  \draw[resolve] (pmp) -- (lease);
+  \draw[resolve] (lease) -- (pia);
+  \draw[local] (pia) -- (engine);
+\end{tikzpicture}
