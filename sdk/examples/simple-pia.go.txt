@@ -1,0 +1,140 @@
+// Example: Building a PIA for a custom serving engine.
+// This file demonstrates the PIA SDK pattern without external dependencies.
+// Copy this pattern into your own project.
+package main
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"log"
+	"math/big"
+	"net"
+	"time"
+)
+
+// EngineAdapter is implemented by serving engine adapters.
+type EngineAdapter interface {
+	Complete(ctx context.Context, req *Request) (*Response, error)
+	HealthCheck(ctx context.Context) error
+	ModelID() string
+}
+
+// Request is a normalized inference request.
+type Request struct {
+	Model       string    `json:"model"`
+	Messages    []Message `json:"messages"`
+	MaxTokens   int       `json:"max_tokens"`
+	Temperature float64   `json:"temperature"`
+}
+
+// Message is a chat message.
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// Response is a normalized inference response.
+type Response struct {
+	Content      string `json:"content"`
+	FinishReason string `json:"finish_reason"`
+	Usage        Usage   `json:"usage"`
+}
+
+// Usage contains normalized token accounting.
+type Usage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	TotalTokens  int `json:"total_tokens"`
+}
+
+// MyEngineAdapter is an example adapter.
+type MyEngineAdapter struct {
+	modelID string
+}
+
+func (a *MyEngineAdapter) Complete(ctx context.Context, req *Request) (*Response, error) {
+	var lastUserMsg string
+	for _, m := range req.Messages {
+		if m.Role == "user" {
+			lastUserMsg = m.Content
+		}
+	}
+	resp := fmt.Sprintf("Model %s received: %s", a.modelID, lastUserMsg)
+	return &Response{
+		Content:      resp,
+		FinishReason: "COMPLETED",
+		Usage:        Usage{InputTokens: len(lastUserMsg) / 4, OutputTokens: len(resp) / 4, TotalTokens: (len(lastUserMsg) + len(resp)) / 4},
+	}, nil
+}
+
+func (a *MyEngineAdapter) HealthCheck(ctx context.Context) error { return nil }
+func (a *MyEngineAdapter) ModelID() string                       { return a.modelID }
+
+func main() {
+	modelID := "example-model"
+	addr := ":9444"
+
+	adapter := &MyEngineAdapter{modelID: modelID}
+
+	// Generate self-signed cert
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{Organization: []string{"PAPER PIA"}},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		DNSNames:     []string{"localhost"},
+	}
+	certDER, _ := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	keyDER, _ := x509.MarshalECPrivateKey(key)
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	cert, _ := tls.X509KeyPair(certPEM, keyPEM)
+
+	listener, err := tls.Listen("tcp", addr, &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS13,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer listener.Close()
+
+	log.Printf("Example PIA for model %s on %s", modelID, addr)
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			continue
+		}
+		go func() {
+			defer conn.Close()
+			dec := json.NewDecoder(conn)
+			enc := json.NewEncoder(conn)
+			for {
+				var req Request
+				if err := dec.Decode(&req); err != nil {
+					return
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				resp, err := adapter.Complete(ctx, &req)
+				cancel()
+				if err != nil {
+					enc.Encode(map[string]string{"error": err.Error()})
+					continue
+				}
+				enc.Encode(resp)
+			}
+		}()
+	}
+}
