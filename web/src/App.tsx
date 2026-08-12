@@ -24,6 +24,7 @@ import LiveView from './pages/LiveView'
 import CodeExplorer from './pages/CodeExplorer'
 import Analytics from './pages/Analytics'
 import Communications from './pages/Communications'
+import Sandboxes from './pages/Sandboxes'
 import Bootstrap from './pages/Bootstrap'
 
 export default function App() {
@@ -79,6 +80,7 @@ function AppContent() {
         <Route path="/explorer" element={<CodeExplorer />} />
         <Route path="/analytics" element={<Analytics />} />
         <Route path="/communications" element={<Communications />} />
+          <Route path="/sandboxes" element={<Sandboxes />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Layout>
