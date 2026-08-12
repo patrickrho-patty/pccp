@@ -59,15 +59,15 @@ func New(db *gorm.DB) *Service {
 
 // IssueRequest is a request to issue a short-lived scoped credential.
 type IssueRequest struct {
-	OrganizationID string
-	SessionID      string
-	HarnessID      string
-	SecretRef      string // reference to the source secret
-	TargetService  string
-	Operation      string
-	Scopes         []string
-	ValiditySecs   int
-	IssuedBy       string
+	OrganizationID string   `json:"organization_id"`
+	SessionID      string   `json:"session_id"`
+	HarnessID      string   `json:"harness_id,omitempty"`
+	SecretRef      string   `json:"secret_ref"`
+	TargetService  string   `json:"target_service,omitempty"`
+	Operation      string   `json:"operation,omitempty"`
+	Scopes         []string `json:"scopes,omitempty"`
+	ValiditySecs   int      `json:"validity_secs,omitempty"`
+	IssuedBy       string   `json:"issued_by,omitempty"`
 }
 
 // Issue creates a short-lived scoped credential and returns it.

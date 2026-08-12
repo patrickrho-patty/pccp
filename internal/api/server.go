@@ -261,6 +261,9 @@ func (s *Server) setupRouter() {
 			r.Get("/", s.handleListAuditEvents)
 		})
 
+		// Additional service routes
+		s.setupAdditionalRoutes(r, s.ext())
+
 		// Dashboard
 		r.Get("/dashboard", s.handleDashboard)
 	})
@@ -333,7 +336,6 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 
 func decodeJSON(r *http.Request, v interface{}) error {
 	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
 	return dec.Decode(v)
 }
 
