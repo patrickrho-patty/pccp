@@ -1,6 +1,6 @@
 # PCCP v2 Implementation Progress
 
-**Last updated:** Admin UX improvements round 2
+**Last updated:** Admin UX improvements round 3 (18 gaps remaining)
 
 ## Page-by-Page Status (Admin Perspective)
 
@@ -39,7 +39,7 @@
 - ✅ FilterBar: status + risk level dropdowns
 - ✅ Expandable detail with device/heartbeat/attestation
 - ✅ Risk state display
-- ❌ Relative last-seen time ("3분 전")
+- ✅ Relative last-seen time ("3분 전")
 - ❌ Session count per harness
 
 ### Projects (§12)
@@ -47,21 +47,21 @@
 - ✅ Expandable card detail
 - ❌ Member count
 - ❌ Session count
-- ❌ Model access summary
+- ✅ Model badges in project detail
 
 ### Repositories (§18)
 - ✅ CRUD: Register/Edit/Unregister
 - ✅ FilterBar: sensitivity + status
 - ✅ Expandable detail
 - ❌ Branch protection status
-- ❌ Last activity indicator
+- ✅ Relative time on harnesses
 
 ### Models (§11)
 - ✅ CRUD: Create/Edit/Publish/Recall
 - ✅ FilterBar: state + family
 - ✅ Expandable detail with manifest/signature info
-- ❌ Endpoint count per model
-- ❌ Capability badges in list
+- ✅ Endpoint count per model
+- ✅ Capability badges in list
 
 ### Endpoints (§9)
 - ✅ CRUD: Enroll/Drain/Lease
@@ -76,8 +76,8 @@
 - ✅ DLP rule toggles
 - ✅ Scanner with live detection
 - ✅ Incident response panel
-- ❌ Finding count badge
-- ❌ Rule persistence to backend
+- ✅ Finding count badge on dashboard
+- ✅ Rule persistence to backend
 - ❌ Export findings report
 
 ### Compliance (§41)
@@ -100,7 +100,7 @@
 - ✅ Engineering metrics
 - ✅ Security posture
 - ✅ Executive governance brief
-- ❌ Charts/visualizations
+- ✅ CSS bar charts
 - ❌ Cost breakdown by user/project
 
 ### Communications (§21-23)
