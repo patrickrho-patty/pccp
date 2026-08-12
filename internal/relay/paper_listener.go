@@ -190,6 +190,13 @@ func (pl *PaperListener) handleConn(ctx context.Context, netConn net.Conn) {
 	// validate the auth proof over the HELLO/HELLO_ACK transcript.
 	// For Phase 0: accept any valid PPC format.
 
+	// Send AUTH_ACK to confirm authentication
+	if err := conn.SendControl(paper.MsgAuthAck, nil, []byte("authenticated")); err != nil {
+		log.Printf("relay: paper AUTH_ACK to %s failed: %v", connID, err)
+		return
+	}
+	log.Printf("relay: paper AUTH_ACK sent to %s, peer ready", connID)
+
 	// Phase 3: Application messages (READY state)
 	// The peer is now authenticated and can open governed exchanges.
 	pl.handleApplicationMessages(ctx, conn, connID, hello)
@@ -322,16 +329,26 @@ func (pl *PaperListener) forwardAIHTTP(ctx context.Context, harnessConn *paper.T
 	}
 	prompt += "\n\nAssistant:"
 
+	// Build chat messages for PIA's /v1/chat/completions
+	type chatMsg struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	var chatMsgs []chatMsg
+	for _, m := range msgs {
+		chatMsgs = append(chatMsgs, chatMsg{Role: m.Role, Content: m.Content})
+	}
+
 	piaReq := map[string]interface{}{
 		"model":       vllmModel,
-		"prompt":      prompt,
+		"messages":    chatMsgs,
 		"max_tokens":  aiReq.MaxTokens,
 		"temperature": 0.0,
 		"stream":      false,
 	}
 
 	piaBody, _ := json.Marshal(piaReq)
-	piaResp, err := http.Post(piaURL+"/v1/completions", "application/json", bytes.NewReader(piaBody))
+	piaResp, err := http.Post(piaURL+"/v1/chat/completions", "application/json", bytes.NewReader(piaBody))
 	if err != nil {
 		errPayload, _ := json.Marshal(map[string]string{"error": "PIA unreachable: " + err.Error()})
 		harnessConn.SendMessage(paper.MsgClose, nil, errPayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
@@ -346,12 +363,22 @@ func (pl *PaperListener) forwardAIHTTP(ctx context.Context, harnessConn *paper.T
 	text := ""
 	if choices, ok := piaResult["choices"].([]interface{}); ok && len(choices) > 0 {
 		if choice, ok := choices[0].(map[string]interface{}); ok {
-			text, _ = choice["text"].(string)
+			// Chat completions format: choices[].message.content
+			if msg, ok := choice["message"].(map[string]interface{}); ok {
+				text, _ = msg["content"].(string)
+			}
+			// Fallback to completions format: choices[].text
+			if text == "" {
+				text, _ = choice["text"].(string)
+			}
 		}
 	}
 
-	inputTokens, _ := piaResult["usage"].(map[string]interface{})["prompt_tokens"].(float64)
-	outputTokens, _ := piaResult["usage"].(map[string]interface{})["completion_tokens"].(float64)
+	var inputTokens, outputTokens float64
+	if usage, ok := piaResult["usage"].(map[string]interface{}); ok {
+		inputTokens, _ = usage["prompt_tokens"].(float64)
+		outputTokens, _ = usage["completion_tokens"].(float64)
+	}
 
 	// Build AI_COMPLETE response
 	completePayload, _ := json.Marshal(map[string]interface{}{

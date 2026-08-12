@@ -24,6 +24,7 @@ const (
 	MsgUserBind      MessageType = 0x0102
 	MsgUserBindAck   MessageType = 0x0103
 	MsgCapabilities  MessageType = 0x0104
+	MsgAuthAck        MessageType = 0x0105
 )
 
 // Sessions / capability leases (0x0200–0x02FF)
