@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
 
 const FILTER_CONFIG: FilterConfig = {

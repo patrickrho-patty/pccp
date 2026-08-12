@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 
 const healthIcon = (status: string) => {
   if (status === 'ok' || status === 'healthy') return { icon: '✅', color: 'text-green-600' }
