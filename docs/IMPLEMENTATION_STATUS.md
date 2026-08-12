@@ -40,13 +40,13 @@
 - ✅ Expandable detail with device/heartbeat/attestation
 - ✅ Risk state display
 - ✅ Relative last-seen time ("3분 전")
-- ❌ Session count per harness
+- ✅ Session count per harness
 
 ### Projects (§12)
 - ✅ CRUD: Create/Edit/Archive
 - ✅ Expandable card detail
 - ❌ Member count
-- ❌ Session count
+- ✅ Session count in project card
 - ✅ Model badges in project detail
 
 ### Repositories (§18)
@@ -84,7 +84,7 @@
 - ✅ Framework overview with 5 certifications
 - ✅ Assessment with control details
 - ✅ Evidence tab
-- ❌ Last assessment date
+- ✅ Last assessment date
 - ❌ Remediation tracking
 
 ### Audit (§40)
