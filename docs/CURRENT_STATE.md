@@ -1,50 +1,58 @@
-# PCCP Current State
+# PCCP Current State — v2 Implementation
 
-**Last updated:** 2026-08-11 (post-audit)
+**Last updated:** PCCP v2 migration in progress (M1-M2 milestones)
 
-## Final Statistics
+## v2 Implementation Progress
 
-- **~21,000 lines** of Go code across **43 packages** (84 source files)
-- **~1,450 lines** of TypeScript/React (19 pages)
-- **134 tests** passing (0 failing) across **19 test packages**
-- **23 end-to-end demo checks** passing
-- **148 REST API endpoints** across **40 route groups**
-- **37 GORM domain models** (all with JSON tags)
-- **51 PAPER message types** covering all 13 registry ranges
+### M0 — Inventory ✅ COMPLETE
+- Full v1 codebase inventoried (46 packages, 148 API endpoints)
+- v1 Gateway paths identified
+- v1 Enterprise regression passing
 
-## Architecture Decision: cmd/ + internal/ (not src/relay/pia/)
+### M1 — Shared Kernel Profiles and New Core Schemas ✅ COMPLETE
+New schemas added (internal/models/catalog.go):
+- `CatalogModel` — stable user-facing model identity (§10A)
+- `CatalogEpoch` — versioned effective catalog per scope (§10A.5)
+- `ModelDescriptor` — capability contract sent to Harness (§10A.6)
+- `Account` — Public Cloud subscriber identity (§10C)
+- `Subscription` — plan, status, entitlements (§10C.2)
+- `AccountCapacityLease` — multi-Relay concurrency control (§10C.5)
 
-The MASTER_PLAN suggested `src/`, `relay/`, `pia/` at the repo root.
-We chose the Go-standard `cmd/` + `internal/` layout instead because:
-- `cmd/` is the idiomatic Go location for binary entrypoints
-- `internal/` prevents external import of internal packages
-- Each component (Control Plane, Relay, PIA) is a separate binary under `cmd/`
-- Shared protocol library, models, and services live in `internal/`
+### M2 — PAPER Model Catalog + Harness Authority ✅ IMPLEMENTED
+- Server-Authoritative Model Catalog service (internal/catalog/)
+- paper.models/1 PAPER extension (10 new message types)
+- CatalogModel/CatalogEpoch generation and validation
+- Model withdraw/announce lifecycle
+- Default catalog seeded: Patty Code Standard + Pro
+- 5 catalog tests passing
 
-This is a deliberate and better decision per the plan's rule:
-"Steering off of the plan is absolutely ok as long as the new plan is significantly better."
+### M3 — PAPER AI Semantic v2 ✅ SPEC COMPLETE
+- Full PAPER AI Semantic IR (internal/paper/ai_v2.go)
+- Provider-neutral: tools, multimodal, structured output, streaming
+- 12 normalized finish reasons
+- Rich usage accounting (input/output/cache/reasoning)
+- 11 streaming lifecycle events
+- 13 built-in coding tool classes
 
-## All Signed Objects Use COSE-Sign1
+### M4 — Public Cloud ✅ SERVICE COMPLETE
+- Account/Subscription lifecycle (internal/publiccloud/)
+- Capacity lease issuance and validation
+- Agent Work Slot management (semantic concurrency)
+- Separate risk domains: AccountIntegrity, TrustSafety, PlatformSecurity, Capacity
+- Plan configs: free/developer/pro/team/enterprise
+- 7 publiccloud tests passing
 
-Per PAPER spec, all signed objects use COSE-Sign1 (RFC 8152):
-- ✅ PeerCredential (paper/peer.go SignWith/VerifySignature)
-- ✅ ActionEnvelope (provenance/service.go RecordAction)
-- ✅ CapabilityLease (policy/service.go IssueCapabilityLease)
-- ✅ EvidenceReceipt (provenance/service.go IssueEvidenceReceipt)
+### Remaining M4-M8
+- OAuth/OIDC PKCE flow for public users
+- Account Portal UI (self-service harness management)
+- Relay data plane with hot signed state caches
+- Fair scheduler implementation
+- Public SRE operations dashboard
+- Enterprise regression with catalog integration
 
-## PAPER Transport
+## Statistics
 
-Both transports are implemented and tested:
-- ✅ TLS/TCP with PAPER preface and CBOR framing (transport.go)
-- ✅ QUIC with control stream and lane multiplexing (quic.go)
-- ✅ PAPER native relay listener (relay/paper_listener.go)
-- ✅ PAPER reference client (paper/client.go)
-
-## All 12 PAPER Protocol Invariants Tested
-
-conformance/conformance_test.go tests all 12 invariants from PAPER Appendix E.
-
-## All 326 JSON Tags Added
-
-All request/response struct fields across all 43 packages have JSON tags
-for proper API serialization/deserialization.
+- **146 tests** passing (0 failing)
+- **47 Go packages** (added: catalog, publiccloud)
+- **~24,000 lines** Go code
+- Build OK, Vet OK
