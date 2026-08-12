@@ -117,6 +117,44 @@ export default function Analytics() {
       </div>
 
       {/* Human finalization notice */}
+      <div className="card mb-6">
+        <h3 className="text-sm font-semibold mb-4">비용 분석 · Cost Analysis</h3>
+        <div className="grid grid-cols-3 gap-4 mb-4">
+          <div className="text-center p-3 bg-gray-50 rounded-lg">
+            <div className="text-2xl font-bold text-blue-600">{fmt(usage?.total_tokens_in || 0)}</div>
+            <div className="text-xs text-gray-500">입력 토큰</div>
+          </div>
+          <div className="text-center p-3 bg-gray-50 rounded-lg">
+            <div className="text-2xl font-bold text-green-600">{fmt(usage?.total_tokens_out || 0)}</div>
+            <div className="text-xs text-gray-500">출력 토큰</div>
+          </div>
+          <div className="text-center p-3 bg-gray-50 rounded-lg">
+            <div className="text-2xl font-bold text-purple-600">
+              {(((usage?.total_tokens_in || 0) + (usage?.total_tokens_out || 0)) / 1000000 * 5000).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            </div>
+            <div className="text-xs text-gray-500">예상 비용 (KRW)</div>
+          </div>
+        </div>
+        {usage?.model_breakdown && Object.keys(usage.model_breakdown).length > 0 && (
+          <div className="mt-4 pt-3 border-t border-gray-100">
+            <div className="text-xs font-semibold text-gray-600 mb-2">모델별 비용 · Cost by Model</div>
+            <div className="space-y-2">
+              {Object.entries(usage.model_breakdown).map(([model, tokens]: [string, any]) => (
+                <div key={model} className="flex justify-between items-center text-xs">
+                  <span className="font-mono text-gray-600">{model}</span>
+                  <div className="flex gap-4">
+                    <span className="text-gray-500">{fmt(tokens)} 토큰</span>
+                    <span className="font-medium text-gray-700">
+                      {(tokens / 1000000 * 5000).toLocaleString(undefined, { maximumFractionDigits: 0 })} KRW
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="card">
         <div className="flex items-start gap-3">
           <div className="text-yellow-500 text-xl">⚠</div>

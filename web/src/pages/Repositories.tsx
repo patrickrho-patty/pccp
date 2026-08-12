@@ -100,6 +100,27 @@ export default function Repositories() {
                         <div><span className="text-gray-500">Clone URL:</span> {r.clone_url || '-'}</div>
                         <div><span className="text-gray-500">생성일:</span> {r.created_at?.slice(0, 10)}</div>
                       </div>
+                      <div className="mt-3 pt-3 border-t border-gray-200">
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-semibold text-gray-600">브랜치 보호 · Branch Protection</span>
+                          <select className="input max-w-[160px] text-xs" defaultValue="standard" onChange={async (e) => {
+                            try {
+                              await fetch('/api/scm/branch-protection', {
+                                method: 'POST',
+                                headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ repository_id: r.id, branch: r.default_branch || 'main', level: e.target.value, requires_approval: e.target.value === 'release' || e.target.value === 'production' })
+                              })
+                            } catch {}
+                          }}>
+                            <option value="standard">표준 · Standard</option>
+                            <option value="protected">보호됨 · Protected</option>
+                            <option value="release">릴리스 · Release</option>
+                            <option value="production">프로덕션 · Production</option>
+                            <option value="locked">잠금 · Locked</option>
+                          </select>
+                          <span className="text-xs text-gray-400">브랜치: {r.default_branch || 'main'}</span>
+                        </div>
+                      </div>
                     </td></tr>
                   )}
                 </>
