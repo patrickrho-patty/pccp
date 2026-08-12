@@ -6,7 +6,7 @@ export default function Users() {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ organization_id: '', email: '', name: '', name_ko: '', title: '' })
 
-  const load = () => api.listUsers().then(setUsers)
+  const load = () => api.listUsers().then(data => setUsers(Array.isArray(data) ? data : data || []))
   useEffect(() => { load() }, [])
 
   const handleCreate = async (e: React.FormEvent) => {

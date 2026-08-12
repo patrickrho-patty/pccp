@@ -6,19 +6,19 @@ export default function Harnesses() {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ organization_id: '', user_id: '', harness_id: '', public_key_hex: '', binary_version: '1.0.0' })
 
-  useEffect(() => { api.listHarnesses().then(setHarnesses) }, [])
+  useEffect(() => { api.listHarnesses().then(data => setHarnesses(Array.isArray(data) ? data : data || [])) }, [])
 
   const handleEnroll = async (e: React.FormEvent) => {
     e.preventDefault()
     await api.enrollHarness(form)
     setShowForm(false)
-    api.listHarnesses().then(setHarnesses)
+    api.listHarnesses().then(data => setHarnesses(Array.isArray(data) ? data : data || []))
   }
 
   const handleRevoke = async (id: string) => {
     if (!confirm('이 하네스를 폐기하시겠습니까?')) return
     await api.revokeHarness(id, 'manual revoke')
-    api.listHarnesses().then(setHarnesses)
+    api.listHarnesses().then(data => setHarnesses(Array.isArray(data) ? data : data || []))
   }
 
   const statusBadge = (status: string) => {

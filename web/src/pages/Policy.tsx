@@ -6,13 +6,13 @@ export default function Policy() {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ allowed_models: 'pmp_kocoder_v1', transition_mode: 'immediate' })
 
-  useEffect(() => { api.listEpochs().then(setEpochs) }, [])
+  useEffect(() => { api.listEpochs().then(data => setEpochs(Array.isArray(data) ? data : data || [])) }, [])
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
     await api.createEpoch({ ...form, allowed_models: form.allowed_models.split(',').map(s => s.trim()) })
     setShowForm(false)
-    api.listEpochs().then(setEpochs)
+    api.listEpochs().then(data => setEpochs(Array.isArray(data) ? data : data || []))
   }
 
   return (

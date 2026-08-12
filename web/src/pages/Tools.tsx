@@ -5,12 +5,12 @@ export default function Tools() {
   const [tools, setTools] = useState<any[]>([])
 
   useEffect(() => {
-    api.listTools().then(setTools).catch(() => {})
+    api.listTools().then(data => setTools(Array.isArray(data) ? data : data || [])).catch(() => {})
   }, [])
 
   const seed = async () => {
     await api.seedTools()
-    api.listTools().then(setTools)
+    api.listTools().then(data => setTools(Array.isArray(data) ? data : data || []))
   }
 
   const dangerBadge = (d: string) => {

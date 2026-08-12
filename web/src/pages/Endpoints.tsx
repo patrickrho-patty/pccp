@@ -4,11 +4,11 @@ import { api } from '../api'
 export default function Endpoints() {
   const [endpoints, setEndpoints] = useState<any[]>([])
 
-  useEffect(() => { api.listEndpoints().then(setEndpoints) }, [])
+  useEffect(() => { api.listEndpoints().then(data => setEndpoints(Array.isArray(data) ? data : data || [])) }, [])
 
   const handleLease = async (id: string) => {
     await api.issueEndpointLease(id)
-    api.listEndpoints().then(setEndpoints)
+    api.listEndpoints().then(data => setEndpoints(Array.isArray(data) ? data : data || []))
   }
 
   const statusBadge = (s: string) => {

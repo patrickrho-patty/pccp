@@ -5,7 +5,9 @@ export default function Fleet() {
 
   useEffect(() => {
     fetch('/api/fleet/inventory', { headers: authHeaders() })
-      .then(r => r.json()).then(setInventory).catch(() => {})
+      .then(r => r.json())
+      .then(data => setInventory(Array.isArray(data) ? data : []))
+      .catch(() => setInventory([]))
   }, [])
 
   const riskBadge = (score: number) => {
@@ -17,7 +19,6 @@ export default function Fleet() {
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">플릿 관리 <span className="text-gray-400 text-lg font-normal">Fleet Management</span></h1>
-
       <div className="card">
         {inventory.length === 0 ? (
           <p className="text-gray-400 text-center py-8">등록된 하네스가 없습니다</p>
@@ -35,7 +36,7 @@ export default function Fleet() {
             </thead>
             <tbody>
               {inventory.map((h: any) => (
-                <tr key={h.harness?.id} className="border-b border-gray-100 last:border-0">
+                <tr key={h.harness?.id || Math.random()} className="border-b border-gray-100 last:border-0">
                   <td className="py-3 font-mono text-xs">{h.harness?.harness_id?.slice(0, 25)}</td>
                   <td className="py-3">{h.user?.name_ko || h.user?.name || '-'}</td>
                   <td className="py-3">

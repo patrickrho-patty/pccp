@@ -6,13 +6,13 @@ export default function Projects() {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '', name_ko: '', slug: '', allowed_models: 'pmp_kocoder_v1' })
 
-  useEffect(() => { api.listProjects().then(setProjects) }, [])
+  useEffect(() => { api.listProjects().then(data => setProjects(Array.isArray(data) ? data : data || [])) }, [])
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
     await api.createProject({ ...form, allowed_models: form.allowed_models.split(',').map(s => s.trim()) })
     setShowForm(false)
-    api.listProjects().then(setProjects)
+    api.listProjects().then(data => setProjects(Array.isArray(data) ? data : data || []))
   }
 
   return (

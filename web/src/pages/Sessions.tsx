@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom'
 export default function Sessions() {
   const [sessions, setSessions] = useState<any[]>([])
 
-  useEffect(() => { api.listSessions().then(setSessions) }, [])
+  useEffect(() => { api.listSessions().then(data => setSessions(Array.isArray(data) ? data : data || [])) }, [])
 
   const statusBadge = (s: string) => {
     const map: Record<string, string> = { active: 'badge-green', pending: 'badge-yellow', closed: 'badge-gray', terminated: 'badge-red' }

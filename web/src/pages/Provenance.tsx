@@ -8,7 +8,7 @@ export default function Provenance() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (id) api.getProvenance(id).then(setChain).finally(() => setLoading(false))
+    if (id) api.getProvenance(id).then(data => setChain(Array.isArray(data) ? data : data || [])).finally(() => setLoading(false))
   }, [id])
 
   if (loading) return <div className="text-gray-500">로딩 중...</div>

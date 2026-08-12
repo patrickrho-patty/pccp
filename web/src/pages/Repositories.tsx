@@ -6,13 +6,13 @@ export default function Repositories() {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ organization_id: '', project_id: '', name: '', full_name: '', default_branch: 'main', sensitivity: 'internal' })
 
-  useEffect(() => { api.listRepositories().then(setRepos) }, [])
+  useEffect(() => { api.listRepositories().then(data => setRepos(Array.isArray(data) ? data : data || [])) }, [])
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
     await api.registerRepository(form)
     setShowForm(false)
-    api.listRepositories().then(setRepos)
+    api.listRepositories().then(data => setRepos(Array.isArray(data) ? data : data || []))
   }
 
   const sensBadge = (s: string) => {

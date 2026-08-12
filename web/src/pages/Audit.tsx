@@ -4,7 +4,7 @@ import { api } from '../api'
 export default function Audit() {
   const [events, setEvents] = useState<any[]>([])
 
-  useEffect(() => { api.listAudit().then(setEvents) }, [])
+  useEffect(() => { api.listAudit().then(data => setEvents(Array.isArray(data) ? data : [])) }, [])
 
   const resultBadge = (r: string) => r === 'success' ? 'badge-green' : r === 'denied' ? 'badge-red' : 'badge-yellow'
 

@@ -9,9 +9,9 @@ export default function Analytics() {
   useEffect(() => {
     api.dashboard().then(() => {})
     // Fetch analytics data
-    fetch('/api/analytics/usage', { headers: authHeaders() }).then(r => r.json()).then(setUsage).catch(() => {})
-    fetch('/api/analytics/engineering', { headers: authHeaders() }).then(r => r.json()).then(setEngineering).catch(() => {})
-    fetch('/api/analytics/security', { headers: authHeaders() }).then(r => r.json()).then(setSecurity).catch(() => {})
+    fetch('/api/analytics/usage', { headers: authHeaders() }).then(r => r.json()).then(data => setUsage(Array.isArray(data) ? data : data || [])).catch(() => {})
+    fetch('/api/analytics/engineering', { headers: authHeaders() }).then(r => r.json()).then(data => setEngineering(Array.isArray(data) ? data : data || [])).catch(() => {})
+    fetch('/api/analytics/security', { headers: authHeaders() }).then(r => r.json()).then(data => setSecurity(Array.isArray(data) ? data : data || [])).catch(() => {})
   }, [])
 
   return (

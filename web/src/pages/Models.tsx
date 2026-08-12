@@ -5,16 +5,16 @@ export default function Models() {
   const [models, setModels] = useState<any[]>([])
   const [showForm, setShowForm] = useState(false)
 
-  useEffect(() => { api.listModels().then(setModels) }, [])
+  useEffect(() => { api.listModels().then(data => setModels(Array.isArray(data) ? data : data || [])) }, [])
 
   const handlePublish = async (id: string) => {
     await api.publishModel(id)
-    api.listModels().then(setModels)
+    api.listModels().then(data => setModels(Array.isArray(data) ? data : data || []))
   }
   const handleRecall = async (id: string) => {
     if (!confirm('이 모델을 리콜하시겠습니까?')) return
     await api.recallModel(id)
-    api.listModels().then(setModels)
+    api.listModels().then(data => setModels(Array.isArray(data) ? data : data || []))
   }
 
   const stateBadge = (s: string) => {
