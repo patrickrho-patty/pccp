@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"crypto/tls"
 	"flag"
 	"log"
 	"os"
@@ -13,15 +15,22 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", "", "Relay HTTP listen address")
+	addr := flag.String("addr", "", "Relay HTTP admin listen address")
+	paperAddr := flag.String("paper-addr", "", "PAPER native protocol listen address (TLS/TCP)")
 	flag.Parse()
 
 	cfg := config.LoadRelayFromEnv()
-	listenAddr := *addr
-	if listenAddr == "" {
-		listenAddr = os.Getenv("PCCP_RELAY_HTTP_ADDR")
-		if listenAddr == "" {
-			listenAddr = ":8090"
+	httpAddr := *addr
+	if httpAddr == "" {
+		httpAddr = os.Getenv("PCCP_RELAY_HTTP_ADDR")
+		if httpAddr == "" {
+			httpAddr = ":8090"
+		}
+	}
+	if *paperAddr == "" {
+		*paperAddr = os.Getenv("PCCP_RELAY_PAPER_ADDR")
+		if *paperAddr == "" {
+			*paperAddr = ":8444"
 		}
 	}
 
@@ -39,16 +48,39 @@ func main() {
 		log.Fatalf("failed to create relay: %v", err)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Start PAPER native protocol listener (TLS/TCP with CBOR framing)
+	// Per README guardrail: "No HTTP/REST/WebSocket for protocol traffic."
+	paperTLS := &tls.Config{
+		InsecureSkipVerify: true,
+		MinVersion:         tls.VersionTLS13,
+		NextProtos:         []string{relay.PaperALPN},
+	}
+	// In production, load actual certs from cfg.TLSCertFile / cfg.TLSKeyFile
+	paperListener := relay.NewPaperListener(svc, paperTLS)
+	go func() {
+		log.Printf("Starting PAPER native listener on %s", *paperAddr)
+		if err := paperListener.ListenTCP(ctx, *paperAddr); err != nil && ctx.Err() == nil {
+			log.Printf("PAPER listener error: %v", err)
+		}
+	}()
+
+	// Graceful shutdown
 	go func() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
 		log.Println("Shutting down relay...")
+		cancel()
 		os.Exit(0)
 	}()
 
+	log.Printf("Relay admin API on %s (PAPER native on %s)", httpAddr, *paperAddr)
+
+	// HTTP admin API (for control-plane operations, NOT for protocol traffic)
 	server := relay.NewServer(svc)
-	if err := server.ListenAndServe(listenAddr); err != nil {
+	if err := server.ListenAndServe(httpAddr); err != nil {
 		log.Fatalf("relay server error: %v", err)
 	}
 }

@@ -86,9 +86,16 @@ func (s *Service) RecordAction(req RecordActionRequest) (*models.ActionEnvelope,
 	// Compute envelope digest
 	envelope.EnvelopeDigest = s.computeEnvelopeDigest(envelope)
 
-	// CP signs the envelope
-	sig := ed25519.Sign(s.signingKey, []byte(envelope.EnvelopeDigest))
-	envelope.CPSignature = hex.EncodeToString(sig)
+	// CP signs the envelope using COSE-Sign1 (PAPER §34)
+	sign1, err := paper.CreateCOSESign1([]byte(envelope.EnvelopeDigest), s.signingKey, []byte("pccp-ca"))
+	if err != nil {
+		return nil, fmt.Errorf("provenance: sign action envelope: %w", err)
+	}
+	encoded, err := paper.EncodeCOSESign1(sign1)
+	if err != nil {
+		return nil, fmt.Errorf("provenance: encode action signature: %w", err)
+	}
+	envelope.CPSignature = hex.EncodeToString(encoded)
 
 	if err := s.db.Create(envelope).Error; err != nil {
 		return nil, fmt.Errorf("provenance: record action: %w", err)

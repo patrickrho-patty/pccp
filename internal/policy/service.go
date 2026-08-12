@@ -149,12 +149,19 @@ func (s *Service) IssueCapabilityLease(req IssueLeaseRequest) (*models.Capabilit
 		Status:               "active",
 	}
 
-	// CP signs the lease
+	// CP signs the lease using COSE-Sign1 (PAPER §22)
 	leaseBody := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s",
 		lease.LeaseID, lease.SubjectPeerID, lease.UserID, lease.SessionID,
 		lease.PolicyEpochID, lease.NotBefore, lease.NotAfter)
-	sig := ed25519.Sign(s.signingKey, []byte(leaseBody))
-	lease.CPSignature = hex.EncodeToString(sig)
+	sign1, err := paper.CreateCOSESign1([]byte(leaseBody), s.signingKey, []byte("pccp-policy"))
+	if err != nil {
+		return nil, fmt.Errorf("policy: sign lease: %w", err)
+	}
+	encoded, err := paper.EncodeCOSESign1(sign1)
+	if err != nil {
+		return nil, fmt.Errorf("policy: encode lease signature: %w", err)
+	}
+	lease.CPSignature = hex.EncodeToString(encoded)
 
 	_ = readScope
 	_ = writeScope
