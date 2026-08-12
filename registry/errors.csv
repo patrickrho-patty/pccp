@@ -1,0 +1,14 @@
+family_start,family_end,name,description
+0x0000,0x00FF,Core,Connection and framing errors
+0x1000,0x10FF,Authentication,Identity and credential errors
+0x2000,0x20FF,Session,Session and lease errors
+0x3000,0x30FF,Governance,Policy and exchange errors
+0x4000,0x40FF,AI,Inference and model errors
+0x5000,0x50FF,Context,Context and repository errors
+0x6000,0x60FF,Tools,Tool and runtime errors
+0x7000,0x70FF,Provenance,Provenance and evidence errors
+0x8000,0x80FF,Communication,Chat and messaging errors
+0x9000,0x90FF,Voice,Voice protocol errors
+0xA000,0xA0FF,Files,File transfer errors
+0xB000,0xB0FF,Broadcast,Broadcast and admin errors
+0xC000,0xC0FF,Telemetry,Metering and telemetry errors

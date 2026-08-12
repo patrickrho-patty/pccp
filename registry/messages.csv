@@ -1,0 +1,62 @@
+code,name,family,description
+0x0001,HELLO,core,Connection initiation and version negotiation
+0x0002,HELLO_ACK,core,Server version negotiation response
+0x0003,PING,core,Liveness probe
+0x0004,PONG,core,Liveness response
+0x0005,DRAIN,core,Connection draining notification
+0x0006,CLOSE,core,Connection close
+0x0100,AUTH_CHALLENGE,auth,Authentication challenge from Relay
+0x0101,AUTH_PROOF,auth,Peer authentication proof
+0x0102,USER_BIND,auth,User identity binding
+0x0103,USER_BIND_ACK,auth,User binding acknowledgment
+0x0104,CAPABILITIES,auth,Capability negotiation
+0x0200,SESSION_OPEN,session,Working session request
+0x0201,SESSION_GRANT,session,Working session grant
+0x0202,SESSION_CLOSE,session,Working session close
+0x0210,LEASE_ISSUE,session,Capability lease issuance
+0x0211,LEASE_REVOKE,session,Capability lease revocation
+0x0212,LEASE_RENEW,session,Capability lease renewal
+0x0300,EXCHANGE_OPEN,governance,Governed exchange open
+0x0301,EXCHANGE_ACTION,governance,Exchange action
+0x0302,EXCHANGE_CLOSE,governance,Exchange close
+0x0303,GOVERNANCE_ENV,governance,Governance envelope
+0x0304,RELAY_VERDICT,governance,Relay enforcement verdict
+0x0305,APPROVAL_REQUEST,governance,Approval request
+0x0306,APPROVAL_RESULT,governance,Approval result
+0x0307,EVIDENCE_RECEIPT,governance,Evidence receipt
+0x0400,AI_OPEN,ai,AI inference open
+0x0401,INFERENCE_REQUEST,ai,Inference request to PIA
+0x0402,AI_TOKEN_CHUNK,ai,Token streaming chunk
+0x0403,AI_COMPLETE,ai,Inference completion
+0x0410,PIA_ENROLL,ai,PIA enrollment
+0x0411,ENDPOINT_REGISTER,ai,Endpoint registration
+0x0412,ENDPOINT_LEASE,ai,Endpoint lease
+0x0500,CONTEXT_MANIFEST,context,Context manifest
+0x0501,CONTEXT_DECISION,context,Context authorization decision
+0x0510,REPO_BASELINE,context,Repository baseline
+0x0600,TOOL_PROPOSE,tools,Tool proposal
+0x0601,TOOL_AUTHORIZE,tools,Tool authorization
+0x0602,RUNTIME_EXECUTE,tools,Runtime execution
+0x0603,TOOL_RESULT,tools,Tool result
+0x0700,PROVENANCE_NODE,provenance,Provenance spine node
+0x0701,CHANGE_SET,provenance,Code change set
+0x0702,COMMIT_BIND,provenance,Commit provenance binding
+0x0800,CHAT_MESSAGE,chat,Chat message
+0x0801,PRESENCE,chat,Presence update
+0x0A00,FILE_OFFER,files,File transfer offer
+0x0A01,FILE_CHUNK,files,File chunk
+0x0A02,FILE_COMMIT,files,File commit
+0x0B00,BROADCAST,broadcast,Broadcast message
+0x0B01,ADMIN_DIRECTIVE,broadcast,Administrative directive
+0x0C00,TELEMETRY,telemetry,Telemetry event
+0x0C01,METER_USAGE,telemetry,Metering event
+0x0D00,MODEL_CATALOG_REQUEST,models,Model catalog request
+0x0D01,MODEL_CATALOG_SNAPSHOT,models,Model catalog snapshot
+0x0D02,MODEL_CATALOG_DELTA,models,Model catalog delta
+0x0D03,MODEL_ANNOUNCE,models,Model announcement
+0x0D04,MODEL_WITHDRAW,models,Model withdrawal
+0x0D05,MODEL_DEFAULT_CHANGED,models,Default model changed
+0x0D06,MODEL_AVAILABILITY,models,Model availability update
+0x0D07,MODEL_CAPABILITY_CHANGED,models,Model capability changed
+0x0D08,MODEL_UPGRADE_REQUIRED,models,Model upgrade required
+0x0D09,CATALOG_ACK,models,Catalog acknowledgment

@@ -1,0 +1,3 @@
+profile,name,hash,signature,description
+PAPER-BASE-1,Baseline,SHA-256,Ed25519,Minimum interoperable profile
+PAPER-BASE-2,Extended,SHA-256,Ed25519+COSE-Sign1,Baseline with COSE envelopes
