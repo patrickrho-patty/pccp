@@ -11,6 +11,7 @@ export default function ServiceCommandCenter() {
   const [health, setHealth] = useState<any>({})
   const [accounts, setAccounts] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [selectedStatus, setSelectedStatus] = useState<string | null>(null)
 
   useEffect(() => {
     Promise.all([
@@ -28,14 +29,48 @@ export default function ServiceCommandCenter() {
 
   // Compute metrics
   const totalAccounts = accounts.length
-  const activeSubs = accounts.filter(a => a.subscription_status === 'active').length
-  const graceSubs = accounts.filter(a => a.subscription_status === 'grace').length
-  const pastDueSubs = accounts.filter(a => a.subscription_status === 'past_due').length
-  const cancelledSubs = accounts.filter(a => a.subscription_status === 'cancelled').length
-  const expiredSubs = accounts.filter(a => a.subscription_status === 'expired').length
+  const activeSubs = accounts.filter(a => a.subscription_status === 'active')
+  const graceSubs = accounts.filter(a => a.subscription_status === 'grace')
+  const pastDueSubs = accounts.filter(a => a.subscription_status === 'past_due')
+  const cancelledSubs = accounts.filter(a => a.subscription_status === 'cancelled')
+  const expiredSubs = accounts.filter(a => a.subscription_status === 'expired')
   const integrityFlags = accounts.filter(a => a.account_integrity_state !== 'normal').length
   const tsFlags = accounts.filter(a => a.trust_safety_state !== 'normal').length
   const capacityFlags = accounts.filter(a => a.capacity_state !== 'normal').length
+
+  const statusLabels: Record<string, { ko: string; en: string; desc: string; color: string }> = {
+    active: { ko: '활성', en: 'Active', desc: '결제 완료, 정상 이용 중', color: 'green' },
+    grace: { ko: '미납', en: 'Unpaid', desc: '결제 실패, 일시적 이용 가능', color: 'yellow' },
+    past_due: { ko: '연체', en: 'Past Due', desc: '미납 기간 종료, 접근 제한', color: 'orange' },
+    cancelled: { ko: '취소', en: 'Cancelled', desc: '사용자 취소', color: 'gray' },
+    expired: { ko: '만료', en: 'Expired', desc: '구독 완전 만료', color: 'red' },
+  }
+
+  const cardBg: Record<string, string> = {
+    blue: 'bg-blue-50 hover:bg-blue-100',
+    green: 'bg-green-50 hover:bg-green-100',
+    yellow: 'bg-yellow-50 hover:bg-yellow-100',
+    orange: 'bg-orange-50 hover:bg-orange-100',
+    gray: 'bg-gray-100 hover:bg-gray-200',
+    red: 'bg-red-50 hover:bg-red-100',
+  }
+  const cardText: Record<string, string> = {
+    blue: 'text-blue-600', green: 'text-green-600', yellow: 'text-yellow-600',
+    orange: 'text-orange-600', gray: 'text-gray-500', red: 'text-red-600',
+  }
+
+  const subCards = [
+    { filter: '', count: totalAccounts, ko: '총 계정', en: 'Total', desc: '등록된 모든 사용자', color: 'blue' },
+    { filter: 'active', items: activeSubs, ko: '활성', en: 'Active', desc: '결제 완료, 정상 이용 중', color: 'green' },
+    { filter: 'grace', items: graceSubs, ko: '미납', en: 'Unpaid', desc: '결제 실패, 일시적 이용 가능', color: 'yellow' },
+    { filter: 'past_due', items: pastDueSubs, ko: '연체', en: 'Past Due', desc: '미납 기간 종료, 접근 제한', color: 'orange' },
+    { filter: 'cancelled', items: cancelledSubs, ko: '취소', en: 'Cancelled', desc: '사용자 취소', color: 'gray' },
+    { filter: 'expired', items: expiredSubs, ko: '만료', en: 'Expired', desc: '구독 완전 만료', color: 'red' },
+  ]
+
+  const filteredAccounts = selectedStatus
+    ? accounts.filter(a => selectedStatus === 'all' ? true : a.subscription_status === selectedStatus)
+    : []
 
   return (
     <div>
@@ -45,46 +80,83 @@ export default function ServiceCommandCenter() {
       {/* Subscription Status Breakdown */}
       <div className="card mb-6">
         <h3 className="text-sm font-semibold mb-1">구독 상태 분포 · Subscription Status</h3>
-        <p className="text-xs text-gray-400 mb-4">퍼블릭 클라우드 구독자 결제/상태 현황 (PRD §8.9)</p>
+        <p className="text-xs text-gray-400 mb-4">카드를 클릭하면 해당 상태의 계정 목록을 볼 수 있습니다 · Click a card to see accounts</p>
         <div className="grid grid-cols-6 gap-3">
-          <div className="text-center p-3 bg-blue-50 rounded-lg">
-            <div className="text-2xl font-bold text-blue-600">{totalAccounts}</div>
-            <div className="text-xs font-medium text-gray-700 mt-1">총 계정</div>
-            <div className="text-[10px] text-gray-400">Total Accounts</div>
-            <div className="text-[10px] text-gray-400 mt-1">등록된 모든 사용자</div>
-          </div>
-          <div className="text-center p-3 bg-green-50 rounded-lg">
-            <div className="text-2xl font-bold text-green-600">{activeSubs}</div>
-            <div className="text-xs font-medium text-gray-700 mt-1">활성</div>
-            <div className="text-[10px] text-gray-400">Active</div>
-            <div className="text-[10px] text-gray-400 mt-1">결제 완료, 정상 이용 중</div>
-          </div>
-          <div className="text-center p-3 bg-yellow-50 rounded-lg">
-            <div className="text-2xl font-bold text-yellow-600">{graceSubs}</div>
-            <div className="text-xs font-medium text-gray-700 mt-1">미납</div>
-            <div className="text-[10px] text-gray-400">Unpaid (Grace)</div>
-            <div className="text-[10px] text-gray-400 mt-1">결제 실패, 일시적 이용 가능</div>
-          </div>
-          <div className="text-center p-3 bg-orange-50 rounded-lg">
-            <div className="text-2xl font-bold text-orange-600">{pastDueSubs}</div>
-            <div className="text-xs font-medium text-gray-700 mt-1">연체</div>
-            <div className="text-[10px] text-gray-400">Past Due</div>
-            <div className="text-[10px] text-gray-400 mt-1">미납 기간 종료, 접근 제한</div>
-          </div>
-          <div className="text-center p-3 bg-gray-100 rounded-lg">
-            <div className="text-2xl font-bold text-gray-500">{cancelledSubs}</div>
-            <div className="text-xs font-medium text-gray-700 mt-1">취소</div>
-            <div className="text-[10px] text-gray-400">Cancelled</div>
-            <div className="text-[10px] text-gray-400 mt-1">사용자 취소</div>
-          </div>
-          <div className="text-center p-3 bg-red-50 rounded-lg">
-            <div className="text-2xl font-bold text-red-600">{expiredSubs}</div>
-            <div className="text-xs font-medium text-gray-700 mt-1">만료</div>
-            <div className="text-[10px] text-gray-400">Expired</div>
-            <div className="text-[10px] text-gray-400 mt-1">구독 완전 만료</div>
-          </div>
+          {subCards.map((c) => (
+            <div
+              key={c.filter || 'all'}
+              onClick={() => setSelectedStatus(c.filter === '' ? 'all' : c.filter)}
+              className={`text-center p-3 rounded-lg cursor-pointer transition-all ${cardBg[c.color]} ${selectedStatus === (c.filter === '' ? 'all' : c.filter) ? 'ring-2 ring-blue-400' : ''}`}
+            >
+              <div className={`text-2xl font-bold ${cardText[c.color]}`}>{c.filter === '' ? c.count : c.items.length}</div>
+              <div className="text-xs font-medium text-gray-700 mt-1">{c.ko}</div>
+              <div className="text-[10px] text-gray-400">{c.en}</div>
+              <div className="text-[10px] text-gray-400 mt-1">{c.desc}</div>
+            </div>
+          ))}
         </div>
       </div>
+
+      {/* Account list when a status is selected */}
+      {selectedStatus && (
+        <div className="card mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold">
+              {selectedStatus === 'all' ? '전체 계정' : statusLabels[selectedStatus]?.ko + ' 계정'}
+              <span className="text-gray-400 font-normal ml-2">
+                {selectedStatus === 'all' ? 'All Accounts' : statusLabels[selectedStatus]?.en + ' Accounts'}
+              </span>
+            </h3>
+            <button onClick={() => setSelectedStatus(null)} className="text-gray-400 hover:text-gray-600 text-sm">✕ 닫기</button>
+          </div>
+          {filteredAccounts.length === 0 ? (
+            <p className="text-gray-400 text-center py-6 text-sm">해당 상태의 계정이 없습니다</p>
+          ) : (
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
+                  <th className="pb-2">이메일</th>
+                  <th className="pb-2">이름</th>
+                  <th className="pb-2">플랜</th>
+                  <th className="pb-2">구독 상태</th>
+                  <th className="pb-2">무결성</th>
+                  <th className="pb-2">신뢰·안전</th>
+                  <th className="pb-2">용량</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAccounts.map((a: any, i: number) => (
+                  <tr key={a.id || i} className="border-b border-gray-50 last:border-0 hover:bg-blue-50/30">
+                    <td className="py-2 text-sm">{a.email || '-'}</td>
+                    <td className="py-2 text-sm">{a.display_name_ko || a.display_name || '-'}</td>
+                    <td className="py-2 text-xs"><span className="badge-gray">{a.plan || '-'}</span></td>
+                    <td className="py-2 text-xs">
+                      <span className={cardText[statusLabels[a.subscription_status]?.color || 'gray']}>
+                        {statusLabels[a.subscription_status]?.ko || a.subscription_status}
+                      </span>
+                    </td>
+                    <td className="py-2">
+                      <span className={a.account_integrity_state !== 'normal' ? 'badge-yellow' : 'badge-green'}>
+                        {a.account_integrity_state || 'normal'}
+                      </span>
+                    </td>
+                    <td className="py-2">
+                      <span className={a.trust_safety_state !== 'normal' ? 'badge-red' : 'badge-green'}>
+                        {a.trust_safety_state || 'normal'}
+                      </span>
+                    </td>
+                    <td className="py-2">
+                      <span className={a.capacity_state !== 'normal' ? 'badge-yellow' : 'badge-green'}>
+                        {a.capacity_state || 'normal'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
 
       {/* Infrastructure Overview */}
       <div className="grid grid-cols-3 gap-3 mb-6">

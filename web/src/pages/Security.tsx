@@ -34,11 +34,7 @@ export default function Security() {
   const [stats, setStats] = useState({ critical: 0, high: 0, medium: 0, open: 0, total: 0 })
 
   useEffect(() => {
-    loadFindings()
-    loadStats()
-  }, [])
-
-  const loadFindings = () => {
+    // Load security stats
     fetch('/api/analytics/security', { headers: authHeaders() })
       .then(r => r.json())
       .then(data => {
@@ -52,7 +48,13 @@ export default function Security() {
         })
       })
       .catch(() => {})
-  }
+
+    // Load findings
+    fetch('/api/security/findings', { headers: authHeaders() })
+      .then(r => r.json())
+      .then(data => setFindings(Array.isArray(data) ? data : []))
+      .catch(() => {})
+  }, [])
 
 
   const runScan = async () => {
