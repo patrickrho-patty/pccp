@@ -109,7 +109,7 @@ func LoadPIAFromEnv() PIAConfig {
 		RelayAddr:          getenvDefault("PCCP_PIA_RELAY_ADDR", "localhost:8443"),
 		TLSCertFile:        getenvDefault("PCCP_PIA_TLS_CERT", ".keys/pia.crt"),
 		TLSKeyFile:         getenvDefault("PCCP_PIA_TLS_KEY", ".keys/pia.key"),
-		ServingEngineType:  getenvDefault("PCCP_PIA_ENGINE", "mock"),
+		ServingEngineType:  getenvDefault("PCCP_PIA_ENGINE", "vllm"),
 		ServingEngineURL:   getenvDefault("PCCP_PIA_SERVING_URL", "http://localhost:8081"),
 		ModelPackageID:     getenvDefault("PCCP_PIA_MODEL_PACKAGE", ""),
 		ModelWeightsPath:   os.Getenv("PCCP_PIA_MODEL_PATH"),

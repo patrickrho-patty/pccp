@@ -117,7 +117,7 @@ func TestResolveToPackage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pkgID != "pmp_kocoder_v1" {
-		t.Fatalf("expected pmp_kocoder_v1, got %s", pkgID)
+	if pkgID != "pmp_qwen3_moe_v1" {
+		t.Fatalf("expected pmp_qwen3_moe_v1, got %s", pkgID)
 	}
 }

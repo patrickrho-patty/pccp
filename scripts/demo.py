@@ -140,7 +140,7 @@ def main():
         step(4, "Create Project & Repository")
         r = requests.post(f"{API}/api/projects", headers=headers, json={
             "organization_id": org_id, "name": "Payment Service", "name_ko": "결제 서비스",
-            "slug": "payment-service", "allowed_models": ["pmp_kocoder_v1"]
+            "slug": "payment-service", "allowed_models": ["pmp_qwen3_moe_v1"]
         })
         proj_id = r.json()["id"]
         ok(f"Project: 결제 서비스 ({proj_id})")
@@ -156,7 +156,7 @@ def main():
         # 5. Register Model Package
         step(5, "Register Model Package: Patty-KoCoder-v1")
         r = requests.post(f"{API}/api/models", headers=headers, json={
-            "package_id": "pmp_kocoder_v1", "model_id": "patty-kocoder-35b",
+            "package_id": "pmp_qwen3_moe_v1", "model_id": "patty-kocoder-35b",
             "name": "Patty-KoCoder-v1", "name_ko": "패티 코더 v1",
             "family": "coder", "version": "1.0.0",
             "capabilities": ["code", "tool_use", "korean"],
@@ -171,7 +171,7 @@ def main():
         # 6. Create Policy Epoch
         step(6, "Create Policy Epoch")
         r = requests.post(f"{API}/api/policy/epochs", headers=headers, json={
-            "organization_id": org_id, "allowed_models": ["pmp_kocoder_v1"],
+            "organization_id": org_id, "allowed_models": ["pmp_qwen3_moe_v1"],
             "transition_mode": "immediate"
         })
         epoch_id = r.json()["epoch_id"]
@@ -184,7 +184,7 @@ def main():
 
         r = requests.post(f"{API}/api/endpoints/enroll", headers=headers, json={
             "organization_id": org_id, "pia_peer_id": "pia-local",
-            "model_package_id": "pmp_kocoder_v1", "serving_engine": "vllm",
+            "model_package_id": "pmp_qwen3_moe_v1", "serving_engine": "vllm",
             "serving_engine_version": "0.6.0", "public_key_hex": pia_pubkey,
             "node_identity": "spiffe://patty.local/node/pia-local",
             "assurance_level": "L1"
@@ -207,7 +207,7 @@ def main():
             "organization_id": org_id, "harness_id": harness_id, "user_id": user_id,
             "project_id": proj_id, "repository_id": repo_id, "branch": "feature/refund",
             "title": "환불 로직 구현", "task_purpose": "payment refund processing",
-            "model_class": "pmp_kocoder_v1"
+            "model_class": "pmp_qwen3_moe_v1"
         })
         sess_db_id = r.json()["id"]
         sess_id = r.json()["session_id"]
@@ -217,7 +217,7 @@ def main():
         r = requests.post(f"{API}/api/policy/leases", headers=headers, json={
             "organization_id": org_id, "subject_peer_id": harness_id,
             "user_id": user_id, "session_id": sess_id, "policy_epoch_id": epoch_id,
-            "allowed_models": ["pmp_kocoder_v1"],
+            "allowed_models": ["pmp_qwen3_moe_v1"],
             "repository_scope": [{"repo_id": repo_id, "branch": "feature/refund"}],
             "file_path_read_scope": ["src/**"], "file_path_write_scope": ["src/**"],
             "tool_classes": ["read", "write", "execute"],
@@ -231,7 +231,7 @@ def main():
         r = requests.post(f"{RELAY}/v1/exchanges", json={
             "organization_id": org_id, "session_id": sess_id, "user_id": user_id,
             "harness_id": harness_id, "lease_id": cap_lease_id,
-            "policy_epoch_id": epoch_id, "model_package_id": "pmp_kocoder_v1",
+            "policy_epoch_id": epoch_id, "model_package_id": "pmp_qwen3_moe_v1",
             "project_id": proj_id, "repository_id": repo_id,
             "branch": "feature/refund", "purpose": "implement refund logic"
         })
@@ -248,7 +248,7 @@ def main():
             print(f"  {YELLOW}Routing inference to PIA...{NC}")
             r = requests.post(f"{RELAY}/v1/inference", json={
                 "exchange_id": exch_id, "organization_id": org_id,
-                "session_id": sess_id, "model_package_id": "pmp_kocoder_v1",
+                "session_id": sess_id, "model_package_id": "pmp_qwen3_moe_v1",
                 "model": "Patty-KoCoder-v1",
                 "messages": [{"role": "user", "content": "payment-service의 환불 처리 로직을 Go로 작성해주세요."}],
                 "max_tokens": 500
