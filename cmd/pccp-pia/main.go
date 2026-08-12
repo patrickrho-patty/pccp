@@ -95,6 +95,21 @@ func main() {
 	if piaAddr == "" {
 		piaAddr = ":9090"
 	}
+	// Start PAPER listener for Relay connections (v2 §9.2)
+	paperAddr := os.Getenv("PCCP_PIA_PAPER_ADDR")
+	if paperAddr == "" {
+		paperAddr = ":9444"
+	}
+	paperListener := pia.NewPaperListener(svc)
+	go func() {
+		log.Printf("Starting PAPER listener on %s", paperAddr)
+		if err := paperListener.ListenTCP(ctx, paperAddr); err != nil && ctx.Err() == nil {
+			log.Printf("PAPER listener error: %v", err)
+		}
+	}()
+	log.Printf("PAPER listener on %s, HTTP on %s", paperAddr, piaAddr)
+
+	// HTTP server (health, admin, internal vLLM adapter only)
 	server := pia.NewServer(svc)
 	if err := server.ListenAndServe(piaAddr); err != nil {
 		log.Fatalf("PIA server error: %v", err)
