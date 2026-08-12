@@ -133,6 +133,7 @@ func (s *Server) setupRouter() {
 		// Organizations
 		r.Route("/organizations", func(r chi.Router) {
 			r.Get("/", s.handleListOrganizations)
+		r.Get("/seats", s.handleGetSeatUsage)
 			r.Post("/", s.handleCreateOrganization)
 			r.Get("/{id}", s.handleGetOrganization)
 		})
@@ -240,6 +241,10 @@ func (s *Server) setupRouter() {
 		r.Get("/security/policy", s.handleGetSecurityPolicy)
 		r.Put("/security/policy", s.handleUpdateSecurityPolicy)
 		r.Get("/security/findings", s.handleSecurityFindings)
+			r.Get("/security/findings/{id}", s.handleSecurityFindingDetail)
+			r.Put("/security/findings/{id}", s.handleUpdateFinding)
+			r.Get("/security/findings/{id}", s.handleSecurityFindingDetail)
+			r.Put("/security/findings/{id}", s.handleUpdateFinding)
 		r.Post("/security/lockdown", s.handleSecurityLockdown)
 
 		// Fleet Operations
@@ -465,6 +470,45 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 }
 
 // Generic CRUD handlers
+func (s *Server) handleGetSeatUsage(w http.ResponseWriter, r *http.Request) {
+		orgID := getOrgID(r)
+
+		var org models.Organization
+		if err := s.db.Where("id = ?", orgID).First(&org).Error; err != nil {
+			writeError(w, http.StatusNotFound, "organization not found")
+			return
+		}
+
+		var userCount int64
+		s.db.Model(&models.User{}).Where("organization_id = ? AND status != ?", orgID, "offboarded").Count(&userCount)
+
+		var harnessCount int64
+		s.db.Model(&models.Harness{}).Where("organization_id = ? AND status NOT IN ?", orgID, []string{"revoked"}).Count(&harnessCount)
+
+		var activeSessions int64
+		s.db.Model(&models.Session{}).Where("organization_id = ? AND status = ?", orgID, "active").Count(&activeSessions)
+
+		result := map[string]interface{}{
+			"organization_id":   org.ID,
+			"plan_tier":         org.PlanTier,
+			"user_seats": map[string]interface{}{
+				"used":     userCount,
+				"max":      org.MaxUserSeats,
+				"available": org.MaxUserSeats - int(userCount),
+				"utilization": fmt.Sprintf("%.0f%%", float64(userCount)/float64(org.MaxUserSeats)*100),
+			},
+			"harness_seats": map[string]interface{}{
+				"used":     harnessCount,
+				"max":      org.MaxHarnessSeats,
+				"available": org.MaxHarnessSeats - int(harnessCount),
+				"utilization": fmt.Sprintf("%.0f%%", float64(harnessCount)/float64(org.MaxHarnessSeats)*100),
+			},
+			"active_sessions": activeSessions,
+			"plan_renewal_date": org.PlanRenewalDate,
+		}
+		writeJSON(w, http.StatusOK, result)
+	}
+
 func (s *Server) handleListOrganizations(w http.ResponseWriter, r *http.Request) {
 	var orgs []models.Organization
 	result := s.db.Find(&orgs)
@@ -537,6 +581,12 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	orgID := req.OrganizationID
 	if orgID == "" {
 		orgID = getOrgID(r)
+	}
+	// Dedup: check if email already exists in this org
+	var existing models.User
+	if err := s.db.Where("email = ? AND organization_id = ?", req.Email, orgID).First(&existing).Error; err == nil {
+		writeError(w, http.StatusConflict, "이미 등록된 이메일입니다 · Email already exists: "+req.Email)
+		return
 	}
 	user, err := s.identity.CreateUser(orgID, req.Email, req.Name, req.NameKo, req.AuthMethod, "")
 	if err != nil {
@@ -1824,6 +1874,66 @@ func (s *Server) handleSecurityFindings(w http.ResponseWriter, r *http.Request) 
 	var findings []models.SecurityFinding
 	s.db.Where("organization_id = ?", orgID).Order("occurred_at DESC").Limit(100).Find(&findings)
 	writeJSON(w, http.StatusOK, findings)
+}
+
+func (s *Server) handleSecurityFindingDetail(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var finding models.SecurityFinding
+	if err := s.db.Where("id = ?", id).First(&finding).Error; err != nil {
+		writeError(w, http.StatusNotFound, "finding not found")
+		return
+	}
+	result := map[string]interface{}{"finding": finding}
+	if finding.SessionID != "" {
+		var session models.Session
+		if s.db.Where("session_id = ?", finding.SessionID).First(&session).Error == nil {
+			result["session"] = session
+			if session.UserID != "" {
+				var user models.User
+				if s.db.Where("id = ?", session.UserID).First(&user).Error == nil {
+					result["user"] = user
+				}
+			}
+			if session.HarnessID != "" {
+				var harness models.Harness
+				if s.db.Where("harness_id = ?", session.HarnessID).First(&harness).Error == nil {
+					result["harness"] = harness
+				}
+			}
+		}
+	}
+	var auditEvents []models.AuditEvent
+	s.db.Where("resource_id = ?", id).Order("occurred_at DESC").Limit(20).Find(&auditEvents)
+	result["audit_events"] = auditEvents
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleUpdateFinding(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Status string `json:"status"`
+		Notes  string `json:"notes"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	s.db.Model(&models.SecurityFinding{}).Where("id = ?", id).Update("status", req.Status)
+	orgID := getOrgID(r)
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.security.finding_updated",
+		ActorType:      "admin",
+		Action:         "update_finding_status",
+		ResourceType:   "security_finding",
+		ResourceID:     id,
+		Details:        "status=" + req.Status,
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
+	var finding models.SecurityFinding
+	s.db.Where("id = ?", id).First(&finding)
+	writeJSON(w, http.StatusOK, finding)
 }
 
 func (s *Server) handleSecurityLockdown(w http.ResponseWriter, r *http.Request) {

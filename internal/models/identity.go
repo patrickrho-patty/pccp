@@ -17,6 +17,12 @@ type Organization struct {
 	// Korean enterprise hierarchy (PRD §12)
 	BusinessRegistrationNo string `gorm:"type:varchar(32)" json:"business_registration_no,omitempty"`
 	GroupCompany    bool   `gorm:"default:false" json:"group_company"`
+	// Seat management (Enterprise/Government licensing)
+	MaxUserSeats     int    `gorm:"default:50" json:"max_user_seats"`
+	MaxHarnessSeats  int    `gorm:"default:100" json:"max_harness_seats"`
+	PlanTier         string `gorm:"type:varchar(32);default:'team'" json:"plan_tier"` // team, business, enterprise
+	PlanRenewalDate  string `gorm:"type:timestamp" json:"plan_renewal_date,omitempty"`
+	BillingContact   string `gorm:"type:varchar(255)" json:"billing_contact,omitempty"`
 }
 
 // BusinessUnit represents organizational hierarchy (PRD §12.1).
@@ -33,7 +39,7 @@ type BusinessUnit struct {
 // User is an authenticated human user (PRD §8.1).
 type User struct {
 	AuditBase
-	Email          string `gorm:"type:varchar(255);index" json:"email"`
+	Email          string `gorm:"type:varchar(255);uniqueIndex:idx_email_org" json:"email"`
 	EmailKo        string `gorm:"type:varchar(255)" json:"email_ko,omitempty"`
 	Name           string `gorm:"type:varchar(255)" json:"name"`
 	NameKo         string `gorm:"type:varchar(255)" json:"name_ko"`           // Korean name (PRD §44.3)

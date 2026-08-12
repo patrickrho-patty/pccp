@@ -15,8 +15,6 @@ import Harnesses from './pages/Harnesses'
 import Projects from './pages/Projects'
 import Repositories from './pages/Repositories'
 import Sessions from './pages/Sessions'
-import Models from './pages/Models'
-import Endpoints from './pages/Endpoints'
 import Policy from './pages/Policy'
 import Provenance from './pages/Provenance'
 import Audit from './pages/Audit'
@@ -24,8 +22,9 @@ import Fleet from './pages/Fleet'
 import Security from './pages/Security'
 import Compliance from './pages/Compliance'
 import Tools from './pages/Tools'
-import ModelCatalog from './pages/ModelCatalog'
 import SREConsole from './pages/SREConsole'
+import ModelInfra from './pages/ModelInfra'
+import SubscriberManagement from './pages/SubscriberManagement'
 import ServiceCommandCenter from './pages/ServiceCommandCenter'
 import AccountPortal from './pages/AccountPortal'
 import LiveView from './pages/LiveView'
@@ -77,11 +76,9 @@ function AppContent() {
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/fleet" element={<Fleet />} />
           <Route path="/sessions" element={<Sessions />} />
-          <Route path="/catalog" element={<ModelCatalog />} />
-          <Route path="/models" element={<Models />} />
-          <Route path="/endpoints" element={<Endpoints />} />
+          <Route path="/accounts" element={<SubscriberManagement />} />
+          <Route path="/models" element={<ModelInfra />} />
           <Route path="/security" element={<Security />} />
-          <Route path="/compliance" element={<Compliance />} />
           <Route path="/audit" element={<Audit />} />
         </>)}
 
@@ -103,8 +100,6 @@ function AppContent() {
           <Route path="/tools" element={<Tools />} />
           <Route path="/communications" element={<Communications />} />
           <Route path="/sandboxes" element={<Sandboxes />} />
-          <Route path="/catalog" element={<ModelCatalog />} />
-          <Route path="/endpoints" element={<Endpoints />} />
           <Route path="/audit" element={<Audit />} />
         </>)}
 

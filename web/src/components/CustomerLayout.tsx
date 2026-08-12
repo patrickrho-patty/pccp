@@ -1,6 +1,7 @@
 import { ReactNode, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { SeatWidget } from './SeatWidget'
 
 type NavItem = { path: string; label: string; labelEn: string; icon: string }
 
@@ -114,6 +115,7 @@ export default function CustomerLayout({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="px-4 py-3 border-t border-gray-800 flex-shrink-0 space-y-2">
+          <SeatWidget compact />
           <select
             className="w-full bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700"
             value="customer"

@@ -18,6 +18,7 @@ const navSections = [
     title: '계정 및 구독',
     titleEn: 'Accounts & Subscriptions',
     items: [
+      { path: '/accounts', label: '구독자 관리', labelEn: 'Subscribers', icon: '👥' },
       { path: '/fleet', label: '하네스 플릿', labelEn: 'Harness Fleet', icon: '⛶' },
       { path: '/sessions', label: '세션 현황', labelEn: 'Sessions', icon: '◐' },
     ]
@@ -26,9 +27,7 @@ const navSections = [
     title: '모델 인프라',
     titleEn: 'Model Infrastructure',
     items: [
-      { path: '/catalog', label: '카탈로그', labelEn: 'Catalog', icon: '🗂' },
-      { path: '/models', label: '모델 패키지', labelEn: 'Packages', icon: '◆' },
-      { path: '/endpoints', label: '엔드포인트', labelEn: 'Endpoints', icon: '◇' },
+      { path: '/models', label: '모델 인프라', labelEn: 'Model Infra', icon: '◆' },
     ]
   },
   {
@@ -36,7 +35,6 @@ const navSections = [
     titleEn: 'Risk & Security',
     items: [
       { path: '/security', label: '플랫폼 보안', labelEn: 'Platform Security', icon: '🛡' },
-      { path: '/compliance', label: '컴플라이언스', labelEn: 'Compliance', icon: '📋' },
     ]
   },
   {

@@ -141,8 +141,8 @@ export default function Fleet() {
                   </tr>
                 </thead>
                 <tbody>
-                  {inventory.map((h: any) => (
-                    <tr key={h.harness?.id || Math.random()}
+                  {inventory.map((h: any, idx: number) => (
+                    <tr key={h.harness?.id || h.harness?.harness_id || idx}
                       className={`border-b border-gray-100 last:border-0 cursor-pointer ${selectedHarness === h.harness?.harness_id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
                       onClick={() => setSelectedHarness(selectedHarness === h.harness?.harness_id ? null : h.harness?.harness_id)}>
                       <td className="py-3">

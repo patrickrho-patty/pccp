@@ -1,136 +1,107 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
 
-// PRD §15.3 Alert Catalog — categorized by threat family
-const THREAT_CATEGORIES = [
-  {
-    id: 'injection',
-    name: '프롬프트 인젝션 · 탈옥',
-    nameEn: 'Prompt Injection & Jailbreak',
-    icon: '🧪',
-    desc: '모델/도구 제어 우회 시도, 명령어 재정의, 시스템 프롬프트 노출',
-    prdRef: '§10C.12',
-    severity: 'critical',
-    rules: [
-      { id: 'inj-override', name: '명령어 재정의', nameEn: 'Instruction Override', pattern: 'ignore.*previous.*instructions', action: 'block' },
-      { id: 'inj-jailbreak', name: '탈옥 시도', nameEn: 'Jailbreak (DAN)', pattern: '(jailbreak|DAN|developer.mode|system.prompt)', action: 'block' },
-      { id: 'inj-bypass', name: '도구 제어 우회', nameEn: 'Tool Control Bypass', pattern: '(bypass.*filter|ignore.*safety|disable.*guard)', action: 'block' },
-      { id: 'inj-credential-extract', name: '시스템 자격증명 노출 시도', nameEn: 'Credential Extraction', pattern: '(show.*system.*prompt|reveal.*api.*key|print.*env)', action: 'block' },
-      { id: 'inj-indirect', name: '간접 인젝션 (저장소 컨텐츠)', nameEn: 'Indirect Injection (Repo)', pattern: '<!--.*ignore.*-->|{{.*system.*}}', action: 'review' },
-    ]
-  },
-  {
-    id: 'extraction',
-    name: '모델 남용 · 추출',
-    nameEn: 'Model Abuse & Extraction',
-    icon: '🤖',
-    desc: '모델 지식 추출, 구독 API 재판매, 프로토콜 남용',
-    prdRef: '§35.2',
-    severity: 'critical',
-    rules: [
-      { id: 'extract-volume', name: '대량 자동 질의 (추출 시도)', nameEn: 'High-Volume Automated Probing', pattern: '>100 req/min from single account', action: 'throttle' },
-      { id: 'extract-resale', name: '구독 API 재판매', nameEn: 'Subscription Resale', pattern: 'API-like usage pattern, no human latency', action: 'block' },
-      { id: 'extract-catalog', name: '카탈로그 스푸핑', nameEn: 'Catalog Spoofing', pattern: 'inject model/base_url locally', action: 'block' },
-      { id: 'extract-protocol', name: '프로토콜 남용 (DoS)', nameEn: 'Protocol Abuse/DoS', pattern: 'malformed PAPER frames, flood', action: 'block' },
-    ]
-  },
-  {
-    id: 'identity',
-    name: '계정 · 신원 남용',
-    nameEn: 'Account & Identity Abuse',
-    icon: '👤',
-    desc: '계정 공유, 자격증명 도용, 하네스 복제, 결제 사기',
-    prdRef: '§10C.9-10, §35.2',
-    severity: 'high',
-    rules: [
-      { id: 'acct-share', name: '계정 공유', nameEn: 'Account Sharing', pattern: 'concurrent distant harnesses, unusual geo', action: 'stepup' },
-      { id: 'acct-clone', name: '하네스 복제', nameEn: 'Harness Cloning', pattern: 'same peer key from multiple devices', action: 'block' },
-      { id: 'acct-replay', name: '자격증명 재생 공격', nameEn: 'Credential Replay', pattern: 'cryptographic replay detected', action: 'block' },
-      { id: 'acct-payment', name: '결제/자격 사기', nameEn: 'Payment/Entitlement Fraud', pattern: 'plan state manipulation', action: 'block' },
-      { id: 'acct-rapid', name: '빠른 등록/해지 사이클', nameEn: 'Rapid Enroll/Revoke', pattern: '>5 enroll/revoke in 1h', action: 'review' },
-    ]
-  },
-  {
-    id: 'exfil',
-    name: '데이터 유출',
-    nameEn: 'Data Exfiltration',
-    icon: '📤',
-    desc: '비밀정보 모델 노출, PII 유출, 비정상 파일 전송',
-    prdRef: '§15.3',
-    severity: 'critical',
-    rules: [
-      { id: 'exfil-rrn', name: '주민등록번호', nameEn: 'Korean RRN', pattern: '\\d{6}-\\d{7}', action: 'block' },
-      { id: 'exfil-business', name: '사업자등록번호', nameEn: 'Business Registration', pattern: '\\d{3}-\\d{2}-\\d{5}', action: 'mask' },
-      { id: 'exfil-aws', name: 'AWS 접근키', nameEn: 'AWS Access Key', pattern: 'AKIA[A-Z0-9]{16}', action: 'block' },
-      { id: 'exfil-private-key', name: '개인키', nameEn: 'Private Key', pattern: '-----BEGIN.*PRIVATE KEY', action: 'block' },
-      { id: 'exfil-jwt', name: 'JWT 토큰', nameEn: 'JWT Token', pattern: 'eyJ[a-zA-Z0-9_-]+', action: 'block' },
-      { id: 'exfil-github', name: 'GitHub PAT', nameEn: 'GitHub Token', pattern: 'gh[pousr]_[A-Za-z0-9]{36}', action: 'block' },
-      { id: 'exfil-file', name: '비정상 대용량 파일 전송', nameEn: 'Abnormal File Transfer', pattern: '>100MB outbound transfer', action: 'review' },
-    ]
-  },
-  {
-    id: 'supplychain',
-    name: '공급망 · 코드 보안',
-    nameEn: 'Supply Chain & Code Security',
-    icon: '📦',
-    desc: '취약한 의존성, 금지 라이선스, 승인되지 않은 패키지',
-    prdRef: '§15.3',
-    severity: 'high',
-    rules: [
-      { id: 'sc-vuln', name: '취약한 의존성 (임계치 초과)', nameEn: 'Vulnerable Dependency', pattern: 'CVSS > policy threshold', action: 'block' },
-      { id: 'sc-license', name: '금지 라이선스', nameEn: 'Prohibited License', pattern: 'GPL/AGPL in proprietary repo', action: 'block' },
-      { id: 'sc-crypto', name: '금지 암호화 알고리즘', nameEn: 'Prohibited Crypto', pattern: 'MD5, SHA1, DES, RC4', action: 'block' },
-      { id: 'sc-mcp', name: '승인되지 않은 MCP 서버', nameEn: 'Unapproved MCP Server', pattern: 'MCP not in org allowlist', action: 'block' },
-      { id: 'sc-package', name: '공급망 패키지 위험', nameEn: 'Supply Chain Package Risk', pattern: 'typosquat/known-malicious pkg', action: 'block' },
-    ]
-  },
-  {
-    id: 'infra',
-    name: '인프라 공격',
-    nameEn: 'Infrastructure Attacks',
-    icon: '🏗️',
-    desc: '샌드박스 탈출, 엔드포인트 우회, 모델 증명 손실',
-    prdRef: '§15.3, §35.2',
-    severity: 'critical',
-    rules: [
-      { id: 'infra-sandbox', name: '샌드박스 탈출 지표', nameEn: 'Sandbox Escape', pattern: 'unexpected process tree, priv escalation', action: 'block' },
-      { id: 'infra-endpoint', name: '엔드포인트 우회 (직접 vLLM)', nameEn: 'Endpoint Bypass', pattern: 'raw vLLM direct access', action: 'block' },
-      { id: 'infra-attest', name: '모델 엔드포인트 증명 손실', nameEn: 'Endpoint Attestation Loss', pattern: 'PIA attestation expired/invalid', action: 'block' },
-      { id: 'infra-mismatch', name: '모델 아티팩트 불일치', nameEn: 'Model Artifact Mismatch', pattern: 'PMP digest mismatch', action: 'block' },
-      { id: 'infra-downgrade', name: '프로토콜 다운그레이드', nameEn: 'Protocol Downgrade', pattern: 'PAPER→HTTP fallback attempt', action: 'block' },
-    ]
-  },
-  {
-    id: 'evasion',
-    name: '정책 우회',
-    nameEn: 'Policy Evasion',
-    icon: '🕵️',
-    desc: '보안 정책 회피, 난독화, 보호 브랜치 쓰기, 감사 회피',
-    prdRef: '§15.3, §10C.10',
-    severity: 'high',
-    rules: [
-      { id: 'evade-obfuscation', name: '난독화/인코딩 우회', nameEn: 'Obfuscation/Encoding', pattern: 'base64/hex encoded payloads to bypass DLP', action: 'block' },
-      { id: 'evade-protected', name: '보호 브랜치 쓰기 시도', nameEn: 'Protected Branch Write', pattern: 'direct push to main/release/prod', action: 'block' },
-      { id: 'evade-tamper', name: '정책/설정 변조', nameEn: 'Policy/Config Tampering', pattern: 'unauthorized config modification', action: 'block' },
-      { id: 'evade-audit', name: '감사 파이프라인 중단', nameEn: 'Audit Pipeline Interruption', pattern: 'provenance gap, event spine down', action: 'alert' },
-      { id: 'evade-provenance', name: '프로바이던스 위조', nameEn: 'Provenance Forgery', pattern: 'faked AI/human attribution', action: 'block' },
-    ]
-  },
-  {
-    id: 'capacity',
-    name: '용량 남용',
-    nameEn: 'Capacity Abuse',
-    icon: '⚡',
-    desc: 'GPU 고갈, 과도한 토큰 사용, 동시 하네스 한도 우회',
-    prdRef: '§10C.7-8, §35.2',
-    severity: 'medium',
-    rules: [
-      { id: 'cap-gpu', name: 'GPU 고갈 (다중 무거운 에이전트)', nameEn: 'GPU Starvation', pattern: 'many heavy-context agents from one account', action: 'throttle' },
-      { id: 'cap-token', name: '과도한 토큰/컨텍스트 사용', nameEn: 'Excessive Token/Context Use', pattern: '>90% capacity sustained', action: 'throttle' },
-      { id: 'cap-quota', name: '동시 하네스 할당량 우회', nameEn: 'Concurrent Harness Quota Bypass', pattern: 'work slot count exceeds lease', action: 'block' },
-    ]
-  },
-]
+// Pattern presets — plain-language options, no regex visible to user
+const PATTERN_PRESETS = {
+  pii: [
+    { id: 'kr-rrn', label: '주민등록번호 (Korean Resident Registration)', desc: '6자리-7자리 형식', value: '\\d{6}-\\d{7}' },
+    { id: 'kr-business', label: '사업자등록번호 (Business Registration)', desc: '3자리-2자리-5자리 형식', value: '\\d{3}-\\d{2}-\\d{5}' },
+    { id: 'kr-phone', label: '한국 전화번호 (Korean Phone)', desc: '0XX-XXXX-XXXX 형식', value: '0\\d{1,2}-\\d{3,4}-\\d{4}' },
+    { id: 'kr-account', label: '은행 계좌번호 (Bank Account)', desc: '은행 계좌 번호 패턴', value: '\\d{3}-\\d{6,8}-\\d{3}' },
+  ],
+  secret: [
+    { id: 'aws-key', label: 'AWS 접근 키 (AWS Access Key)', desc: 'AKIA로 시작하는 20자리 키', value: 'AKIA[A-Z0-9]{16}' },
+    { id: 'jwt', label: 'JWT 토큰 (JSON Web Token)', desc: 'eyJ로 시작하는 토큰', value: 'eyJ[a-zA-Z0-9_-]+' },
+    { id: 'private-key', label: '개인키 (Private Key)', desc: 'PEM 형식 개인키', value: '-----BEGIN.*PRIVATE KEY' },
+    { id: 'github-pat', label: 'GitHub 토큰 (GitHub PAT)', desc: 'ghp_/ghs_ 등으로 시작', value: 'gh[pousr]_[A-Za-z0-9]{36}' },
+    { id: 'generic-api-key', label: '일반 API 키 (Generic API Key)', desc: '32자리 이상의 영숫자 키', value: '[a-zA-Z0-9]{32,}' },
+  ],
+  injection: [
+    { id: 'ignore-instructions', label: '명령어 무시 (Ignore Previous Instructions)', desc: '"이전 지시 무시" 등의 재정의 시도', value: 'ignore.*previous.*instructions' },
+    { id: 'jailbreak', label: '탈옥 시도 (Jailbreak)', desc: 'DAN, 개발자 모드 등 보안 해제 시도', value: '(jailbreak|DAN|developer.mode|system.prompt)' },
+    { id: 'bypass-guard', label: '보안 장치 우회 (Bypass Safety)', desc: '필터/가드 무시 시도', value: '(bypass.*filter|ignore.*safety|disable.*guard)' },
+    { id: 'reveal-credentials', label: '자격증명 노출 (Credential Exposure)', desc: '시스템 프롬프트/API 키 출력 시도', value: '(show.*system.*prompt|reveal.*api.*key|print.*env)' },
+    { id: 'indirect-injection', label: '간접 인젝션 (Indirect via Code)', desc: '코드/주석에 숨겨진 인젝션', value: '(<!--.*ignore.*-->|{{.*system.*}}|eval.*prompt)' },
+  ],
+  behavior: [
+    { id: 'high-volume', label: '대량 요청 (High Volume Requests)', desc: '분당 100회 이상 자동 요청', value: '__BEHAVIOR_HIGH_VOLUME__' },
+    { id: 'no-human-latency', label: '봇 패턴 (Bot-like Usage)', desc: '사용자 대기 시간이 없는 API적 사용', value: '__BEHAVIOR_BOT_PATTERN__' },
+    { id: 'rapid-enroll', label: '빠른 등록/해지 (Rapid Enroll/Revoke)', desc: '1시간 내 5회 이상 등록/해지', value: '__BEHAVIOR_RAPID_ENROLL__' },
+    { id: 'large-transfer', label: '대용량 전송 (Large File Transfer)', desc: '100MB 이상 외부 전송', value: '__BEHAVIOR_LARGE_TRANSFER__' },
+  ],
+  code: [
+    { id: 'weak-crypto', label: '취약한 암호화 (Weak Crypto)', desc: 'MD5, SHA1, DES, RC4 사용', value: '__CODE_WEAK_CRYPTO__' },
+    { id: 'prohibited-license', label: '금지 라이선스 (Prohibited License)', desc: 'GPL/AGPL in proprietary repo', value: '__CODE_BAD_LICENSE__' },
+    { id: 'vulnerable-dep', label: '취약한 의존성 (Vulnerable Dependency)', desc: 'CVSS 임계치 초과 패키지', value: '__CODE_VULN_DEP__' },
+    { id: 'unapproved-mcp', label: '승인되지 않은 MCP (Unapproved MCP)', desc: '조직 허용 목록 외 MCP 서버', value: '__CODE_UNAPPROVED_MCP__' },
+  ],
+  infra: [
+    { id: 'sandbox-escape', label: '샌드박스 탈출 (Sandbox Escape)', desc: '권한 상승, 예상치 못한 프로세스', value: '__INFRA_SANDBOX_ESCAPE__' },
+    { id: 'endpoint-bypass', label: '엔드포인트 우회 (Endpoint Bypass)', desc: 'vLLM/SGLang 직접 접근 시도', value: '__INFRA_ENDPOINT_BYPASS__' },
+    { id: 'attestation-loss', label: '증명 손실 (Attestation Loss)', desc: 'PIA 증명 만료/무효', value: '__INFRA_ATTESTATION_LOSS__' },
+    { id: 'protocol-downgrade', label: '프로토콜 다운그레이드 (Protocol Downgrade)', desc: 'PAPER → HTTP 폴백 시도', value: '__INFRA_PROTOCOL_DOWNGRADE__' },
+  ],
+}
+
+const CATEGORY_INFO = {
+  pii: { ko: '개인정보', en: 'PII Detection', icon: '🆔', desc: '한국 개인정보(주민번호, 사업자번호 등) 감지' },
+  secret: { ko: '비밀정보', en: 'Secret Scanning', icon: '🔑', desc: 'API 키, 토큰, 개인키 등 민감 정보 감지' },
+  injection: { ko: '프롬프트 인젝션', en: 'Prompt Injection', icon: '🧪', desc: '명령어 재정의, 탈옥, 제어 우회 시도' },
+  behavior: { ko: '행동 분석', en: 'Behavioral Analysis', icon: '📊', desc: '사용량 패턴, 봇 감지, 비정상 행동' },
+  code: { ko: '코드 보안', en: 'Code Security', icon: '📦', desc: '취약한 의존성, 금지 라이선스, 암호화' },
+  infra: { ko: '인프라 보안', en: 'Infrastructure', icon: '🏗️', desc: '샌드박스, 엔드포인트, 프로토콜 공격' },
+}
+
+const SEVERITY_INFO = {
+  critical: { ko: '치명적', color: 'badge-red', desc: '즉시 차단 필요' },
+  high: { ko: '높음', color: 'badge-red', desc: '빠른 대응 필요' },
+  medium: { ko: '중간', color: 'badge-yellow', desc: '검토 후 대응' },
+  low: { ko: '낮음', color: 'badge-blue', desc: '기록 및 모니터링' },
+}
+
+const ACTION_INFO = {
+  block: { ko: '차단', color: 'badge-red', desc: '요청 즉시 거부' },
+  mask: { ko: '마스킹', color: 'badge-yellow', desc: '민감 정보 마스킹 후 허용' },
+  throttle: { ko: '속도 제한', color: 'badge-blue', desc: '요청 빈도 제한' },
+  review: { ko: '검토 요청', color: 'badge-yellow', desc: '관리자 검토 대기' },
+  alert: { ko: '알림만', color: 'badge-gray', desc: '기록 및 알림, 허용' },
+  stepup: { ko: '재인증', color: 'badge-blue', desc: '추가 인증 요구' },
+}
+
+type Rule = {
+  id: string
+  name: string
+  nameEn: string
+  category: string
+  severity: string
+  action: string
+  presetId: string
+  pattern: string
+  enabled: boolean
+}
+
+// Default rules built from presets
+function buildDefaultRules(): Rule[] {
+  const rules: Rule[] = []
+  Object.entries(PATTERN_PRESETS).forEach(([cat, presets]) => {
+    presets.forEach(p => {
+      const sev = cat === 'pii' || cat === 'secret' ? 'critical' : cat === 'injection' || cat === 'infra' ? 'critical' : cat === 'behavior' ? 'medium' : 'high'
+      const act = cat === 'pii' ? 'mask' : 'block'
+      rules.push({
+        id: `${cat}-${p.id}`,
+        name: p.label.split('(')[0].trim(),
+        nameEn: p.label.match(/\(([^)]+)\)/)?.[1] || p.id,
+        category: cat,
+        severity: sev,
+        action: cat === 'pii' && p.id !== 'kr-rrn' && p.id !== 'kr-account' ? 'mask' : act,
+        presetId: p.id,
+        pattern: p.value,
+        enabled: true,
+      })
+    })
+  })
+  return rules
+}
 
 type Finding = {
   id: string; finding_type: string; severity: string; title: string;
@@ -138,229 +109,237 @@ type Finding = {
 }
 
 export default function Security() {
-  const [tab, setTab] = useState<'dashboard' | 'threats' | 'findings' | 'scanner'>('dashboard')
+  const [tab, setTab] = useState<'dashboard' | 'rules' | 'findings' | 'scanner'>('dashboard')
+  const [rules, setRules] = useState<Rule[]>(buildDefaultRules())
   const [scanText, setScanText] = useState('')
   const [scanResult, setScanResult] = useState<any>(null)
   const [findings, setFindings] = useState<Finding[]>([])
   const [stats, setStats] = useState({ critical: 0, high: 0, medium: 0, open: 0, total: 0 })
+  const [showBuilder, setShowBuilder] = useState(false)
+  const [editingRule, setEditingRule] = useState<Rule | null>(null)
 
   useEffect(() => {
     fetch('/api/analytics/security', { headers: authHeaders() })
-      .then(r => r.json())
-      .then(data => {
+      .then(r => r.json()).then(data => {
         const s = data || {}
         setStats({
-          critical: s.critical_count || 0,
-          high: s.high_count || 0,
+          critical: s.critical_count || 0, high: s.high_count || 0,
           medium: (s.total_findings || 0) - (s.critical_count || 0) - (s.high_count || 0),
-          open: s.open_count || 0,
-          total: s.total_findings || 0,
+          open: s.open_count || 0, total: s.total_findings || 0,
         })
-      })
-      .catch(() => {})
+      }).catch(() => {})
     fetch('/api/security/findings', { headers: authHeaders() })
-      .then(r => r.json())
-      .then(data => setFindings(Array.isArray(data) ? data : []))
+      .then(r => r.json()).then(data => setFindings(Array.isArray(data) ? data : []))
       .catch(() => {})
   }, [])
 
   const runScan = async () => {
     if (!scanText) return
-    try {
-      const r = await api.securityCheck(scanText)
-      setScanResult(r)
-    } catch (e: any) {
-      setScanResult({ error: e.message })
+    try { setScanResult(await api.securityCheck(scanText)) } catch (e: any) { setScanResult({ error: e.message }) }
+  }
+
+  const saveRule = (rule: Rule) => {
+    if (editingRule) {
+      setRules(rs => rs.map(r => r.id === rule.id ? rule : r))
+    } else {
+      setRules(rs => [...rs, { ...rule, id: `${rule.category}-${Date.now()}` }])
+    }
+    // Persist to backend
+    fetch('/api/security/policy', {
+      method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rule_id: rule.id, enabled: rule.enabled, severity: rule.severity, action: rule.action }),
+    }).catch(() => {})
+    setShowBuilder(false)
+    setEditingRule(null)
+  }
+
+  const deleteRule = (id: string) => {
+    if (!confirm('이 규칙을 삭제하시겠습니까?')) return
+    setRules(rs => rs.filter(r => r.id !== id))
+  }
+
+  const toggleRule = (id: string) => {
+    setRules(rs => rs.map(r => r.id === id ? { ...r, enabled: !r.enabled } : r))
+    const rule = rules.find(r => r.id === id)
+    if (rule) {
+      fetch('/api/security/policy', {
+        method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rule_id: id, enabled: !rule.enabled }),
+      }).catch(() => {})
     }
   }
 
-  const sevBadge = (s: string) => s === 'critical' ? 'badge-red' : s === 'high' ? 'badge-red' : s === 'medium' ? 'badge-yellow' : 'badge-blue'
-  const sevText = (s: string) => s === 'critical' ? '치명적' : s === 'high' ? '높음' : s === 'medium' ? '중간' : '낮음'
-  const statusBadge = (s: string) => s === 'open' ? 'badge-red' : s === 'investigating' ? 'badge-yellow' : s === 'resolved' ? 'badge-green' : 'badge-gray'
-  const actionBadge = (a: string) => {
-    const m: Record<string,string> = { block: 'badge-red', mask: 'badge-yellow', throttle: 'badge-blue', review: 'badge-yellow', alert: 'badge-gray', stepup: 'badge-blue' }
-    return m[a] || 'badge-gray'
-  }
-  const actionText = (a: string) => {
-    const m: Record<string,string> = { block: '차단', mask: '마스킹', throttle: '제한', review: '검토', alert: '알림', stepup: '재인증' }
-    return m[a] || a
-  }
-
+  const sevBadge = (s: string) => SEVERITY_INFO[s]?.color || 'badge-gray'
+  const actionBadge = (a: string) => ACTION_INFO[a]?.color || 'badge-gray'
+  const statusBadge = (s: string) => s === 'open' ? 'badge-red' : s === 'investigating' ? 'badge-yellow' : 'badge-green'
   const postureScore = stats.total === 0 ? 100 : Math.max(0, 100 - stats.critical * 25 - stats.high * 10 - stats.open * 5)
 
   return (
     <div>
       <h1 className="text-2xl font-bold mb-1">보안 운영 센터 <span className="text-gray-400 text-lg font-normal">Security Operations Center</span></h1>
-      <p className="text-xs text-gray-400 mb-6">AI 코딩 위협 탐지 및 대응 · Threat detection per PRD §15, §35</p>
+      <p className="text-xs text-gray-400 mb-6">AI 코딩 위협 탐지 및 대응 · Threat Detection & Response</p>
 
-      {/* Tab navigation */}
       <div className="flex gap-1 mb-6 border-b border-gray-200">
         {[
-          { id: 'dashboard', label: '보안 현황', labelEn: 'Dashboard' },
-          { id: 'threats', label: '위협 카탈로그', labelEn: 'Threat Catalog' },
-          { id: 'findings', label: '보안 발견', labelEn: 'Findings' },
-          { id: 'scanner', label: '보안 검사', labelEn: 'Scanner' },
+          { id: 'dashboard', label: '보안 현황', en: 'Dashboard' },
+          { id: 'rules', label: '보안 규칙', en: 'Rules' },
+          { id: 'findings', label: '보안 발견', en: 'Findings' },
+          { id: 'scanner', label: '보안 검사', en: 'Scanner' },
         ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id as any)}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === t.id ? 'border-patty-600 text-patty-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-            {t.label} <span className="text-xs text-gray-400">{t.labelEn}</span>
+            {t.label} <span className="text-xs text-gray-400">{t.en}</span>
           </button>
         ))}
       </div>
 
-      {/* Dashboard Tab */}
+      {/* DASHBOARD */}
       {tab === 'dashboard' && (
         <div>
           <div className="grid grid-cols-4 gap-4 mb-6">
-            <div className="card col-span-1">
-              <div className="text-center">
-                <div className={`text-5xl font-bold ${postureScore >= 80 ? 'text-green-600' : postureScore >= 50 ? 'text-yellow-600' : 'text-red-600'}`}>{postureScore}</div>
-                <div className="text-sm text-gray-500 mt-1">보안 점수 · Security Score</div>
-              </div>
-            </div>
+            <div className="card"><div className="text-center">
+              <div className={`text-5xl font-bold ${postureScore >= 80 ? 'text-green-600' : postureScore >= 50 ? 'text-yellow-600' : 'text-red-600'}`}>{postureScore}</div>
+              <div className="text-sm text-gray-500 mt-1">보안 점수</div></div></div>
             <div className="card col-span-3">
-              <h3 className="text-sm font-medium text-gray-700 mb-3">위협 현황 · Threat Summary</h3>
+              <h3 className="text-sm font-medium text-gray-700 mb-3">위협 현황</h3>
               <div className="grid grid-cols-4 gap-4">
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-red-600">{stats.critical}</div>
-                  <div className="text-xs text-gray-500">치명적 · Critical</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-orange-600">{stats.high}</div>
-                  <div className="text-xs text-gray-500">높음 · High</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-yellow-600">{stats.medium}</div>
-                  <div className="text-xs text-gray-500">중간 · Medium</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-blue-600">{stats.open}</div>
-                  <div className="text-xs text-gray-500">미해결 · Open</div>
-                </div>
+                <div className="text-center"><div className="text-2xl font-bold text-red-600">{stats.critical}</div><div className="text-xs text-gray-500">치명적</div></div>
+                <div className="text-center"><div className="text-2xl font-bold text-orange-600">{stats.high}</div><div className="text-xs text-gray-500">높음</div></div>
+                <div className="text-center"><div className="text-2xl font-bold text-yellow-600">{stats.medium}</div><div className="text-xs text-gray-500">중간</div></div>
+                <div className="text-center"><div className="text-2xl font-bold text-blue-600">{stats.open}</div><div className="text-xs text-gray-500">미해결</div></div>
               </div>
             </div>
           </div>
 
-          {/* Threat categories overview */}
-          <div className="grid grid-cols-2 gap-4 mb-6">
-            {THREAT_CATEGORIES.map(cat => (
-              <div key={cat.id} className="card">
-                <div className="flex items-start gap-3 mb-2">
-                  <span className="text-2xl">{cat.icon}</span>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-sm font-semibold">{cat.name}</h4>
-                      <span className={sevBadge(cat.severity)}>{sevText(cat.severity)}</span>
+          {/* Category cards */}
+          <div className="grid grid-cols-3 gap-3 mb-6">
+            {Object.entries(CATEGORY_INFO).map(([id, info]) => {
+              const catRules = rules.filter(r => r.category === id && r.enabled)
+              return (
+                <div key={id} className="card">
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">{info.icon}</span>
+                    <div className="flex-1">
+                      <h4 className="text-sm font-semibold">{info.ko}</h4>
+                      <p className="text-xs text-gray-400">{info.en}</p>
+                      <p className="text-xs text-gray-500 mt-1">{info.desc}</p>
                     </div>
-                    <p className="text-xs text-gray-400">{cat.nameEn} <span className="ml-1">({cat.prdRef})</span></p>
+                    <span className="badge-gray">{catRules.length} 규칙</span>
                   </div>
-                  <span className="badge-gray">{cat.rules.length} 규칙</span>
                 </div>
-                <p className="text-xs text-gray-500">{cat.desc}</p>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
-          {/* Incident Response */}
+          {/* Emergency */}
           <div className="card">
-            <h3 className="text-sm font-semibold mb-3">인시던트 대응 · Incident Response (§15.4)</h3>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-sm font-medium mb-1">세션 격리 · Session</div>
-                <p className="text-xs text-gray-500">세션 일시정지, 모델/도구 중지, 샌드박스 보존</p>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-sm font-medium mb-1">하네스 격리 · Harness</div>
-                <p className="text-xs text-gray-500">인증서 회수, 통신 차단, 재등록 필요</p>
-              </div>
-              <div className="bg-red-50 rounded-lg p-3">
-                <div className="text-sm font-medium mb-1 text-red-700">조직 잠금 · Lockdown</div>
-                <p className="text-xs text-gray-500">전체 에이전트 중지, 클라우드 모델 차단</p>
-              </div>
-            </div>
-            <button className="btn-danger w-full text-sm mt-3" onClick={async () => {
-              if (!confirm('정말로 전체 조직을 잠금하시겠습니까? 모든 AI 세션이 중지됩니다.')) return
-              try {
-                const res = await fetch('/api/security/lockdown', { method: 'POST', headers: authHeaders() })
-                if (res.ok) alert('긴급 잠금이 활성화되었습니다.')
-              } catch { alert('잠금 실패') }
+            <h3 className="text-sm font-semibold mb-3">인시던트 대응</h3>
+            <button className="btn-danger w-full text-sm" onClick={async () => {
+              if (!confirm('전체 조직을 잠금하시겠습니까? 모든 AI 세션이 중지됩니다.')) return
+              try { await fetch('/api/security/lockdown', { method: 'POST', headers: authHeaders() }); alert('긴급 잠금 활성화') } catch { alert('실패') }
             }}>⚠ 긴급 조직 잠금 · Emergency Lockdown</button>
           </div>
         </div>
       )}
 
-      {/* Threats Tab — full catalog */}
-      {tab === 'threats' && (
+      {/* RULES — full CRUD with builder */}
+      {tab === 'rules' && (
         <div>
-          <p className="text-xs text-gray-400 mb-4">PRD §15.3 초기 알림 카탈로그 + §35 위협 모델 기반 · 8개 위협 카테고리, {THREAT_CATEGORIES.reduce((a, c) => a + c.rules.length, 0)}개 탐지 규칙</p>
-          {THREAT_CATEGORIES.map(cat => (
-            <div key={cat.id} className="card mb-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">{cat.icon}</span>
-                  <div>
-                    <h4 className="text-sm font-semibold">{cat.name}</h4>
-                    <p className="text-xs text-gray-400">{cat.nameEn} · {cat.prdRef} · {cat.desc}</p>
-                  </div>
-                </div>
-                <span className={sevBadge(cat.severity)}>{sevText(cat.severity)}</span>
-              </div>
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
-                    <th className="pb-2">위협</th>
-                    <th className="pb-2">탐지 패턴</th>
-                    <th className="pb-2">조치</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cat.rules.map(r => (
-                    <tr key={r.id} className="border-b border-gray-50 last:border-0">
-                      <td className="py-2">
-                        <div className="text-sm font-medium">{r.name}</div>
-                        <div className="text-xs text-gray-400">{r.nameEn}</div>
-                      </td>
-                      <td className="py-2"><code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded">{r.pattern}</code></td>
-                      <td className="py-2"><span className={actionBadge(r.action)}>{actionText(r.action)}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div className="flex justify-between items-center mb-4">
+            <div>
+              <h3 className="text-lg font-semibold">보안 규칙 관리 · Security Rules</h3>
+              <p className="text-xs text-gray-400">{rules.filter(r => r.enabled).length}개 활성 / {rules.length}개 전체 · 규칙을 클릭하여 편집/삭제</p>
             </div>
-          ))}
+            <button onClick={() => { setEditingRule(null); setShowBuilder(true) }} className="btn-primary text-sm">+ 새 규칙 만들기</button>
+          </div>
+
+          {/* Rule Builder Modal */}
+          {showBuilder && (
+            <RuleBuilder
+              rule={editingRule}
+              onSave={saveRule}
+              onCancel={() => { setShowBuilder(false); setEditingRule(null) }}
+            />
+          )}
+
+          {/* Rules grouped by category */}
+          {Object.entries(CATEGORY_INFO).map(([catId, catInfo]) => {
+            const catRules = rules.filter(r => r.category === catId)
+            if (catRules.length === 0) return null
+            return (
+              <div key={catId} className="card mb-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-xl">{catInfo.icon}</span>
+                  <h4 className="text-sm font-semibold">{catInfo.ko} <span className="text-gray-400 font-normal">{catInfo.en}</span></h4>
+                  <span className="text-xs text-gray-400 ml-auto">{catInfo.desc}</span>
+                </div>
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
+                      <th className="pb-2">규칙 이름</th>
+                      <th className="pb-2">설명</th>
+                      <th className="pb-2">심각도</th>
+                      <th className="pb-2">조치</th>
+                      <th className="pb-2">활성</th>
+                      <th className="pb-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {catRules.map(r => {
+                      const preset = PATTERN_PRESETS[r.category as keyof typeof PATTERN_PRESETS]?.find(p => p.id === r.presetId)
+                      return (
+                        <tr key={r.id} className="border-b border-gray-50 last:border-0 hover:bg-blue-50/20">
+                          <td className="py-2.5">
+                            <div className="text-sm font-medium">{r.name}</div>
+                            <div className="text-xs text-gray-400">{r.nameEn}</div>
+                          </td>
+                          <td className="py-2.5 text-xs text-gray-500 max-w-xs">{preset?.desc || '-'}</td>
+                          <td className="py-2.5"><span className={sevBadge(r.severity)}>{SEVERITY_INFO[r.severity]?.ko}</span></td>
+                          <td className="py-2.5"><span className={actionBadge(r.action)}>{ACTION_INFO[r.action]?.ko}</span></td>
+                          <td className="py-2.5">
+                            <button onClick={() => toggleRule(r.id)}
+                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${r.enabled ? 'bg-patty-600' : 'bg-gray-300'}`}>
+                              <span className={`inline-block h-3 w-3 rounded-full bg-white transition-transform ${r.enabled ? 'translate-x-5' : 'translate-x-1'}`} />
+                            </button>
+                          </td>
+                          <td className="py-2.5">
+                            <div className="flex gap-2">
+                              <button onClick={() => { setEditingRule(r); setShowBuilder(true) }} className="text-xs text-blue-600 hover:underline">편집</button>
+                              <button onClick={() => deleteRule(r.id)} className="text-xs text-red-600 hover:underline">삭제</button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+          })}
         </div>
       )}
 
-      {/* Findings Tab */}
+      {/* FINDINGS */}
       {tab === 'findings' && (
         <div className="card">
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-semibold">보안 발견 목록 · Security Findings</h3>
-            <div className="flex gap-3 items-center">
-              <span className="text-sm text-gray-500">{findings.length}건</span>
-              {findings.length > 0 && (
-                <button onClick={() => {
-                  const csv = ['timestamp,type,severity,title,status,session_id']
-                  findings.forEach(f => { csv.push([f.occurred_at, f.finding_type, f.severity, (f.title_ko || f.title || '').replace(/,/g, ';'), f.status, f.session_id || ''].join(',')) })
-                  const blob = new Blob([csv.join('\n')], { type: 'text/csv' })
-                  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'security_findings.csv'; a.click()
-                }} className="btn-sm btn-secondary">CSV 내보내기</button>
-              )}
-            </div>
+            <h3 className="text-lg font-semibold">보안 발견 목록 · Findings</h3>
+            {findings.length > 0 && (
+              <button onClick={() => {
+                const csv = ['timestamp,type,severity,title,status,session_id']
+                findings.forEach(f => { csv.push([f.occurred_at, f.finding_type, f.severity, (f.title_ko || f.title || '').replace(/,/g, ';'), f.status, f.session_id || ''].join(',')) })
+                const blob = new Blob([csv.join('\n')], { type: 'text/csv' })
+                const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'security_findings.csv'; a.click()
+              }} className="btn-sm btn-secondary">CSV</button>
+            )}
           </div>
           {findings.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="text-4xl mb-3">✅</div>
-              <p className="text-gray-500">활성 보안 발견이 없습니다.</p>
-            </div>
+            <div className="text-center py-12"><div className="text-4xl mb-3">✅</div><p className="text-gray-500">활성 보안 발견이 없습니다.</p></div>
           ) : (
             <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-200 text-left text-sm text-gray-500">
-                  <th className="pb-3">유형</th><th className="pb-3">심각도</th><th className="pb-3">제목</th>
-                  <th className="pb-3">상태</th><th className="pb-3">시간</th>
-                </tr>
-              </thead>
+              <thead><tr className="border-b border-gray-200 text-left text-sm text-gray-500">
+                <th className="pb-3">유형</th><th className="pb-3">심각도</th><th className="pb-3">제목</th><th className="pb-3">상태</th><th className="pb-3">시간</th>
+              </tr></thead>
               <tbody>
                 {findings.map(f => (
                   <tr key={f.id} className="border-b border-gray-100 last:border-0">
@@ -377,26 +356,23 @@ export default function Security() {
         </div>
       )}
 
-      {/* Scanner Tab */}
+      {/* SCANNER */}
       {tab === 'scanner' && (
         <div className="card">
-          <h3 className="text-lg font-semibold mb-3">보안 검사 도구 · Security Scanner</h3>
-          <p className="text-sm text-gray-500 mb-4">텍스트를 입력하여 DLP/시크릿/인젝션 탐지 규칙을 테스트합니다.</p>
-          <textarea className="input font-mono text-sm mb-3" rows={4}
-            value={scanText} onChange={e => setScanText(e.target.value)}
-            placeholder="주민번호: 901225-1234567, AWS_KEY=AKIAABCDEFGHIJKLMNOP, ignore previous instructions..." />
-          <button onClick={runScan} disabled={!scanText} className="btn-primary text-sm">보안 검사 실행 · Scan</button>
+          <h3 className="text-lg font-semibold mb-3">보안 검사 도구 · Scanner</h3>
+          <p className="text-sm text-gray-500 mb-4">텍스트를 입력하여 보안 규칙을 테스트합니다. 관리자가 규칙을 검증하는 데 사용됩니다.</p>
+          <textarea className="input font-mono text-sm mb-3" rows={4} value={scanText}
+            onChange={e => setScanText(e.target.value)}
+            placeholder="예: 주민번호 901225-1234567, AWS 키 AKIAABCDEFGHIJKLMNOP, ignore previous instructions..." />
+          <button onClick={runScan} disabled={!scanText} className="btn-primary text-sm">검사 실행</button>
           {scanResult && (
             <div className="mt-6">
-              <div className="flex items-center gap-3 mb-4">
-                <span className="text-sm font-medium">결과:</span>
-                <span className={scanResult.passed ? 'badge-green' : scanResult.verdict === 'DENY' ? 'badge-red' : 'badge-yellow'}>
-                  {scanResult.verdict === 'DENY' ? '차단 (DENY)' : scanResult.verdict === 'REQUIRE_REVIEW' ? '검토 필요' : '통과 (ALLOW)'}
-                </span>
-              </div>
-              {scanResult.findings && scanResult.findings.length > 0 ? (
-                <table className="w-full">
-                  <thead><tr className="border-b border-gray-200 text-left text-sm text-gray-500">
+              <span className={scanResult.passed ? 'badge-green' : scanResult.verdict === 'DENY' ? 'badge-red' : 'badge-yellow'}>
+                {scanResult.verdict === 'DENY' ? '🚫 차단됨' : scanResult.verdict === 'REQUIRE_REVIEW' ? '⚠️ 검토 필요' : '✅ 통과'}
+              </span>
+              {scanResult.findings?.length > 0 && (
+                <table className="w-full mt-3">
+                  <thead><tr className="border-b text-left text-sm text-gray-500">
                     <th className="pb-2">유형</th><th className="pb-2">심각도</th><th className="pb-2">항목</th><th className="pb-2">매칭</th>
                   </tr></thead>
                   <tbody>
@@ -410,12 +386,112 @@ export default function Security() {
                     ))}
                   </tbody>
                 </table>
-              ) : scanResult.passed ? <p className="text-green-600 text-sm">✓ 위반 사항 없음</p>
-                : <p className="text-red-600 text-sm">{scanResult.error || '검사 실패'}</p>}
+              )}
+              {scanResult.passed && <p className="text-green-600 text-sm mt-3">✅ 위반 사항이 없습니다.</p>}
             </div>
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Rule Builder Component ───────────────────────────────────
+function RuleBuilder({ rule, onSave, onCancel }: { rule: Rule | null; onSave: (r: Rule) => void; onCancel: () => void }) {
+  const [category, setCategory] = useState(rule?.category || 'pii')
+  const [presetId, setPresetId] = useState(rule?.presetId || '')
+  const [name, setName] = useState(rule?.name || '')
+  const [severity, setSeverity] = useState(rule?.severity || 'high')
+  const [action, setAction] = useState(rule?.action || 'block')
+  const [enabled, setEnabled] = useState(rule?.enabled ?? true)
+
+  const presets = PATTERN_PRESETS[category as keyof typeof PATTERN_PRESETS] || []
+  const selectedPreset = presets.find(p => p.id === presetId)
+
+  const handlePresetChange = (id: string) => {
+    setPresetId(id)
+    const p = presets.find(x => x.id === id)
+    if (p) setName(p.label.split('(')[0].trim())
+  }
+
+  const handleSave = () => {
+    if (!presetId || !name) { alert('패턴과 이름을 선택하세요'); return }
+    const p = presets.find(x => x.id === presetId)
+    onSave({
+      id: rule?.id || `${category}-${Date.now()}`,
+      name, nameEn: p?.label.match(/\(([^)]+)\)/)?.[1] || name,
+      category, severity, action, presetId,
+      pattern: p?.value || '',
+      enabled,
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onCancel}>
+      <div className="bg-white rounded-xl shadow-xl max-w-lg w-full mx-4" onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+          <h3 className="font-semibold">{rule ? '규칙 편집' : '새 보안 규칙'}</h3>
+          <button onClick={onCancel} className="text-gray-400 hover:text-gray-600">✕</button>
+        </div>
+        <div className="p-5 space-y-4">
+          {/* Category */}
+          <div>
+            <label className="label">위협 카테고리 · Threat Category</label>
+            <select className="input" value={category} onChange={e => { setCategory(e.target.value); setPresetId('') }}>
+              {Object.entries(CATEGORY_INFO).map(([id, info]) => (
+                <option key={id} value={id}>{info.icon} {info.ko} ({info.en})</option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-400 mt-1">{CATEGORY_INFO[category]?.desc}</p>
+          </div>
+
+          {/* Pattern Preset */}
+          <div>
+            <label className="label">탐지 대상 · What to Detect</label>
+            <select className="input" value={presetId} onChange={e => handlePresetChange(e.target.value)}>
+              <option value="">선택하세요 · Select...</option>
+              {presets.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+            </select>
+            {selectedPreset && <p className="text-xs text-blue-600 mt-1">📋 {selectedPreset.desc}</p>}
+          </div>
+
+          {/* Name */}
+          <div>
+            <label className="label">규칙 이름 · Rule Name</label>
+            <input className="input" value={name} onChange={e => setName(e.target.value)} />
+          </div>
+
+          {/* Severity + Action */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">심각도 · Severity</label>
+              <select className="input" value={severity} onChange={e => setSeverity(e.target.value)}>
+                {Object.entries(SEVERITY_INFO).map(([id, info]) => (
+                  <option key={id} value={id}>{info.ko} — {info.desc}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">조치 · Action</label>
+              <select className="input" value={action} onChange={e => setAction(e.target.value)}>
+                {Object.entries(ACTION_INFO).map(([id, info]) => (
+                  <option key={id} value={id}>{info.ko} — {info.desc}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Enabled */}
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} className="w-4 h-4" />
+            규칙 활성화 · Enable this rule
+          </label>
+        </div>
+        <div className="p-5 border-t border-gray-100 flex gap-2">
+          <button onClick={handleSave} className="btn-primary text-sm flex-1">{rule ? '수정 저장' : '규칙 생성'}</button>
+          <button onClick={onCancel} className="btn-secondary text-sm">취소</button>
+        </div>
+      </div>
     </div>
   )
 }

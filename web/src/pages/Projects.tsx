@@ -9,6 +9,7 @@ export default function Projects() {
   const [form, setForm] = useState({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard' })
 
   const [users, setUsers] = useState<any[]>([])
+  const [sessions, setSessions] = useState<any[]>([])
   const load = () => {
     api.listProjects().then(data => setProjects(Array.isArray(data) ? data : []))
     api.listSessions().then(data => setSessions(Array.isArray(data) ? data : []))
