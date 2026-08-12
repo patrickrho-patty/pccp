@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 	"log"
 	"net/http"
 	"time"
@@ -268,10 +270,36 @@ func (s *Server) setupRouter() {
 		r.Get("/dashboard", s.handleDashboard)
 	})
 
-	// Serve the React frontend (static files)
-	r.Handle("/*", http.FileServer(http.Dir("web/dist")))
+	// Serve the React frontend (static files with SPA fallback)
+	r.Handle("/*", spaHandler("web/dist"))
 
 	s.router = r
+}
+
+
+// spaHandler serves static files from the given directory with SPA fallback.
+// For paths that don't match a real file (like /login, /dashboard),
+// it serves index.html so React Router can handle client-side routing.
+func spaHandler(distDir string) http.Handler {
+	fs := http.FileServer(http.Dir(distDir))
+	indexPath := distDir + "/index.html"
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check if the file exists
+		path := distDir + r.URL.Path
+		if _, err := os.Stat(path); err == nil {
+			// File exists, serve it normally
+			fs.ServeHTTP(w, r)
+			return
+		}
+		// File doesn't exist — check if it's an API route
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/health") {
+			http.NotFound(w, r)
+			return
+		}
+		// SPA fallback: serve index.html
+		http.ServeFile(w, r, indexPath)
+	})
 }
 
 // ServeHTTP implements http.Handler.
