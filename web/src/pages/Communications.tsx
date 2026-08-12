@@ -84,7 +84,13 @@ export default function Communications() {
           {/* Conversation List */}
           <div className="w-64 card overflow-y-auto main-scroll">
             <div className="flex justify-between items-center mb-3">
-              <h3 className="text-sm font-semibold">대화 목록</h3>
+              <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold">대화 목록</h3>
+            <div className="flex items-center gap-1 text-xs">
+              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+              <span className="text-gray-400">온라인</span>
+            </div>
+          </div>
               <button onClick={createConversation} className="text-blue-600 text-xs hover:underline">+ 새 대화</button>
             </div>
             {conversations.length === 0 ? (
@@ -92,8 +98,11 @@ export default function Communications() {
             ) : conversations.map(c => (
               <div key={c.id} onClick={() => loadMessages(c.id)}
                 className={`p-2 rounded cursor-pointer mb-1 ${selectedConv === c.id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}>
-                <div className="text-sm font-medium">{c.title || '제목 없음'}</div>
-                <div className="text-xs text-gray-400">{c.type}</div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-green-500" />
+                  <div className="text-sm font-medium">{c.title || '제목 없음'}</div>
+                </div>
+                <div className="text-xs text-gray-400 ml-4">{c.type}</div>
               </div>
             ))}
           </div>
