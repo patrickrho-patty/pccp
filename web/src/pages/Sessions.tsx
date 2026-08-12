@@ -11,10 +11,11 @@ const FILTER_CONFIG: FilterConfig = {
       key: 'status',
       label: '상태',
       options: [
-        { value: 'active', label: '활성' },
-        { value: 'paused', label: '일시정지' },
-        { value: 'closed', label: '종료' },
-        { value: 'terminated', label: '강제종료' },
+        { value: 'active', label: '🟢 활성' },
+        { value: 'paused', label: '🟡 일시정지' },
+        { value: 'closed', label: '⚪ 종료' },
+        { value: 'terminated', label: '🔴 강제종료' },
+        { value: 'completed', label: '✅ 완료' },
       ],
     },
     {
@@ -137,7 +138,7 @@ export default function Sessions() {
 
       <div className="card">
         {paged.length === 0 ? (
-          <div className="text-center py-12"><p className="text-gray-400 mb-2">{filters.search ? '검색 결과가 없습니다' : '활성 세션이 없습니다'}</p></div>
+          <div className="text-center py-12"><p className="text-gray-400 mb-2">{filters.search ? '검색 결과가 없습니다' : '세션이 없습니다'}</p></div>
         ) : (
           <table className="w-full">
             <thead>
