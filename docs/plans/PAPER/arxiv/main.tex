@@ -1,0 +1,394 @@
+\documentclass[10pt,twocolumn]{article}
+
+\usepackage[letterpaper,margin=0.72in,columnsep=0.24in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+\usepackage{cite}
+
+\hypersetup{
+  pdftitle={Who Authorized This Commit? PAPER and the Case for Governance-Native AI Communication},
+  pdfauthor={Patrick Rho},
+  pdfsubject={Governance-native protocol design and preliminary prototype evaluation},
+  pdfkeywords={AI governance, provenance, coding agents, protocol, capability security}
+}
+
+\setlist{nosep,leftmargin=*}
+\setlength{\parindent}{1em}
+\setlength{\parskip}{0pt}
+\renewcommand{\arraystretch}{1.12}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcommand{\papername}{PAPER}
+\newcommand{\system}{PCCP}
+
+\title{\textbf{Who Authorized This Commit?}\\\large PAPER and the Case for Governance-Native AI Communication}
+\author{Patrick Rho\\Patty Research}
+\date{August 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+An AI coding agent can read a private repository, choose what leaves the machine, select a model, request tools, rewrite a file, and produce a commit. Yet after the commit exists, a surprisingly basic question is difficult to answer: \emph{who was authorized to cause it?} Today's systems can usually recover pieces of the answer from API credentials, gateway decisions, tool logs, and Git history. They cannot reliably show that the same bounded authority governed the entire path from human intent to model invocation to executable side effect. The missing abstraction is not another log. It is an authority-bearing exchange.
+
+We present \papername{} (Patty AI Provenance \& Enforcement Relay), a stateful protocol that makes governance part of AI communication itself. Its core primitive, the \emph{Governed Exchange}, binds an enrolled peer and human identity to a short-lived Capability Lease, an immutable Policy Epoch, inline Relay Verdicts, a server-authoritative model package and endpoint, and a content-addressed Provenance Spine. The result is a live exchange in which a model may propose an action but cannot manufacture the authority to execute it, and in which evidence is produced along the causal path rather than reconstructed afterward.
+
+We develop this design, define its security boundary, and report measurements from a Go prototype. Record encode/decode takes a median 290.2~ns at 1~KiB and 97.0~$\mu$s at 1~MiB; an evidence-chain update takes 73.05~ns; and Ed25519 sign-and-verify takes 42.7~$\mu$s on an Apple M4 Pro. These are primitive costs, not an end-to-end performance result. Production authentication, policy-pipeline latency, TTFT, scale, and provenance fidelity remain to be evaluated. The larger result is architectural: if agents can cause durable effects, authority and causal evidence should be first-class properties of the protocol that carries their work.
+\end{abstract}
+
+\section{Introduction}
+
+Consider a plausible incident. A developer asks an agent to repair a failing authorization test. The agent selects six repository files as context, invokes a model advertised as ``Code Standard,'' receives a shell-tool proposal, runs a migration, edits two files, and creates a commit. Hours later, the migration is found to have exposed tenant data. The organization now asks:
+
+\begin{itemize}
+  \item Which human and which installed agent initiated the work?
+  \item Was that agent allowed to disclose those six files to that model?
+  \item Which immutable policy version permitted the migration command?
+  \item Did the model merely propose the command, or did an authorized runtime execute it?
+  \item Which exact model package and serving endpoint produced the proposal?
+  \item Which parts of the final commit survived from model output after human edits?
+\end{itemize}
+
+Every component may have a log. That is precisely the problem. API authentication identifies a caller at one boundary; a gateway records a routing or policy decision at another; a sandbox records execution; Git records the resulting artifact. The organization must reconstruct one causal and authorization story from records produced under different identifiers, clocks, retention policies, and trust assumptions. A gap or ambiguity is discovered only after the side effect has already occurred.
+
+This failure is not fundamentally an observability failure. It is a \emph{protocol-model failure}. Conventional AI interfaces transport prompts, tokens, tool calls, tasks, and artifacts. They do not require the live exchange to carry the bounded authority under which those objects may cause effects. Consequently, governance is middleware surrounding the exchange rather than a condition for the exchange to advance.
+
+\papername{} asks what changes if we reverse that relationship. Instead of transporting intelligence first and reconstructing authority later, the protocol carries intelligence \emph{inside an authority-bearing envelope}. A protected exchange cannot advance merely because a TLS connection exists or a model emitted a tool call. It advances only when the relevant identity, purpose, lease, policy epoch, model resolution, and Relay decision agree. Figure~\ref{fig:overview} illustrates this shift.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=0.96\textwidth]{figures/qwen-governed-exchange.png}
+  \caption{The architectural inversion. Conventional systems transport the interaction and reconstruct authority from logs afterward. PAPER makes bounded authority, enforcement, model identity, and causal evidence conditions of the live path. The illustration is conceptual and contains no empirical data.}
+  \label{fig:overview}
+\end{figure*}
+
+\subsection{Contributions}
+
+The paper advances one thesis: \emph{an agentic AI protocol should carry not only messages and actions, but the authority and causal evidence that make those actions legitimate}. Three contributions support that thesis:
+
+\begin{enumerate}
+  \item \textbf{Governed Exchange.} We define a protocol lifecycle in which human and peer identity, purpose-bound Capability Lease, immutable Policy Epoch, model authority, and inline Relay Verdict are prerequisites for protected actions. A model proposal is data; execution authority remains external to the model.
+  \item \textbf{Causal authority chain.} We connect user-facing model choice to a signed model package and leased endpoint, and connect intent, disclosure, inference, tool activity, edits, and artifacts through a content-addressed Provenance Spine and signed receipt. The goal is not more telemetry, but a verifiable answer to \emph{why this effect was allowed to happen}.
+  \item \textbf{Measured prototype foundation.} We implement framing, canonical objects, signatures, evidence chaining, transport foundations, and a development Relay-to-PIA path in Go. We report reproducible primitive costs and an explicit audit of what the prototype does \emph{not} yet prove.
+\end{enumerate}
+
+The novelty claim is deliberately compositional. Secure transport, capabilities, provenance DAGs, signed receipts, and tool protocols already exist. PAPER's claim is that their authority semantics belong in one live state machine at the Harness--Relay--inference/runtime boundary. If this thesis holds, governance becomes enforceable before an effect and evidence becomes a protocol output rather than a forensic coincidence.
+
+\section{Background and Adjacent Systems}
+
+\paragraph{Model APIs and gateways.}
+HTTPS/JSON and streaming model APIs are effective request/response interfaces. Gateways can add authentication, quotas, policy, and logging. \papername{} differs primarily in the unit of state: authorization and evidence are bound to a long-lived governed session and exchange rather than reconstructed from independent middleware events.
+
+\paragraph{MCP and A2A.}
+The Model Context Protocol (MCP) standardizes interactions between AI applications and context/tool providers~\cite{mcp2025}. Agent2Agent (A2A) standardizes agent discovery, tasks, messages, and artifacts~\cite{a2a2026}. \papername{} does not position either as an inferior transport. MCP can exist behind a governed tool broker, and A2A can operate at an agent-to-agent boundary. \papername{} targets the narrower boundary between a human-facing engineering Harness, inline policy enforcement, controlled inference/runtime infrastructure, and software provenance.
+
+\paragraph{Runtime governance and agent security.}
+MI9 examines integrated runtime governance for agentic systems~\cite{wang2025mi9}; AgentDojo provides an environment for prompt-injection attacks and defenses~\cite{debenedetti2024agentdojo}; and argument-level provenance work highlights the mismatch between coarse authorization and tool arguments~\cite{fan2026granularity}. \papername{} is complementary: it defines protocol objects and state transitions through which identity, policy, tool authority, and evidence can be enforced and exported.
+
+\paragraph{Supply-chain provenance.}
+in-toto records signed metadata about supply-chain steps~\cite{torresarias2019intoto,intoto}, while SLSA defines provenance expectations for build and source tracks~\cite{slsa12}. \papername{} addresses an earlier interactive phase, before a build artifact necessarily exists. A \papername{} receipt may later feed an in-toto or SLSA-oriented attestation.
+
+\paragraph{Identity and cryptographic building blocks.}
+SPIFFE provides workload-identity conventions~\cite{spiffe}. \papername{} reuses TLS~1.3~\cite{rfc9846}, QUIC~\cite{rfc9000}, deterministic CBOR~\cite{rfc8949}, COSE~\cite{rfc9052}, HPKE~\cite{rfc9180}, and COSE receipts~\cite{rfc9942}. These standards provide transport and object-security primitives; they do not define the application-level authority model proposed here.
+
+\section{Requirements and Threat Model}
+
+\subsection{Design requirements}
+
+The protocol is designed around six requirements: (R1) bind protected actions to an enrolled peer and user; (R2) constrain authority with short-lived, purpose-bound grants; (R3) bind enforcement to an immutable policy revision; (R4) identify approved model artifacts and endpoints more strongly than a caller-supplied name; (R5) distinguish a model's proposed action from runtime authorization and execution; and (R6) emit causal evidence that can be verified independently of ordinary application logs.
+
+The system must also operate with a temporarily unavailable control plane. Relays therefore consume signed or authenticated snapshots, revocation state, policy epochs, model catalogs, and leases. Availability under stale state is bounded by explicit expiration and deployment policy rather than implicit cache behavior.
+
+\subsection{Adversaries and non-goals}
+
+We consider network attackers, unregistered clients, stolen or replayed credentials, compromised Harnesses, prompt-injected content, malicious tool output, model-name spoofing, cross-tenant mistakes, and evidence tampering. A Relay or administrator may also be malicious or compromised. The protocol aims to make such authority and evidence boundaries explicit; it cannot make a trusted plaintext Relay unable to inspect content, prove that a model behaved correctly, or prevent a fully compromised endpoint from acting outside the protocol. Hardware attestation and formal verification are optional future profiles, not assumptions of the prototype.
+
+\section{Architecture}
+
+\subsection{Peers and planes}
+
+The administrative Control Plane enrolls identities, issues policy and model state, manages revocation, and indexes evidence. A Relay terminates Harness connections, validates authority, performs inline policy decisions, routes approved inference, and appends evidence. A Patty Inference Agent (PIA) is a registered peer placed in front of a serving engine. The PIA translates the protocol's semantic request into a local engine interface; a raw engine endpoint is not a Harness trust boundary. A runtime executes tools only after independent authorization.
+
+\begin{table*}[t]
+\centering
+\caption{Core authority and identity objects. Objects visible to the Harness are intentionally separated from deployment identities.}
+\label{tab:objects}
+\small
+\begin{tabularx}{\textwidth}{@{}l l Y Y@{}}
+\toprule
+Object & Authority & Purpose & Important distinction \\
+\midrule
+Peer credential & enrollment authority & Binds key, peer profile, tenant, and validity & Identifies software instance, not merely user \\
+Capability Lease & policy authority & Grants bounded action/model/tool/context scope & Permission; not resource capacity \\
+Policy Epoch & policy authority & Immutable effective policy revision & Exchange binds to a digest, not ``latest'' \\
+Catalog Model & model catalog & Stable user-facing service identity & Contains no provider endpoint \\
+Model Descriptor & model catalog & Declares semantic capabilities and client minimums & Negotiation, not authorization by itself \\
+Model Package (PMP) & model authority & Signed artifact/template/quantization identity & Stronger than human-readable model name \\
+Endpoint Lease & serving authority & Binds active PIA endpoint to approved package & Short-lived deployment state \\
+Account Capacity Lease & capacity authority & Coordinates distributed workload slots & Capacity; distinct from action permission \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\subsection{Transport and representation}
+
+QUIC is the preferred binding because independent streams reduce head-of-line coupling; TLS~1.3 over TCP is the fallback. Both use the same application semantics and ALPN identity. Records contain a fixed prelude, canonical header, payload, logical lane identifier, and lane sequence. Deterministic CBOR provides reproducible object encoding. COSE signatures protect credentials, leases, epochs, model manifests, and receipts where object-level verification is required.
+
+Transport authentication alone is insufficient. An application proof must bind peer credential, nonces, negotiated profile, and channel context so that a credential proof captured on one connection cannot be replayed on another. The present prototype defines these messages but, as Section~\ref{sec:implementation} explains, does not yet perform the complete production verification path.
+
+\section{Governance-Native Exchange Semantics}
+
+\subsection{Identity, sessions, and Capability Leases}
+
+User identity, Harness identity, and workload/session identity are separate. Enrollment gives a Harness a peer credential; it does not grant unrestricted inference. A Working Session binds user, Harness, organization/project, purpose, repository, and effective policy. A Capability Lease then grants a subset of actions for a short interval: permitted models, context paths, tool classes, token budget, and approval requirements. Revocation or expiration prevents new protected actions even if the underlying transport remains connected.
+
+\subsection{Policy Epoch and Relay Verdict}
+
+A Policy Epoch is an immutable digest-addressed policy snapshot. Every protected exchange references an epoch. If policy changes mid-session, active work follows an explicit continue, rebind, pause, or terminate rule; it does not silently switch semantics. Before protected content reaches a PIA or runtime, the Relay emits a structured verdict such as allow, deny, transform, quarantine, or require approval. Verdict evidence identifies the policy epoch and rule set that produced it.
+
+\subsection{Exchange lifecycle}
+
+A typical exchange progresses through \textsc{open}, \textsc{governance}, \textsc{route}, \textsc{stream}, optional \textsc{tool/approval}, and \textsc{close}. The Relay validates the peer/session binding, Capability Lease, Policy Epoch, catalog model, model package, endpoint lease, and capacity state before dispatch. Token or data records are multiplexed over lanes with sequence numbers. Side-effecting actions carry an idempotency class so reconnect/resumption cannot silently duplicate a completed operation.
+
+\subsection{Server-authoritative model resolution}
+
+The v2 design adds an important identity separation:
+
+\begin{equation*}
+\text{Catalog Model} \rightarrow \text{PMP} \rightarrow \text{PIA Endpoint}.
+\end{equation*}
+
+After authentication, the Harness receives an effective model catalog scoped by entitlement, organization policy, deployment profile, geography, and client capability. A Model Descriptor advertises supported semantic features---for example multimodal input, structured output, parallel tools, caching, reasoning controls, and resumability---without exposing an endpoint. An inference open message references the Catalog Model and Catalog Epoch. The Relay rejects stale or unauthorized identities, resolves a signed PMP, and selects an endpoint with a valid lease. This prevents a caller-supplied base URL or model alias from becoming routing authority.
+
+\subsection{Tool authority and prompt injection}
+
+A model output is a proposal, not authority. Tool descriptors specify execution placement, risk class, argument schema, approval policy, idempotency, and provenance requirements. Incrementally streamed arguments are not executable until complete and authorized. Repository text, chat, files, and tool output retain trust labels but cannot enlarge lease scope. Prompt injection remains possible; the protocol contribution is to make authority external to model text and to record the inputs and decisions surrounding execution.
+
+\section{Causal Provenance and Receipts}
+
+Ordinary logs answer that events occurred. The Provenance Spine represents causal edges among human intent, selected context, policy decisions, model invocation, output, tool proposal, approval, execution result, edits, tests, review, and source-control artifacts. Nodes are content-addressed and typed; edges describe causation, derivation, disclosure, transformation, or binding.
+
+For compact exchange integrity, let $r_0=H(\textsf{domain}\parallel\textsf{exchange-open})$ and
+
+\begin{equation}
+r_i = H(\textsf{domain}\parallel r_{i-1}\parallel H(e_i)),
+\end{equation}
+
+where $e_i$ is the canonical representation of evidence event $i$. A signed Evidence Receipt binds the final root to the exchange, identities, policy epoch, model/package resolution, outcome, and retention/export profile. This construction provides tamper evidence, not truth by magic: a compromised authorized component can still emit false source data. Cross-component receipts and external transparency can reduce unilateral trust but are not complete in the prototype.
+
+Selective export may replace sensitive nodes with commitments or redacted summaries while retaining verifiable linkage. Source-code attribution after refactoring or merging is probabilistic and should carry confidence and transformation history rather than a binary ``AI-generated'' label.
+
+\section{Prototype Implementation}
+\label{sec:implementation}
+
+The prototype is implemented in Go and evaluated at repository commit \texttt{0234034b51fb6f1a5127280ce1e9c209b8198004}. It includes a 32-byte record prelude, bounded headers and payloads, canonical CBOR helpers, COSE Sign1 support, Ed25519 object signatures, content-addressed digests, evidence-chain primitives, peer/session state machines, TLS/TCP transport, a QUIC transport foundation, model/catalog schemas, policy and lease services, Relay/PIA components, vLLM/SGLang adapters, and conformance tests.
+
+The current Relay can route an inference request to a PIA using a \papername{} TLS/TCP connection and \texttt{AI\_OPEN}/\texttt{AI\_COMPLETE} records. The embedded semantic payload is currently JSON, and a legacy HTTP development fallback remains when the PAPER PIA address is not configured. This is a migration-stage implementation rather than the final canonical AI semantic encoding.
+
+Several security-sensitive paths remain incomplete. The Relay listener receives an authentication proof but accepts a structurally valid development credential without verifying its production COSE signature, revocation, and handshake transcript. Development TLS configurations use self-signed certificates and disabled verification. Catalog validation in one pipeline path rejects an empty identifier but does not query the effective catalog cache; capacity validation and scheduler admission include permissive stubs. Some application-message handlers log rather than execute the full governance route. These limitations constrain all empirical claims in this paper.
+
+\begin{table*}[t]
+\centering
+\caption{Claim-to-evidence matrix for the evaluated snapshot. ``Partial'' means relevant code exists but the complete stated property is not exercised end to end.}
+\label{tab:claims}
+\small
+\begin{tabularx}{\textwidth}{@{}Y l Y Y@{}}
+\toprule
+Claim & Status & Available evidence & Permitted wording \\
+\midrule
+Record framing and bounded parsing & Implemented & round-trip tests and microbenchmarks & Measured prototype primitive \\
+Canonical CBOR and signature primitives & Implemented & unit tests and microbenchmarks & Measured prototype primitive \\
+Tamper-evident evidence-chain update & Implemented primitive & deterministic hash tests and microbenchmark & Detects mutation under stated hash assumptions \\
+TLS/TCP Relay-to-PIA PAPER exchange & Partial & implementation and package tests & Development vertical slice \\
+Authenticated Harness-to-Relay exchange & Partial & message/state tests; proof verification incomplete & Protocol design with partial prototype \\
+Catalog Model authorization & Partial & schemas/service tests; permissive pipeline path & Server-authoritative design under implementation \\
+Account-wide distributed capacity enforcement & Design/scaffold & schema and service scaffolding & Not empirically established \\
+Twelve research invariants enforced & Not established & eleven named tests; several placeholders & Candidate invariant suite only \\
+Production latency, TTFT, scale, provenance fidelity & Unmeasured & methodology only & No result claim \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\section{Evaluation Methodology}
+
+The complete evaluation asks: (Q1) what connection and pre-inference latency does \papername{} add; (Q2) how does Relay CPU/memory scale with streams; (Q3) what evidence/storage cost is incurred; (Q4) which adversarial cases are rejected; and (Q5) how accurately provenance survives software evolution?
+
+\subsection{Baselines}
+
+We define five goal-aware baselines: B0, a minimal secure binary stream; B1, bearer-authenticated HTTPS/JSON streaming; B2, HTTPS/JSON plus comparable gateway policy and logging; B3, \papername{} with identity/session and minimal governance; and B4, \papername{} with lease, policy, content checks, verdicts, and provenance. MCP and A2A should be compared semantically, not presented as performance competitors for goals they do not attempt.
+
+End-to-end experiments must report connection p50/p95/p99, time to first Relay verdict, TTFT, inter-token latency, sustained throughput, CPU time, allocation, memory per stream, and evidence bytes. The environment disclosure must include CPU, memory, NIC, RTT, topology, OS, Go and QUIC versions, model/quantization, GPU, policy modules, and storage backend.
+
+\subsection{Security and provenance experiments}
+
+Negative tests include an unknown peer, expired/replayed lease, unknown Policy Epoch, stale catalog, unapproved model package, invalid endpoint lease, profile-confused message, malformed state sequence, duplicate side effect after resume, prompt-injected capability escalation, and modified receipt. Provenance fidelity should be measured on generated functions followed by human edits, file renames, function moves, rebases, merges, and multi-agent changes. Precision/recall and confidence calibration are more appropriate than anecdotal examples.
+
+\section{Preliminary Results}
+
+\subsection{Experimental setup}
+
+Measurements ran locally on an Apple M4 Pro with 14 logical CPUs and 48~GiB RAM, macOS~27.0, arm64, and Go~1.26.5. Each Go benchmark was repeated five times; Table~\ref{tab:microbench} reports the median. The command disabled ordinary tests for the benchmark package and enabled allocation reporting. The full repository test command subsequently passed. No network, database, model, GPU, or token generation was involved.
+
+\begin{table}[t]
+\centering
+\caption{Preliminary in-memory primitive medians over five runs. Record tests include encode and decode.}
+\label{tab:microbench}
+\small
+\begin{tabular}{@{}l r r r@{}}
+\toprule
+Operation & Time/op & B/op & allocs \\
+\midrule
+Record, 1 KiB & 290.2 ns & 2,384 & 7 \\
+Record, 64 KiB & 8.46 $\mu$s & 139,472 & 7 \\
+Record, 1 MiB & 97.0 $\mu$s & 2,105,556 & 7 \\
+CBOR Hello round trip & 599.4 ns & 592 & 9 \\
+Evidence-chain update & 73.05 ns & 32 & 1 \\
+1 KiB object digest & 403.1 ns & 32 & 1 \\
+Ed25519 sign+verify & 42.7 $\mu$s & 64 & 1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The record result scales approximately linearly across the measured sizes. The benchmark allocates an encoded buffer and decoded record on every iteration; consequently, bytes allocated are roughly twice the large payload size. The evidence-chain operation is small relative to a network or model call, but this does not imply that complete provenance is inexpensive: serialization, signatures, persistence, indexing, and retention are excluded.
+
+The full repository suite passed at the evaluated commit. The conformance package exposes tests named for research invariants 1--5 and 7--12; invariant 6 has no named test. Moreover, several passing tests do not exercise their full invariant. The Policy Epoch test checks connection readiness rather than unknown-epoch rejection; the tool-authority test checks only credential validity; the reconnect test contains no assertion and refers to another package; and the profile-isolation test constructs a list without sending messages through an enforcing registry. We therefore report passing code tests, not ``twelve invariants proven.''
+
+\subsection{Interpretation}
+
+These measurements establish that the implemented framing and cryptographic helper operations are benchmarkable and inexpensive on one modern CPU. They do not answer the central performance research question because the dominant overhead may reside in TLS/QUIC establishment, policy modules, database/cache access, scanning/classifiers, network placement, model scheduling, or storage. The B0--B4 experiments remain required before making a system-overhead claim.
+
+\section{Comparative Analysis}
+
+\begin{table*}[t]
+\centering
+\caption{Goal-aware qualitative comparison. A blank objective is not a deficiency when a system intentionally addresses another boundary.}
+\label{tab:comparison}
+\small
+\begin{tabularx}{\textwidth}{@{}l Y Y Y Y@{}}
+\toprule
+System family & Primary boundary & Live purpose-bound authority & Inline model/package identity & Interactive causal code provenance \\
+\midrule
+Model API & application--model service & typically application-defined & usually caller-visible model identifier & external \\
+AI gateway & application--provider mediation & gateway/policy dependent & provider-route dependent & logs/plug-ins \\
+MCP & AI application--tool/context provider & authorization is deployment-specific & not its objective & not its objective \\
+A2A & agent--agent task/artifact exchange & protocol/task dependent & not its objective & not its objective \\
+in-toto/SLSA & software supply-chain steps/artifacts & step/build policy & artifact identity & post-step/build provenance \\
+\papername{} & Harness--Relay--PIA/runtime & Capability Lease + Policy Epoch & Catalog Model + PMP + Endpoint Lease & native exchange graph/receipt \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+Table~\ref{tab:comparison} locates novelty in composition and lifecycle semantics rather than lower-layer mechanisms. A conventional gateway could implement many \papername{} concepts. The research question is whether defining common state transitions, identities, evidence objects, and transport semantics improves enforceability and interoperability enough to justify a stateful protocol.
+
+\section{Security Analysis}
+
+An unregistered generic client lacks a valid peer credential and session grant; a stolen Harness key remains bounded by lease lifetime, repository/purpose scope, revocation, and optional device evidence. A fake model name cannot select an endpoint when the Relay resolves only an authorized Catalog Model through a signed PMP and active Endpoint Lease. A prompt-injected tool call cannot grant itself authority because runtime execution performs an independent lease/policy check.
+
+Replay protection requires transcript-bound authentication and idempotency evidence. Transport fallback must preserve the same authorization objects and state machine. Evidence tampering changes the chain root, while an attacker able to compromise all receipt signers can still forge a consistent account. A malicious inspectable Relay can read plaintext and may omit or distort events; cross-component receipts, limited retention, independent export, and optional payload protection reduce but do not eliminate this trust.
+
+The prototype does not yet establish these end-to-end properties. In particular, placeholder proof material and permissive certificate verification mean that the development transport must not be described as production peer authentication.
+
+\section{Deployment and Migration}
+
+One protocol kernel can support public cloud, enterprise, and sovereign profiles by varying enabled modules, policy defaults, retention, mobility, and infrastructure placement rather than forking wire semantics. Sovereign deployment may use local PKI, catalogs, PIA endpoints, and offline-signed update bundles. This is a design target, not an interoperability result.
+
+Because PCCP already has administrative and legacy request paths, adoption is brownfield. A safe sequence inventories callers, introduces catalog/control schemas additively, runs the PAPER Relay beside the legacy gateway, dual-records comparable requests, canaries Harness cohorts, blocks generic routing for migrated clients, and removes the old path only after telemetry and rollback gates are satisfied. A migration evaluation should compare normalized usage, chosen model package, tool outcome, and evidence between old and new paths.
+
+\section{Discussion and Limitations}
+
+\paragraph{Scope pressure.}
+Inference, tools, context, files, chat, voice, and directives can share identity and session infrastructure, but a broad substrate increases implementation and review cost. The core paper is strongest when these are capability-separated extensions rather than equally mature contributions.
+
+\paragraph{State and operations.}
+Leases, epochs, resumption, revocation, catalogs, and evidence add operational burden. Cache staleness and control-plane partitions require explicit fail-closed, bounded-stale, or degrade behavior. Binary framing also requires first-class diagnostics and capture tooling.
+
+\paragraph{Privacy.}
+Fine-grained provenance can become employee surveillance. Deployments need purpose limitation, minimization, role-separated access, retention bounds, selective export, and notice. Content-addressing does not anonymize sensitive content; unsalted hashes can enable guessing attacks.
+
+\paragraph{Implementation maturity.}
+Only primitive overhead is measured. Production authentication, complete catalog/capacity enforcement, QUIC/TCP equivalence, independent interoperability, fuzzing, security review, scale, TTFT, and provenance-fidelity datasets remain open. The implementation contains a legacy development fallback and JSON semantic payload that must be removed or formally profiled before claiming a PAPER-only canonical path.
+
+\paragraph{No formal proof.}
+The state machine and invariants are candidates for formal modeling, but no formal security proof is claimed. Provenance establishes recorded causality under component assumptions, not semantic correctness or authorship truth.
+
+\section{Ethics and Governance}
+
+Evidence about prompts, files, tool use, edits, and human decisions can improve incident response and accountability while also enabling disproportionate monitoring. The protocol therefore supports retention and export profiles, but technical configurability is insufficient. Deployments should establish lawful purpose, employee notice, access review, appeal, data-subject handling, and a separation between security investigations and performance management. Public deployments should default to operationally minimal traces; regulated deployments should justify deeper retention per policy domain.
+
+Generated conceptual artwork is used only for Figure~\ref{fig:overview}; it communicates architecture and contains no measurement or factual comparison. Empirical tables are derived directly from checked-in benchmark output.
+
+\section{Reproducibility}
+
+The accompanying artifact contains the exact LaTeX source, bibliography, conceptual figure, benchmark data, Go benchmark harness, and build instructions. The preliminary measurements can be reproduced with:
+
+\begin{quote}\small
+\texttt{go test ./internal/paper -run '\^\$' -bench 'Benchmark(...)' -benchmem -count=5}
+\end{quote}
+
+where the artifact README provides the complete regular expression. The PDF builds offline with \texttt{latexmk} and BibTeX. A complete empirical release should additionally publish raw per-run output, network/load generators, topology automation, negative-security fixtures, provenance datasets, and independent implementation results.
+
+\section{Conclusion}
+
+\papername{} proposes governance-native communication for human--AI software engineering: authority, immutable policy, inline enforcement, model/package resolution, and causal evidence become properties of the live exchange. The Go prototype implements framing, serialization, cryptographic and evidence primitives, transport foundations, governance schemas, and a development Relay-to-PIA vertical slice. Preliminary microbenchmarks show these primitives are measurable and small on one modern CPU, but do not establish end-to-end system overhead or production security.
+
+The next evidentiary threshold is clear: complete authentication and enforcement paths, B0--B4 network and inference comparisons, executable invariant coverage, independent interoperability, adversarial testing, and a provenance-fidelity dataset. Until then, \papername{} should be evaluated as a protocol design with a partial, measured prototype---not as a production-complete or formally verified security system.
+
+\bibliographystyle{abbrv}
+\bibliography{references}
+
+\clearpage
+\onecolumn
+\appendix
+\section{Research Invariant Coverage}
+
+\noindent Table~\ref{tab:invariants} audits the conformance-test coverage at the evaluated commit. ``Weak'' denotes an assertion that does not exercise the full invariant stated by its test name; ``partial'' denotes a meaningful primitive or state check without a complete end-to-end path.
+
+\begin{center}
+\small
+\refstepcounter{table}
+\label{tab:invariants}
+\textbf{Table \thetable: Coverage audit of the candidate research invariants.}\\[4pt]
+\begin{tabularx}{\textwidth}{@{}c Y l Y@{}}
+\toprule
+ID & Candidate invariant & Coverage & Audit note \\
+\midrule
+I1 & No protected action before peer authentication & Partial & connection-state gating asserted; listener proof verification incomplete \\
+I2 & No protected action outside a valid Capability Lease & Weak & test checks credential time validity, not action authorization \\
+I3 & No action under an unknown Policy Epoch & Weak & test checks connection readiness, not epoch lookup/rejection \\
+I4 & No invocation against an unapproved package/endpoint lease & Partial & signature mutation tested; full route binding not exercised \\
+I5 & Tool proposal grants no authority by itself & Weak & test checks only a valid peer credential \\
+I6 & Context disclosure requires explicit authority & Missing & no named conformance test \\
+I7 & Transport fallback preserves authorization semantics & Weak & ALPN constant checked; fallback exchange not exercised \\
+I8 & Reconnect does not duplicate completed side effects & Placeholder & named test has no assertion \\
+I9 & Protected exchange terminates with verifiable evidence & Partial & deterministic chain checked; termination/receipt path not exercised \\
+I10 & Provenance mutation changes digest & Implemented primitive & distinct content produces distinct domain-separated digest \\
+I11 & Peer profiles cannot emit privileged messages & Placeholder & message list is constructed but not passed through enforcement \\
+I12 & Administrative communication and enforcement are distinct & Structural & distinct message type codes asserted \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Required Completion Experiments}
+
+The following gates separate the preliminary artifact from a complete empirical revision:
+
+\begin{enumerate}
+  \item \textbf{Transport and authentication:} exercise full certificate and COSE proof verification, revocation, transcript binding, resumption, and QUIC-to-TCP fallback with p50/p95/p99 connection measurements.
+  \item \textbf{End-to-end inference:} compare B0--B4 on identical payloads and model output, reporting Relay verdict latency, TTFT, streaming throughput, CPU, allocation, and memory.
+  \item \textbf{Governance negatives:} reject expired/replayed leases, unknown epochs, stale catalogs, unapproved packages, invalid endpoints, profile-confused messages, and duplicate side effects through the actual Relay path.
+  \item \textbf{Scale and failure:} measure concurrent sessions/streams, Relay restart, control-plane loss, bounded-stale caches, capacity-authority loss, and evidence-backend degradation.
+  \item \textbf{Provenance fidelity:} publish a labeled dataset covering human edits, file/function moves, rebases, merges, and multi-agent changes with precision, recall, and confidence calibration.
+  \item \textbf{Independent evidence:} demonstrate an implementation not sharing the complete Go stack, publish golden vectors/fuzz results, and obtain an external security review before a production-security claim.
+\end{enumerate}
+
+\end{document}

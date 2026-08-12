@@ -1,0 +1,90 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.1}Contributions}{1}{subsection.1.1}\protected@file@percent }
+\citation{mcp2025}
+\citation{a2a2026}
+\citation{wang2025mi9}
+\citation{debenedetti2024agentdojo}
+\citation{fan2026granularity}
+\citation{torresarias2019intoto,intoto}
+\citation{slsa12}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Conceptual overview of the design boundary. The upper path reconstructs governance from model/tool logs after execution. The lower path binds a Relay-mediated exchange to a Capability Lease, Policy Epoch, Relay Verdicts, approved inference infrastructure, and a continuous evidence chain. This illustration contains no empirical data.}}{2}{figure.1}\protected@file@percent }
+\newlabel{fig:overview}{{1}{2}{Conceptual overview of the design boundary. The upper path reconstructs governance from model/tool logs after execution. The lower path binds a Relay-mediated exchange to a Capability Lease, Policy Epoch, Relay Verdicts, approved inference infrastructure, and a continuous evidence chain. This illustration contains no empirical data}{figure.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Background and Adjacent Systems}{2}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Model APIs and gateways.}{2}{section*.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{MCP and A2A.}{2}{section*.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Runtime governance and agent security.}{2}{section*.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Supply-chain provenance.}{2}{section*.5}\protected@file@percent }
+\citation{spiffe}
+\citation{rfc9846}
+\citation{rfc9000}
+\citation{rfc8949}
+\citation{rfc9052}
+\citation{rfc9180}
+\citation{rfc9942}
+\@writefile{toc}{\contentsline {paragraph}{Identity and cryptographic building blocks.}{3}{section*.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Requirements and Threat Model}{3}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Design requirements}{3}{subsection.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Adversaries and non-goals}{3}{subsection.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}Architecture}{3}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Peers and planes}{3}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Transport and representation}{3}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Governance-Native Exchange Semantics}{3}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Identity, sessions, and Capability Leases}{3}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Policy Epoch and Relay Verdict}{3}{subsection.5.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Core authority and identity objects. Objects visible to the Harness are intentionally separated from deployment identities.}}{4}{table.1}\protected@file@percent }
+\newlabel{tab:objects}{{1}{4}{Core authority and identity objects. Objects visible to the Harness are intentionally separated from deployment identities}{table.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Exchange lifecycle}{4}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Server-authoritative model resolution}{4}{subsection.5.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}Tool authority and prompt injection}{4}{subsection.5.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Causal Provenance and Receipts}{4}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}Prototype Implementation}{5}{section.7}\protected@file@percent }
+\newlabel{sec:implementation}{{7}{5}{Prototype Implementation}{section.7}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {8}Evaluation Methodology}{5}{section.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.1}Baselines}{5}{subsection.8.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}Security and provenance experiments}{5}{subsection.8.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9}Preliminary Results}{5}{section.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.1}Experimental setup}{5}{subsection.9.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.2}Interpretation}{5}{subsection.9.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Claim-to-evidence matrix for the evaluated snapshot. ``Partial'' means relevant code exists but the complete stated property is not exercised end to end.}}{6}{table.2}\protected@file@percent }
+\newlabel{tab:claims}{{2}{6}{Claim-to-evidence matrix for the evaluated snapshot. ``Partial'' means relevant code exists but the complete stated property is not exercised end to end}{table.2}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Preliminary in-memory primitive medians over five runs. Record tests include encode and decode.}}{6}{table.3}\protected@file@percent }
+\newlabel{tab:microbench}{{3}{6}{Preliminary in-memory primitive medians over five runs. Record tests include encode and decode}{table.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {10}Comparative Analysis}{6}{section.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {11}Security Analysis}{6}{section.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12}Deployment and Migration}{6}{section.12}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Goal-aware qualitative comparison. A blank objective is not a deficiency when a system intentionally addresses another boundary.}}{7}{table.4}\protected@file@percent }
+\newlabel{tab:comparison}{{4}{7}{Goal-aware qualitative comparison. A blank objective is not a deficiency when a system intentionally addresses another boundary}{table.4}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {13}Discussion and Limitations}{7}{section.13}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Scope pressure.}{7}{section*.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{State and operations.}{7}{section*.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Privacy.}{7}{section*.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Implementation maturity.}{7}{section*.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{No formal proof.}{7}{section*.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {14}Ethics and Governance}{7}{section.14}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {15}Reproducibility}{7}{section.15}\protected@file@percent }
+\bibstyle{abbrv}
+\bibdata{references}
+\bibcite{a2a2026}{1}
+\bibcite{rfc9180}{2}
+\bibcite{rfc8949}{3}
+\bibcite{debenedetti2024agentdojo}{4}
+\bibcite{fan2026granularity}{5}
+\bibcite{intoto}{6}
+\bibcite{rfc9000}{7}
+\bibcite{mcp2025}{8}
+\bibcite{rfc9846}{9}
+\bibcite{rfc9052}{10}
+\bibcite{slsa12}{11}
+\bibcite{spiffe}{12}
+\bibcite{rfc9942}{13}
+\bibcite{torresarias2019intoto}{14}
+\bibcite{wang2025mi9}{15}
+\@writefile{toc}{\contentsline {section}{\numberline {16}Conclusion}{8}{section.16}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {A}Research Invariant Coverage}{9}{appendix.A}\protected@file@percent }
+\newlabel{tab:invariants}{{5}{9}{Research Invariant Coverage}{table.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.1}Required Completion Experiments}{9}{subsection.A.1}\protected@file@percent }
+\gdef \@abspage@last{9}
