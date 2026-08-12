@@ -8,10 +8,11 @@ export default function Projects() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [form, setForm] = useState({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard' })
 
-  const [sessions, setSessions] = useState<any[]>([])
+  const [users, setUsers] = useState<any[]>([])
   const load = () => {
     api.listProjects().then(data => setProjects(Array.isArray(data) ? data : []))
     api.listSessions().then(data => setSessions(Array.isArray(data) ? data : []))
+    api.listUsers().then(data => setUsers(Array.isArray(data) ? data : []))
   }
   useEffect(() => { load() }, [])
 
@@ -113,6 +114,7 @@ export default function Projects() {
             {p.slug && <p className="text-xs text-gray-400 font-mono mb-2">{p.slug}</p>}
             <div className="flex gap-3 text-xs text-gray-500">
               <span>활성 세션: <strong className="text-gray-700">{getSessionCount(p.id)}</strong></span>
+              <span>사용자: <strong className="text-gray-700">{users.length}</strong></span>
             </div>
 
             {expandedId === p.id && (

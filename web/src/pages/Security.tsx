@@ -222,7 +222,20 @@ export default function Security() {
         <div className="card">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-lg font-semibold">보안 발견 목록 · Security Findings</h3>
-            <span className="text-sm text-gray-500">{findings.length}건</span>
+            <div className="flex gap-3 items-center">
+              <span className="text-sm text-gray-500">{findings.length}건</span>
+              {findings.length > 0 && (
+                <button onClick={() => {
+                  const csv = ['timestamp,type,severity,title,status,session_id']
+                  findings.forEach(f => {
+                    csv.push([f.occurred_at, f.finding_type, f.severity, (f.title_ko || f.title || '').replace(/,/g, ';'), f.status, f.session_id || ''].join(','))
+                  })
+                  const blob = new Blob([csv.join('\n')], { type: 'text/csv' })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a'); a.href = url; a.download = 'security_findings.csv'; a.click()
+                }} className="btn-sm btn-secondary">CSV 내보내기</button>
+              )}
+            </div>
           </div>
           {findings.length === 0 ? (
             <div className="text-center py-12">

@@ -42,7 +42,19 @@ export default function ModelCatalog() {
           <h1 className="text-2xl font-bold">모델 카탈로그 <span className="text-gray-400 text-lg font-normal">Model Catalog</span></h1>
           <p className="text-sm text-gray-500 mt-1">서버 권한 모델 관리 · Server-Authoritative Model Management (v2)</p>
         </div>
-        <button onClick={handleSeed} className="btn-secondary text-sm">기본 모델 등록</button>
+        <div className="flex gap-2">
+          <button onClick={handleSeed} className="btn-secondary text-sm">기본 모델 등록</button>
+          <button onClick={async () => {
+            try {
+              const res = await fetch('/api/catalog/epoch', { headers: authHeaders() })
+              if (res.ok) {
+                const epoch = await res.json()
+                setEpoch(epoch)
+                alert('카탈로그 에포크 갱신됨: ' + (epoch.epoch_id || '').slice(0, 20))
+              }
+            } catch {}
+          }} className="btn-primary text-sm">에포크 갱신</button>
+        </div>
       </div>
 
       {/* Catalog Epoch Info */}
