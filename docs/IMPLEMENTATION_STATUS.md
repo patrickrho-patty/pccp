@@ -45,7 +45,7 @@
 ### Projects (§12)
 - ✅ CRUD: Create/Edit/Archive
 - ✅ Expandable card detail
-- ❌ Member count
+- ✅ Member count in project card
 - ✅ Session count in project card
 - ✅ Model badges in project detail
 
@@ -78,7 +78,7 @@
 - ✅ Incident response panel
 - ✅ Finding count badge on dashboard
 - ✅ Rule persistence to backend
-- ❌ Export findings report
+- ✅ CSV export on findings tab
 
 ### Compliance (§41)
 - ✅ Framework overview with 5 certifications
@@ -114,7 +114,7 @@
 - ✅ Server-authoritative model display
 - ✅ Capability indicators
 - ✅ Withdraw/Announce
-- ❌ Epoch refresh
+- ✅ Epoch refresh button
 
 ### SRE Console (§10C/§7.1)
 - ✅ Overview with system health
