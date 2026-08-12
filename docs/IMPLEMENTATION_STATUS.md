@@ -21,8 +21,8 @@
 - ✅ Search by name/email/title
 - ✅ Pagination (25/page)
 - ✅ **Last login date column**
-- ❌ Bulk actions (select multiple)
-- ❌ Department/business unit assignment
+- ✅ Bulk actions (select, suspend, offboard)
+- ✅ Department assignment (8 Korean departments)
 - ✅ User detail view with activity history
 
 ### Sessions (§14.3)
