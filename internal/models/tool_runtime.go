@@ -121,5 +121,12 @@ func AllModels() []interface{} {
 		&Broadcast{},
 		// Usage (Phase 4)
 		&UsageRecord{},
+		// v2 Model Catalog (§10A)
+		&CatalogModel{},
+		&CatalogEpoch{},
+		// v2 Public Cloud (§10C)
+		&Account{},
+		&Subscription{},
+		&AccountCapacityLease{},
 	}
 }
