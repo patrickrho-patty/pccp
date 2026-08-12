@@ -101,6 +101,7 @@ function AppContent() {
           <Route path="/tools" element={<Tools />} />
           <Route path="/communications" element={<Communications />} />
           <Route path="/sandboxes" element={<Sandboxes />} />
+          <Route path="/enterprise" element={<EnterpriseFeatures />} />
           <Route path="/audit" element={<Audit />} />
         </>)}
 

@@ -187,6 +187,7 @@ func (s *Server) setupRouter() {
 			r.Get("/{id}/provenance", s.handleGetProvenance)
 			r.Get("/{id}/usage", s.handleGetSessionUsage)
 			r.Get("/{id}/timeline", s.handleGetSessionTimeline)
+			r.Get("/{id}/exchanges", s.handleGetSessionExchanges)
 		})
 
 		// Model registry
@@ -986,6 +987,18 @@ func (s *Server) handleCompatChatCompletions(w http.ResponseWriter, r *http.Requ
 		}
 
 		writeJSON(w, http.StatusOK, resp)
+	}
+
+func (s *Server) handleGetSessionExchanges(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		var sess models.Session
+		if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		var exchanges []models.PromptExchange
+		s.db.Where("session_id = ?", sess.SessionID).Order("created_at ASC").Find(&exchanges)
+		writeJSON(w, http.StatusOK, exchanges)
 	}
 
 func (s *Server) handleGetSessionTimeline(w http.ResponseWriter, r *http.Request) {

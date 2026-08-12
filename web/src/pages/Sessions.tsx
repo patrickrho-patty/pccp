@@ -39,7 +39,9 @@ export default function Sessions() {
   const [showForm, setShowForm] = useState(false)
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table')
   const [timeline, setTimeline] = useState<any>(null)
+  const [exchanges, setExchanges] = useState<any[]>([])
   const [inspectorSession, setInspectorSession] = useState<any>(null)
+  const [inspectorExchanges, setInspectorExchanges] = useState<any[]>([])
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [provenance, setProvenance] = useState<any>(null)
   const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
@@ -94,6 +96,11 @@ export default function Sessions() {
     try {
       const res = await fetch(`/api/sessions/${session.id}/timeline`, { headers: authHeaders() })
       if (res.ok) { const tl = await res.json(); setTimeline(tl) }
+    } catch {}
+    // Fetch conversation history
+    try {
+      const res = await fetch(`/api/sessions/${session.id}/exchanges`, { headers: authHeaders() })
+      if (res.ok) { const ex = await res.json(); setExchanges(Array.isArray(ex) ? ex : []) }
     } catch {}
   }
 
@@ -213,7 +220,7 @@ export default function Sessions() {
                       <div className="flex gap-2 justify-end">
                         {s.status === 'active' && (<><button onClick={() => handlePause(s.id)} className="text-yellow-600 text-xs hover:underline">일시정지</button><button onClick={() => handleClose(s.id)} className="text-red-600 text-xs hover:underline">종료</button></>)}
                         {s.status === 'paused' && <button onClick={() => handleResume(s.id)} className="text-green-600 text-xs hover:underline">재개</button>}
-                        <button onClick={() => setInspectorSession(s)} className="text-blue-600 text-xs hover:underline">상세 검사</button>
+                        <button onClick={async () => { setInspectorSession(s); try { const res = await fetch(`/api/sessions/${s.id}/exchanges`, { headers: authHeaders() }); if (res.ok) { setInspectorExchanges(await res.json()) } } catch {} }} className="text-blue-600 text-xs hover:underline">상세 검사</button>
                         <Link to={`/sessions/${s.id}/provenance`} className="text-blue-600 text-xs hover:underline">프로바이던스</Link>
                       </div>
                     </td>
@@ -331,6 +338,39 @@ export default function Sessions() {
                     </div>
                   )}
                 </>
+              )}
+
+              {/* Conversation History */}
+              {inspectorExchanges && inspectorExchanges.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-semibold text-gray-600 mb-2">대화 기록 · Conversation History ({inspectorExchanges.length})</h4>
+                  <div className="space-y-3 max-h-96 overflow-y-auto">
+                    {inspectorExchanges.map((ex, i) => (
+                      <div key={i} className="border border-gray-100 rounded-lg p-3">
+                        <div className="flex items-center gap-2 text-[10px] text-gray-400 mb-2">
+                          <span>Exchange #{i + 1}</span>
+                          {ex.model_package_id && <span>· {ex.model_package_id}</span>}
+                          {ex.input_tokens > 0 && <span>· 입력: {ex.input_tokens} 토큰</span>}
+                          {ex.output_tokens > 0 && <span>· 출력: {ex.output_tokens} 토큰</span>}
+                          {ex.latency_ms > 0 && <span>· {ex.latency_ms}ms</span>}
+                          <span className={`ml-auto px-1.5 py-0.5 rounded ${ex.verdict_result === 'allow' ? 'bg-green-100 text-green-700' : ex.verdict_result === 'deny' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>{ex.verdict_result || ex.status}</span>
+                        </div>
+                        {ex.prompt_text && (
+                          <div className="mb-2">
+                            <div className="text-[10px] font-medium text-blue-600 mb-0.5">👤 프롬프트</div>
+                            <pre className="text-xs bg-blue-50 rounded p-2 whitespace-pre-wrap font-mono overflow-x-auto max-h-32 overflow-y-auto">{ex.prompt_text}</pre>
+                          </div>
+                        )}
+                        {ex.response_text && (
+                          <div>
+                            <div className="text-[10px] font-medium text-green-600 mb-0.5">🤖 응답</div>
+                            <pre className="text-xs bg-green-50 rounded p-2 whitespace-pre-wrap font-mono overflow-x-auto max-h-32 overflow-y-auto">{ex.response_text}</pre>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           </div>
