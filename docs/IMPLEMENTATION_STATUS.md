@@ -31,7 +31,7 @@
 - ✅ Expandable detail with provenance preview
 - ✅ User name resolution
 - ✅ **Duration display (경과)**
-- ❌ Token usage per session
+- ✅ Token usage per session (backend endpoint + UI)
 - ❌ Live monitoring
 
 ### Harnesses (§14)
@@ -93,7 +93,7 @@
 - ✅ Stats summary
 - ✅ CSV export
 - ✅ Pagination (50/page)
-- ❌ PDF export
+- ✅ PDF export (browser print dialog)
 
 ### Analytics (§28)
 - ✅ Token usage with progress bars
@@ -108,7 +108,7 @@
 - ✅ Broadcast creation
 - ✅ File transfer placeholder
 - ❌ Real-time WebSocket updates
-- ❌ Presence indicators
+- ✅ Presence indicators (online dots in comms)
 
 ### Model Catalog (§10A)
 - ✅ Server-authoritative model display
