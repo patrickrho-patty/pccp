@@ -5,15 +5,18 @@ export default function Repositories() {
   const [repos, setRepos] = useState<any[]>([])
   const [projects, setProjects] = useState<any[]>([])
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ project_id: '', name: '', full_name: '', default_branch: 'main', sensitivity: 'internal' })
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [form, setForm] = useState({
+    project_id: '', name: '', full_name: '', default_branch: 'main', sensitivity: 'internal',
+  })
 
   const load = () => {
     fetch('/api/repositories', { headers: authHeaders() })
-      .then(r => r.json()).then(data => setRepos(Array.isArray(data) ? data : data || []))
+      .then(r => r.json()).then(data => setRepos(Array.isArray(data) ? data : []))
       .catch(() => setRepos([]))
-    api.listProjects().then(data => setProjects(Array.isArray(data) ? data : data || []))
+    api.listProjects().then(data => setProjects(Array.isArray(data) ? data : []))
   }
-
   useEffect(() => { load() }, [])
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -21,12 +24,39 @@ export default function Repositories() {
     const orgId = repos[0]?.organization_id || projects[0]?.organization_id || ''
     try {
       await api.registerRepository({ ...form, organization_id: orgId })
-      setShowForm(false)
       setForm({ project_id: '', name: '', full_name: '', default_branch: 'main', sensitivity: 'internal' })
+      setShowForm(false)
       load()
-    } catch (err: any) {
-      alert('저장소 등록 실패: ' + err.message)
-    }
+    } catch (err: any) { alert('등록 실패: ' + err.message) }
+  }
+
+  const handleEdit = (repo: any) => {
+    setEditingId(repo.id)
+    setForm({
+      project_id: repo.project_id || '', name: repo.name || '',
+      full_name: repo.full_name || '', default_branch: repo.default_branch || 'main',
+      sensitivity: repo.sensitivity || 'internal',
+    })
+    setShowForm(true)
+  }
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingId) return
+    try {
+      await api.updateRepository(editingId, { sensitivity: form.sensitivity })
+      setEditingId(null)
+      setShowForm(false)
+      load()
+    } catch (err: any) { alert('수정 실패: ' + err.message) }
+  }
+
+  const handleUnregister = async (id: string) => {
+    if (!confirm('이 저장소를 등록 해제하시겠습니까?')) return
+    try {
+      await fetch(`/api/repositories/${id}`, { method: 'DELETE', headers: authHeaders() })
+      load()
+    } catch {}
   }
 
   const sensBadge = (s: string) => {
@@ -43,45 +73,50 @@ export default function Repositories() {
     <div>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">저장소 <span className="text-gray-400 text-lg font-normal">Repositories</span></h1>
-        <button onClick={() => setShowForm(!showForm)} className="btn-primary">
+        <button onClick={() => {
+          if (editingId) { setEditingId(null); setForm({ project_id: '', name: '', full_name: '', default_branch: 'main', sensitivity: 'internal' }) }
+          setShowForm(!showForm)
+        }} className="btn-primary">
           {showForm ? '취소' : '+ 저장소 등록'}
         </button>
       </div>
 
       {showForm && (
-        <form onSubmit={handleCreate} className="card mb-6">
-          <h2 className="text-lg font-semibold mb-4">새 저장소 등록 <span className="text-gray-400 text-sm font-normal">Register Repository</span></h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label">프로젝트 · Project</label>
-              <select className="input" value={form.project_id} onChange={e => setForm({ ...form, project_id: e.target.value })} required>
-                <option value="">선택하세요...</option>
-                {projects.map(p => <option key={p.id} value={p.id}>{p.name_ko || p.name}</option>)}
-              </select>
+        <form onSubmit={editingId ? handleUpdate : handleCreate} className="card mb-6 space-y-4">
+          <h2 className="text-sm font-semibold">{editingId ? '저장소 수정 · Edit Repository' : '새 저장소 등록 · Register Repository'}</h2>
+          {!editingId && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="label">프로젝트 · Project</label>
+                <select className="input" value={form.project_id} onChange={e => setForm({ ...form, project_id: e.target.value })} required>
+                  <option value="">선택...</option>
+                  {projects.map(p => <option key={p.id} value={p.id}>{p.name_ko || p.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">저장소명 · Name</label>
+                <input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="payment-service" required />
+              </div>
+              <div>
+                <label className="label">전체 경로 · Full Name</label>
+                <input className="input" value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} placeholder="org/payment-service" required />
+              </div>
+              <div>
+                <label className="label">기본 브랜치 · Default Branch</label>
+                <input className="input" value={form.default_branch} onChange={e => setForm({ ...form, default_branch: e.target.value })} />
+              </div>
             </div>
-            <div>
-              <label className="label">저장소명 · Repository Name</label>
-              <input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="payment-service" required />
-            </div>
-            <div>
-              <label className="label">전체 경로 · Full Name</label>
-              <input className="input" value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} placeholder="org/payment-service" required />
-            </div>
-            <div>
-              <label className="label">기본 브랜치 · Default Branch</label>
-              <input className="input" value={form.default_branch} onChange={e => setForm({ ...form, default_branch: e.target.value })} />
-            </div>
-            <div>
-              <label className="label">민감도 · Sensitivity</label>
-              <select className="input" value={form.sensitivity} onChange={e => setForm({ ...form, sensitivity: e.target.value })}>
-                <option value="public">공개 · Public</option>
-                <option value="internal">내부 · Internal</option>
-                <option value="confidential">기밀 · Confidential</option>
-                <option value="restricted">제한 · Restricted</option>
-              </select>
-            </div>
+          )}
+          <div>
+            <label className="label">민감도 · Sensitivity</label>
+            <select className="input" value={form.sensitivity} onChange={e => setForm({ ...form, sensitivity: e.target.value })}>
+              <option value="public">공개 · Public</option>
+              <option value="internal">내부 · Internal</option>
+              <option value="confidential">기밀 · Confidential</option>
+              <option value="restricted">제한 · Restricted</option>
+            </select>
           </div>
-          <button type="submit" className="btn-primary mt-4">등록 · Register</button>
+          <button type="submit" className="btn-primary">{editingId ? '수정 · Save' : '등록 · Register'}</button>
         </form>
       )}
 
@@ -89,29 +124,52 @@ export default function Repositories() {
         {repos.length === 0 ? (
           <div className="text-center py-8">
             <p className="text-gray-400">등록된 저장소가 없습니다.</p>
-            <p className="text-sm text-gray-400 mt-1">Git/SCM 저장소를 등록하면 브랜치 보호, 베이스라인 관리, 프로바이던스 추적이 가능합니다.</p>
           </div>
         ) : (
           <table className="w-full">
             <thead>
-              <tr className="border-b border-gray-200 text-left text-sm text-gray-500">
+              <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
                 <th className="pb-3">저장소 · Repository</th>
-                <th className="pb-3">기본 브랜치 · Branch</th>
-                <th className="pb-3">민감도 · Sensitivity</th>
-                <th className="pb-3">상태 · Status</th>
+                <th className="pb-3">SCM</th>
+                <th className="pb-3">기본 브랜치</th>
+                <th className="pb-3">민감도</th>
+                <th className="pb-3">상태</th>
+                <th className="pb-3 text-right">작업</th>
               </tr>
             </thead>
             <tbody>
               {repos.map(r => (
-                <tr key={r.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                  <td className="py-3">
-                    <div className="font-medium">{r.name}</div>
-                    <div className="text-xs text-gray-400">{r.full_name}</div>
-                  </td>
-                  <td className="py-3 text-sm font-mono">{r.default_branch}</td>
-                  <td className="py-3"><span className={sensBadge(r.sensitivity)}>{sensLabel(r.sensitivity)}</span></td>
-                  <td className="py-3"><span className="badge-green">{r.status}</span></td>
-                </tr>
+                <>
+                  <tr key={r.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer"
+                      onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}>
+                    <td className="py-3">
+                      <div className="font-medium text-sm">{r.name}</div>
+                      <div className="text-xs text-gray-400">{r.full_name}</div>
+                    </td>
+                    <td className="py-3"><span className="badge-gray">{r.scm_type}</span></td>
+                    <td className="py-3 text-sm font-mono">{r.default_branch}</td>
+                    <td className="py-3"><span className={sensBadge(r.sensitivity)}>{sensLabel(r.sensitivity)}</span></td>
+                    <td className="py-3"><span className="badge-green">{r.status}</span></td>
+                    <td className="py-3" onClick={e => e.stopPropagation()}>
+                      <div className="flex gap-2 justify-end">
+                        <button onClick={() => handleEdit(r)} className="text-blue-600 text-xs hover:underline">수정</button>
+                        <button onClick={() => handleUnregister(r.id)} className="text-red-600 text-xs hover:underline">해제</button>
+                      </div>
+                    </td>
+                  </tr>
+                  {expandedId === r.id && (
+                    <tr className="bg-gray-50">
+                      <td colSpan={6} className="p-4">
+                        <div className="grid grid-cols-3 gap-4 text-sm">
+                          <div><span className="text-gray-500">프로젝트:</span> {r.project_id?.slice(0, 12) || '-'}</div>
+                          <div><span className="text-gray-500">SCM 제공자:</span> {r.scm_provider || '-'}</div>
+                          <div><span className="text-gray-500">Clone URL:</span> {r.clone_url || '-'}</div>
+                          <div><span className="text-gray-500">생성일:</span> {r.created_at?.slice(0, 10)}</div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
               ))}
             </tbody>
           </table>
