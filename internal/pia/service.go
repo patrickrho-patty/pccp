@@ -31,6 +31,7 @@ type Service struct {
 	servingType  string
 	assureLevel  string
 	modelPkgID   string
+	vllmAdapter  *VLLMAdapter
 
 	mu          sync.RWMutex
 	endpointID  string
@@ -57,6 +58,11 @@ func New(db *gorm.DB, cfg Config) (*Service, error) {
 		return nil, fmt.Errorf("pia: generate key: %w", err)
 	}
 
+	var vllm *VLLMAdapter
+	if cfg.ServingType == "vllm" {
+		vllm = NewVLLMAdapter(cfg.ServingURL, "")
+	}
+
 	s := &Service{
 		db:           db,
 		peerID:       cfg.PeerID,
@@ -67,6 +73,7 @@ func New(db *gorm.DB, cfg Config) (*Service, error) {
 		servingType:  cfg.ServingType,
 		assureLevel:  cfg.AssuranceLevel,
 		modelPkgID:   cfg.ModelPackageID,
+		vllmAdapter:  vllm,
 		cpURL:        cfg.ControlPlaneURL,
 		httpClient:   &http.Client{Timeout: 120 * time.Second},
 	}
@@ -267,6 +274,10 @@ func (s *Service) HandleInference(ctx context.Context, req InferenceRequest) (*I
 
 // proxyToEngine forwards the request to the actual serving engine (vLLM/SGLang).
 func (s *Service) proxyToEngine(ctx context.Context, req InferenceRequest) (*InferenceResponse, error) {
+	// Use the vLLM adapter if available
+	if s.vllmAdapter != nil {
+		return s.vllmAdapter.ChatCompletion(ctx, req)
+	}
 	bodyJSON, _ := json.Marshal(req)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", s.servingURL+"/v1/chat/completions", bytes.NewReader(bodyJSON))
 	if err != nil {
