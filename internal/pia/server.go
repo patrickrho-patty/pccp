@@ -71,8 +71,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify lease before processing
-	if !s.svc.HasValidLease() {
-		// Try to refresh
+	// In direct-proxy mode (no CP URL), skip lease check and proxy directly
+	if !s.svc.HasValidLease() && s.svc.CPURL() != "" {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
 		if err := s.svc.RequestLease(ctx); err != nil {

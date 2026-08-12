@@ -404,6 +404,11 @@ func (s *Service) StartAttestationLoop(ctx context.Context, interval time.Durati
 	}()
 }
 
+// CPURL returns the control plane URL for lease requests.
+func (s *Service) CPURL() string {
+	return s.cpURL
+}
+
 // EndpointID returns the enrolled endpoint ID.
 func (s *Service) EndpointID() string {
 	s.mu.RLock()
