@@ -1134,3 +1134,56 @@ s been generated with the most recent feature set (\pgfplotsset{compat=1.18}).
 Package hyperref Info: Link coloring OFF on input line 69.
 (./PAPER_arXiv_KO.out) (./PAPER_arXiv_KO.out)
 \@outlinefile=\write4
+\openout4 = `PAPER_arXiv_KO.out'.
+
+
+(/usr/local/texlive/2026/texmf-dist/tex/latex/microtype/mt-cmr.cfg
+File: mt-cmr.cfg 2013/05/19 v2.2 microtype config. file: Computer Modern Roman 
+(RS)
+) [1
+
+]
+File: figures/qwen-governed-exchange.png Graphic file (type bmp)
+<figures/qwen-governed-exchange.png>
+
+[2] [3] [4] [5]
+File: figures/governed-exchange-lifecycle.png Graphic file (type bmp)
+<figures/governed-exchange-lifecycle.png>
+ [6] (./figures/model-identity-chain-ko.tex) [7] [8] [9]
+(./figures/primitive-latency-plot-ko.tex
+PGFPlots: reading {benchmark-data/core-primitives.tsv}
+Package pgfplots info on input line 27: Using 'lua backend=false' for axis: ymo
+de=log unsupported (yet).
+) [10] [11] [12] [13]
+(./PAPER_arXiv_KO.bbl
+Underfull \hbox (badness 1178) in paragraph at lines 4--7
+[]\TU/NanumMyeongjo(1)/m/n/10 A2A Project.  Agent2agent protocol specification,
+ 2026.  []$[][][][][] [] [] [] [][][][][][][][][][][][][] [] [][][] [] [][][][]
+[][] []
+ []
+
+Missing character: There is no ́ (U+0301) in font NanumMyeongjo/OT:script=latn;
+language=dflt;mapping=tex-text;!
+Missing character: There is no ̀ (U+0300) in font NanumMyeongjo/OT:script=latn;
+language=dflt;mapping=tex-text;!
+[14]) [15] [16
+
+
+] (./PAPER_arXiv_KO.aux)
+ ***********
+LaTeX2e <2025-11-01>
+L3 programming layer <2026-01-19>
+ ***********
+Package rerunfilecheck Info: File `PAPER_arXiv_KO.out' has not changed.
+(rerunfilecheck)             Checksum: 06470A6C3F9CCFEB43C078472978F3AD;5112.
+ ) 
+Here is how much of TeX's memory you used:
+ 40996 strings out of 468168
+ 950922 string characters out of 5432815
+ 1549521 words of memory out of 5000000
+ 69112 multiletter control sequences out of 15000+600000
+ 633402 words of font info for 99 fonts, out of 8000000 for 9000
+ 1348 hyphenation exceptions out of 8191
+ 91i,11n,94p,1004b,2825s stack positions out of 10000i,1000n,20000p,200000b,200000s
+
+Output written on PAPER_arXiv_KO.pdf (16 pages).
