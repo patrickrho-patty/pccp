@@ -252,45 +252,58 @@ func (s *Service) RouteInference(ctx context.Context, req InferenceRequest) (*In
 
 	exchange.EndpointID = endpoint.EndpointID
 
-	// Forward to PIA
-	// PIA URL from environment variable or endpoint config
-	piaURL := os.Getenv("PCCP_PIA_URL")
-	if piaURL == "" {
-		piaURL = "http://localhost:9090"
-	}
-
-	// Build PIA request
-	piaReq := map[string]interface{}{
-		"model":       req.Model,
-		"messages":    req.Messages,
-		"max_tokens":  req.MaxTokens,
-		"temperature": req.Temperature,
-		"exchange_id": req.ExchangeID,
-	}
-
-	bodyJSON, _ := json.Marshal(piaReq)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", piaURL+"/v1/chat/completions", bytes.NewReader(bodyJSON))
-	if err != nil {
-		return nil, fmt.Errorf("relay: create PIA request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Endpoint-Lease", epLease.LeaseID)
-	httpReq.Header.Set("X-Exchange-ID", req.ExchangeID)
-
-	resp, err := s.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("relay: PIA request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("relay: PIA error (%d): %s", resp.StatusCode, string(body))
-	}
-
+	// Forward to PIA via PAPER protocol (v2 §9.2, §38.1)
+	// If PCCP_PIA_PAPER_ADDR is set, use PAPER transport
+	// Otherwise fall back to HTTP (legacy/dev mode)
 	var inferenceResp InferenceResponse
-	if err := json.NewDecoder(resp.Body).Decode(&inferenceResp); err != nil {
-		return nil, fmt.Errorf("relay: decode PIA response: %w", err)
+
+	paperClient := getPaperInferenceClient()
+	if paperClient != nil {
+		// Use PAPER transport — this is the v2-compliant path
+		// Convert messages to interface{} format
+		interfaceMsgs := make([]map[string]interface{}, len(req.Messages))
+		for i, m := range req.Messages {
+			interfaceMsgs[i] = make(map[string]interface{})
+			interfaceMsgs[i]["role"] = m["role"]
+			interfaceMsgs[i]["content"] = m["content"]
+		}
+		result, err := paperClient.SendInference(ctx, req.Model, interfaceMsgs, req.MaxTokens)
+		if err != nil {
+			return nil, fmt.Errorf("relay: PAPER inference failed: %w", err)
+		}
+		inferenceResp.ID = result.ID
+		inferenceResp.Model = result.Model
+		inferenceResp.Choices = result.Choices
+		inferenceResp.Usage = result.Usage
+	} else {
+		// HTTP fallback (dev/legacy only — not v2 compliant)
+		piaURL := os.Getenv("PCCP_PIA_URL")
+		if piaURL == "" {
+			piaURL = "http://localhost:9090"
+		}
+		piaReq := map[string]interface{}{
+			"model":       req.Model,
+			"messages":    req.Messages,
+			"max_tokens":  req.MaxTokens,
+			"temperature": req.Temperature,
+			"exchange_id": req.ExchangeID,
+		}
+		bodyJSON, _ := json.Marshal(piaReq)
+		httpReq, _ := http.NewRequestWithContext(ctx, "POST", piaURL+"/v1/chat/completions", bytes.NewReader(bodyJSON))
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("X-Endpoint-Lease", epLease.LeaseID)
+		httpReq.Header.Set("X-Exchange-ID", req.ExchangeID)
+
+		resp, err := s.httpClient.Do(httpReq)
+		if err != nil {
+			return nil, fmt.Errorf("relay: PIA request failed: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("relay: PIA error (%d): %s", resp.StatusCode, string(body))
+		}
+		json.NewDecoder(resp.Body).Decode(&inferenceResp)
 	}
 
 	// Record the inference action
