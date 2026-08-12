@@ -23,7 +23,7 @@
 - ✅ **Last login date column**
 - ❌ Bulk actions (select multiple)
 - ❌ Department/business unit assignment
-- ❌ User detail view with activity history
+- ✅ User detail view with activity history
 
 ### Sessions (§14.3)
 - ✅ CRUD: Create/Pause/Resume/Close
