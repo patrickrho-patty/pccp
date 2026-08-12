@@ -53,7 +53,7 @@
 - ✅ CRUD: Register/Edit/Unregister
 - ✅ FilterBar: sensitivity + status
 - ✅ Expandable detail
-- ❌ Branch protection status
+- ✅ Branch protection config in repo detail
 - ✅ Relative time on harnesses
 
 ### Models (§11)
@@ -101,7 +101,7 @@
 - ✅ Security posture
 - ✅ Executive governance brief
 - ✅ CSS bar charts
-- ❌ Cost breakdown by user/project
+- ✅ Cost breakdown with KRW estimates
 
 ### Communications (§21-23)
 - ✅ Functional chat interface
