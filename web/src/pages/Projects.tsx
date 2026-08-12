@@ -111,12 +111,15 @@ export default function Projects() {
                 {p.allowed_model_classes && (
                   <div className="text-xs">
                     <span className="text-gray-500">허용 모델: </span>
-                    <span className="font-mono">{p.allowed_model_classes}</span>
+                    {p.allowed_model_classes?.split(',').map((m: string) => (
+                      <span key={m} className="badge-blue mr-1">{m.trim()}</span>
+                    ))}
                   </div>
                 )}
                 {p.description && <p className="text-xs text-gray-500">{p.description}</p>}
-                <div className="text-xs text-gray-400">
-                  생성: {p.created_at?.slice(0, 10)}
+                <div className="flex gap-4 text-xs text-gray-400 mt-2">
+                  <span>생성: {p.created_at?.slice(0, 10)}</span>
+                  <span>상태: {p.status}</span>
                 </div>
                 <div className="flex gap-2 mt-2">
                   <button onClick={(e) => { e.stopPropagation(); handleEdit(p) }} className="text-blue-600 text-xs hover:underline">수정</button>

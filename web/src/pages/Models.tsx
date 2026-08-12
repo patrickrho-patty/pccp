@@ -78,7 +78,16 @@ export default function Models() {
               {paged.map(m => (
                 <>
                   <tr key={m.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer" onClick={() => setExpandedId(expandedId === m.id ? null : m.id)}>
-                    <td className="py-3"><div className="font-medium text-sm">{m.name_ko || m.name}</div><div className="text-xs text-gray-400">{m.model_id}</div></td>
+                    <td className="py-3">
+                    <div className="font-medium text-sm">{m.name_ko || m.name}</div>
+                    <div className="text-xs text-gray-400">{m.model_id}</div>
+                    <div className="flex gap-1 mt-1">
+                      {m.capabilities && typeof m.capabilities === 'string' && m.capabilities.includes('tool') && <span className="text-[10px] bg-blue-50 text-blue-600 px-1 rounded">도구</span>}
+                      {m.capabilities && typeof m.capabilities === 'string' && m.capabilities.includes('image') && <span className="text-[10px] bg-purple-50 text-purple-600 px-1 rounded">이미지</span>}
+                      {m.capabilities && typeof m.capabilities === 'string' && m.capabilities.includes('stream') && <span className="text-[10px] bg-green-50 text-green-600 px-1 rounded">스트리밍</span>}
+                      {m.capabilities && typeof m.capabilities === 'string' && m.capabilities.includes('cache') && <span className="text-[10px] bg-yellow-50 text-yellow-600 px-1 rounded">캐시</span>}
+                    </div>
+                  </td>
                     <td className="py-3 font-mono text-xs">{m.package_id}</td>
                     <td className="py-3 text-sm">{m.version}</td>
                     <td className="py-3"><span className={stateBadge(m.state)}>{stateLabel(m.state)}</span></td>
