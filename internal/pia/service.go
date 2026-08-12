@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -257,8 +258,9 @@ type Usage struct {
 
 // HandleInference processes an inference request by proxying to the local serving engine.
 func (s *Service) HandleInference(ctx context.Context, req InferenceRequest) (*InferenceResponse, error) {
-	if !s.HasValidLease() {
-		// Try to get a new lease
+	// In direct-proxy mode, skip lease check
+	directMode := os.Getenv("PCCP_PIA_DIRECT") == "1"
+	if !directMode && !s.HasValidLease() {
 		if err := s.RequestLease(ctx); err != nil {
 			return nil, fmt.Errorf("pia: no valid lease: %w", err)
 		}
