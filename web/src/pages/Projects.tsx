@@ -8,7 +8,11 @@ export default function Projects() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [form, setForm] = useState({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard' })
 
-  const load = () => api.listProjects().then(data => setProjects(Array.isArray(data) ? data : []))
+  const [sessions, setSessions] = useState<any[]>([])
+  const load = () => {
+    api.listProjects().then(data => setProjects(Array.isArray(data) ? data : []))
+    api.listSessions().then(data => setSessions(Array.isArray(data) ? data : []))
+  }
   useEffect(() => { load() }, [])
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -44,6 +48,8 @@ export default function Projects() {
       load()
     } catch (err: any) { alert('수정 실패: ' + err.message) }
   }
+
+  const getSessionCount = (projId: string) => sessions.filter(s => s.project_id === projId && s.status === 'active').length
 
   const handleArchive = async (id: string) => {
     if (!confirm('이 프로젝트를 보관 처리하시겠습니까?')) return
@@ -105,6 +111,9 @@ export default function Projects() {
               <span className={p.status === 'active' ? 'badge-green' : 'badge-gray'}>{p.status}</span>
             </div>
             {p.slug && <p className="text-xs text-gray-400 font-mono mb-2">{p.slug}</p>}
+            <div className="flex gap-3 text-xs text-gray-500">
+              <span>활성 세션: <strong className="text-gray-700">{getSessionCount(p.id)}</strong></span>
+            </div>
 
             {expandedId === p.id && (
               <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">

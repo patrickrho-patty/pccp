@@ -26,7 +26,12 @@ export default function Harnesses() {
   const pageSize = 25
   const [form, setForm] = useState({ user_id: '', harness_id: '', public_key_hex: '', binary_version: '1.0.0' })
 
-  const load = () => { api.listHarnesses().then(data => setHarnesses(Array.isArray(data) ? data : [])); api.listUsers().then(data => setUsers(Array.isArray(data) ? data : [])) }
+  const [sessions, setSessions] = useState<any[]>([])
+  const load = () => {
+    api.listHarnesses().then(data => setHarnesses(Array.isArray(data) ? data : []))
+    api.listUsers().then(data => setUsers(Array.isArray(data) ? data : []))
+    api.listSessions().then(data => setSessions(Array.isArray(data) ? data : []))
+  }
   useEffect(() => { load() }, [])
 
   const filtered = useFilteredData(harnesses, filters, FILTER_CONFIG)
@@ -55,6 +60,8 @@ export default function Harnesses() {
     if (hours < 24) return hours + '시간 전'
     return d.toLocaleDateString('ko-KR')
   }
+
+  const getSessionCount = (hrnId: string) => sessions.filter(s => s.harness_id === hrnId && s.status === 'active').length
 
   const statusBadge = (s: string) => { const m: Record<string,string> = { enrolled:'badge-green', active:'badge-green', pending:'badge-yellow', quarantined:'badge-red', revoked:'badge-gray' }; return m[s] || 'badge-gray' }
   const statusLabel = (s: string) => { const m: Record<string,string> = { enrolled:'등록됨', active:'활성', pending:'대기', quarantined:'격리됨', revoked:'폐기됨' }; return m[s] || s }
@@ -87,7 +94,7 @@ export default function Harnesses() {
         ) : (
           <table className="w-full">
             <thead><tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
-              <th className="pb-3">하네스 ID</th><th className="pb-3">버전</th><th className="pb-3">등록 모드</th><th className="pb-3">마지막 활동</th><th className="pb-3">위험도</th><th className="pb-3">상태</th><th className="pb-3 text-right">작업</th>
+              <th className="pb-3">하네스 ID</th><th className="pb-3">버전</th><th className="pb-3">등록 모드</th><th className="pb-3">세션</th><th className="pb-3">마지막 활동</th><th className="pb-3">위험도</th><th className="pb-3">상태</th><th className="pb-3 text-right">작업</th>
             </tr></thead>
             <tbody>
               {paged.map(h => (
@@ -96,6 +103,7 @@ export default function Harnesses() {
                     <td className="py-3 font-mono text-xs">{h.harness_id}</td>
                     <td className="py-3 text-sm">{h.binary_version}</td>
                     <td className="py-3"><span className="badge-gray">{h.enrollment_mode}</span></td>
+                    <td className="py-3 text-sm">{getSessionCount(h.harness_id)} <span className="text-xs text-gray-400">활성</span></td>
                     <td className="py-3 text-xs text-gray-400">{formatRelative(h.last_heartbeat)}</td>
                     <td className="py-3"><span className={h.risk_state === 'normal' ? 'badge-green' : h.risk_state === 'high' ? 'badge-red' : 'badge-yellow'}>{h.risk_state}</span></td>
                     <td className="py-3"><span className={statusBadge(h.status)}>{statusLabel(h.status)}</span></td>
@@ -107,7 +115,7 @@ export default function Harnesses() {
                     </td>
                   </tr>
                   {expandedId === h.id && (
-                    <tr className="bg-gray-50"><td colSpan={7} className="p-4">
+                    <tr className="bg-gray-50"><td colSpan={8} className="p-4">
                       <div className="grid grid-cols-3 gap-4 text-sm">
                         <div><span className="text-gray-500">디바이스:</span> {h.device_id || '-'}</div>
                         <div><span className="text-gray-500">정책 프로필:</span> {h.policy_profile || '-'}</div>

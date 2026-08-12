@@ -24,6 +24,7 @@ export default function Compliance() {
   const [tab, setTab] = useState<'overview' | 'assessment' | 'evidence'>('overview')
   const [certs, setCerts] = useState<string[]>([])
   const [assessment, setAssessment] = useState<Assessment | null>(null)
+  const [lastAssessmentAt, setLastAssessmentAt] = useState<string | null>(null)
   const [selectedCert, setSelectedCert] = useState('')
 
   useEffect(() => {
@@ -36,6 +37,7 @@ export default function Compliance() {
     try {
       const r = await api.complianceAssess(cert)
       setAssessment(r)
+      setLastAssessmentAt(new Date().toLocaleString('ko-KR'))
     } catch {
       setAssessment(null)
     }
@@ -134,6 +136,7 @@ export default function Compliance() {
                   <div>
                     <h2 className="text-xl font-bold">
                       {assessment.certification} 평가 결과
+                      {lastAssessmentAt && <span className="text-xs text-gray-400 font-normal ml-3">최종 평가: {lastAssessmentAt}</span>}
                     </h2>
                     <p className="text-sm text-gray-500 mt-1">
                       {CERT_INFO[assessment.certification]?.name_ko || assessment.certification}
