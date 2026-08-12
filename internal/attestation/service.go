@@ -63,11 +63,11 @@ type AttestationEvidence struct {
 
 // CollectRequest is a request to collect attestation evidence from a host.
 type CollectRequest struct {
-	EndpointID    string
-	NodeIdentity  string
-	GPUIDs        []string
-	RequiredTypes []AttestationType
-	RequiredLevel AssuranceLevel
+ 	EndpointID    string `json:"endpoint_i_d"`
+ 	NodeIdentity  string `json:"node_identity"`
+ 	GPUIDs        []string `json:"g_p_u_i_ds"`
+ 	RequiredTypes []AttestationType `json:"required_types"`
+ 	RequiredLevel AssuranceLevel `json:"required_level"`
 }
 
 // CollectEvidence collects attestation evidence.
@@ -198,11 +198,11 @@ func AssuranceLevelRequirements(level AssuranceLevel) []string {
 // ModelKeyReleaseRequest represents a request to release a model decryption key
 // after attestation passes (PRD §9.8).
 type ModelKeyReleaseRequest struct {
-	EndpointID         string
-	OrganizationID     string
-	ModelPackageID     string
-	AssuranceLevel     AssuranceLevel
-	AttestationEvidence []AttestationEvidence
+ 	EndpointID         string `json:"endpoint_i_d"`
+ 	OrganizationID     string `json:"organization_i_d"`
+ 	ModelPackageID     string `json:"model_package_i_d"`
+ 	AssuranceLevel     AssuranceLevel `json:"assurance_level"`
+ 	AttestationEvidence []AttestationEvidence `json:"attestation_evidence"`
 }
 
 // ModelKeyReleaseResult is the result of a key release request.

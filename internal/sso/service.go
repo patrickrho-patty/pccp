@@ -61,13 +61,13 @@ func (s *Service) GenerateSAMLRedirect(relayState string) (string, error) {
 }
 
 type SAMLResponse struct {
-	UserID       string
-	Email        string
-	Name         string
-	NameKo       string
-	Attributes   map[string]string
-	Issuer       string
-	NotOnOrAfter time.Time
+ 	UserID       string `json:"user_i_d"`
+ 	Email        string `json:"email"`
+ 	Name         string `json:"name"`
+ 	NameKo       string `json:"name_ko"`
+ 	Attributes   map[string]string `json:"attributes"`
+ 	Issuer       string `json:"issuer"`
+ 	NotOnOrAfter time.Time `json:"not_on_or_after"`
 }
 
 func (s *Service) HandleSAMLCallback(samlResponse string, relayState string) (*SAMLResponse, error) {

@@ -20,14 +20,14 @@ const ALPNProtocol = "paper/1"
 // TransportConfig configures the PAPER transport.
 type TransportConfig struct {
 	// TLS configuration
-	TLSConfig *tls.Config
+ 	TLSConfig *tls.Config `json:"t_l_s_config"`
 	// Read/write timeouts
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
+ 	ReadTimeout  time.Duration `json:"read_timeout"`
+ 	WriteTimeout time.Duration `json:"write_timeout"`
 	// Keepalive
-	KeepAlive time.Duration
+ 	KeepAlive time.Duration `json:"keep_alive"`
 	// Max message size
-	MaxMessageSize int
+ 	MaxMessageSize int `json:"max_message_size"`
 }
 
 // DefaultTransportConfig returns sensible defaults.

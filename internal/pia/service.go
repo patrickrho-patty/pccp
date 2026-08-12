@@ -43,12 +43,12 @@ type Service struct {
 
 // Config holds PIA runtime configuration.
 type Config struct {
-	PeerID         string
-	ServingURL     string
-	ServingType    string // vllm, sglang, mock
-	AssuranceLevel string
-	ModelPackageID string
-	ControlPlaneURL string
+ 	PeerID         string `json:"peer_i_d"`
+ 	ServingURL     string `json:"serving_u_r_l"`
+ 	ServingType    string `json:"serving_type"`  // vllm, sglang, mock
+ 	AssuranceLevel string `json:"assurance_level"`
+ 	ModelPackageID string `json:"model_package_i_d"`
+ 	ControlPlaneURL string `json:"control_plane_u_r_l"`
 }
 
 // New creates a new PIA service.

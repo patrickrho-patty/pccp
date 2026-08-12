@@ -24,18 +24,18 @@ func New(db *gorm.DB) *Service {
 
 // CreateBaseline records an immutable task baseline at session start (PRD §18.3).
 type BaselineRequest struct {
-	OrganizationID string
-	RepositoryID   string
-	Branch         string
-	CommitSHA      string
-	CommitMessage  string
-	AuthorName     string
-	AuthorEmail    string
-	CommittedAt    string
-	WorktreeStatus string // git status output
-	SessionID      string
-	SubmodulesJSON string
-	DependencyLock string // package-lock.json/go.sum hashes
+ 	OrganizationID string `json:"organization_i_d"`
+ 	RepositoryID   string `json:"repository_i_d"`
+ 	Branch         string `json:"branch"`
+ 	CommitSHA      string `json:"commit_s_h_a"`
+ 	CommitMessage  string `json:"commit_message"`
+ 	AuthorName     string `json:"author_name"`
+ 	AuthorEmail    string `json:"author_email"`
+ 	CommittedAt    string `json:"committed_at"`
+ 	WorktreeStatus string `json:"worktree_status"`  // git status output
+ 	SessionID      string `json:"session_i_d"`
+ 	SubmodulesJSON string `json:"submodules_j_s_o_n"`
+ 	DependencyLock string `json:"dependency_lock"`  // package-lock.json/go.sum hashes
 }
 
 // CreateBaseline creates a repository baseline.
@@ -139,12 +139,12 @@ func (s *Service) IsEditAllowed(repoID, branchName string) (bool, string, error)
 
 // RecordCommitBinding links a git commit to a change set (PRD §18.6).
 type CommitBindingRequest struct {
-	OrganizationID string
-	RepositoryID   string
-	CommitSHA      string
-	ChangeSetID    string
-	SessionID      string
-	Branch         string
+ 	OrganizationID string `json:"organization_i_d"`
+ 	RepositoryID   string `json:"repository_i_d"`
+ 	CommitSHA      string `json:"commit_s_h_a"`
+ 	ChangeSetID    string `json:"change_set_i_d"`
+ 	SessionID      string `json:"session_i_d"`
+ 	Branch         string `json:"branch"`
 }
 
 // RecordCommitBinding creates a binding between a commit and provenance.
@@ -186,17 +186,17 @@ const (
 
 // RegisterRepository registers a new repository under a project.
 type RegisterRepoRequest struct {
-	OrganizationID  string
-	ProjectID       string
-	Name            string
-	FullName        string
-	CloneURL        string
-	SCMType         SCMType
-	SCMProvider     string // e.g. "github.example.com"
-	DefaultBranch   string
-	Sensitivity     string // public, internal, confidential, restricted
-	CodeOwnersJSON  string
-	CIConfigRef     string
+ 	OrganizationID  string `json:"organization_i_d"`
+ 	ProjectID       string `json:"project_i_d"`
+ 	Name            string `json:"name"`
+ 	FullName        string `json:"full_name"`
+ 	CloneURL        string `json:"clone_u_r_l"`
+ 	SCMType         SCMType `json:"s_c_m_type"`
+ 	SCMProvider     string `json:"s_c_m_provider"`  // e.g. "github.example.com"
+ 	DefaultBranch   string `json:"default_branch"`
+ 	Sensitivity     string `json:"sensitivity"`  // public, internal, confidential, restricted
+ 	CodeOwnersJSON  string `json:"code_owners_j_s_o_n"`
+ 	CIConfigRef     string `json:"c_i_config_ref"`
 }
 
 // RegisterRepository creates a new repository record.

@@ -37,27 +37,27 @@ var extMap = make(map[*Server]*AdditionalServices)
 // These are initialized in ExtendedInit and accessed via the Server's
 // extension field.
 type AdditionalServices struct {
-	Billing   *billing.Service
-	Command   *command.Service
-	Incident  *incident.Service
-	Korean    *korean.Service
-	MCP       *mcp.Service
-	Network   *network.Service
-	Privacy   *privacy.Service
-	Reporting *reporting.Service
-	Secret    *secret.Service
-	Telemetry *telemetry.Service
-	Tools      *tools.Service
-	Attestation *attestation.Service
-	Compliance  *compliance.Service
-	ConfigMgmt  *configmgmt.Service
-	Connectors  *connectors.Service
-	GPUOps      *gpuops.Service
-	KeyMgmt     *keymgmt.Service
-	MCPMarket   *mcpmarket.Service
-	Realtime    *realtime.Service
-	Sovereign   *sovereign.Service
-	SSO         *sso.Service
+ 	Billing   *billing.Service `json:"billing"`
+ 	Command   *command.Service `json:"command"`
+ 	Incident  *incident.Service `json:"incident"`
+ 	Korean    *korean.Service `json:"korean"`
+ 	MCP       *mcp.Service `json:"m_c_p"`
+ 	Network   *network.Service `json:"network"`
+ 	Privacy   *privacy.Service `json:"privacy"`
+ 	Reporting *reporting.Service `json:"reporting"`
+ 	Secret    *secret.Service `json:"secret"`
+ 	Telemetry *telemetry.Service `json:"telemetry"`
+ 	Tools      *tools.Service `json:"tools"`
+ 	Attestation *attestation.Service `json:"attestation"`
+ 	Compliance  *compliance.Service `json:"compliance"`
+ 	ConfigMgmt  *configmgmt.Service `json:"config_mgmt"`
+ 	Connectors  *connectors.Service `json:"connectors"`
+ 	GPUOps      *gpuops.Service `json:"g_p_u_ops"`
+ 	KeyMgmt     *keymgmt.Service `json:"key_mgmt"`
+ 	MCPMarket   *mcpmarket.Service `json:"m_c_p_market"`
+ 	Realtime    *realtime.Service `json:"realtime"`
+ 	Sovereign   *sovereign.Service `json:"sovereign"`
+ 	SSO         *sso.Service `json:"s_s_o"`
 }
 
 // ext gets the additional services for this server, initializing if needed.

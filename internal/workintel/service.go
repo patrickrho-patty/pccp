@@ -159,8 +159,8 @@ func (s *Service) GetEngineeringMetrics(orgID string, userID string, days int) (
 
 	// Lines changed (aggregate)
 	type lineResult struct {
-		Added   int64
-		Removed int64
+  		Added   int64 `json:"added"`
+  		Removed int64 `json:"removed"`
 	}
 	var lr lineResult
 	s.db.Model(&models.ChangeSet{}).

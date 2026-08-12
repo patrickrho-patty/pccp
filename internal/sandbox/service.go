@@ -58,14 +58,14 @@ type Sandbox struct {
 
 // CreateSandbox creates a new sandbox instance.
 type CreateRequest struct {
-	OrganizationID string
-	SessionID      string
-	UserID         string
-	Mode           RuntimeMode
+ 	OrganizationID string `json:"organization_i_d"`
+ 	SessionID      string `json:"session_i_d"`
+ 	UserID         string `json:"user_i_d"`
+ 	Mode           RuntimeMode `json:"mode"`
 	BaseImage      string
-	ImageDigest    string
-	NetworkPolicy  map[string]interface{}
-	ResourceLimits map[string]interface{}
+ 	ImageDigest    string `json:"image_digest"`
+ 	NetworkPolicy  map[string]interface{} `json:"network_policy"`
+ 	ResourceLimits map[string]interface{} `json:"resource_limits"`
 }
 
 // CreateSandbox provisions a new sandbox.

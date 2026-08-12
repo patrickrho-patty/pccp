@@ -32,22 +32,22 @@ func New(db *gorm.DB, relayID string) (*Service, error) {
 
 // RecordAction creates a signed ActionEnvelope for a governed action.
 type RecordActionRequest struct {
-	OrganizationID string
-	SessionID      string
-	ExchangeID     string
-	UserID         string
-	HarnessID      string
-	ModelPackageID string
-	EndpointID     string
-	ProjectID      string
-	RepositoryID   string
-	Branch         string
-	PolicyEpochID  string
-	LeaseID        string
-	ActionType     string
-	ActionPayload  interface{}
-	VerdictResult  string
-	Classification string
+ 	OrganizationID string `json:"organization_i_d"`
+ 	SessionID      string `json:"session_i_d"`
+ 	ExchangeID     string `json:"exchange_i_d"`
+ 	UserID         string `json:"user_i_d"`
+ 	HarnessID      string `json:"harness_i_d"`
+ 	ModelPackageID string `json:"model_package_i_d"`
+ 	EndpointID     string `json:"endpoint_i_d"`
+ 	ProjectID      string `json:"project_i_d"`
+ 	RepositoryID   string `json:"repository_i_d"`
+ 	Branch         string `json:"branch"`
+ 	PolicyEpochID  string `json:"policy_epoch_i_d"`
+ 	LeaseID        string `json:"lease_i_d"`
+ 	ActionType     string `json:"action_type"`
+ 	ActionPayload  interface{} `json:"action_payload"`
+ 	VerdictResult  string `json:"verdict_result"`
+ 	Classification string `json:"classification"`
 }
 
 // RecordAction creates a signed ActionEnvelope and writes it to the audit stream.
@@ -121,22 +121,22 @@ func (s *Service) RecordAction(req RecordActionRequest) (*models.ActionEnvelope,
 
 // CreateChangeSet records a code patch with full provenance lineage.
 type CreateChangeSetRequest struct {
-	OrganizationID string
-	SessionID      string
-	ExchangeID     string
-	RepositoryID   string
-	Branch         string
+ 	OrganizationID string `json:"organization_i_d"`
+ 	SessionID      string `json:"session_i_d"`
+ 	ExchangeID     string `json:"exchange_i_d"`
+ 	RepositoryID   string `json:"repository_i_d"`
+ 	Branch         string `json:"branch"`
 	BaselineID     string
-	UserID         string
-	HarnessID      string
-	ModelPackageID string
-	EndpointID     string
-	FilesChanged   []string
-	DiffSummary    string
-	LinesAdded     int
-	LinesRemoved   int
-	AttributionState string
-	Confidence     float64
+ 	UserID         string `json:"user_i_d"`
+ 	HarnessID      string `json:"harness_i_d"`
+ 	ModelPackageID string `json:"model_package_i_d"`
+ 	EndpointID     string `json:"endpoint_i_d"`
+ 	FilesChanged   []string `json:"files_changed"`
+ 	DiffSummary    string `json:"diff_summary"`
+ 	LinesAdded     int `json:"lines_added"`
+ 	LinesRemoved   int `json:"lines_removed"`
+ 	AttributionState string `json:"attribution_state"`
+ 	Confidence     float64 `json:"confidence"`
 }
 
 // CreateChangeSet creates a ChangeSet with provenance.
@@ -173,24 +173,24 @@ func (s *Service) CreateChangeSet(req CreateChangeSetRequest) (*models.ChangeSet
 
 // CreateProvenanceSpan maps a code region to its origin (PRD §19, Appendix B.1).
 type CreateSpanRequest struct {
-	OrganizationID   string
-	RepositoryID     string
-	ChangeSetID      string
-	FilePath         string
-	CommitSHA        string
-	SymbolLang       string
-	SymbolName       string
-	StartLine        int
-	EndLine          int
-	AttributionState string
-	Confidence       float64
-	SessionID        string
-	UserID           string
-	HarnessID        string
-	ModelPackageID   string
-	EndpointID       string
-	ContextRefs      []string
-	ParentSpanRefs   []string
+ 	OrganizationID   string `json:"organization_i_d"`
+ 	RepositoryID     string `json:"repository_i_d"`
+ 	ChangeSetID      string `json:"change_set_i_d"`
+ 	FilePath         string `json:"file_path"`
+ 	CommitSHA        string `json:"commit_s_h_a"`
+ 	SymbolLang       string `json:"symbol_lang"`
+ 	SymbolName       string `json:"symbol_name"`
+ 	StartLine        int `json:"start_line"`
+ 	EndLine          int `json:"end_line"`
+ 	AttributionState string `json:"attribution_state"`
+ 	Confidence       float64 `json:"confidence"`
+ 	SessionID        string `json:"session_i_d"`
+ 	UserID           string `json:"user_i_d"`
+ 	HarnessID        string `json:"harness_i_d"`
+ 	ModelPackageID   string `json:"model_package_i_d"`
+ 	EndpointID       string `json:"endpoint_i_d"`
+ 	ContextRefs      []string `json:"context_refs"`
+ 	ParentSpanRefs   []string `json:"parent_span_refs"`
 }
 
 // CreateProvenanceSpan creates a provenance span.
@@ -250,18 +250,18 @@ func (s *Service) BindCommit(orgID, repoID, commitSHA, changeSetID, sessionID, b
 
 // IssueEvidenceReceipt creates a signed evidence receipt for a completed exchange (PAPER §34).
 type IssueReceiptRequest struct {
-	OrganizationID string
-	ExchangeID     string
-	SessionID      string
-	FinalState     string
-	FirstEventSeq  uint64
-	LastEventSeq   uint64
-	ChainRoot      string
-	ProvenanceRoot string
-	PolicyEpochID  string
-	LeaseDigest    string
-	ModelPackageID string
-	EndpointID     string
+ 	OrganizationID string `json:"organization_i_d"`
+ 	ExchangeID     string `json:"exchange_i_d"`
+ 	SessionID      string `json:"session_i_d"`
+ 	FinalState     string `json:"final_state"`
+ 	FirstEventSeq  uint64 `json:"first_event_seq"`
+ 	LastEventSeq   uint64 `json:"last_event_seq"`
+ 	ChainRoot      string `json:"chain_root"`
+ 	ProvenanceRoot string `json:"provenance_root"`
+ 	PolicyEpochID  string `json:"policy_epoch_i_d"`
+ 	LeaseDigest    string `json:"lease_digest"`
+ 	ModelPackageID string `json:"model_package_i_d"`
+ 	EndpointID     string `json:"endpoint_i_d"`
 }
 
 // IssueEvidenceReceipt creates and signs an evidence receipt.

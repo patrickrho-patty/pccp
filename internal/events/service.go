@@ -67,16 +67,16 @@ type EventActor struct {
 
 // Emit creates, signs, and persists an event on the durable event spine.
 type EmitRequest struct {
-	EventType      string
-	OrganizationID string
-	UserID         string
-	HarnessID      string
-	ActorType      string
-	SessionID      string
-	ProjectID      string
-	RepositoryID   string
-	Classification string
-	Payload        interface{}
+ 	EventType      string `json:"event_type"`
+ 	OrganizationID string `json:"organization_i_d"`
+ 	UserID         string `json:"user_i_d"`
+ 	HarnessID      string `json:"harness_i_d"`
+ 	ActorType      string `json:"actor_type"`
+ 	SessionID      string `json:"session_i_d"`
+ 	ProjectID      string `json:"project_i_d"`
+ 	RepositoryID   string `json:"repository_i_d"`
+ 	Classification string `json:"classification"`
+ 	Payload        interface{} `json:"payload"`
 }
 
 // Emit creates a signed event and writes it to the event spine.
@@ -165,13 +165,13 @@ func (s *Service) Emit(req EmitRequest) (*EventEnvelope, error) {
 
 // Query retrieves events by various filters.
 type QueryFilter struct {
-	OrganizationID string
-	EventType      string
-	SessionID      string
-	UserID         string
-	HarnessID      string
-	Since          string // RFC3339 timestamp
-	Limit          int
+ 	OrganizationID string `json:"organization_i_d"`
+ 	EventType      string `json:"event_type"`
+ 	SessionID      string `json:"session_i_d"`
+ 	UserID         string `json:"user_i_d"`
+ 	HarnessID      string `json:"harness_i_d"`
+ 	Since          string `json:"since"`  // RFC3339 timestamp
+ 	Limit          int `json:"limit"`
 }
 
 // Query returns events matching the filter.

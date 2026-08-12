@@ -21,12 +21,12 @@ type Service struct {
 
 // Client represents a connected WebSocket client.
 type Client struct {
-	ID        string
-	UserID    string
-	OrgID     string
-	Conn      *websocket.Conn
-	Send      chan []byte
-	Subscriptions map[string]bool // event types subscribed to
+ 	ID        string `json:"i_d"`
+ 	UserID    string `json:"user_i_d"`
+ 	OrgID     string `json:"org_i_d"`
+ 	Conn      *websocket.Conn `json:"conn"`
+ 	Send      chan []byte `json:"send"`
+ 	Subscriptions map[string]bool `json:"subscriptions"`  // event types subscribed to
 }
 
 // Event is a real-time event pushed to clients.

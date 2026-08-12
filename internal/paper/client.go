@@ -24,13 +24,13 @@ type Client struct {
 
 // ClientConfig holds client connection configuration.
 type ClientConfig struct {
-	Addr          string // relay address (host:port)
-	TLSConfig     *tls.Config
-	PeerID        string
-	OrganizationID string
-	PrivateKey    ed25519.PrivateKey
-	Credential    *PeerCredential
-	Profile       PeerProfile
+ 	Addr          string `json:"addr"`  // relay address (host:port)
+ 	TLSConfig     *tls.Config `json:"t_l_s_config"`
+ 	PeerID        string `json:"peer_i_d"`
+ 	OrganizationID string `json:"organization_i_d"`
+ 	PrivateKey    ed25519.PrivateKey `json:"private_key"`
+ 	Credential    *PeerCredential `json:"credential"`
+ 	Profile       PeerProfile `json:"profile"`
 }
 
 // DialClient connects to a PAPER relay and performs the full handshake.

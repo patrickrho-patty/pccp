@@ -44,11 +44,11 @@ type PeerCredential struct {
 // PeerCredentialIssuer creates and signs PPCs for a trust domain.
 type PeerCredentialIssuer struct {
 	// IssuerID is the identity of this issuer (e.g. "pccp-ca").
-	IssuerID string
+ 	IssuerID string `json:"issuer_i_d"`
 	// PrivateKey is the Ed25519 CA signing key.
-	PrivateKey ed25519.PrivateKey
+ 	PrivateKey ed25519.PrivateKey `json:"private_key"`
 	// PublicKey is the corresponding CA public key.
-	PublicKey ed25519.PublicKey
+ 	PublicKey ed25519.PublicKey `json:"public_key"`
 }
 
 // NewPeerCredentialIssuer creates a new self-signed PPC issuer.
@@ -66,15 +66,15 @@ func NewPeerCredentialIssuer(issuerID string) (*PeerCredentialIssuer, error) {
 
 // IssueRequest is the input to issue a new PPC.
 type IssueRequest struct {
-	SubjectPeerID          string
-	Organization           string
-	Profile                PeerProfile
-	PublicKey              ed25519.PublicKey
-	Validity               time.Duration
-	RevocationAuthority    string
-	AllowedProtocolVersions []uint8
-	BuildChannel           string
-	DeploymentZone         string
+ 	SubjectPeerID          string `json:"subject_peer_i_d"`
+ 	Organization           string `json:"organization"`
+ 	Profile                PeerProfile `json:"profile"`
+ 	PublicKey              ed25519.PublicKey `json:"public_key"`
+ 	Validity               time.Duration `json:"validity"`
+ 	RevocationAuthority    string `json:"revocation_authority"`
+ 	AllowedProtocolVersions []uint8 `json:"allowed_protocol_versions"`
+ 	BuildChannel           string `json:"build_channel"`
+ 	DeploymentZone         string `json:"deployment_zone"`
 }
 
 // Issue creates and signs a new PeerCredential.

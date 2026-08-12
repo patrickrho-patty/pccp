@@ -27,12 +27,12 @@ type Protection struct {
 
 // IdempotencyEntry tracks a previously-seen operation.
 type IdempotencyEntry struct {
-	Key        string
-	Class      IdempotencyClass
-	Result     interface{}
-	SeenAt     time.Time
-	ExchangeID string
-	SessionID  string
+ 	Key        string `json:"key"`
+ 	Class      IdempotencyClass `json:"class"`
+ 	Result     interface{} `json:"result"`
+ 	SeenAt     time.Time `json:"seen_at"`
+ 	ExchangeID string `json:"exchange_i_d"`
+ 	SessionID  string `json:"session_i_d"`
 }
 
 // New creates a new replay protection service.

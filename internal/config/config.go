@@ -9,24 +9,24 @@ import (
 // ServerConfig holds control plane server configuration.
 type ServerConfig struct {
 	// HTTP server
-	HTTPAddr string
+ 	HTTPAddr string `json:"h_t_t_p_addr"`
 	// Database
-	DBDriver string
-	DBDSN    string
+ 	DBDriver string `json:"d_b_driver"`
+ 	DBDSN    string `json:"d_b_d_s_n"`
 	// JWT
-	JWTSecret string
+ 	JWTSecret string `json:"j_w_t_secret"`
 	// Control Plane CA
-	CAKeyFile string
-	CACertFile string
+ 	CAKeyFile string `json:"c_a_key_file"`
+ 	CACertFile string `json:"c_a_cert_file"`
 	// Admin bootstrap
-	AdminEmail string
-	AdminPassword string
+ 	AdminEmail string `json:"admin_email"`
+ 	AdminPassword string `json:"admin_password"`
 	// File storage (for evidence bundles, diffs, etc.)
-	StorageDir string
+ 	StorageDir string `json:"storage_dir"`
 	// Default language/locale
-	DefaultLocale string
+ 	DefaultLocale string `json:"default_locale"`
 	// Deployment profile
-	DeploymentProfile string // enterprise, public, sovereign
+ 	DeploymentProfile string `json:"deployment_profile"`  // enterprise, public, sovereign
 }
 
 // LoadFromEnv loads configuration from environment variables with sensible defaults.
@@ -49,19 +49,19 @@ func LoadFromEnv() ServerConfig {
 // RelayConfig holds Relay (data plane) configuration.
 type RelayConfig struct {
 	// QUIC/TCP listen address
-	QUICAddr string
-	TCPAddr  string
+ 	QUICAddr string `json:"q_u_i_c_addr"`
+ 	TCPAddr  string `json:"t_c_p_addr"`
 	// TLS
-	TLSCertFile string
-	TLSKeyFile  string
+ 	TLSCertFile string `json:"t_l_s_cert_file"`
+ 	TLSKeyFile  string `json:"t_l_s_key_file"`
 	// Control Plane API
-	ControlPlaneURL string
-	ControlPlaneToken string
+ 	ControlPlaneURL string `json:"control_plane_u_r_l"`
+ 	ControlPlaneToken string `json:"control_plane_token"`
 	// Database (shared or relay-local)
-	DBDriver string
-	DBDSN    string
+ 	DBDriver string `json:"d_b_driver"`
+ 	DBDSN    string `json:"d_b_d_s_n"`
 	// Evidence storage
-	EvidenceDir string
+ 	EvidenceDir string `json:"evidence_dir"`
 }
 
 // LoadRelayFromEnv loads relay config from env.
@@ -82,24 +82,24 @@ func LoadRelayFromEnv() RelayConfig {
 // PIAConfig holds PIA (Patty Inference Agent) configuration.
 type PIAConfig struct {
 	// PAPER peer
-	PeerID string
+ 	PeerID string `json:"peer_i_d"`
 	// Relay endpoint
-	RelayAddr string
+ 	RelayAddr string `json:"relay_addr"`
 	// TLS
-	TLSCertFile string
-	TLSKeyFile  string
+ 	TLSCertFile string `json:"t_l_s_cert_file"`
+ 	TLSKeyFile  string `json:"t_l_s_key_file"`
 	// Local serving engine
-	ServingEngineType string // vllm, sglang, mock
-	ServingEngineURL  string // localhost URL
+ 	ServingEngineType string `json:"serving_engine_type"`  // vllm, sglang, mock
+ 	ServingEngineURL  string `json:"serving_engine_u_r_l"`  // localhost URL
 	// Model
-	ModelPackageID string
-	ModelWeightsPath string
+ 	ModelPackageID string `json:"model_package_i_d"`
+ 	ModelWeightsPath string `json:"model_weights_path"`
 	// Attestation
-	AssuranceLevel string
-	AttestationInterval string // duration string
+ 	AssuranceLevel string `json:"assurance_level"`
+ 	AttestationInterval string `json:"attestation_interval"`  // duration string
 	// Database
-	DBDriver string
-	DBDSN    string
+ 	DBDriver string `json:"d_b_driver"`
+ 	DBDSN    string `json:"d_b_d_s_n"`
 }
 
 // LoadPIAFromEnv loads PIA config from env.

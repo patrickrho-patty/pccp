@@ -19,3 +19,8 @@ patty-code-pccp/
 *.swp
 *.swo
 bin/
+
+# Orphaned root binaries (should use bin/ directory)
+pccp-pia
+pccp-server
+

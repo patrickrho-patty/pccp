@@ -69,14 +69,14 @@ const MaxPayloadLen = 1024 * 1024
 
 // Record is a PAPER record after parsing the 32-byte prelude.
 type Record struct {
-	VersionMajor byte
-	Kind         RecordKind
-	Flags        Flags
-	MessageType  uint16
-	Header       []byte
-	Payload      []byte
-	LaneID       uint64
-	LaneSequence uint64
+ 	VersionMajor byte `json:"version_major"`
+ 	Kind         RecordKind `json:"kind"`
+ 	Flags        Flags `json:"flags"`
+ 	MessageType  uint16 `json:"message_type"`
+ 	Header       []byte `json:"header"`
+ 	Payload      []byte `json:"payload"`
+ 	LaneID       uint64 `json:"lane_i_d"`
+ 	LaneSequence uint64 `json:"lane_sequence"`
 }
 
 // HeaderLen returns the length of the CBOR header.

@@ -35,13 +35,13 @@ const (
 
 // AccessRequest is a request to access content at a specific visibility level.
 type AccessRequest struct {
-	AdminID        string
-	OrganizationID string
-	TargetUserID   string
-	TargetSession  string
-	Level          VisibilityLevel
-	Purpose        string
-	Justification  string
+ 	AdminID        string `json:"admin_i_d"`
+ 	OrganizationID string `json:"organization_i_d"`
+ 	TargetUserID   string `json:"target_user_i_d"`
+ 	TargetSession  string `json:"target_session"`
+ 	Level          VisibilityLevel `json:"level"`
+ 	Purpose        string `json:"purpose"`
+ 	Justification  string `json:"justification"`
 }
 
 // AccessDecision determines whether content access is permitted.

@@ -28,14 +28,14 @@ type SessionResumptionResponse struct {
 
 // ResumptionCredential is a token that allows session resumption.
 type ResumptionCredential struct {
-	SessionID     string
-	Token         []byte
-	IssuedAt      time.Time
-	ExpiresAt     time.Time
-	LastSeqNum    uint64
-	OrgID         string
-	UserID        string
-	HarnessID     string
+ 	SessionID     string `json:"session_i_d"`
+ 	Token         []byte `json:"token"`
+ 	IssuedAt      time.Time `json:"issued_at"`
+ 	ExpiresAt     time.Time `json:"expires_at"`
+ 	LastSeqNum    uint64 `json:"last_seq_num"`
+ 	OrgID         string `json:"org_i_d"`
+ 	UserID        string `json:"user_i_d"`
+ 	HarnessID     string `json:"harness_i_d"`
 }
 
 // GenerateResumptionToken creates a resumption token for a session.

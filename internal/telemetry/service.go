@@ -139,17 +139,17 @@ func (s *Service) GetHistogramStats(name string) HistogramStats {
 // RecordMetering records a metering event for billing (PAPER §50).
 // Metering events MUST be tied to authenticated Exchange/Session IDs.
 type MeteringEvent struct {
-	OrganizationID string
-	SessionID      string
-	ExchangeID     string
-	UserID         string
-	HarnessID      string
-	ModelPackageID string
-	EndpointID     string
-	MetricType     MetricType
-	Quantity       int64
-	Unit           string
-	OccurredAt     time.Time
+ 	OrganizationID string `json:"organization_i_d"`
+ 	SessionID      string `json:"session_i_d"`
+ 	ExchangeID     string `json:"exchange_i_d"`
+ 	UserID         string `json:"user_i_d"`
+ 	HarnessID      string `json:"harness_i_d"`
+ 	ModelPackageID string `json:"model_package_i_d"`
+ 	EndpointID     string `json:"endpoint_i_d"`
+ 	MetricType     MetricType `json:"metric_type"`
+ 	Quantity       int64 `json:"quantity"`
+ 	Unit           string `json:"unit"`
+ 	OccurredAt     time.Time `json:"occurred_at"`
 }
 
 // RecordMetering records a metering event.

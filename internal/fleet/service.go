@@ -116,13 +116,13 @@ const (
 
 // PerformAction executes a fleet action on a harness.
 type ActionRequest struct {
-	OrganizationID string
-	HarnessID      string
-	Action         FleetAction
-	Reason         string
-	PerformedBy    string // admin user ID
-	SessionID      string // for session-specific actions
-	Parameters     map[string]interface{}
+ 	OrganizationID string `json:"organization_i_d"`
+ 	HarnessID      string `json:"harness_i_d"`
+ 	Action         FleetAction `json:"action"`
+ 	Reason         string `json:"reason"`
+ 	PerformedBy    string `json:"performed_by"`  // admin user ID
+ 	SessionID      string `json:"session_i_d"`  // for session-specific actions
+ 	Parameters     map[string]interface{} `json:"parameters"`
 }
 
 // PerformAction executes a fleet action and records it in the audit trail.

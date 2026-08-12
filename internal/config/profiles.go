@@ -2,26 +2,26 @@ package config
 
 // DeploymentProfile defines the three consumption profiles (PRD §1.1, §34).
 type DeploymentProfile struct {
-	Name             string // enterprise, public, sovereign
-	DefaultLocale    string
-	DefaultTimezone  string
+ 	Name             string `json:"name"`  // enterprise, public, sovereign
+ 	DefaultLocale    string `json:"default_locale"`
+ 	DefaultTimezone  string `json:"default_timezone"`
 	// Security defaults
-	RequireMDM       bool
-	RequireMFA       bool
-	RequireHardwareKey bool
-	RequireAttestation bool
-	MinAssuranceLevel string
+ 	RequireMDM       bool `json:"require_m_d_m"`
+ 	RequireMFA       bool `json:"require_m_f_a"`
+ 	RequireHardwareKey bool `json:"require_hardware_key"`
+ 	RequireAttestation bool `json:"require_attestation"`
+ 	MinAssuranceLevel string `json:"min_assurance_level"`
 	// Network
-	AllowPublicInternet bool
-	RequireVPN          bool
+ 	AllowPublicInternet bool `json:"allow_public_internet"`
+ 	RequireVPN          bool `json:"require_v_p_n"`
 	// Retention
-	TranscriptRetention string // metadata_only, redacted, full
-	MaxRetentionDays    int
+ 	TranscriptRetention string `json:"transcript_retention"`  // metadata_only, redacted, full
+ 	MaxRetentionDays    int `json:"max_retention_days"`
 	// Updates
-	UpdateMode          string // automatic, manual, offline
+ 	UpdateMode          string `json:"update_mode"`  // automatic, manual, offline
 	// Compliance
-	KoreanPIIDetection  bool
-	AuditLevel          string // standard, enhanced, maximum
+ 	KoreanPIIDetection  bool `json:"korean_p_i_i_detection"`
+ 	AuditLevel          string `json:"audit_level"`  // standard, enhanced, maximum
 }
 
 // EnterpriseProfile returns the default enterprise deployment profile.

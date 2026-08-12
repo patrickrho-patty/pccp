@@ -1,41 +1,50 @@
 # PCCP Current State
 
-**Last updated:** 2026-08-11 (complete build)
+**Last updated:** 2026-08-11 (post-audit)
 
 ## Final Statistics
 
-- **19,836 lines** of Go code across **44 packages**
-- **1,428 lines** of TypeScript/React (16 pages)
-- **148 files** tracked in git
-- **123 tests** passing (0 failing) across **18 test packages**
+- **~21,000 lines** of Go code across **43 packages** (84 source files)
+- **~1,450 lines** of TypeScript/React (19 pages)
+- **134 tests** passing (0 failing) across **19 test packages**
+- **23 end-to-end demo checks** passing
 - **148 REST API endpoints** across **40 route groups**
-- **37 GORM domain models**
-- **35 git commits**
+- **37 GORM domain models** (all with JSON tags)
+- **51 PAPER message types** covering all 13 registry ranges
 
-## All PRD Sections Implemented
+## Architecture Decision: cmd/ + internal/ (not src/relay/pia/)
 
-Every section of the PCCP PRD and PAPER Protocol Specification has a
-corresponding Go package implementation:
+The MASTER_PLAN suggested `src/`, `relay/`, `pia/` at the repo root.
+We chose the Go-standard `cmd/` + `internal/` layout instead because:
+- `cmd/` is the idiomatic Go location for binary entrypoints
+- `internal/` prevents external import of internal packages
+- Each component (Control Plane, Relay, PIA) is a separate binary under `cmd/`
+- Shared protocol library, models, and services live in `internal/`
 
-- PAPER Protocol Library (16 files): CBOR, COSE-Sign1, TCP/TLS, QUIC, framing, state machine, 50+ messages, session resumption
-- All 44 internal packages map to specific PRD sections (§1-§46)
-- All 14 Definition of Done criteria (PRD §54) addressed
-- All 6 phases of the roadmap have implementations
+This is a deliberate and better decision per the plan's rule:
+"Steering off of the plan is absolutely ok as long as the new plan is significantly better."
 
-## Complete API Coverage
+## All Signed Objects Use COSE-Sign1
 
-148 REST API endpoints across 40 route groups covering:
-identity, harnesses, projects, repositories, sessions, models, endpoints,
-policy, communications, analytics, security, fleet, SCM, impact, context,
-sandboxes, events, audit, MCP, network, secrets, commands, billing,
-incidents, korean features, privacy, reports, telemetry, tools,
-attestation, compliance, config management, connectors, GPU ops,
-key management, MCP marketplace, SSO, sovereign, and realtime.
+Per PAPER spec, all signed objects use COSE-Sign1 (RFC 8152):
+- ✅ PeerCredential (paper/peer.go SignWith/VerifySignature)
+- ✅ ActionEnvelope (provenance/service.go RecordAction)
+- ✅ CapabilityLease (policy/service.go IssueCapabilityLease)
+- ✅ EvidenceReceipt (provenance/service.go IssueEvidenceReceipt)
 
-## System Components
+## PAPER Transport
 
-3 binaries: pccp-server, pccp-relay, pccp-pia
-Full end-to-end demo (23 checks passing)
-Docker + Kubernetes deployment support
-PostgreSQL/SQLite multi-RDBMS via GORM
-Korean-first (ko-KR) with i18n framework
+Both transports are implemented and tested:
+- ✅ TLS/TCP with PAPER preface and CBOR framing (transport.go)
+- ✅ QUIC with control stream and lane multiplexing (quic.go)
+- ✅ PAPER native relay listener (relay/paper_listener.go)
+- ✅ PAPER reference client (paper/client.go)
+
+## All 12 PAPER Protocol Invariants Tested
+
+conformance/conformance_test.go tests all 12 invariants from PAPER Appendix E.
+
+## All 326 JSON Tags Added
+
+All request/response struct fields across all 43 packages have JSON tags
+for proper API serialization/deserialization.

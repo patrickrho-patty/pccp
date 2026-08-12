@@ -39,14 +39,14 @@ type CommandRule struct {
 
 // CommandRequest is a parsed command to be evaluated.
 type CommandRequest struct {
-	OrganizationID string
-	SessionID      string
-	Executable     string
-	Arguments      []string
-	WorkingDir     string
-	EnvVars        []string // names only, values not captured for privacy
-	RequiresNetwork bool
-	RequiresRoot   bool
+ 	OrganizationID string `json:"organization_i_d"`
+ 	SessionID      string `json:"session_i_d"`
+ 	Executable     string `json:"executable"`
+ 	Arguments      []string `json:"arguments"`
+ 	WorkingDir     string `json:"working_dir"`
+ 	EnvVars        []string `json:"env_vars"`  // names only, values not captured for privacy
+ 	RequiresNetwork bool `json:"requires_network"`
+ 	RequiresRoot   bool `json:"requires_root"`
 }
 
 // CommandDecision is the authorization decision.
