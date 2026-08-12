@@ -20,6 +20,7 @@ const navItems = [
   { path: '/tools', label: '도구', labelEn: 'Tools', icon: '🔧' },
   { path: '/fleet', label: '플릿 관리', labelEn: 'Fleet', icon: '⛶' },
   { path: '/audit', label: '감사 로그', labelEn: 'Audit', icon: '☰' },
+  { path: '/portal', label: '계정 포털', labelEn: 'Portal', icon: '👤' },
   { path: '/sre', label: 'SRE 운영', labelEn: 'SRE', icon: '📡' },
 ]
 

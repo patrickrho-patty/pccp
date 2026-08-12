@@ -19,6 +19,7 @@ import Compliance from './pages/Compliance'
 import Tools from './pages/Tools'
 import ModelCatalog from './pages/ModelCatalog'
 import SREConsole from './pages/SREConsole'
+import AccountPortal from './pages/AccountPortal'
 import Analytics from './pages/Analytics'
 import Communications from './pages/Communications'
 import Bootstrap from './pages/Bootstrap'
@@ -71,6 +72,7 @@ function AppContent() {
         <Route path="/tools" element={<Tools />} />
         <Route path="/catalog" element={<ModelCatalog />} />
         <Route path="/sre" element={<SREConsole />} />
+        <Route path="/portal" element={<AccountPortal />} />
         <Route path="/analytics" element={<Analytics />} />
         <Route path="/communications" element={<Communications />} />
         <Route path="*" element={<Navigate to="/" />} />
