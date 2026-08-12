@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { useAuth } from './hooks/useAuth'
+import { useAuth, AuthProvider } from './hooks/useAuth'
 import Login from './pages/Login'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
@@ -22,6 +22,14 @@ import Communications from './pages/Communications'
 import Bootstrap from './pages/Bootstrap'
 
 export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
+  )
+}
+
+function AppContent() {
   const { isAuthenticated, loading } = useAuth()
 
   if (loading) {
