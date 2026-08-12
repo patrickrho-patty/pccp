@@ -117,6 +117,9 @@ func (s *Server) setupRouter() {
 	// Health check
 	r.Get("/health", s.handleHealth)
 
+	// OpenAI-compatible inference adapter (§38.5)
+	r.Post("/v1/chat/completions", s.handleCompatChatCompletions)
+
 	// Auth routes (no auth required)
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Post("/login", s.handleLogin)
