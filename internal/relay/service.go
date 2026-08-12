@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"os"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
@@ -252,9 +253,11 @@ func (s *Service) RouteInference(ctx context.Context, req InferenceRequest) (*In
 	exchange.EndpointID = endpoint.EndpointID
 
 	// Forward to PIA
-	// Determine the PIA URL — in production this comes from the endpoint configuration.
-	// For Phase 0, PIA runs on localhost:9090.
-	piaURL := "http://localhost:9090"
+	// PIA URL from environment variable or endpoint config
+	piaURL := os.Getenv("PCCP_PIA_URL")
+	if piaURL == "" {
+		piaURL = "http://localhost:9090"
+	}
 
 	// Build PIA request
 	piaReq := map[string]interface{}{

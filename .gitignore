@@ -24,3 +24,5 @@ bin/
 pccp-pia
 pccp-server
 
+# Environment Variables
+.env
