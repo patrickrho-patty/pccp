@@ -3,9 +3,15 @@
 \usepackage[letterpaper,margin=1in]{geometry}
 \usepackage{fontspec}
 \usepackage{kotex}
-\setmainfont{NanumMyeongjo}
+\setmainfont{NanumMyeongjo}[
+  ItalicFont=NanumMyeongjo,
+  BoldItalicFont=NanumMyeongjo,
+]
 \setsansfont{Noto Sans CJK KR}
-\setmainhangulfont{NanumMyeongjo}
+\setmainhangulfont{NanumMyeongjo}[
+  ItalicFont=NanumMyeongjo,
+  BoldItalicFont=NanumMyeongjo,
+]
 \setsanshangulfont{Noto Sans CJK KR}
 \usepackage[protrusion=false,expansion=false]{microtype}
 \usepackage{graphicx}
@@ -27,7 +33,7 @@
 \usepackage{cite}
 
 \hypersetup{
-  pdftitle={이 커밋을 승인한 주체는 누구인가? PAPER와 거버넌스 내재형 AI 통신},
+  pdftitle={이 커밋은 누가 승인했는가? 거버넌스 내재형 AI 통신 프로토콜 PAPER},
   pdfauthor={Patrick Rho},
   pdfsubject={거버넌스 내재형 프로토콜 설계와 예비 프로토타입 평가},
   pdfkeywords={AI 거버넌스, 프로비넌스, 코딩 에이전트, 프로토콜, 역량 기반 보안}
@@ -49,12 +55,14 @@
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \newcommand{\papername}{PAPER}
 \newcommand{\system}{PCCP}
+\renewcommand{\emph}[1]{\textbf{#1}}
+\renewcommand{\textsc}[1]{\textsf{\MakeUppercase{#1}}}
 \renewcommand{\abstractname}{초록}
 \renewcommand{\figurename}{그림}
 \renewcommand{\tablename}{표}
 \renewcommand{\refname}{참고문헌}
 
-\title{\textbf{이 커밋을 승인한 주체는 누구인가?}\\\large PAPER와 거버넌스 내재형 AI 통신}
+\title{\textbf{이 커밋은 누가 승인했는가?}\\\large 거버넌스 내재형 AI 통신 프로토콜 PAPER}
 \author{Patrick Rho\\Patty Research}
 \date{2026년 8월}
 

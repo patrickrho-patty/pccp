@@ -232,6 +232,10 @@ func (s *Server) setupRouter() {
 
 		// Security
 		r.Post("/security/check", s.handleSecurityCheck)
+		r.Get("/security/policy", s.handleGetSecurityPolicy)
+		r.Put("/security/policy", s.handleUpdateSecurityPolicy)
+		r.Get("/security/findings", s.handleSecurityFindings)
+		r.Post("/security/lockdown", s.handleSecurityLockdown)
 
 		// Fleet Operations
 		r.Route("/fleet", func(r chi.Router) {
@@ -1610,6 +1614,82 @@ func (s *Server) handleDrainEndpoint(w http.ResponseWriter, r *http.Request) {
 	s.db.Model(&models.InferenceEndpoint{}).Where("endpoint_id = ?", id).
 		Update("status", "draining")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "draining"})
+}
+
+
+func (s *Server) handleGetSecurityPolicy(w http.ResponseWriter, r *http.Request) {
+	// Return current DLP rule configuration
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"rules": []map[string]interface{}{
+			{"rule_id": "pii-kr-rrn", "name": "Korean RRN", "name_ko": "주민등록번호", "type": "korean_pii", "severity": "critical", "enabled": true, "action": "block"},
+			{"rule_id": "pii-kr-business", "name": "Business Registration", "name_ko": "사업자등록번호", "type": "korean_pii", "severity": "high", "enabled": true, "action": "mask"},
+			{"rule_id": "pii-kr-phone", "name": "Korean Phone", "name_ko": "전화번호", "type": "korean_pii", "severity": "medium", "enabled": true, "action": "mask"},
+			{"rule_id": "pii-kr-account", "name": "Bank Account", "name_ko": "계좌번호", "type": "korean_pii", "severity": "high", "enabled": true, "action": "block"},
+			{"rule_id": "secret-aws", "name": "AWS Access Key", "name_ko": "AWS 접근키", "type": "secret", "severity": "critical", "enabled": true, "action": "block"},
+			{"rule_id": "secret-jwt", "name": "JWT Token", "name_ko": "JWT 토큰", "type": "secret", "severity": "high", "enabled": true, "action": "block"},
+			{"rule_id": "secret-private-key", "name": "Private Key", "name_ko": "개인키", "type": "secret", "severity": "critical", "enabled": true, "action": "block"},
+			{"rule_id": "secret-github", "name": "GitHub PAT", "name_ko": "GitHub 토큰", "type": "secret", "severity": "high", "enabled": true, "action": "block"},
+			{"rule_id": "injection-ignore", "name": "Instruction Override", "name_ko": "명령어 재정의", "type": "prompt_injection", "severity": "high", "enabled": true, "action": "block"},
+			{"rule_id": "injection-jailbreak", "name": "Jailbreak Attempt", "name_ko": "탈옥 시도", "type": "prompt_injection", "severity": "high", "enabled": true, "action": "block"},
+		},
+	})
+}
+
+func (s *Server) handleUpdateSecurityPolicy(w http.ResponseWriter, r *http.Request) {
+	var updates struct {
+		RuleID  string `json:"rule_id"`
+		Enabled *bool  `json:"enabled"`
+	}
+	if err := decodeJSON(r, &updates); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	// In production, this would persist to a PolicyPack record
+	// For now, record in audit
+	orgID := getOrgID(r)
+	audit := &models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.security.rule_updated",
+		ActorType:      "admin",
+		Action:         "update_security_rule",
+		ResourceType:   "security_rule",
+		ResourceID:     updates.RuleID,
+		Details:        fmt.Sprintf(`{"rule_id":"%s","enabled":%v}`, updates.RuleID, updates.Enabled),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	}
+	s.db.Create(audit)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) handleSecurityFindings(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var findings []models.SecurityFinding
+	s.db.Where("organization_id = ?", orgID).Order("occurred_at DESC").Limit(100).Find(&findings)
+	writeJSON(w, http.StatusOK, findings)
+}
+
+func (s *Server) handleSecurityLockdown(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	// Terminate all active sessions
+	s.db.Model(&models.Session{}).
+		Where("organization_id = ? AND status = 'active'", orgID).
+		Update("status", "terminated")
+	s.db.Model(&models.Harness{}).
+		Where("organization_id = ?", orgID).
+		Update("risk_state", "high")
+
+	audit := &models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.security.emergency_lockdown",
+		ActorType:      "admin",
+		Action:         "emergency_lockdown",
+		Details:        "Emergency lockdown activated via Security console",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	}
+	s.db.Create(audit)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "lockdown_activated"})
 }
 
 

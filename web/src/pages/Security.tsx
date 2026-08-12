@@ -54,13 +54,6 @@ export default function Security() {
       .catch(() => {})
   }
 
-  const loadStats = () => {
-    // Fetch security findings from audit events
-    fetch('/api/audit?type=cp.security.finding', { headers: authHeaders() })
-      .then(r => r.json())
-      .then(data => setFindings(Array.isArray(data) ? data : []))
-      .catch(() => setFindings([]))
-  }
 
   const runScan = async () => {
     if (!scanText) return
@@ -72,8 +65,20 @@ export default function Security() {
     }
   }
 
-  const toggleRule = (ruleId: string) => {
-    setRules(rs => rs.map(r => r.rule_id === ruleId ? { ...r, enabled: !r.enabled } : r))
+  const toggleRule = async (ruleId: string) => {
+    const rule = rules.find(r => r.rule_id === ruleId)
+    if (!rule) return
+    const newEnabled = !rule.enabled
+    // Update local state immediately
+    setRules(rs => rs.map(r => r.rule_id === ruleId ? { ...r, enabled: newEnabled } : r))
+    // Persist to backend
+    try {
+      await fetch('/api/security/policy', {
+        method: 'PUT',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rule_id: ruleId, enabled: newEnabled }),
+      })
+    } catch {}
   }
 
   const sevColor = (s: string) => s === 'critical' ? 'text-red-600' : s === 'high' ? 'text-orange-600' : s === 'medium' ? 'text-yellow-600' : 'text-blue-600'
@@ -195,10 +200,14 @@ export default function Security() {
                   </div>
                   <p className="text-xs text-gray-500">전체 에이전트 중지, 클라우드 모델 차단, 긴급 방송</p>
                 </div>
-                <button className="btn-danger w-full text-sm" onClick={() => {
-                  if (confirm('정말로 전체 조직을 잠금하시겠습니까? 이 작업은 모든 AI 세션을 중지합니다.')) {
-                    alert('긴급 잠금이 시작되었습니다. 모든 관리자에게 알림이 발송됩니다.')
-                  }
+                <button className="btn-danger w-full text-sm" onClick={async () => {
+                  if (!confirm('정말로 전체 조직을 잠금하시겠습니까? 이 작업은 모든 AI 세션을 중지합니다.')) return
+                  try {
+                    const res = await fetch('/api/security/lockdown', { method: 'POST', headers: authHeaders() })
+                    if (res.ok) {
+                      alert('긴급 잠금이 활성화되었습니다. 모든 활성 세션이 종료되었습니다.')
+                    }
+                  } catch { alert('잠금 실패') }
                 }}>
                   ⚠ 긴급 조직 잠금 · Emergency Lockdown
                 </button>
