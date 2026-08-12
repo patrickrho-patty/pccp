@@ -46,11 +46,18 @@ export default function Users() {
   })
   const [page, setPage] = useState(1)
   const pageSize = 25
+  const [sessions, setSessions] = useState<any[]>([])
+  const [harnesses, setHarnesses] = useState<any[]>([])
+  const [expandedUserId, setExpandedUserId] = useState<string | null>(null)
   const [form, setForm] = useState({
     email: '', name: '', name_ko: '', title: '', auth_method: 'local',
   })
 
-  const load = () => api.listUsers().then(data => setUsers(Array.isArray(data) ? data : []))
+  const load = () => {
+    api.listUsers().then(data => setUsers(Array.isArray(data) ? data : []))
+    api.listSessions().then(data => setSessions(Array.isArray(data) ? data : []))
+    api.listHarnesses().then(data => setHarnesses(Array.isArray(data) ? data : []))
+  }
   useEffect(() => { load() }, [])
 
   const filtered = useFilteredData(users, filters, FILTER_CONFIG)
@@ -98,6 +105,23 @@ export default function Users() {
     catch (err: any) { alert('삭제 실패: ' + err.message) }
   }
 
+  const getUserSessions = (userId: string) => sessions.filter(s => s.user_id === userId)
+  const getUserHarnesses = (userId: string) => {
+    // Harnesses don't have user_id directly, but we can match via sessions
+    const userSessionHarnessIds = sessions.filter(s => s.user_id === userId).map(s => s.harness_id)
+    return harnesses.filter(h => userSessionHarnessIds.includes(h.harness_id))
+  }
+  const formatRelative = (ts: string) => {
+    if (!ts) return '-'
+    const d = new Date(ts)
+    const diff = Date.now() - d.getTime()
+    const mins = Math.floor(diff / 60000)
+    if (mins < 1) return '방금 전'
+    if (mins < 60) return mins + '분 전'
+    const hours = Math.floor(mins / 60)
+    if (hours < 24) return hours + '시간 전'
+    return d.toLocaleDateString('ko-KR')
+  }
   const statusBadge = (s: string) => {
     const map: Record<string, string> = { active: 'badge-green', suspended: 'badge-yellow', offboarded: 'badge-gray' }
     return map[s] || 'badge-gray'
@@ -172,16 +196,17 @@ export default function Users() {
                 {filters.search ? '검색 결과가 없습니다' : '등록된 사용자가 없습니다'}
               </td></tr>
             ) : paged.map(u => (
-              <tr key={u.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30">
-                <td className="py-3">
+              <>
+                <tr key={u.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer" onClick={() => setExpandedUserId(expandedUserId === u.id ? null : u.id)}>
+                <td className="py-3" onClick={e => e.stopPropagation()}>
                   <div className="font-medium text-sm">{u.name_ko || u.name}</div>
                   <div className="text-xs text-gray-400">{u.name}</div>
                 </td>
                 <td className="py-3 text-sm">{u.email}</td>
                 <td className="py-3 text-sm text-gray-600">{u.title || '-'}</td>
-                <td className="py-3"><span className="badge-gray">{u.auth_method}</span></td>
-                <td className="py-3"><span className={statusBadge(u.status)}>{statusLabel(u.status)}</span></td>
-                <td className="py-3">
+                <td className="py-3" onClick={e => e.stopPropagation()}><span className="badge-gray">{u.auth_method}</span></td>
+                <td className="py-3" onClick={e => e.stopPropagation()}><span className={statusBadge(u.status)}>{statusLabel(u.status)}</span></td>
+                <td className="py-3" onClick={e => e.stopPropagation()}>
                   <div className="flex gap-2 justify-end">
                     <button onClick={() => handleEdit(u)} className="text-blue-600 text-xs hover:underline">수정</button>
                     {u.status === 'active' && <button onClick={() => handleStatusChange(u, 'suspended')} className="text-yellow-600 text-xs hover:underline">정지</button>}
@@ -189,8 +214,62 @@ export default function Users() {
                     {u.status !== 'offboarded' && <button onClick={() => handleDelete(u)} className="text-red-600 text-xs hover:underline">퇴사</button>}
                   </div>
                 </td>
-              </tr>
-            ))}
+                </tr>
+                {expandedUserId === u.id && (
+                    <tr className="bg-gray-50">
+                      <td colSpan={7} className="p-4">
+                        <div className="grid grid-cols-3 gap-6">
+                          {/* Sessions */}
+                          <div>
+                            <div className="text-xs font-semibold text-gray-600 mb-2">세션 이력 ({getUserSessions(u.id).length})</div>
+                            {getUserSessions(u.id).length === 0 ? (
+                              <p className="text-xs text-gray-400">세션 없음</p>
+                            ) : (
+                              <div className="space-y-1">
+                                {getUserSessions(u.id).slice(0, 5).map(s => (
+                                  <div key={s.id} className="text-xs">
+                                    <span className="font-medium">{s.title || '제목 없음'}</span>
+                                    <span className="text-gray-400 ml-2">{s.model_class}</span>
+                                    <span className={`ml-2 ${s.status === 'active' ? 'text-green-600' : 'text-gray-400'}`}>{s.status}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          {/* Harnesses */}
+                          <div>
+                            <div className="text-xs font-semibold text-gray-600 mb-2">하네스 ({getUserHarnesses(u.id).length})</div>
+                            {getUserHarnesses(u.id).length === 0 ? (
+                              <p className="text-xs text-gray-400">하네스 없음</p>
+                            ) : (
+                              <div className="space-y-1">
+                                {getUserHarnesses(u.id).map(h => (
+                                  <div key={h.id} className="text-xs">
+                                    <span className="font-mono">{h.harness_id}</span>
+                                    <span className={`ml-2 ${h.status === 'active' || h.status === 'enrolled' ? 'text-green-600' : 'text-gray-400'}`}>{h.status}</span>
+                                    <span className="text-gray-400 ml-1">v{h.binary_version}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          {/* Quick Info */}
+                          <div>
+                            <div className="text-xs font-semibold text-gray-600 mb-2">사용자 정보</div>
+                            <div className="space-y-1 text-xs text-gray-500">
+                              <div>인증: <span className="font-medium text-gray-700">{u.auth_method}</span></div>
+                              <div>로케일: {u.locale || 'ko-KR'}</div>
+                              <div>타임존: {u.timezone || 'Asia/Seoul'}</div>
+                              <div>등록: {u.created_at?.slice(0, 10)}</div>
+                              {u.last_login_at && <div>마지막 로그인: {formatRelative(u.last_login_at)}</div>}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+              </>
+                ))}
           </tbody>
         </table>
       </div>
