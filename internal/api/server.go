@@ -226,6 +226,11 @@ func (s *Server) setupRouter() {
 			r.Get("/presence", s.handleGetPresence)
 			r.Post("/presence", s.handleUpdatePresence)
 			r.Post("/broadcasts", s.handleSendBroadcast)
+			r.Get("/broadcasts", s.handleListBroadcasts)
+			r.Post("/file-transfers", s.handleCreateFileTransfer)
+			r.Get("/file-transfers", s.handleListFileTransfers)
+			r.Get("/presence", s.handleGetPresence)
+			r.Post("/presence", s.handleUpdatePresence)
 		})
 
 		// Work Intelligence
@@ -2077,6 +2082,42 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dash)
 }
 
+
+func (s *Server) handleListBroadcasts(w http.ResponseWriter, r *http.Request) {
+		orgID := getOrgID(r)
+		var broadcasts []models.Broadcast
+		s.db.Where("organization_id = ?", orgID).Order("created_at DESC").Limit(50).Find(&broadcasts)
+		writeJSON(w, http.StatusOK, broadcasts)
+	}
+
+	func (s *Server) handleCreateFileTransfer(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			SenderID     string `json:"sender_id"`
+			RecipientID  string `json:"recipient_id"`
+			FileName     string `json:"file_name"`
+			FileSize     int64  `json:"file_size"`
+			FileType     string `json:"file_type"`
+			Classification string `json:"classification"`
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		orgID := getOrgID(r)
+		ft, err := s.comms.CreateFileTransfer(orgID, req.SenderID, req.RecipientID, req.FileName, req.FileSize, req.FileType, req.Classification)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, ft)
+	}
+
+	func (s *Server) handleListFileTransfers(w http.ResponseWriter, r *http.Request) {
+		orgID := getOrgID(r)
+		var transfers []models.FileTransfer
+		s.db.Where("organization_id = ?", orgID).Order("created_at DESC").Limit(50).Find(&transfers)
+		writeJSON(w, http.StatusOK, transfers)
+	}
 
 func min(a, b int) int {
 	if a < b {
