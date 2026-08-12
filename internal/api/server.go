@@ -138,6 +138,8 @@ func (s *Server) setupRouter() {
 			r.Get("/", s.handleListUsers)
 			r.Post("/", s.handleCreateUser)
 			r.Get("/{id}", s.handleGetUser)
+			r.Put("/{id}", s.handleUpdateUser)
+			r.Delete("/{id}", s.handleDeleteUser)
 		})
 
 		// Harnesses
@@ -146,6 +148,8 @@ func (s *Server) setupRouter() {
 			r.Post("/enroll", s.handleEnrollHarness)
 			r.Get("/{id}", s.handleGetHarness)
 			r.Post("/{id}/revoke", s.handleRevokeHarness)
+			r.Post("/{id}/quarantine", s.handleQuarantineHarness)
+			r.Post("/{id}/reactivate", s.handleReactivateHarness)
 		})
 
 		// Projects
@@ -153,6 +157,8 @@ func (s *Server) setupRouter() {
 			r.Get("/", s.handleListProjects)
 			r.Post("/", s.handleCreateProject)
 			r.Get("/{id}", s.handleGetProject)
+			r.Put("/{id}", s.handleUpdateProject)
+			r.Delete("/{id}", s.handleDeleteProject)
 		})
 
 		// Repositories
@@ -160,6 +166,8 @@ func (s *Server) setupRouter() {
 			r.Get("/", s.handleListRepositories)
 			r.Post("/", s.handleRegisterRepository)
 			r.Get("/{id}", s.handleGetRepository)
+			r.Put("/{id}", s.handleUpdateRepository)
+			r.Delete("/{id}", s.handleDeleteRepository)
 			r.Post("/{id}/baselines", s.handleCreateBaseline)
 		})
 
@@ -169,6 +177,8 @@ func (s *Server) setupRouter() {
 			r.Post("/", s.handleOpenSession)
 			r.Get("/{id}", s.handleGetSession)
 			r.Post("/{id}/close", s.handleCloseSession)
+			r.Post("/{id}/pause", s.handlePauseSession)
+			r.Post("/{id}/resume", s.handleResumeSession)
 			r.Get("/{id}/provenance", s.handleGetProvenance)
 		})
 
@@ -179,6 +189,7 @@ func (s *Server) setupRouter() {
 			r.Get("/{id}", s.handleGetModelPackage)
 			r.Post("/{id}/publish", s.handlePublishModel)
 			r.Post("/{id}/recall", s.handleRecallModel)
+			r.Put("/{id}", s.handleUpdateModel)
 		})
 
 		// Endpoints
@@ -187,6 +198,8 @@ func (s *Server) setupRouter() {
 			r.Post("/enroll", s.handleEnrollEndpoint)
 			r.Post("/{id}/lease", s.handleIssueEndpointLease)
 			r.Get("/{id}", s.handleGetEndpoint)
+			r.Put("/{id}", s.handleUpdateEndpoint)
+			r.Post("/{id}/drain", s.handleDrainEndpoint)
 		})
 
 		// Policy
@@ -1406,6 +1419,197 @@ func (s *Server) handleEmitEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, envelope)
+}
+
+
+// --- Generic CRUD Handlers ---
+
+func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var user models.User
+	if err := s.db.First(&user, "id = ?", id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var updates struct {
+		Name       *string `json:"name,omitempty"`
+		NameKo     *string `json:"name_ko,omitempty"`
+		Email      *string `json:"email,omitempty"`
+		Title      *string `json:"title,omitempty"`
+		Status     *string `json:"status,omitempty"`
+		AuthMethod *string `json:"auth_method,omitempty"`
+		Locale     *string `json:"locale,omitempty"`
+		Timezone   *string `json:"timezone,omitempty"`
+	}
+	if err := decodeJSON(r, &updates); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if updates.Name != nil { user.Name = *updates.Name }
+	if updates.NameKo != nil { user.NameKo = *updates.NameKo }
+	if updates.Email != nil { user.Email = *updates.Email }
+	if updates.Title != nil { user.Title = *updates.Title }
+	if updates.Status != nil { user.Status = *updates.Status }
+	if updates.AuthMethod != nil { user.AuthMethod = *updates.AuthMethod }
+	if updates.Locale != nil { user.Locale = *updates.Locale }
+	if updates.Timezone != nil { user.Timezone = *updates.Timezone }
+	s.db.Save(&user)
+	writeJSON(w, http.StatusOK, user)
+}
+
+func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	s.db.Model(&models.User{}).Where("id = ?", id).Update("status", "offboarded")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "offboarded"})
+}
+
+func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var proj models.Project
+	if err := s.db.First(&proj, "id = ?", id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var updates struct {
+		Name           *string `json:"name,omitempty"`
+		NameKo         *string `json:"name_ko,omitempty"`
+		Description    *string `json:"description,omitempty"`
+		Status         *string `json:"status,omitempty"`
+	}
+	decodeJSON(r, &updates)
+	if updates.Name != nil { proj.Name = *updates.Name }
+	if updates.NameKo != nil { proj.NameKo = *updates.NameKo }
+	if updates.Description != nil { proj.Description = *updates.Description }
+	if updates.Status != nil { proj.Status = *updates.Status }
+	s.db.Save(&proj)
+	writeJSON(w, http.StatusOK, proj)
+}
+
+func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	s.db.Model(&models.Project{}).Where("id = ?", id).Update("status", "archived")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "archived"})
+}
+
+func (s *Server) handleUpdateRepository(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var repo models.Repository
+	if err := s.db.First(&repo, "id = ?", id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var updates struct {
+		Sensitivity *string `json:"sensitivity,omitempty"`
+		Status      *string `json:"status,omitempty"`
+	}
+	decodeJSON(r, &updates)
+	if updates.Sensitivity != nil { repo.Sensitivity = *updates.Sensitivity }
+	if updates.Status != nil { repo.Status = *updates.Status }
+	s.db.Save(&repo)
+	writeJSON(w, http.StatusOK, repo)
+}
+
+func (s *Server) handleDeleteRepository(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	s.db.Model(&models.Repository{}).Where("id = ?", id).Update("status", "unregistered")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "unregistered"})
+}
+
+func (s *Server) handlePauseSession(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var sess models.Session
+	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	s.db.Model(&sess).Update("status", "paused")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "paused"})
+}
+
+func (s *Server) handleResumeSession(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var sess models.Session
+	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	s.db.Model(&sess).Update("status", "active")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "active"})
+}
+
+func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var pkg models.ModelPackage
+	if err := s.db.Where("id = ? OR package_id = ?", id, id).First(&pkg).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var updates struct {
+		Name        *string `json:"name,omitempty"`
+		NameKo      *string `json:"name_ko,omitempty"`
+		Description *string `json:"description,omitempty"`
+	}
+	decodeJSON(r, &updates)
+	if updates.Name != nil { pkg.Name = *updates.Name }
+	if updates.NameKo != nil { pkg.NameKo = *updates.NameKo }
+	s.db.Save(&pkg)
+	writeJSON(w, http.StatusOK, pkg)
+}
+
+func (s *Server) handleQuarantineHarness(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var harness models.Harness
+	if err := s.db.Where("id = ? OR harness_id = ?", id, id).First(&harness).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	s.db.Model(&harness).Updates(map[string]interface{}{
+		"status":     "quarantined",
+		"risk_state": "high",
+	})
+	// Terminate active sessions
+	s.db.Model(&models.Session{}).Where("harness_id = ? AND status = 'active'", harness.HarnessID).
+		Update("status", "terminated")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "quarantined"})
+}
+
+func (s *Server) handleReactivateHarness(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var harness models.Harness
+	if err := s.db.Where("id = ? OR harness_id = ?", id, id).First(&harness).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	s.db.Model(&harness).Updates(map[string]interface{}{
+		"status":     "enrolled",
+		"risk_state": "normal",
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "enrolled"})
+}
+
+func (s *Server) handleUpdateEndpoint(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var ep models.InferenceEndpoint
+	if err := s.db.Where("id = ? OR endpoint_id = ?", id, id).First(&ep).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var updates struct {
+		AssuranceLevel *string `json:"assurance_level,omitempty"`
+		Status         *string `json:"status,omitempty"`
+	}
+	decodeJSON(r, &updates)
+	if updates.AssuranceLevel != nil { ep.AssuranceLevel = *updates.AssuranceLevel }
+	if updates.Status != nil { ep.Status = *updates.Status }
+	s.db.Save(&ep)
+	writeJSON(w, http.StatusOK, ep)
+}
+
+func (s *Server) handleDrainEndpoint(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	s.db.Model(&models.InferenceEndpoint{}).Where("endpoint_id = ?", id).
+		Update("status", "draining")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "draining"})
 }
 
 

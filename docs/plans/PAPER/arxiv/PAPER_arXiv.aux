@@ -3,12 +3,10 @@
 \providecommand\HyField@AuxAddToFields[1]{}
 \providecommand\HyField@AuxAddToCoFields[2]{}
 \@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces The architectural inversion. Conventional systems transport the interaction and reconstruct authority from logs afterward. PAPER makes bounded authority, enforcement, model identity, and causal evidence conditions of the live path. The illustration is conceptual and contains no empirical data.}}{2}{figure.1}\protected@file@percent }
-\newlabel{fig:overview}{{1}{2}{The architectural inversion. Conventional systems transport the interaction and reconstruct authority from logs afterward. PAPER makes bounded authority, enforcement, model identity, and causal evidence conditions of the live path. The illustration is conceptual and contains no empirical data}{figure.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces The architectural inversion. Conventional systems transport the interaction and reconstruct authority from logs afterward. PAPER makes bounded authority, enforcement, model identity, and causal evidence conditions of the live path. The illustration is conceptual and contains no empirical data.}}{2}{figure.caption.1}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:overview}{{1}{2}{The architectural inversion. Conventional systems transport the interaction and reconstruct authority from logs afterward. PAPER makes bounded authority, enforcement, model identity, and causal evidence conditions of the live path. The illustration is conceptual and contains no empirical data}{figure.caption.1}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {1.1}Contributions}{2}{subsection.1.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {2}The Missing Layer}{2}{section.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Authentication is not authorization history.}{2}{section*.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Model output is not execution authority.}{2}{section*.3}\protected@file@percent }
 \citation{mcp2025}
 \citation{a2a2026}
 \citation{wang2025mi9}
@@ -16,6 +14,15 @@
 \citation{fan2026granularity}
 \citation{torresarias2019intoto,intoto}
 \citation{slsa12}
+\citation{rfc9943}
+\@writefile{toc}{\contentsline {section}{\numberline {2}The Missing Layer}{3}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Authentication is not authorization history.}{3}{section*.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Model output is not execution authority.}{3}{section*.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Logs record events; they do not necessarily prove one causal path.}{3}{section*.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Adjacent Systems and Novelty Boundary}{3}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Model APIs and gateways.}{3}{section*.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{MCP and A2A.}{3}{section*.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Runtime governance and agent security.}{3}{section*.7}\protected@file@percent }
 \citation{spiffe}
 \citation{rfc9846}
 \citation{rfc9000}
@@ -23,73 +30,75 @@
 \citation{rfc9052}
 \citation{rfc9180}
 \citation{rfc9942}
-\@writefile{toc}{\contentsline {paragraph}{Logs record events; they do not necessarily prove one causal path.}{3}{section*.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {3}Adjacent Systems and Novelty Boundary}{3}{section.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Model APIs and gateways.}{3}{section*.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{MCP and A2A.}{3}{section*.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Runtime governance and agent security.}{3}{section*.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Supply-chain provenance.}{3}{section*.8}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Identity and cryptographic building blocks.}{3}{section*.9}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {4}Requirements and Threat Model}{3}{section.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Design requirements}{3}{subsection.4.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Adversaries and non-goals}{3}{subsection.4.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {5}The Governed Exchange}{3}{section.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Architecture and peers}{4}{subsection.5.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Why this is a protocol, not a larger log schema}{4}{subsection.5.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Transport and representation}{4}{subsection.5.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}How an Exchange Earns the Right to Advance}{4}{section.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Identity, sessions, and Capability Leases}{4}{subsection.6.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Policy Epoch and Relay Verdict}{4}{subsection.6.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Exchange lifecycle}{4}{subsection.6.3}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Core authority and identity objects. Objects visible to the Harness are intentionally separated from deployment identities.}}{5}{table.1}\protected@file@percent }
-\newlabel{tab:objects}{{1}{5}{Core authority and identity objects. Objects visible to the Harness are intentionally separated from deployment identities}{table.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}Server-authoritative model resolution}{5}{subsection.6.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.5}Tool authority and prompt injection}{5}{subsection.6.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {7}Causal Provenance and Receipts}{5}{section.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {8}From Design to a Running Exchange}{6}{section.8}\protected@file@percent }
-\newlabel{sec:implementation}{{8}{6}{From Design to a Running Exchange}{section.8}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {9}Evaluation: What Must Be True for PAPER to Matter?}{6}{section.9}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {9.1}Baselines}{6}{subsection.9.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {9.2}Security and provenance experiments}{6}{subsection.9.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {10}Preliminary Results: Are the Protocol Primitives Obviously Too Expensive?}{6}{section.10}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {10.1}Experimental setup}{6}{subsection.10.1}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Evidence boundary of the evaluated prototype. ``Partial'' means relevant code exists but the complete stated property is not exercised end to end.}}{7}{table.2}\protected@file@percent }
-\newlabel{tab:claims}{{2}{7}{Evidence boundary of the evaluated prototype. ``Partial'' means relevant code exists but the complete stated property is not exercised end to end}{table.2}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Preliminary in-memory primitive medians over five runs. Record tests include encode and decode.}}{7}{table.3}\protected@file@percent }
-\newlabel{tab:microbench}{{3}{7}{Preliminary in-memory primitive medians over five runs. Record tests include encode and decode}{table.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {10.2}Interpretation}{7}{subsection.10.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {11}What PAPER Changes---and What It Does Not}{7}{section.11}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Goal-aware qualitative comparison. A blank objective is not a deficiency when a system intentionally addresses another boundary.}}{8}{table.4}\protected@file@percent }
-\newlabel{tab:comparison}{{4}{8}{Goal-aware qualitative comparison. A blank objective is not a deficiency when a system intentionally addresses another boundary}{table.4}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {12}Security Consequences of Externalizing Authority}{8}{section.12}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {13}Can This Replace a Gateway Without a Flag Day?}{8}{section.13}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {14}Discussion: From Message Protocols to Consequence Protocols}{8}{section.14}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Scope pressure.}{9}{section*.10}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{State and operations.}{9}{section*.11}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Privacy.}{9}{section*.12}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Implementation maturity.}{9}{section*.13}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{No formal proof.}{9}{section*.14}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {15}Ethics: Evidence Can Become Surveillance}{9}{section.15}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {16}Reproducibility}{9}{section.16}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {17}Conclusion}{9}{section.17}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Supply-chain provenance.}{4}{section*.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Identity and cryptographic building blocks.}{4}{section*.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}Requirements and Threat Model}{4}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Design requirements}{4}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Adversaries and non-goals}{4}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}The Governed Exchange}{4}{section.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Core authority and identity objects. Objects visible to the Harness are intentionally separated from deployment identities.}}{5}{table.caption.10}\protected@file@percent }
+\newlabel{tab:objects}{{1}{5}{Core authority and identity objects. Objects visible to the Harness are intentionally separated from deployment identities}{table.caption.10}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Architecture and peers}{5}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Why this is a protocol, not a larger log schema}{5}{subsection.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Transport and representation}{5}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}How an Exchange Earns the Right to Advance}{6}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Identity, sessions, and Capability Leases}{6}{subsection.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Policy Epoch and Relay Verdict}{6}{subsection.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Exchange lifecycle}{6}{subsection.6.3}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Protocol-design view of a Governed Exchange. Protected work advances through ordered authority gates; a model-generated tool proposal enters an optional branch but requires an independent authorization transition before execution. This figure specifies intended semantics, not measured implementation coverage.}}{6}{figure.caption.11}\protected@file@percent }
+\newlabel{fig:lifecycle}{{2}{6}{Protocol-design view of a Governed Exchange. Protected work advances through ordered authority gates; a model-generated tool proposal enters an optional branch but requires an independent authorization transition before execution. This figure specifies intended semantics, not measured implementation coverage}{figure.caption.11}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}Server-authoritative model resolution}{7}{subsection.6.4}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Protocol-design view of server-authoritative model resolution. Product, artifact, and deployment identities remain distinct until the Relay resolves them to an enrolled PIA; the serving engine is a local implementation detail, not a Harness-selectable endpoint.}}{7}{figure.caption.12}\protected@file@percent }
+\newlabel{fig:model-identity}{{3}{7}{Protocol-design view of server-authoritative model resolution. Product, artifact, and deployment identities remain distinct until the Relay resolves them to an enrolled PIA; the serving engine is a local implementation detail, not a Harness-selectable endpoint}{figure.caption.12}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.5}Tool authority and prompt injection}{7}{subsection.6.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}Causal Provenance and Receipts}{7}{section.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8}From Design to a Running Exchange}{8}{section.8}\protected@file@percent }
+\newlabel{sec:implementation}{{8}{8}{From Design to a Running Exchange}{section.8}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {9}Evaluation: What Must Be True for PAPER to Matter?}{8}{section.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.1}Baselines}{8}{subsection.9.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Evidence boundary of the evaluated prototype. ``Partial'' means relevant code exists but the complete stated property is not exercised end to end.}}{9}{table.caption.13}\protected@file@percent }
+\newlabel{tab:claims}{{2}{9}{Evidence boundary of the evaluated prototype. ``Partial'' means relevant code exists but the complete stated property is not exercised end to end}{table.caption.13}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.2}Security and provenance experiments}{9}{subsection.9.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10}Preliminary Results: Are the Protocol Primitives Obviously Too Expensive?}{9}{section.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.1}Experimental setup}{9}{subsection.10.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Preliminary in-memory primitive medians over five runs. Record tests include encode and decode.}}{10}{table.caption.14}\protected@file@percent }
+\newlabel{tab:microbench}{{3}{10}{Preliminary in-memory primitive medians over five runs. Record tests include encode and decode}{table.caption.14}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Empirical median latency of the seven measured in-memory primitives, read directly from the checked-in TSV and shown on a logarithmic axis. The plot excludes network, Relay policy, persistence, model, GPU, TTFT, and token-generation costs.}}{10}{figure.caption.15}\protected@file@percent }
+\newlabel{fig:primitive-latency}{{4}{10}{Empirical median latency of the seven measured in-memory primitives, read directly from the checked-in TSV and shown on a logarithmic axis. The plot excludes network, Relay policy, persistence, model, GPU, TTFT, and token-generation costs}{figure.caption.15}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Goal-aware qualitative comparison. A blank objective is not a deficiency when a system intentionally addresses another boundary.}}{11}{table.caption.16}\protected@file@percent }
+\newlabel{tab:comparison}{{4}{11}{Goal-aware qualitative comparison. A blank objective is not a deficiency when a system intentionally addresses another boundary}{table.caption.16}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.2}Interpretation}{11}{subsection.10.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {11}What PAPER Changes---and What It Does Not}{11}{section.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12}Security Consequences of Externalizing Authority}{11}{section.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {13}Can This Replace a Gateway Without a Flag Day?}{12}{section.13}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {14}Discussion: From Message Protocols to Consequence Protocols}{12}{section.14}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Scope pressure.}{12}{section*.17}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{State and operations.}{12}{section*.18}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Privacy.}{12}{section*.19}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Implementation maturity.}{12}{section*.20}\protected@file@percent }
 \bibstyle{abbrv}
 \bibdata{references}
 \bibcite{a2a2026}{1}
+\@writefile{toc}{\contentsline {paragraph}{No formal proof.}{13}{section*.21}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {15}Ethics: Evidence Can Become Surveillance}{13}{section.15}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {16}Reproducibility}{13}{section.16}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {17}Conclusion}{13}{section.17}\protected@file@percent }
 \bibcite{rfc9180}{2}
-\bibcite{rfc8949}{3}
-\bibcite{debenedetti2024agentdojo}{4}
-\bibcite{fan2026granularity}{5}
-\bibcite{intoto}{6}
-\bibcite{rfc9000}{7}
-\bibcite{mcp2025}{8}
-\bibcite{rfc9846}{9}
-\bibcite{rfc9052}{10}
-\bibcite{slsa12}{11}
-\bibcite{spiffe}{12}
-\bibcite{rfc9942}{13}
-\bibcite{torresarias2019intoto}{14}
-\bibcite{wang2025mi9}{15}
-\@writefile{toc}{\contentsline {section}{\numberline {A}Research Invariant Coverage}{11}{appendix.A}\protected@file@percent }
-\newlabel{tab:invariants}{{5}{11}{Research Invariant Coverage}{table.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {A.1}Required Completion Experiments}{11}{subsection.A.1}\protected@file@percent }
-\gdef \@abspage@last{11}
+\bibcite{rfc9943}{3}
+\bibcite{rfc8949}{4}
+\bibcite{debenedetti2024agentdojo}{5}
+\bibcite{fan2026granularity}{6}
+\bibcite{intoto}{7}
+\bibcite{rfc9000}{8}
+\bibcite{mcp2025}{9}
+\bibcite{rfc9846}{10}
+\bibcite{rfc9052}{11}
+\bibcite{slsa12}{12}
+\bibcite{spiffe}{13}
+\bibcite{rfc9942}{14}
+\bibcite{torresarias2019intoto}{15}
+\bibcite{wang2025mi9}{16}
+\@writefile{toc}{\contentsline {section}{\numberline {A}Research Invariant Coverage}{15}{appendix.A}\protected@file@percent }
+\newlabel{tab:invariants}{{5}{15}{Research Invariant Coverage}{table.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.1}Required Completion Experiments}{15}{subsection.A.1}\protected@file@percent }
+\gdef \@abspage@last{15}

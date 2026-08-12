@@ -42,6 +42,12 @@ export const api = {
   listUsers: () => request<any[]>('/api/users'),
   createUser: (data: any) =>
     request<any>('/api/users', { method: 'POST', body: JSON.stringify(data) }),
+  updateUser: (id: string, data: any) =>
+    request<any>(`/api/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteUser: (id: string) =>
+    request<any>(`/api/users/${id}`, { method: 'DELETE' }),
+  getUser: (id: string) =>
+    request<any>(`/api/users/${id}`),
 
   // Harnesses
   listHarnesses: () => request<any[]>('/api/harnesses'),
@@ -49,16 +55,26 @@ export const api = {
     request<any>('/api/harnesses/enroll', { method: 'POST', body: JSON.stringify(data) }),
   revokeHarness: (id: string, reason: string) =>
     request<any>(`/api/harnesses/${id}/revoke`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  quarantineHarness: (id: string) =>
+    request<any>(`/api/harnesses/${id}/quarantine`, { method: 'POST' }),
+  reactivateHarness: (id: string) =>
+    request<any>(`/api/harnesses/${id}/reactivate`, { method: 'POST' }),
 
   // Projects
   listProjects: () => request<any[]>('/api/projects'),
   createProject: (data: any) =>
     request<any>('/api/projects', { method: 'POST', body: JSON.stringify(data) }),
+  updateProject: (id: string, data: any) =>
+    request<any>(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteProject: (id: string) =>
+    request<any>(`/api/projects/${id}`, { method: 'DELETE' }),
 
   // Repositories
   listRepositories: () => request<any[]>('/api/repositories'),
   registerRepository: (data: any) =>
     request<any>('/api/repositories', { method: 'POST', body: JSON.stringify(data) }),
+  updateRepository: (id: string, data: any) =>
+    request<any>(`/api/repositories/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Sessions
   listSessions: () => request<any[]>('/api/sessions'),
@@ -66,6 +82,10 @@ export const api = {
     request<any>('/api/sessions', { method: 'POST', body: JSON.stringify(data) }),
   closeSession: (id: string) =>
     request<any>(`/api/sessions/${id}/close`, { method: 'POST' }),
+  pauseSession: (id: string) =>
+    request<any>(`/api/sessions/${id}/pause`, { method: 'POST' }),
+  resumeSession: (id: string) =>
+    request<any>(`/api/sessions/${id}/resume`, { method: 'POST' }),
   getProvenance: (id: string) =>
     request<any>(`/api/sessions/${id}/provenance`),
 

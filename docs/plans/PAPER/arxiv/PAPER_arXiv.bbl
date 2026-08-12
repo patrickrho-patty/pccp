@@ -11,6 +11,13 @@ R.~Barnes, K.~Bhargavan, and C.~A. Wood.
 \newblock Technical Report RFC 9180, IETF, Feb. 2022.
 \newblock \url{https://www.rfc-editor.org/info/rfc9180}.
 
+\bibitem{rfc9943}
+H.~Birkholz, A.~Delignat-Lavaud, C.~Fournet, Y.~Deshpande, and S.~Lasker.
+\newblock An architecture for trustworthy and transparent digital supply
+  chains.
+\newblock Technical Report RFC 9943, IETF, June 2026.
+\newblock \url{https://www.rfc-editor.org/info/rfc9943}.
+
 \bibitem{rfc8949}
 C.~Bormann and P.~Hoffman.
 \newblock Concise binary object representation ({CBOR}).

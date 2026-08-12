@@ -1,9 +1,9 @@
-\documentclass[10pt,twocolumn]{article}
+\documentclass[10pt]{article}
 
-\usepackage[letterpaper,margin=0.72in,columnsep=0.24in]{geometry}
+\usepackage[letterpaper,margin=1in]{geometry}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
-\usepackage{lmodern}
+\usepackage{newtxtext}
 \usepackage{microtype}
 \usepackage{graphicx}
 \usepackage{booktabs}
@@ -12,6 +12,14 @@
 \usepackage{enumitem}
 \usepackage{xcolor}
 \usepackage{amsmath}
+\usepackage{newtxmath}
+\usepackage[font=small,labelfont=bf]{caption}
+\usepackage{float}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\usepackage{pgfplots}
+\usepackage{pgfplotstable}
+\pgfplotsset{compat=1.18}
 \usepackage{url}
 \usepackage[hidelinks]{hyperref}
 \usepackage{cite}
@@ -23,10 +31,19 @@
   pdfkeywords={AI governance, provenance, coding agents, protocol, capability security}
 }
 
-\setlist{nosep,leftmargin=*}
-\setlength{\parindent}{1em}
-\setlength{\parskip}{0pt}
-\renewcommand{\arraystretch}{1.12}
+\linespread{1.04}
+\setlist{leftmargin=*,topsep=4pt,itemsep=2pt,parsep=1pt,partopsep=1pt}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt plus 1pt minus 1pt}
+\setlength{\textfloatsep}{18pt plus 3pt minus 3pt}
+\setlength{\floatsep}{14pt plus 2pt minus 2pt}
+\renewcommand{\arraystretch}{1.18}
+\definecolor{paperink}{HTML}{263746}
+\definecolor{paperblue}{HTML}{DCE8F0}
+\definecolor{paperblueedge}{HTML}{58758A}
+\definecolor{paperamber}{HTML}{E2A23A}
+\definecolor{paperamberlight}{HTML}{FFF1D6}
+\definecolor{papergray}{HTML}{EEF1F3}
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \newcommand{\papername}{PAPER}
 \newcommand{\system}{PCCP}
@@ -111,7 +128,7 @@ The Model Context Protocol (MCP) standardizes interactions between AI applicatio
 MI9 examines integrated runtime governance for agentic systems~\cite{wang2025mi9}; AgentDojo provides an environment for prompt-injection attacks and defenses~\cite{debenedetti2024agentdojo}; and argument-level provenance work highlights the mismatch between coarse authorization and tool arguments~\cite{fan2026granularity}. \papername{} is complementary: it defines protocol objects and state transitions through which identity, policy, tool authority, and evidence can be enforced and exported.
 
 \paragraph{Supply-chain provenance.}
-in-toto records signed metadata about supply-chain steps~\cite{torresarias2019intoto,intoto}, while SLSA defines provenance expectations for build and source tracks~\cite{slsa12}. \papername{} addresses an earlier interactive phase, before a build artifact necessarily exists. A \papername{} receipt may later feed an in-toto or SLSA-oriented attestation.
+in-toto records signed metadata about supply-chain steps~\cite{torresarias2019intoto,intoto}, while SLSA defines provenance expectations for build and source tracks~\cite{slsa12}. SCITT defines transparency services for registering signed statements about digital artifacts and issuing receipts~\cite{rfc9943}. \papername{} addresses an earlier interactive phase, before a build artifact necessarily exists: it governs whether context, inference, and side effects may occur. A \papername{} receipt may later become an in-toto/SLSA attestation input or a SCITT statement, but artifact transparency does not replace live exchange authority.
 
 \paragraph{Identity and cryptographic building blocks.}
 SPIFFE provides workload-identity conventions~\cite{spiffe}. \papername{} reuses TLS~1.3~\cite{rfc9846}, QUIC~\cite{rfc9000}, deterministic CBOR~\cite{rfc8949}, COSE~\cite{rfc9052}, HPKE~\cite{rfc9180}, and COSE receipts~\cite{rfc9942}. These standards provide transport and object-security primitives; they do not define the application-level authority model proposed here.
@@ -187,6 +204,15 @@ A typical exchange progresses through \textsc{open}, \textsc{governance}, \texts
 
 Returning to the motivating incident, the sequence now has crisp answers. The context disclosure is allowed or denied under the lease and epoch before six files leave the Harness. ``Code Standard'' resolves to a signed package and leased PIA endpoint before inference. The shell string remains a proposal until a separately authorized runtime transition executes it. The final receipt binds these decisions to the evidence root later associated with the commit.
 
+Figure~\ref{fig:lifecycle} makes the ordering explicit. The optional branch is whether a tool is proposed; authorization of a proposed tool is never optional.
+
+\begin{figure}[H]
+  \centering
+  \input{figures/governed-exchange-lifecycle.tex}
+  \caption{Protocol-design view of a Governed Exchange. Protected work advances through ordered authority gates; a model-generated tool proposal enters an optional branch but requires an independent authorization transition before execution. This figure specifies intended semantics, not measured implementation coverage.}
+  \label{fig:lifecycle}
+\end{figure}
+
 \subsection{Server-authoritative model resolution}
 
 Model names are user experience, not security identities. PAPER therefore separates:
@@ -196,6 +222,15 @@ Model names are user experience, not security identities. PAPER therefore separa
 \end{equation*}
 
 After authentication, the Harness receives an effective model catalog scoped by entitlement, organization policy, deployment profile, geography, and client capability. A Model Descriptor advertises semantic features---for example multimodal input, structured output, parallel tools, caching, reasoning controls, and resumability---without exposing an endpoint. An inference-open message references the Catalog Model and Catalog Epoch. The Relay rejects stale or unauthorized selections, resolves a signed Patty Model Package (PMP), and selects a PIA endpoint with a valid lease. These are three deliberately different identities: the Catalog Model is the stable product visible to the user, the PMP identifies the approved artifact and serving configuration, and the Endpoint Lease identifies where that package may run now. A caller may express a preference; it cannot turn a string or base URL into trusted infrastructure.
+
+Figure~\ref{fig:model-identity} shows how that separation prevents a user-visible name from becoming routing authority.
+
+\begin{figure}[H]
+  \centering
+  \input{figures/model-identity-chain.tex}
+  \caption{Protocol-design view of server-authoritative model resolution. Product, artifact, and deployment identities remain distinct until the Relay resolves them to an enrolled PIA; the serving engine is a local implementation detail, not a Harness-selectable endpoint.}
+  \label{fig:model-identity}
+\end{figure}
 
 \subsection{Tool authority and prompt injection}
 
@@ -290,6 +325,15 @@ Ed25519 sign+verify & 42.7 $\mu$s & 64 & 1 \\
 
 The immediate answer is no: none of the measured primitives is an obvious showstopper. Record encode/decode scales approximately linearly across the measured sizes, reaching 97.0~$\mu$s for a 1~MiB payload. The 73.05~ns evidence-chain update is small enough to apply per evidence event, and a 42.7~$\mu$s sign-and-verify operation is plausible at exchange or receipt boundaries rather than per token. The benchmark allocates an encoded buffer and decoded record on every iteration; bytes allocated are therefore roughly twice the large payload size and identify a concrete optimization target.
 
+Figure~\ref{fig:primitive-latency} makes the four-order-of-magnitude range visible; Table~\ref{tab:microbench} remains the exact-value record.
+
+\begin{figure}[H]
+  \centering
+  \input{figures/primitive-latency-plot.tex}
+  \caption{Empirical median latency of the seven measured in-memory primitives, read directly from the checked-in TSV and shown on a logarithmic axis. The plot excludes network, Relay policy, persistence, model, GPU, TTFT, and token-generation costs.}
+  \label{fig:primitive-latency}
+\end{figure}
+
 This is encouraging but easy to overread. Complete provenance also requires canonical event construction, persistence, indexing, retention, and potentially multiple signatures. The current measurements say that the low-level mechanism is not obviously prohibitive. They do not say that governance is free.
 
 The full repository suite passed at the evaluated commit. More revealingly, our coverage audit found that the conformance package's names overstate its present evidence. It exposes tests named for invariants 1--5 and 7--12, with no named test for invariant 6; several passing tests exercise only a proxy for their stated property. For example, the Policy Epoch test checks connection readiness rather than unknown-epoch rejection, and the reconnect test contains no assertion. This finding changed the paper: we report passing code tests, not ``twelve invariants enforced.'' The detailed audit appears in Appendix~A.
@@ -360,7 +404,7 @@ The state machine and invariants are candidates for formal modeling, but no form
 
 Evidence about prompts, files, tool use, edits, and human decisions can improve incident response and accountability while also enabling disproportionate monitoring. The protocol therefore supports retention and export profiles, but technical configurability is insufficient. Deployments should establish lawful purpose, employee notice, access review, appeal, data-subject handling, and a separation between security investigations and performance management. Public deployments should default to operationally minimal traces; regulated deployments should justify deeper retention per policy domain.
 
-Generated conceptual artwork is used only for Figure~\ref{fig:overview}; it communicates architecture and contains no measurement or factual comparison. Empirical tables are derived from the checked-in benchmark dataset; raw per-run output remains a requirement for a complete empirical release.
+Generated conceptual artwork is used only for Figure~\ref{fig:overview}; it communicates architecture and contains no measurement or factual comparison. Figures~\ref{fig:lifecycle} and~\ref{fig:model-identity} are LaTeX-native protocol-design diagrams. Figure~\ref{fig:primitive-latency} and the empirical tables are derived from the checked-in benchmark dataset; raw per-run output remains a requirement for a complete empirical release.
 
 \section{Reproducibility}
 

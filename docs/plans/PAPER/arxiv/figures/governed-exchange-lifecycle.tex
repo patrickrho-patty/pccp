@@ -1,0 +1,32 @@
+\begin{tikzpicture}[
+  font=\small,
+  state/.style={draw=paperblueedge, fill=paperblue, rounded corners=2pt,
+    minimum width=3.4cm, minimum height=0.82cm, align=center,
+    text=paperink, font=\small\bfseries},
+  gate/.style={draw=paperamber, fill=paperamberlight, rounded corners=2pt,
+    minimum width=3.4cm, minimum height=0.72cm, align=center,
+    text=paperink, font=\scriptsize},
+  flow/.style={-{Latex[length=2.2mm]}, very thick, draw=paperink},
+  optional/.style={flow, dashed, draw=paperblueedge}
+]
+  \node[state] (open) {OPEN};
+  \node[state, right=0.75cm of open] (govern) {GOVERNANCE};
+  \node[state, right=0.75cm of govern] (route) {ROUTE};
+  \node[state, below=2.25cm of route] (stream) {STREAM};
+  \node[state, left=0.75cm of stream] (tool) {TOOL / APPROVAL};
+  \node[state, left=0.75cm of tool] (close) {CLOSE};
+
+  \node[gate, below=0.18cm of open] (gopen) {peer + session binding};
+  \node[gate, below=0.18cm of govern] (ggovern) {lease + epoch + verdict};
+  \node[gate, below=0.18cm of route] (groute) {catalog + PMP + endpoint};
+  \node[gate, above=0.18cm of stream] (gstream) {authorized inference path};
+  \node[gate, above=0.18cm of tool] (gtool) {independent tool authority};
+  \node[gate, above=0.18cm of close] (gclose) {evidence root + receipt};
+
+  \draw[flow] (open) -- (govern);
+  \draw[flow] (govern) -- (route);
+  \draw[flow] (route) -- (stream);
+  \draw[optional] (stream) -- node[above, font=\scriptsize, text=paperblueedge] {if proposed} (tool);
+  \draw[flow] (stream.south) -- ++(0,-0.36) -| node[pos=0.72, below, font=\scriptsize] {no tool} (close.south);
+  \draw[flow] (tool) -- (close);
+\end{tikzpicture}

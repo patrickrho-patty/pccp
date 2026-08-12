@@ -1,0 +1,31 @@
+\pgfplotstableread[col sep=tab]{benchmark-data/core-primitives.tsv}\primitivebenchmarks
+\begin{tikzpicture}
+\begin{axis}[
+  width=\textwidth,
+  height=7.0cm,
+  ybar,
+  bar width=14pt,
+  ymode=log,
+  log basis y=10,
+  ymin=50,
+  ymax=200000,
+  ylabel={Median latency (ns/op, log scale)},
+  xtick=data,
+  xticklabels={Record 1K,Record 64K,Record 1M,CBOR Hello,Evidence chain,1K digest,Ed25519},
+  x tick label style={font=\scriptsize, rotate=35, anchor=east},
+  y tick label style={font=\scriptsize},
+  ylabel style={font=\small},
+  grid=major,
+  grid style={draw=papergray},
+  axis line style={draw=paperink},
+  tick style={draw=paperink},
+  nodes near coords,
+  nodes near coords style={font=\scriptsize, rotate=90, anchor=west, text=paperink},
+  point meta=explicit symbolic,
+  enlarge x limits=0.08,
+]
+\addplot+[fill=paperblueedge, draw=paperink]
+  table[x expr=\coordindex, y=median_ns_per_op,
+    meta=median_ns_per_op] {\primitivebenchmarks};
+\end{axis}
+\end{tikzpicture}

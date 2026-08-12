@@ -5,7 +5,9 @@ TARGET := PAPER_arXiv
 
 all: $(TARGET).pdf
 
-$(TARGET).pdf: main.tex references.bib figures/qwen-governed-exchange.png
+$(TARGET).pdf: main.tex references.bib figures/qwen-governed-exchange.png \
+	figures/governed-exchange-lifecycle.tex figures/model-identity-chain.tex \
+	figures/primitive-latency-plot.tex benchmark-data/core-primitives.tsv
 	$(LATEXMK) -pdf -interaction=nonstopmode -halt-on-error -file-line-error -jobname=$(TARGET) main.tex
 
 check: $(TARGET).pdf
