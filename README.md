@@ -144,6 +144,20 @@ pnpm build  # Build to web/dist/
 - [Product PRD](docs/plans/Patty_Code_Control_Plane_PRD_v1.md)
 - [PAPER Protocol Spec](docs/plans/PAPER/PAPER_Protocol_Specification_v1.0.md)
 
+## Guardrails (non-negotiable)
+
+1. **One product, three profiles.** Never accept code that forks for Government. Different policy defaults, different deployment topology, same code.
+2. **Schema before UI.** Every entity defined in the PRD becomes a signed schema before any dashboard renders it.
+3. **Vertical slices, not horizontal layers.** Every increment must ship end-to-end through Harness → Relay → PIA → Control, even if the surface is tiny. No "build all the dashboards first".
+4. **Evidence is part of the build.** Every protected action emits an event in the same commit the action is implemented. No retroactive "add logging later".
+5. **Conformance is part of the protocol.** PAPER comes with a conformance suite. Reference implementation must pass it. Independent implementations must be able to pass it.
+6. **Open-source boundary is enforced.** What is open stays open; what is proprietary stays proprietary. The control plane itself is open source (see PRD §9.9). The trust boundary is the signed model package and the endpoint attestation, not the secrecy of the code.
+7. **No phantom compliance.** Do not claim "CSAP compliant", "KISA certified", or "ISMS-P compliant" because a feature exists. Maps and evidence are the product; the certifications are the customer's process.
+8. **No HTTP/REST/WebSocket for protocol traffic.** The protocol binds QUIC and TLS/TCP. If the network blocks QUIC, fall back to native TLS/TCP — never to REST. The HTTP API is for admin/control-plane only.
+9. **Harness changes ship from the worktree.** `patty-code-pccp/` is a separate repo. Do not stage Harness files into this repo.
+10. **No employee evaluation autonomy.** Work Intelligence produces rubric scores with evidence. A human finalization step is required for any consequential employment decision. Period.
+
+
 ## Phase Status
 
 | Phase | Theme | Status |
