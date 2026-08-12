@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title description">
+  <title id="title">Governed AI Exchange</title>
+  <desc id="description">Comparison of a conventional AI path with post-hoc reconstruction and a PAPER path with inline governance and a provenance spine.</desc>
+
+  <defs>
+    <style>
+      .title { font: 800 55px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: 1px; fill: #071b3b; }
+      .section { font: 800 28px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: .8px; fill: #071b3b; }
+      .box-text { font: 800 26px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: .3px; text-anchor: middle; fill: #071b3b; }
+      .box-text-inverse { font: 800 26px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: .3px; text-anchor: middle; fill: #ffffff; }
+      .badge-text { font: 800 13px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: .2px; text-anchor: middle; fill: #ffffff; }
+      .annotation { font: 800 23px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: .6px; text-anchor: middle; fill: #071b3b; }
+      .provenance { font: 800 27px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: 1px; text-anchor: middle; fill: #e96816; }
+      .navy-box { fill: #071b3b; stroke: #071b3b; stroke-width: 4; }
+      .slate-box { fill: #e8edf2; stroke: #071b3b; stroke-width: 4; }
+      .flow { fill: none; stroke: #071b3b; stroke-width: 5; stroke-linecap: square; }
+      .reconstruct { fill: none; stroke: #52637a; stroke-width: 4; stroke-dasharray: 13 12; }
+      .spine { fill: none; stroke: #e96816; stroke-width: 9; stroke-linecap: square; stroke-linejoin: round; }
+      .spine-tap { fill: none; stroke: #e96816; stroke-width: 4; }
+    </style>
+
+    <marker id="arrow-navy" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#071b3b"/>
+    </marker>
+    <marker id="arrow-slate" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#52637a"/>
+    </marker>
+    <marker id="arrow-orange" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#e96816"/>
+    </marker>
+  </defs>
+
+  <rect width="1600" height="900" fill="#ffffff"/>
+
+  <text class="title" x="800" y="75" text-anchor="middle">GOVERNED AI EXCHANGE</text>
+
+  <!-- Conventional path -->
+  <text class="section" x="50" y="145">CONVENTIONAL PATH</text>
+
+  <rect class="navy-box" x="50" y="180" width="220" height="120" rx="4"/>
+  <text class="box-text-inverse" x="160" y="226">
+    <tspan x="160" dy="0">HUMAN</tspan>
+    <tspan x="160" dy="32">INTENT</tspan>
+  </text>
+
+  <path class="flow" d="M270 240 H330" marker-end="url(#arrow-navy)"/>
+
+  <rect class="slate-box" x="345" y="180" width="210" height="120" rx="4"/>
+  <text class="box-text" x="450" y="249">HARNESS</text>
+
+  <path class="flow" d="M555 240 H615" marker-end="url(#arrow-navy)"/>
+
+  <rect class="slate-box" x="630" y="180" width="210" height="120" rx="4"/>
+  <text class="box-text" x="735" y="226">
+    <tspan x="735" dy="0">MODEL</tspan>
+    <tspan x="735" dy="32">API</tspan>
+  </text>
+
+  <path class="flow" d="M840 240 H900" marker-end="url(#arrow-navy)"/>
+
+  <rect class="slate-box" x="915" y="180" width="190" height="120" rx="4"/>
+  <text class="box-text" x="1010" y="249">TOOLS</text>
+
+  <path class="flow" d="M1105 240 H1165" marker-end="url(#arrow-navy)"/>
+
+  <rect class="navy-box" x="1180" y="180" width="270" height="120" rx="4"/>
+  <text class="box-text-inverse" x="1315" y="226">
+    <tspan x="1315" dy="0">POST-HOC</tspan>
+    <tspan x="1315" dy="32">LOGS</tspan>
+  </text>
+
+  <!-- Post-hoc logs reconstruct the originating interaction backward in time. -->
+  <path class="reconstruct" d="M1385 302 V365 H160 V315" marker-end="url(#arrow-slate)"/>
+  <rect x="650" y="337" width="300" height="48" fill="#ffffff"/>
+  <text class="annotation" x="800" y="369">RECONSTRUCTION</text>
+
+  <!-- PAPER path -->
+  <text class="section" x="50" y="475">PAPER PATH</text>
+
+  <!-- Governance badges are attached to the PAPER Relay. -->
+  <g aria-label="PAPER governance bindings">
+    <rect x="493" y="505" width="132" height="55" rx="5" fill="#071b3b"/>
+    <circle cx="514" cy="532.5" r="11" fill="none" stroke="#e96816" stroke-width="3"/>
+    <path d="M508 532.5 l4 4 8-9" fill="none" stroke="#e96816" stroke-width="2.5"/>
+    <text class="badge-text" x="569" y="528">
+      <tspan x="569" dy="0">CAPABILITY</tspan>
+      <tspan x="569" dy="16">LEASE</tspan>
+    </text>
+
+    <rect x="633" y="505" width="132" height="55" rx="5" fill="#071b3b"/>
+    <path d="M649 522 h20 v22 h-20 z M654 517 v10 M664 517 v10 M649 529 h20" fill="none" stroke="#e96816" stroke-width="2.5"/>
+    <text class="badge-text" x="720" y="528">
+      <tspan x="720" dy="0">POLICY</tspan>
+      <tspan x="720" dy="16">EPOCH</tspan>
+    </text>
+
+    <rect x="773" y="505" width="132" height="55" rx="5" fill="#071b3b"/>
+    <path d="M789 520 h19 v24 h-19 z M794 527 h9 M794 533 h9 M794 539 h6" fill="none" stroke="#e96816" stroke-width="2.5"/>
+    <text class="badge-text" x="859" y="528">
+      <tspan x="859" dy="0">RELAY</tspan>
+      <tspan x="859" dy="16">VERDICT</tspan>
+    </text>
+    <path d="M699 560 V580" stroke="#071b3b" stroke-width="4"/>
+  </g>
+
+  <rect class="navy-box" x="50" y="590" width="210" height="125" rx="4"/>
+  <text class="box-text-inverse" x="155" y="638">
+    <tspan x="155" dy="0">HUMAN</tspan>
+    <tspan x="155" dy="32">INTENT</tspan>
+  </text>
+
+  <path class="flow" d="M260 652.5 H295" marker-end="url(#arrow-navy)"/>
+
+  <rect class="slate-box" x="310" y="590" width="200" height="125" rx="4"/>
+  <text class="box-text" x="410" y="661">HARNESS</text>
+
+  <path class="flow" d="M510 652.5 H545" marker-end="url(#arrow-navy)"/>
+
+  <rect class="slate-box" x="560" y="590" width="210" height="125" rx="4"/>
+  <text class="box-text" x="665" y="638">
+    <tspan x="665" dy="0">PAPER</tspan>
+    <tspan x="665" dy="32">RELAY</tspan>
+  </text>
+
+  <path class="flow" d="M770 652.5 H805" marker-end="url(#arrow-navy)"/>
+
+  <rect class="slate-box" x="820" y="590" width="270" height="125" rx="4"/>
+  <text class="box-text" x="955" y="638">
+    <tspan x="955" dy="0">APPROVED</tspan>
+    <tspan x="955" dy="32">PIA + MODEL</tspan>
+  </text>
+
+  <path class="flow" d="M1090 652.5 H1125" marker-end="url(#arrow-navy)"/>
+
+  <rect class="slate-box" x="1140" y="590" width="180" height="125" rx="4"/>
+  <text class="box-text" x="1230" y="661">RUNTIME</text>
+
+  <path class="flow" d="M1320 652.5 H1355" marker-end="url(#arrow-navy)"/>
+
+  <rect class="navy-box" x="1370" y="590" width="180" height="125" rx="4"/>
+  <text class="box-text-inverse" x="1460" y="638">
+    <tspan x="1460" dy="0">CODE</tspan>
+    <tspan x="1460" dy="32">COMMIT</tspan>
+  </text>
+
+  <!-- Every PAPER stage contributes to the evidence line. -->
+  <path class="spine-tap" d="M155 715 V780 M410 715 V780 M665 715 V780 M955 715 V780 M1230 715 V780 M1460 715 V780"/>
+  <path class="spine" d="M50 780 H1450" marker-end="url(#arrow-orange)"/>
+  <rect x="590" y="798" width="420" height="48" fill="#ffffff"/>
+  <text class="provenance" x="800" y="832">PROVENANCE SPINE</text>
+
+  <!-- Signed evidence receipt -->
+  <g transform="translate(1470 745)" aria-label="Evidence Receipt">
+    <path d="M0 0 H58 L82 24 V100 H0 Z" fill="#ffffff" stroke="#071b3b" stroke-width="4"/>
+    <path d="M58 0 V24 H82" fill="none" stroke="#071b3b" stroke-width="4"/>
+    <path d="M15 42 H64 M15 55 H64 M15 68 H48" stroke="#52637a" stroke-width="3"/>
+    <path d="M18 86 C28 75, 33 95, 42 82 C47 76, 53 89, 63 79" fill="none" stroke="#e96816" stroke-width="3"/>
+  </g>
+  <text class="annotation" x="1511" y="872" font-size="18">
+    <tspan x="1511" dy="0">EVIDENCE</tspan>
+    <tspan x="1511" dy="23">RECEIPT</tspan>
+  </text>
+</svg>

@@ -2,13 +2,21 @@ package pia
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"log"
+	"math/big"
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/paper"
 )
@@ -23,11 +31,55 @@ type PaperListener struct {
 }
 
 func NewPaperListener(svc *Service) *PaperListener {
+	tlsConfig := &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13, NextProtos: []string{paper.ALPNProtocol}}
+
+	// Generate self-signed cert for PAPER TLS if none provided
+	cert, err := generateSelfSignedCert()
+	if err != nil {
+		log.Printf("pia-paper: cert generation failed, PAPER listener will use InsecureSkipVerify: %v", err)
+	} else {
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
 	return &PaperListener{
 		svc:       svc,
-		tlsConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13, NextProtos: []string{paper.ALPNProtocol}},
+		tlsConfig: tlsConfig,
 		conns:     make(map[string]*paper.TransportConn),
 	}
+}
+
+// generateSelfSignedCert creates an ephemeral ECDSA self-signed certificate
+// for PAPER TLS connections. In production, this should use proper PKI.
+func generateSelfSignedCert() (tls.Certificate, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{Organization: []string{"Patty Code PIA"}},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		DNSNames:     []string{"localhost", "pia"},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	return tls.X509KeyPair(certPEM, keyPEM)
 }
 
 func (pl *PaperListener) ListenTCP(ctx context.Context, addr string) error {
