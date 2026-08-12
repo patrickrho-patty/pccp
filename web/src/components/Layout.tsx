@@ -20,6 +20,7 @@ const navItems = [
   { path: '/tools', label: '도구', labelEn: 'Tools', icon: '🔧' },
   { path: '/fleet', label: '플릿 관리', labelEn: 'Fleet', icon: '⛶' },
   { path: '/audit', label: '감사 로그', labelEn: 'Audit', icon: '☰' },
+  { path: '/sre', label: 'SRE 운영', labelEn: 'SRE', icon: '📡' },
 ]
 
 export default function Layout({ children }: { children: ReactNode }) {
