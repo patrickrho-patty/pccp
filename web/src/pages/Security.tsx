@@ -116,6 +116,7 @@ export default function Security() {
   const [findings, setFindings] = useState<Finding[]>([])
   const [stats, setStats] = useState({ critical: 0, high: 0, medium: 0, open: 0, total: 0 })
   const [showBuilder, setShowBuilder] = useState(false)
+  const [findingDetail, setFindingDetail] = useState<any>(null)
   const [editingRule, setEditingRule] = useState<Rule | null>(null)
 
   useEffect(() => {
@@ -132,6 +133,26 @@ export default function Security() {
       .then(r => r.json()).then(data => setFindings(Array.isArray(data) ? data : []))
       .catch(() => {})
   }, [])
+
+  const viewFindingDetail = async (id: string) => {
+    try {
+      const res = await fetch(`/api/security/findings/${id}`, { headers: authHeaders() })
+      if (res.ok) { setFindingDetail(await res.json()) }
+    } catch {}
+  }
+
+  const updateFindingStatus = async (id: string, status: string) => {
+    try {
+      await fetch(`/api/security/findings/${id}`, {
+        method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      })
+      setFindingDetail(null)
+      // Refresh findings
+      fetch('/api/security/findings', { headers: authHeaders() })
+        .then(r => r.json()).then(data => setFindings(Array.isArray(data) ? data : []))
+    } catch {}
+  }
 
   const runScan = async () => {
     if (!scanText) return
@@ -342,7 +363,7 @@ export default function Security() {
               </tr></thead>
               <tbody>
                 {findings.map(f => (
-                  <tr key={f.id} className="border-b border-gray-100 last:border-0">
+                  <tr key={f.id} className="border-b border-gray-100 last:border-0 cursor-pointer hover:bg-blue-50/30" onClick={() => viewFindingDetail(f.id)}>
                     <td className="py-3 text-sm font-mono">{f.finding_type}</td>
                     <td className="py-3"><span className={sevBadge(f.severity)}>{f.severity}</span></td>
                     <td className="py-3 text-sm">{f.title_ko || f.title}</td>

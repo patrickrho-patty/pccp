@@ -249,8 +249,6 @@ func (s *Server) setupRouter() {
 		r.Get("/security/findings", s.handleSecurityFindings)
 			r.Get("/security/findings/{id}", s.handleSecurityFindingDetail)
 			r.Put("/security/findings/{id}", s.handleUpdateFinding)
-			r.Get("/security/findings/{id}", s.handleSecurityFindingDetail)
-			r.Put("/security/findings/{id}", s.handleUpdateFinding)
 		r.Post("/security/lockdown", s.handleSecurityLockdown)
 
 		// Fleet Operations
