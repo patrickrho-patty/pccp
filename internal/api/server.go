@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -804,6 +805,122 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "closed"})
 }
+
+func (s *Server) handleCompatChatCompletions(w http.ResponseWriter, r *http.Request) {
+		// OpenAI-compatible chat completions adapter
+		// Proxies to PIA for inference
+		var req map[string]interface{}
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+
+		// Get model from request
+		modelName, _ := req["model"].(string)
+		if modelName == "" {
+			modelName = "default"
+		}
+
+		messages, _ := req["messages"].([]interface{})
+
+		// Build a simple prompt from messages
+		var promptParts []string
+		for _, msg := range messages {
+			m, ok := msg.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			role, _ := m["role"].(string)
+			content, _ := m["content"].(string)
+			promptParts = append(promptParts, role+": "+content)
+		}
+		prompt := "You are a helpful coding assistant.\n\n" + strings.Join(promptParts, "\n") + "\n\nAssistant:"
+
+		// Check if PIA URL is configured
+		piaURL := os.Getenv("PCCP_PIA_URL")
+		if piaURL == "" {
+			// Return a mock response for dev/testing
+			resp := map[string]interface{}{
+				"id":      "chatcmpl-" + time.Now().Format("20060102150405"),
+				"object":  "chat.completion",
+				"created": time.Now().Unix(),
+				"model":   modelName,
+				"choices": []map[string]interface{}{
+					{
+						"index": 0,
+						"message": map[string]interface{}{
+							"role":    "assistant",
+							"content": "[PCCP] Inference adapter ready. Configure PCCP_PIA_URL for model serving. Prompt received: " + prompt[:min(len(prompt), 100)],
+						},
+						"finish_reason": "stop",
+					},
+				},
+				"usage": map[string]interface{}{
+					"prompt_tokens":     len(prompt) / 4,
+					"completion_tokens": 20,
+					"total_tokens":      len(prompt)/4 + 20,
+				},
+			}
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+
+		// Proxy to PIA
+		maxTokens := 4096
+		if mt, ok := req["max_tokens"].(float64); ok {
+			maxTokens = int(mt)
+		}
+
+		 piaReq := map[string]interface{}{
+			"model":       os.Getenv("PCCP_VLLM_MODEL"),
+			"prompt":      prompt,
+			"max_tokens":  maxTokens,
+			"temperature": 0.0,
+			"stream":      false,
+		}
+
+		 piaBody, _ := json.Marshal(piaReq)
+		piaResp, err := http.Post(piaURL+"/v1/completions", "application/json", bytes.NewReader(piaBody))
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "PIA unreachable: "+err.Error())
+			return
+		}
+		defer piaResp.Body.Close()
+
+		var piaResult map[string]interface{}
+		json.NewDecoder(piaResp.Body).Decode(&piaResult)
+
+		// Convert to OpenAI format
+		choices, _ := piaResult["choices"].([]interface{})
+		var respChoices []map[string]interface{}
+		if len(choices) > 0 {
+			if choice, ok := choices[0].(map[string]interface{}); ok {
+				if text, ok := choice["text"].(string); ok {
+					respChoices = append(respChoices, map[string]interface{}{
+						"index": 0,
+						"message": map[string]interface{}{
+							"role":    "assistant",
+							"content": text,
+						},
+						"finish_reason": "stop",
+					})
+				}
+			}
+		}
+
+		resp := map[string]interface{}{
+			"id":      "chatcmpl-" + time.Now().Format("20060102150405"),
+			"object":  "chat.completion",
+			"created": time.Now().Unix(),
+			"model":   modelName,
+			"choices": respChoices,
+		}
+		if usage, ok := piaResult["usage"].(map[string]interface{}); ok {
+			resp["usage"] = usage
+		}
+
+		writeJSON(w, http.StatusOK, resp)
+	}
 
 func (s *Server) handleGetSessionUsage(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
@@ -1799,3 +1916,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dash)
 }
 
+
+func min(a, b int) int {
+	if a < b { return a }
+	return b
+}
