@@ -26,7 +26,11 @@ export default function Models() {
   const pageSize = 25
   const [form, setForm] = useState({ package_id: '', model_id: '', name: '', name_ko: '', family: 'code', version: '1.0.0' })
 
-  const load = () => { fetch('/api/models', { headers: authHeaders() }).then(r => r.json()).then(data => setModels(Array.isArray(data) ? data : [])).catch(() => setModels([])) }
+  const [endpoints, setEndpoints] = useState<any[]>([])
+  const load = () => {
+    fetch('/api/models', { headers: authHeaders() }).then(r => r.json()).then(data => setModels(Array.isArray(data) ? data : [])).catch(() => setModels([]))
+    fetch('/api/endpoints', { headers: authHeaders() }).then(r => r.json()).then(data => setEndpoints(Array.isArray(data) ? data : [])).catch(() => setEndpoints([]))
+  }
   useEffect(() => { load() }, [])
 
   const filtered = useFilteredData(models, filters, FILTER_CONFIG)
@@ -40,6 +44,8 @@ export default function Models() {
   const handleRecall = async (id: string) => { if (confirm('리콜하시겠습니까? 모든 엔드포인트 리스가 무효화됩니다.')) { try { await fetch(`/api/models/${id}/recall`, { method: 'POST', headers: authHeaders() }); load() } catch {} } }
   const handleEdit = (m: any) => { setEditingId(m.id); setForm({ package_id: m.package_id || '', model_id: m.model_id || '', name: m.name || '', name_ko: m.name_ko || '', family: m.family || 'code', version: m.version || '1.0.0' }); setShowForm(true) }
   const handleUpdate = async (e: React.FormEvent) => { e.preventDefault(); if (!editingId) return; try { await fetch(`/api/models/${editingId}`, { method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ name: form.name, name_ko: form.name_ko }) }); setEditingId(null); setShowForm(false); load() } catch { alert('수정 실패') } }
+
+  const getEndpointCount = (pkgId: string) => endpoints.filter(e => e.model_package_id === pkgId && e.status === 'active').length
 
   const stateBadge = (s: string) => { const m: Record<string,string> = { draft:'badge-gray', published:'badge-green', deprecated:'badge-yellow', recalled:'badge-red' }; return m[s] || 'badge-gray' }
   const stateLabel = (s: string) => { const m: Record<string,string> = { draft:'초안', published:'게시됨', deprecated:'사용중단', recalled:'리콜됨' }; return m[s] || s }
@@ -72,7 +78,7 @@ export default function Models() {
         ) : (
           <table className="w-full">
             <thead><tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
-              <th className="pb-3">모델명</th><th className="pb-3">패키지 ID</th><th className="pb-3">버전</th><th className="pb-3">상태</th><th className="pb-3">보증</th><th className="pb-3 text-right">작업</th>
+              <th className="pb-3">모델명</th><th className="pb-3">패키지 ID</th><th className="pb-3">버전</th><th className="pb-3">상태</th><th className="pb-3">엔드포인트</th><th className="pb-3">보증</th><th className="pb-3 text-right">작업</th>
             </tr></thead>
             <tbody>
               {paged.map(m => (
@@ -91,6 +97,7 @@ export default function Models() {
                     <td className="py-3 font-mono text-xs">{m.package_id}</td>
                     <td className="py-3 text-sm">{m.version}</td>
                     <td className="py-3"><span className={stateBadge(m.state)}>{stateLabel(m.state)}</span></td>
+                    <td className="py-3 text-sm">{getEndpointCount(m.package_id)} <span className="text-xs text-gray-400">활성</span></td>
                     <td className="py-3"><span className="badge-blue">{m.minimum_endpoint_assurance || 'L1'}</span></td>
                     <td className="py-3" onClick={e => e.stopPropagation()}>
                       <div className="flex gap-2 justify-end">
@@ -101,7 +108,7 @@ export default function Models() {
                     </td>
                   </tr>
                   {expandedId === m.id && (
-                    <tr className="bg-gray-50"><td colSpan={6} className="p-4">
+                    <tr className="bg-gray-50"><td colSpan={7} className="p-4">
                       <div className="grid grid-cols-3 gap-4 text-sm">
                         <div><span className="text-gray-500">패밀리:</span> {m.family}</div>
                         <div><span className="text-gray-500">매니페스트:</span> <code className="text-xs">{m.manifest_digest?.slice(0, 30) || '-'}</code></div>

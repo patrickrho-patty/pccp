@@ -7,11 +7,17 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
 
+  const [findingCount, setFindingCount] = useState(0)
   useEffect(() => {
     Promise.all([
       fetch('/api/dashboard', { headers: authHeaders() }).then(r => r.json()).catch(() => ({})),
       fetch('/api/korean/governance-brief', { headers: authHeaders() }).then(r => r.json()).catch(() => null),
-    ]).then(([dash, brf]) => { setData(dash); setBrief(brf); setLoading(false) })
+      fetch('/api/security/findings', { headers: authHeaders() }).then(r => r.json()).catch(() => []),
+    ]).then(([dash, brf, findings]) => {
+      setData(dash); setBrief(brf)
+      setFindingCount(Array.isArray(findings) ? findings.filter((f: any) => f.status === 'open').length : 0)
+      setLoading(false)
+    })
   }, [])
 
   if (loading) return <div className="text-gray-500">로딩 중...</div>
@@ -111,7 +117,10 @@ export default function Dashboard() {
               <div className="text-xs text-gray-500">개발자 AI 코딩 세션 열기 →</div>
             </button>
             <button onClick={() => navigate('/security')} className="w-full text-left p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
-              <div className="text-sm font-medium">보안 검사</div>
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">보안 검사</div>
+                {findingCount > 0 && <span className="badge-red text-xs">{findingCount} 발견</span>}
+              </div>
               <div className="text-xs text-gray-500">DLP/PII/시크릿 스캔 →</div>
             </button>
             <button onClick={() => navigate('/compliance')} className="w-full text-left p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">

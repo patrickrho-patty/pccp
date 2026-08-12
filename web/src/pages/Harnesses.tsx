@@ -44,6 +44,18 @@ export default function Harnesses() {
   const handleQuarantine = async (id: string) => { if (confirm('격리하시겠습니까? 모든 활성 세션이 종료됩니다.')) { try { await api.quarantineHarness(id); load() } catch {} } }
   const handleReactivate = async (id: string) => { try { await api.reactivateHarness(id); load() } catch {} }
 
+  const formatRelative = (ts: string) => {
+    if (!ts || ts.startsWith('0001-01-01')) return '-'
+    const d = new Date(ts)
+    const diff = Date.now() - d.getTime()
+    const mins = Math.floor(diff / 60000)
+    if (mins < 1) return '방금 전'
+    if (mins < 60) return mins + '분 전'
+    const hours = Math.floor(mins / 60)
+    if (hours < 24) return hours + '시간 전'
+    return d.toLocaleDateString('ko-KR')
+  }
+
   const statusBadge = (s: string) => { const m: Record<string,string> = { enrolled:'badge-green', active:'badge-green', pending:'badge-yellow', quarantined:'badge-red', revoked:'badge-gray' }; return m[s] || 'badge-gray' }
   const statusLabel = (s: string) => { const m: Record<string,string> = { enrolled:'등록됨', active:'활성', pending:'대기', quarantined:'격리됨', revoked:'폐기됨' }; return m[s] || s }
 
@@ -75,7 +87,7 @@ export default function Harnesses() {
         ) : (
           <table className="w-full">
             <thead><tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
-              <th className="pb-3">하네스 ID</th><th className="pb-3">버전</th><th className="pb-3">등록 모드</th><th className="pb-3">위험도</th><th className="pb-3">상태</th><th className="pb-3 text-right">작업</th>
+              <th className="pb-3">하네스 ID</th><th className="pb-3">버전</th><th className="pb-3">등록 모드</th><th className="pb-3">마지막 활동</th><th className="pb-3">위험도</th><th className="pb-3">상태</th><th className="pb-3 text-right">작업</th>
             </tr></thead>
             <tbody>
               {paged.map(h => (
@@ -84,6 +96,7 @@ export default function Harnesses() {
                     <td className="py-3 font-mono text-xs">{h.harness_id}</td>
                     <td className="py-3 text-sm">{h.binary_version}</td>
                     <td className="py-3"><span className="badge-gray">{h.enrollment_mode}</span></td>
+                    <td className="py-3 text-xs text-gray-400">{formatRelative(h.last_heartbeat)}</td>
                     <td className="py-3"><span className={h.risk_state === 'normal' ? 'badge-green' : h.risk_state === 'high' ? 'badge-red' : 'badge-yellow'}>{h.risk_state}</span></td>
                     <td className="py-3"><span className={statusBadge(h.status)}>{statusLabel(h.status)}</span></td>
                     <td className="py-3" onClick={e => e.stopPropagation()}>
@@ -94,7 +107,7 @@ export default function Harnesses() {
                     </td>
                   </tr>
                   {expandedId === h.id && (
-                    <tr className="bg-gray-50"><td colSpan={6} className="p-4">
+                    <tr className="bg-gray-50"><td colSpan={7} className="p-4">
                       <div className="grid grid-cols-3 gap-4 text-sm">
                         <div><span className="text-gray-500">디바이스:</span> {h.device_id || '-'}</div>
                         <div><span className="text-gray-500">정책 프로필:</span> {h.policy_profile || '-'}</div>
