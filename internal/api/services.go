@@ -7,6 +7,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/patrickrho-patty/pccp/internal/attestation"
+	"github.com/patrickrho-patty/pccp/internal/catalog"
+	"github.com/patrickrho-patty/pccp/internal/models"
+	"github.com/patrickrho-patty/pccp/internal/publiccloud"
 	"github.com/patrickrho-patty/pccp/internal/billing"
 	"github.com/patrickrho-patty/pccp/internal/command"
 	"github.com/patrickrho-patty/pccp/internal/compliance"
@@ -58,6 +61,8 @@ type AdditionalServices struct {
  	Realtime    *realtime.Service `json:"realtime"`
  	Sovereign   *sovereign.Service `json:"sovereign"`
  	SSO         *sso.Service `json:"s_s_o"`
+	Catalog      *catalog.Service `json:"catalog"`
+	PublicCloud  *publiccloud.Service `json:"public_cloud"`
 }
 
 // ext gets the additional services for this server, initializing if needed.
@@ -94,6 +99,8 @@ func (s *Server) initAdditional() *AdditionalServices {
 		Realtime:    realtime.New(),
 		Sovereign:   sovereign.New(),
 		SSO:         sso.New(s.db, "pccp-sso-secret"),
+		Catalog:     mustCatalog(s.db),
+		PublicCloud: mustPublicCloud(s.db),
 	}
 	return ext
 }
@@ -269,6 +276,26 @@ func (s *Server) setupAdditionalRoutes(r chi.Router, ext *AdditionalServices) {
 
 	// Realtime
 	r.Get("/realtime/status", s.wrapRealtimeStatus(ext))
+
+	// v2 Model Catalog (§10A)
+	r.Route("/catalog", func(r chi.Router) {
+		r.Get("/models", s.wrapCatalogModels(ext))
+		r.Post("/models", s.wrapCatalogRegister(ext))
+		r.Get("/epoch", s.wrapCatalogEpoch(ext))
+		r.Post("/seed", s.wrapCatalogSeed(ext))
+		r.Post("/{id}/withdraw", s.wrapCatalogWithdraw(ext))
+		r.Post("/{id}/announce", s.wrapCatalogAnnounce(ext))
+	})
+
+	// v2 Public Cloud (§10C)
+	r.Route("/public", func(r chi.Router) {
+		r.Post("/accounts", s.wrapPublicCreateAccount(ext))
+		r.Get("/accounts", s.wrapPublicAccounts(ext))
+		r.Get("/accounts/{id}", s.wrapPublicGetAccount(ext))
+		r.Post("/accounts/{id}/subscription", s.wrapPublicCreateSub(ext))
+		r.Get("/accounts/{id}/lease", s.wrapPublicLease(ext))
+		r.Get("/accounts/{id}/slots", s.wrapPublicSlots(ext))
+	})
 }
 
 // --- Handler wrappers ---
@@ -1286,6 +1313,174 @@ func (s *Server) wrapRealtimeStatus(ext *AdditionalServices) http.HandlerFunc {
 	}
 }
 
+
+// --- Catalog Handlers ---
+
+func (s *Server) wrapCatalogModels(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID := getOrgID(r)
+		descs, err := ext.Catalog.GetEffectiveCatalog("", orgID, "")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, descs)
+	}
+}
+
+func (s *Server) wrapCatalogRegister(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var cm models.CatalogModel
+		if err := decodeJSON(r, &cm); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if err := ext.Catalog.RegisterCatalogModel(&cm); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, cm)
+	}
+}
+
+func (s *Server) wrapCatalogEpoch(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		accountID := r.URL.Query().Get("account_id")
+		orgID := getOrgID(r)
+		epoch, err := ext.Catalog.GenerateCatalogEpoch(accountID, orgID, "")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, epoch)
+	}
+}
+
+func (s *Server) wrapCatalogSeed(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := ext.Catalog.SeedDefaultCatalog(); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "seeded"})
+	}
+}
+
+func (s *Server) wrapCatalogWithdraw(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		ext.Catalog.WithdrawModel(id, "manual withdraw")
+		writeJSON(w, http.StatusOK, map[string]string{"status": "withdrawn"})
+	}
+}
+
+func (s *Server) wrapCatalogAnnounce(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		ext.Catalog.AnnounceModel(id)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "announced"})
+	}
+}
+
+// --- Public Cloud Handlers ---
+
+func (s *Server) wrapPublicCreateAccount(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Email        string `json:"email"`
+			DisplayName  string `json:"display_name"`
+			DisplayNameKo string `json:"display_name_ko"`
+			Plan         string `json:"plan"`
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		acct, err := ext.PublicCloud.CreateAccount(req.Email, req.DisplayName, req.DisplayNameKo, req.Plan)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, acct)
+	}
+}
+
+func (s *Server) wrapPublicAccounts(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var accounts []models.Account
+		s.db.Find(&accounts)
+		writeJSON(w, http.StatusOK, accounts)
+	}
+}
+
+func (s *Server) wrapPublicGetAccount(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		acct, err := ext.PublicCloud.GetAccount(id)
+		if err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, acct)
+	}
+}
+
+func (s *Server) wrapPublicCreateSub(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		var req struct{ Plan string `json:"plan"` }
+		decodeJSON(r, &req)
+		sub, err := ext.PublicCloud.CreateSubscription(id, req.Plan)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, sub)
+	}
+}
+
+func (s *Server) wrapPublicLease(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		lease, err := ext.PublicCloud.IssueCapacityLease(id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, lease)
+	}
+}
+
+func (s *Server) wrapPublicSlots(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		acct, _ := ext.PublicCloud.GetAccount(id)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"max_harnesses":         acct.MaxHarnesses,
+			"max_active_harnesses":  acct.MaxActiveHarnesses,
+			"normal_work_slots":     acct.NormalWorkSlots,
+			"heavy_work_slots":      acct.HeavyWorkSlots,
+			"background_slots":      acct.BackgroundSlots,
+		})
+	}
+}
+
+
+func mustCatalog(db *gorm.DB) *catalog.Service {
+	svc, err := catalog.New(db)
+	if err != nil {
+		panic(fmt.Sprintf("api: init catalog: %v", err))
+	}
+	return svc
+}
+
+func mustPublicCloud(db *gorm.DB) *publiccloud.Service {
+	svc, err := publiccloud.New(db)
+	if err != nil {
+		panic(fmt.Sprintf("api: init publiccloud: %v", err))
+	}
+	return svc
+}
 
 // Ensure imports used
 var _ = fmt.Sprintf
