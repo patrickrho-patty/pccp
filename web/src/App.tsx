@@ -1,7 +1,14 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth, AuthProvider } from './hooks/useAuth'
 import Login from './pages/Login'
-import Layout from './components/Layout'
+import Bootstrap from './pages/Bootstrap'
+
+// Layouts
+import OpsLayout from './components/OpsLayout'
+import CustomerLayout from './components/CustomerLayout'
+import PortalLayout from './components/PortalLayout'
+
+// Pages
 import Dashboard from './pages/Dashboard'
 import Users from './pages/Users'
 import Harnesses from './pages/Harnesses'
@@ -25,7 +32,6 @@ import CodeExplorer from './pages/CodeExplorer'
 import Analytics from './pages/Analytics'
 import Communications from './pages/Communications'
 import Sandboxes from './pages/Sandboxes'
-import Bootstrap from './pages/Bootstrap'
 
 export default function App() {
   return (
@@ -36,7 +42,7 @@ export default function App() {
 }
 
 function AppContent() {
-  const { isAuthenticated, loading } = useAuth()
+  const { isAuthenticated, loading, profile } = useAuth()
 
   if (loading) {
     return (
@@ -55,32 +61,55 @@ function AppContent() {
     )
   }
 
+  // Profile-aware routing
+  const Layout = profile === 'patty_ops' ? OpsLayout : profile === 'portal' ? PortalLayout : CustomerLayout
+
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/users" element={<Users />} />
-        <Route path="/harnesses" element={<Harnesses />} />
-        <Route path="/projects" element={<Projects />} />
-        <Route path="/repositories" element={<Repositories />} />
-        <Route path="/sessions" element={<Sessions />} />
-        <Route path="/sessions/:id/provenance" element={<Provenance />} />
-        <Route path="/models" element={<Models />} />
-        <Route path="/endpoints" element={<Endpoints />} />
-        <Route path="/policy" element={<Policy />} />
-        <Route path="/audit" element={<Audit />} />
-        <Route path="/fleet" element={<Fleet />} />
-        <Route path="/security" element={<Security />} />
-        <Route path="/compliance" element={<Compliance />} />
-        <Route path="/tools" element={<Tools />} />
-        <Route path="/catalog" element={<ModelCatalog />} />
-        <Route path="/sre" element={<SREConsole />} />
-        <Route path="/portal" element={<AccountPortal />} />
-        <Route path="/live" element={<LiveView />} />
-        <Route path="/explorer" element={<CodeExplorer />} />
-        <Route path="/analytics" element={<Analytics />} />
-        <Route path="/communications" element={<Communications />} />
+        {/* Shared routes */}
+        <Route path="/" element={profile === 'patty_ops' ? <SREConsole /> : profile === 'portal' ? <AccountPortal /> : <Dashboard />} />
+
+        {/* Patty Ops routes */}
+        {profile === 'patty_ops' && (<>
+          <Route path="/sre" element={<SREConsole />} />
+          <Route path="/fleet" element={<Fleet />} />
+          <Route path="/live" element={<LiveView />} />
+          <Route path="/portal" element={<AccountPortal />} />
+          <Route path="/catalog" element={<ModelCatalog />} />
+          <Route path="/models" element={<Models />} />
+          <Route path="/endpoints" element={<Endpoints />} />
+          <Route path="/security" element={<Security />} />
+          <Route path="/audit" element={<Audit />} />
+        </>)}
+
+        {/* Customer Console routes */}
+        {profile === 'customer' && (<>
+          <Route path="/users" element={<Users />} />
+          <Route path="/harnesses" element={<Harnesses />} />
+          <Route path="/projects" element={<Projects />} />
+          <Route path="/repositories" element={<Repositories />} />
+          <Route path="/sessions" element={<Sessions />} />
+          <Route path="/sessions/:id/provenance" element={<Provenance />} />
+          <Route path="/fleet" element={<Fleet />} />
+          <Route path="/live" element={<LiveView />} />
+          <Route path="/explorer" element={<CodeExplorer />} />
+          <Route path="/analytics" element={<Analytics />} />
+          <Route path="/policy" element={<Policy />} />
+          <Route path="/security" element={<Security />} />
+          <Route path="/compliance" element={<Compliance />} />
+          <Route path="/tools" element={<Tools />} />
+          <Route path="/communications" element={<Communications />} />
           <Route path="/sandboxes" element={<Sandboxes />} />
+          <Route path="/audit" element={<Audit />} />
+        </>)}
+
+        {/* Portal routes (minimal self-service) */}
+        {profile === 'portal' && (<>
+          <Route path="/portal" element={<AccountPortal />} />
+          <Route path="/harnesses" element={<Harnesses />} />
+        </>)}
+
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Layout>

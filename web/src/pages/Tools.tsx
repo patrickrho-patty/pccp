@@ -20,6 +20,16 @@ const FILTER_CONFIG: FilterConfig = {
 export default function Tools() {
   const [tools, setTools] = useState<any[]>([])
   const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
+  const [showForm, setShowForm] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [form, setForm] = useState({
+    name: '', name_ko: '', category: 'read', tool_class: '', danger_level: 'low', requires_approval: false,
+  })
+
+  const authHeaders = () => {
+    const token = localStorage.getItem('pccp_token')
+    return token ? { Authorization: `Bearer ${token}` } : {}
+  }
 
   const load = () => api.listTools().then(data => setTools(Array.isArray(data) ? data : []))
   useEffect(() => { load() }, [])
@@ -36,8 +46,63 @@ export default function Tools() {
     const m: Record<string,string> = { low: '낮음', medium: '중간', high: '높음', critical: '치명적' }
     return m[d] || d
   }
+  const categoryLabel = (c: string) => {
+    const m: Record<string,string> = { read: '읽기', write: '쓰기', execute: '실행', network: '네트워크', search: '검색', git: 'Git', test: '테스트' }
+    return m[c] || c
+  }
 
-  // Stats
+  const createOrUpdate = async () => {
+    if (!form.name || !form.tool_class) { alert('도구명과 클래스는 필수입니다'); return }
+    try {
+      if (editingId) {
+        await fetch(`/api/tools/${editingId}`, {
+          method: 'PUT',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify(form),
+        })
+      } else {
+        await fetch('/api/tools', {
+          method: 'POST',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify(form),
+        })
+      }
+      setShowForm(false)
+      setEditingId(null)
+      setForm({ name: '', name_ko: '', category: 'read', tool_class: '', danger_level: 'low', requires_approval: false })
+      load()
+    } catch (e) { alert('오류: ' + e) }
+  }
+
+  const startEdit = (t: any) => {
+    setEditingId(t.id)
+    setForm({
+      name: t.name || '', name_ko: t.name_ko || '',
+      category: t.category || 'read', tool_class: t.tool_class || '',
+      danger_level: t.danger_level || 'low', requires_approval: t.requires_approval || false,
+    })
+    setShowForm(true)
+  }
+
+  const handleDelete = async (t: any) => {
+    if (!confirm(`"${t.name}" 도구를 삭제하시겠습니까?`)) return
+    try {
+      await fetch(`/api/tools/${t.id}`, { method: 'DELETE', headers: authHeaders() })
+      load()
+    } catch {}
+  }
+
+  const toggleApproval = async (t: any) => {
+    try {
+      await fetch(`/api/tools/${t.id}`, {
+        method: 'PUT',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...t, requires_approval: !t.requires_approval }),
+      })
+      load()
+    } catch {}
+  }
+
   const stats = {
     total: tools.length,
     requiringApproval: tools.filter(t => t.requires_approval).length,
@@ -48,9 +113,67 @@ export default function Tools() {
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">도구 관리 <span className="text-gray-400 text-lg font-normal">Tools & MCP</span></h1>
-        <button onClick={seed} className="btn-secondary text-sm">기본 도구 등록</button>
+        <div>
+          <h1 className="text-2xl font-bold">도구 관리 <span className="text-gray-400 text-lg font-normal">Tool Registry</span></h1>
+          <p className="text-xs text-gray-400 mt-1">하네스가 실행할 수 있는 도구와 권한을 관리합니다 · Govern what operations the harness may perform</p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={seed} className="btn-secondary text-sm">기본 도구 등록</button>
+          <button onClick={() => { setShowForm(!showForm); setEditingId(null); setForm({ name: '', name_ko: '', category: 'read', tool_class: '', danger_level: 'low', requires_approval: false }) }} className="btn-primary text-sm">+ 도구 등록</button>
+        </div>
       </div>
+
+      {/* Register/Edit Form */}
+      {showForm && (
+        <div className="card mb-6">
+          <h3 className="text-sm font-semibold mb-4">{editingId ? '도구 수정' : '새 도구 등록'}</h3>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="label">도구명 · Name (필수)</label>
+              <input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="file.read" disabled={!!editingId} />
+            </div>
+            <div>
+              <label className="label">한글명 · Korean Name</label>
+              <input className="input" value={form.name_ko} onChange={e => setForm({ ...form, name_ko: e.target.value })} placeholder="파일 읽기" />
+            </div>
+            <div>
+              <label className="label">도구 클래스 · Tool Class (필수)</label>
+              <input className="input" value={form.tool_class} onChange={e => setForm({ ...form, tool_class: e.target.value })} placeholder="read" />
+            </div>
+            <div>
+              <label className="label">분류 · Category</label>
+              <select className="input" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>
+                <option value="read">읽기 · Read</option>
+                <option value="write">쓰기 · Write</option>
+                <option value="execute">실행 · Execute</option>
+                <option value="network">네트워크 · Network</option>
+                <option value="git">Git</option>
+                <option value="test">테스트 · Test</option>
+                <option value="search">검색 · Search</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">위험도 · Danger Level</label>
+              <select className="input" value={form.danger_level} onChange={e => setForm({ ...form, danger_level: e.target.value })}>
+                <option value="low">낮음 · Low</option>
+                <option value="medium">중간 · Medium</option>
+                <option value="high">높음 · High</option>
+                <option value="critical">치명적 · Critical</option>
+              </select>
+            </div>
+            <div className="flex items-end">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={form.requires_approval} onChange={e => setForm({ ...form, requires_approval: e.target.checked })} className="w-4 h-4" />
+                승인 필요 · Requires Approval
+              </label>
+            </div>
+          </div>
+          <div className="flex gap-2 mt-4">
+            <button onClick={createOrUpdate} className="btn-primary text-sm">{editingId ? '수정' : '등록'}</button>
+            <button onClick={() => { setShowForm(false); setEditingId(null) }} className="btn-secondary text-sm">취소</button>
+          </div>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-4 gap-3 mb-4">
@@ -86,6 +209,7 @@ export default function Tools() {
                 <th className="pb-3">분류</th>
                 <th className="pb-3">위험도</th>
                 <th className="pb-3">승인</th>
+                <th className="pb-3">작업</th>
               </tr>
             </thead>
             <tbody>
@@ -93,9 +217,19 @@ export default function Tools() {
                 <tr key={t.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30">
                   <td className="py-3 font-mono text-sm">{t.name}</td>
                   <td className="py-3 text-sm">{t.name_ko || '-'}</td>
-                  <td className="py-3"><span className="badge-gray">{t.category}</span></td>
+                  <td className="py-3"><span className="badge-gray">{categoryLabel(t.category)}</span></td>
                   <td className="py-3"><span className={dangerBadge(t.danger_level)}>{dangerLabel(t.danger_level)}</span></td>
-                  <td className="py-3">{t.requires_approval ? <span className="badge-yellow">✓</span> : <span className="text-gray-300">-</span>}</td>
+                  <td className="py-3">
+                    <button onClick={() => toggleApproval(t)}>
+                      {t.requires_approval ? <span className="badge-yellow cursor-pointer">✓ 승인필요</span> : <span className="text-gray-300 cursor-pointer">-</span>}
+                    </button>
+                  </td>
+                  <td className="py-3">
+                    <div className="flex gap-2">
+                      <button onClick={() => startEdit(t)} className="text-xs text-blue-600 hover:underline">수정</button>
+                      <button onClick={() => handleDelete(t)} className="text-xs text-red-600 hover:underline">삭제</button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

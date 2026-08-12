@@ -22,6 +22,12 @@ func New(db *gorm.DB) *Service {
 
 // RegisterTool registers a development tool in the registry (PRD §17.1).
 func (s *Service) RegisterTool(orgID, name, nameKo, category, toolClass string, dangerLevel string, requiresApproval bool) (*models.Tool, error) {
+	// Dedup: check if tool already exists for this org
+	var existing models.Tool
+	if err := s.db.Where("organization_id = ? AND name = ?", orgID, name).First(&existing).Error; err == nil {
+		return &existing, nil // already registered, return existing
+	}
+
 	tool := &models.Tool{
 		AuditBase: models.AuditBase{
 			OrganizationID: orgID,
