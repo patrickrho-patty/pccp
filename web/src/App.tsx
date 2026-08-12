@@ -26,6 +26,7 @@ import Compliance from './pages/Compliance'
 import Tools from './pages/Tools'
 import ModelCatalog from './pages/ModelCatalog'
 import SREConsole from './pages/SREConsole'
+import ServiceCommandCenter from './pages/ServiceCommandCenter'
 import AccountPortal from './pages/AccountPortal'
 import LiveView from './pages/LiveView'
 import CodeExplorer from './pages/CodeExplorer'
@@ -68,18 +69,19 @@ function AppContent() {
     <Layout>
       <Routes>
         {/* Shared routes */}
-        <Route path="/" element={profile === 'patty_ops' ? <SREConsole /> : profile === 'portal' ? <AccountPortal /> : <Dashboard />} />
+        <Route path="/" element={profile === 'patty_ops' ? <ServiceCommandCenter /> : profile === 'portal' ? <AccountPortal /> : <Dashboard />} />
 
         {/* Patty Ops routes */}
         {profile === 'patty_ops' && (<>
           <Route path="/sre" element={<SREConsole />} />
+          <Route path="/analytics" element={<Analytics />} />
           <Route path="/fleet" element={<Fleet />} />
-          <Route path="/live" element={<LiveView />} />
-          <Route path="/portal" element={<AccountPortal />} />
+          <Route path="/sessions" element={<Sessions />} />
           <Route path="/catalog" element={<ModelCatalog />} />
           <Route path="/models" element={<Models />} />
           <Route path="/endpoints" element={<Endpoints />} />
           <Route path="/security" element={<Security />} />
+          <Route path="/compliance" element={<Compliance />} />
           <Route path="/audit" element={<Audit />} />
         </>)}
 
@@ -89,10 +91,10 @@ function AppContent() {
           <Route path="/harnesses" element={<Harnesses />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/repositories" element={<Repositories />} />
+          <Route path="/live" element={<LiveView />} />
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/sessions/:id/provenance" element={<Provenance />} />
           <Route path="/fleet" element={<Fleet />} />
-          <Route path="/live" element={<LiveView />} />
           <Route path="/explorer" element={<CodeExplorer />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/policy" element={<Policy />} />
@@ -101,6 +103,8 @@ function AppContent() {
           <Route path="/tools" element={<Tools />} />
           <Route path="/communications" element={<Communications />} />
           <Route path="/sandboxes" element={<Sandboxes />} />
+          <Route path="/catalog" element={<ModelCatalog />} />
+          <Route path="/endpoints" element={<Endpoints />} />
           <Route path="/audit" element={<Audit />} />
         </>)}
 

@@ -23,19 +23,25 @@ const navSections = [
     ]
   },
   {
-    title: 'AI 세션',
-    titleEn: 'AI Sessions',
+    title: '라이브 운영',
+    titleEn: 'Live Operations',
     items: [
-      { path: '/sessions', label: '세션', labelEn: 'Sessions', icon: '◐' },
-      { path: '/live', label: '실시간', labelEn: 'Live', icon: '🔴' },
-      { path: '/fleet', label: '플릿', labelEn: 'Fleet', icon: '⛶' },
+      { path: '/live', label: '실시간 뷰', labelEn: 'Live Wall', icon: '🔴' },
+      { path: '/sessions', label: 'AI 세션', labelEn: 'AI Sessions', icon: '◐' },
+      { path: '/fleet', label: '플릿 관리', labelEn: 'Fleet', icon: '⛶' },
     ]
   },
   {
     title: '프로바이던스',
     titleEn: 'Provenance',
     items: [
-      { path: '/explorer', label: '코드 탐색기', labelEn: 'Explorer', icon: '🔬' },
+      { path: '/explorer', label: '코드 탐색기', labelEn: 'Code Explorer', icon: '🔬' },
+    ]
+  },
+  {
+    title: '워크 인텔리전스',
+    titleEn: 'Work Intelligence',
+    items: [
       { path: '/analytics', label: '분석', labelEn: 'Analytics', icon: '📊' },
     ]
   },
@@ -58,8 +64,8 @@ const navSections = [
     ]
   },
   {
-    title: '감사',
-    titleEn: 'Audit',
+    title: '증거 및 감사',
+    titleEn: 'Evidence & Audit',
     items: [
       { path: '/audit', label: '감사 로그', labelEn: 'Audit Log', icon: '☰' },
     ]
@@ -114,7 +120,7 @@ export default function CustomerLayout({ children }: { children: ReactNode }) {
             onChange={(e) => setProfile(e.target.value as any)}
           >
             <option value="patty_ops">📡 Patty Ops</option>
-            <option value="customer">🏢 Customer Console</option>
+            <option value="customer">🏢 Enterprise/Govt Console</option>
             <option value="portal">👤 Account Portal</option>
           </select>
           <div className="text-[10px] text-gray-600">{email}</div>

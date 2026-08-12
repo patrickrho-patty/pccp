@@ -1,4 +1,4 @@
-import { ReactNode, useState } from 'react'
+import { ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 
@@ -9,22 +9,22 @@ const navSections = [
     title: '서비스 현황',
     titleEn: 'Service Overview',
     items: [
-      { path: '/', label: '대시보드', labelEn: 'Command Center', icon: '◈' },
+      { path: '/', label: '서비스 대시보드', labelEn: 'Service Dashboard', icon: '◈' },
       { path: '/sre', label: 'SRE 운영', labelEn: 'SRE Console', icon: '📡' },
-      { path: '/fleet', label: '플릿 관리', labelEn: 'Fleet', icon: '⛶' },
-      { path: '/live', label: '실시간 뷰', labelEn: 'Live Wall', icon: '🔴' },
+      { path: '/analytics', label: '사용량 분석', labelEn: 'Usage Analytics', icon: '📊' },
     ]
   },
   {
-    title: '계정',
-    titleEn: 'Accounts',
+    title: '계정 및 구독',
+    titleEn: 'Accounts & Subscriptions',
     items: [
-      { path: '/portal', label: '계정 포털', labelEn: 'Account Portal', icon: '👤' },
+      { path: '/fleet', label: '하네스 플릿', labelEn: 'Harness Fleet', icon: '⛶' },
+      { path: '/sessions', label: '세션 현황', labelEn: 'Sessions', icon: '◐' },
     ]
   },
   {
-    title: '모델',
-    titleEn: 'Models',
+    title: '모델 인프라',
+    titleEn: 'Model Infrastructure',
     items: [
       { path: '/catalog', label: '카탈로그', labelEn: 'Catalog', icon: '🗂' },
       { path: '/models', label: '모델 패키지', labelEn: 'Packages', icon: '◆' },
@@ -32,10 +32,11 @@ const navSections = [
     ]
   },
   {
-    title: '리스크',
-    titleEn: 'Risk',
+    title: '리스크 및 보안',
+    titleEn: 'Risk & Security',
     items: [
-      { path: '/security', label: '보안', labelEn: 'Security', icon: '🛡' },
+      { path: '/security', label: '플랫폼 보안', labelEn: 'Platform Security', icon: '🛡' },
+      { path: '/compliance', label: '컴플라이언스', labelEn: 'Compliance', icon: '📋' },
     ]
   },
   {
@@ -94,12 +95,12 @@ export default function OpsLayout({ children }: { children: ReactNode }) {
             value="patty_ops"
             onChange={(e) => setProfile(e.target.value as any)}
           >
-            <option value="patty_ops">📡 Patty Ops</option>
-            <option value="customer">🏢 Customer Console</option>
+            <option value="patty_ops">📡 Patty Ops Console</option>
+            <option value="customer">🏢 Enterprise/Govt Console</option>
             <option value="portal">👤 Account Portal</option>
           </select>
           <div className="text-[10px] text-gray-600">{email}</div>
-          <button onClick={logout} className="text-xs text-gray-500 hover:text-gray-300">로그아웃</button>
+          <button onClick={logout} className="text-xs text-gray-500 hover:text-gray-300">로그아웃 · Logout</button>
         </div>
       </aside>
 
