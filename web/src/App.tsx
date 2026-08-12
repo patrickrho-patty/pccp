@@ -17,6 +17,7 @@ import Fleet from './pages/Fleet'
 import Security from './pages/Security'
 import Compliance from './pages/Compliance'
 import Tools from './pages/Tools'
+import ModelCatalog from './pages/ModelCatalog'
 import Analytics from './pages/Analytics'
 import Communications from './pages/Communications'
 import Bootstrap from './pages/Bootstrap'
@@ -67,6 +68,7 @@ function AppContent() {
         <Route path="/security" element={<Security />} />
         <Route path="/compliance" element={<Compliance />} />
         <Route path="/tools" element={<Tools />} />
+        <Route path="/catalog" element={<ModelCatalog />} />
         <Route path="/analytics" element={<Analytics />} />
         <Route path="/communications" element={<Communications />} />
         <Route path="*" element={<Navigate to="/" />} />

@@ -10,6 +10,7 @@ const navItems = [
   { path: '/repositories', label: '저장소', labelEn: 'Repositories', icon: '▤' },
   { path: '/sessions', label: '세션', labelEn: 'Sessions', icon: '◐' },
   { path: '/models', label: '모델', labelEn: 'Models', icon: '◆' },
+  { path: '/catalog', label: '카탈로그', labelEn: 'Catalog', icon: '🗂' },
   { path: '/endpoints', label: '엔드포인트', labelEn: 'Endpoints', icon: '◇' },
   { path: '/analytics', label: '분석', labelEn: 'Analytics', icon: '📊' },
   { path: '/communications', label: '커뮤니케이션', labelEn: 'Comms', icon: '💬' },

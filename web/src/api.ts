@@ -194,4 +194,19 @@ export const api = {
 
   // Realtime
   realtimeStatus: () => request<any>('/api/realtime/status'),
+
+  // v2 Model Catalog
+  catalogModels: () => request<any[]>('/api/catalog/models'),
+  catalogSeed: () => request<any>('/api/catalog/seed', { method: 'POST' }),
+  catalogEpoch: (accountId?: string) => request<any>(`/api/catalog/epoch${accountId ? '?account_id=' + accountId : ''}`),
+  catalogWithdraw: (id: string) => request<any>(`/api/catalog/${id}/withdraw`, { method: 'POST' }),
+  catalogAnnounce: (id: string) => request<any>(`/api/catalog/${id}/announce`, { method: 'POST' }),
+
+  // v2 Public Cloud
+  publicAccounts: () => request<any[]>('/api/public/accounts'),
+  publicCreateAccount: (data: any) => request<any>('/api/public/accounts', { method: 'POST', body: JSON.stringify(data) }),
+  publicGetAccount: (id: string) => request<any>(`/api/public/accounts/${id}`),
+  publicCreateSub: (id: string, plan: string) => request<any>(`/api/public/accounts/${id}/subscription`, { method: 'POST', body: JSON.stringify({ plan }) }),
+  publicLease: (id: string) => request<any>(`/api/public/accounts/${id}/lease`),
+  publicSlots: (id: string) => request<any>(`/api/public/accounts/${id}/slots`),
 };
