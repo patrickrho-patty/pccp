@@ -6,8 +6,18 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/patrickrho-patty/pccp/internal/attestation"
 	"github.com/patrickrho-patty/pccp/internal/billing"
 	"github.com/patrickrho-patty/pccp/internal/command"
+	"github.com/patrickrho-patty/pccp/internal/compliance"
+	"github.com/patrickrho-patty/pccp/internal/configmgmt"
+	"github.com/patrickrho-patty/pccp/internal/connectors"
+	"github.com/patrickrho-patty/pccp/internal/gpuops"
+	"github.com/patrickrho-patty/pccp/internal/keymgmt"
+	"github.com/patrickrho-patty/pccp/internal/mcpmarket"
+	"github.com/patrickrho-patty/pccp/internal/realtime"
+	"github.com/patrickrho-patty/pccp/internal/sovereign"
+	"github.com/patrickrho-patty/pccp/internal/sso"
 	"github.com/patrickrho-patty/pccp/internal/incident"
 	"github.com/patrickrho-patty/pccp/internal/korean"
 	"github.com/patrickrho-patty/pccp/internal/mcp"
@@ -37,7 +47,17 @@ type AdditionalServices struct {
 	Reporting *reporting.Service
 	Secret    *secret.Service
 	Telemetry *telemetry.Service
-	Tools     *tools.Service
+	Tools      *tools.Service
+	Attestation *attestation.Service
+	Compliance  *compliance.Service
+	ConfigMgmt  *configmgmt.Service
+	Connectors  *connectors.Service
+	GPUOps      *gpuops.Service
+	KeyMgmt     *keymgmt.Service
+	MCPMarket   *mcpmarket.Service
+	Realtime    *realtime.Service
+	Sovereign   *sovereign.Service
+	SSO         *sso.Service
 }
 
 // ext gets the additional services for this server, initializing if needed.
@@ -53,7 +73,8 @@ func (s *Server) ext() *AdditionalServices {
 // initAdditional creates services that require additional wiring.
 func (s *Server) initAdditional() *AdditionalServices {
 	ext := &AdditionalServices{
-		Billing:   mustBilling(s.db),
+		Attestation: attestation.New(),
+		Billing:     mustBilling(s.db),
 		Command:   command.New(),
 		Incident:  incident.New(s.db),
 		Korean:    korean.New(s.db),
@@ -63,7 +84,16 @@ func (s *Server) initAdditional() *AdditionalServices {
 		Reporting: reporting.New(s.db),
 		Secret:    secret.New(s.db),
 		Telemetry: telemetry.New(s.db),
-		Tools:     tools.New(s.db),
+		Tools:      tools.New(s.db),
+		Compliance:  compliance.New(s.db),
+		ConfigMgmt:  configmgmt.New(s.db),
+		Connectors:  connectors.New(),
+		GPUOps:      gpuops.New(s.db),
+		KeyMgmt:     keymgmt.New(),
+		MCPMarket:   mcpmarket.New(),
+		Realtime:    realtime.New(),
+		Sovereign:   sovereign.New(),
+		SSO:         sso.New(s.db, "pccp-sso-secret"),
 	}
 	return ext
 }
@@ -159,6 +189,86 @@ func (s *Server) setupAdditionalRoutes(r chi.Router, ext *AdditionalServices) {
 		r.Get("/approvals", s.wrapToolsPendingApprovals(ext))
 		r.Post("/approvals/{id}/decide", s.wrapToolsDecideApproval(ext))
 	})
+
+	// Attestation
+	r.Route("/attestation", func(r chi.Router) {
+		r.Post("/collect", s.wrapAttestCollect(ext))
+		r.Post("/verify", s.wrapAttestVerify(ext))
+		r.Get("/levels/{level}", s.wrapAttestLevels(ext))
+		r.Post("/key-release", s.wrapAttestKeyRelease(ext))
+	})
+
+	// Compliance
+	r.Route("/compliance", func(r chi.Router) {
+		r.Get("/certifications", s.wrapComplianceList(ext))
+		r.Get("/packs/{cert}", s.wrapCompliancePack(ext))
+		r.Post("/assess", s.wrapComplianceAssess(ext))
+	})
+
+	// Config Management
+	r.Route("/config-changes", func(r chi.Router) {
+		r.Post("/", s.wrapConfigCreate(ext))
+		r.Get("/", s.wrapConfigList(ext))
+		r.Post("/{id}/validate", s.wrapConfigValidate(ext))
+		r.Post("/{id}/approve", s.wrapConfigApprove(ext))
+		r.Post("/{id}/publish", s.wrapConfigPublish(ext))
+		r.Post("/{id}/rollback", s.wrapConfigRollback(ext))
+		r.Get("/drift", s.wrapConfigDrift(ext))
+	})
+
+	// Connectors
+	r.Route("/connectors", func(r chi.Router) {
+		r.Get("/", s.wrapConnectorsList(ext))
+		r.Post("/", s.wrapConnectorsRegister(ext))
+		r.Delete("/{id}", s.wrapConnectorsDisable(ext))
+		r.Get("/types", s.wrapConnectorsTypes(ext))
+	})
+
+	// GPU Operations
+	r.Route("/gpu", func(r chi.Router) {
+		r.Get("/endpoints", s.wrapGPUEndpoints(ext))
+		r.Get("/gpus", s.wrapGPUs(ext))
+		r.Get("/models", s.wrapGPUModels(ext))
+		r.Post("/route", s.wrapGPURoute(ext))
+	})
+
+	// Key Management
+	r.Route("/keys", func(r chi.Router) {
+		r.Post("/generate", s.wrapKeyGenerate(ext))
+		r.Get("/{domain}", s.wrapKeyList(ext))
+		r.Post("/{id}/rotate", s.wrapKeyRotate(ext))
+		r.Post("/{id}/revoke", s.wrapKeyRevoke(ext))
+	})
+
+	// MCP Marketplace
+	r.Route("/mcp-market", func(r chi.Router) {
+		r.Get("/", s.wrapMarketSearch(ext))
+		r.Post("/", s.wrapMarketPublish(ext))
+		r.Get("/{id}", s.wrapMarketGet(ext))
+		r.Get("/categories", s.wrapMarketCategories(ext))
+		r.Post("/seed", s.wrapMarketSeed(ext))
+	})
+
+	// SSO
+	r.Route("/sso", func(r chi.Router) {
+		r.Post("/saml/redirect", s.wrapSSOSAMLRedirect(ext))
+		r.Post("/saml/callback", s.wrapSSOSAMLCallback(ext))
+		r.Get("/oidc/auth-url", s.wrapSSOOIDCAuthURL(ext))
+		r.Post("/oidc/callback", s.wrapSSOOIDCCallback(ext))
+		r.Post("/scim", s.wrapSSOSCIM(ext))
+	})
+
+	// Sovereign
+	r.Route("/sovereign", func(r chi.Router) {
+		r.Post("/trust-bundle", s.wrapSovImportBundle(ext))
+		r.Post("/updates", s.wrapSovImportUpdate(ext))
+		r.Post("/updates/{id}/apply", s.wrapSovApplyUpdate(ext))
+		r.Get("/updates/pending", s.wrapSovPendingUpdates(ext))
+		r.Post("/time-proof", s.wrapSovTimeProof(ext))
+	})
+
+	// Realtime
+	r.Get("/realtime/status", s.wrapRealtimeStatus(ext))
 }
 
 // --- Handler wrappers ---
@@ -675,6 +785,507 @@ func (s *Server) wrapToolsDecideApproval(ext *AdditionalServices) http.HandlerFu
 		writeJSON(w, http.StatusOK, map[string]string{"status": "decided"})
 	}
 }
+
+// --- Attestation Handlers ---
+
+func (s *Server) wrapAttestCollect(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req attestation.CollectRequest
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		evidence, err := ext.Attestation.CollectEvidence(req)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, evidence)
+	}
+}
+
+func (s *Server) wrapAttestVerify(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Evidence        attestation.AttestationEvidence `json:"evidence"`
+			ReferenceValues map[string]string               `json:"reference_values"`
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if err := ext.Attestation.VerifyEvidence(&req.Evidence, req.ReferenceValues); err != nil {
+			writeJSON(w, http.StatusOK, req.Evidence)
+			return
+		}
+		writeJSON(w, http.StatusOK, req.Evidence)
+	}
+}
+
+func (s *Server) wrapAttestLevels(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		level := attestation.AssuranceLevel(chi.URLParam(r, "level"))
+		reqs := attestation.AssuranceLevelRequirements(level)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"level": level, "requirements": reqs})
+	}
+}
+
+func (s *Server) wrapAttestKeyRelease(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req attestation.ModelKeyReleaseRequest
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		result := ext.Attestation.EvaluateKeyRelease(req)
+		writeJSON(w, http.StatusOK, result)
+	}
+}
+
+// --- Compliance Handlers ---
+
+func (s *Server) wrapComplianceList(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, ext.Compliance.ListCertifications())
+	}
+}
+
+func (s *Server) wrapCompliancePack(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cert := compliance.CertificationType(chi.URLParam(r, "cert"))
+		pack, err := ext.Compliance.GetCertificationPack(cert)
+		if err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, pack)
+	}
+}
+
+func (s *Server) wrapComplianceAssess(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID := getOrgID(r)
+		var req struct {
+			Certification string `json:"certification"`
+		}
+		decodeJSON(r, &req)
+		assessment, err := ext.Compliance.AssessCompliance(orgID, compliance.CertificationType(req.Certification))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, assessment)
+	}
+}
+
+// --- Config Management Handlers ---
+
+func (s *Server) wrapConfigCreate(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var change configmgmt.ConfigChange
+		if err := decodeJSON(r, &change); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		result, err := ext.ConfigMgmt.CreateChange(change)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+	}
+}
+
+func (s *Server) wrapConfigList(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID := getOrgID(r)
+		writeJSON(w, http.StatusOK, ext.ConfigMgmt.GetPendingChanges(orgID))
+	}
+}
+
+func (s *Server) wrapConfigValidate(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		if err := ext.ConfigMgmt.ValidateChange(id); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "validated"})
+	}
+}
+
+func (s *Server) wrapConfigApprove(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		var req struct{ ApprovedBy string `json:"approved_by"` }
+		decodeJSON(r, &req)
+		if err := ext.ConfigMgmt.ApproveChange(id, req.ApprovedBy); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "approved"})
+	}
+}
+
+func (s *Server) wrapConfigPublish(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		if err := ext.ConfigMgmt.PublishChange(id); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "published"})
+	}
+}
+
+func (s *Server) wrapConfigRollback(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		var req struct{ Reason string `json:"reason"` }
+		decodeJSON(r, &req)
+		ext.ConfigMgmt.RollbackChange(id, req.Reason)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "rolled_back"})
+	}
+}
+
+func (s *Server) wrapConfigDrift(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID := getOrgID(r)
+		drift, _ := ext.ConfigMgmt.DetectDrift(orgID)
+		writeJSON(w, http.StatusOK, drift)
+	}
+}
+
+// --- Connectors Handlers ---
+
+func (s *Server) wrapConnectorsList(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID := getOrgID(r)
+		writeJSON(w, http.StatusOK, ext.Connectors.List(orgID))
+	}
+}
+
+func (s *Server) wrapConnectorsRegister(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var conn connectors.Connector
+		if err := decodeJSON(r, &conn); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		result, err := ext.Connectors.Register(conn)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+	}
+}
+
+func (s *Server) wrapConnectorsDisable(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		ext.Connectors.Disable(id)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "disabled"})
+	}
+}
+
+func (s *Server) wrapConnectorsTypes(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, connectors.SupportedConnectorTypes())
+	}
+}
+
+// --- GPU Operations Handlers ---
+
+func (s *Server) wrapGPUEndpoints(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, ext.GPUOps.GetAllEndpointMetrics())
+	}
+}
+
+func (s *Server) wrapGPUs(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, ext.GPUOps.GetAllGPUMetrics())
+	}
+}
+
+func (s *Server) wrapGPUModels(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID := getOrgID(r)
+		report, _ := ext.GPUOps.GetModelOperationsReport(orgID)
+		writeJSON(w, http.StatusOK, report)
+	}
+}
+
+func (s *Server) wrapGPURoute(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID := getOrgID(r)
+		var req struct {
+			ModelPackageID string `json:"model_package_id"`
+			DataResidency  string `json:"data_residency"`
+		}
+		decodeJSON(r, &req)
+		decision, err := ext.GPUOps.RouteRequest(orgID, req.ModelPackageID, req.DataResidency)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, decision)
+	}
+}
+
+// --- Key Management Handlers ---
+
+func (s *Server) wrapKeyGenerate(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Domain    string `json:"domain"`
+			ValidityH int    `json:"validity_hours"`
+		}
+		decodeJSON(r, &req)
+		validity := time.Duration(req.ValidityH) * time.Hour
+		if validity == 0 {
+			validity = 90 * 24 * time.Hour
+		}
+		entry, err := ext.KeyMgmt.GenerateKey(keymgmt.KeyDomain(req.Domain), validity)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]interface{}{
+			"id": entry.ID, "domain": entry.Domain, "algorithm": entry.Algorithm,
+			"status": entry.Status,
+		})
+	}
+}
+
+func (s *Server) wrapKeyList(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		domain := keymgmt.KeyDomain(chi.URLParam(r, "domain"))
+		writeJSON(w, http.StatusOK, ext.KeyMgmt.ListKeys(domain))
+	}
+}
+
+func (s *Server) wrapKeyRotate(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		// Extract domain from the key entry
+		entry, err := ext.KeyMgmt.GetKey(id)
+		if err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		newEntry, err := ext.KeyMgmt.RotateKey(entry.Domain, 90*24*time.Hour)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"new_key_id": newEntry.ID})
+	}
+}
+
+func (s *Server) wrapKeyRevoke(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		ext.KeyMgmt.RevokeKey(id)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+	}
+}
+
+// --- MCP Marketplace Handlers ---
+
+func (s *Server) wrapMarketSearch(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		cat := r.URL.Query().Get("category")
+		writeJSON(w, http.StatusOK, ext.MCPMarket.SearchListings(q, cat))
+	}
+}
+
+func (s *Server) wrapMarketPublish(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var listing mcpmarket.MCPListing
+		if err := decodeJSON(r, &listing); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		result, err := ext.MCPMarket.PublishListing(listing)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+	}
+}
+
+func (s *Server) wrapMarketGet(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		listing, err := ext.MCPMarket.GetListing(id)
+		if err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, listing)
+	}
+}
+
+func (s *Server) wrapMarketCategories(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, mcpmarket.Categories())
+	}
+}
+
+func (s *Server) wrapMarketSeed(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ext.MCPMarket.SeedDefaultListings()
+		writeJSON(w, http.StatusOK, map[string]string{"status": "seeded"})
+	}
+}
+
+// --- SSO Handlers ---
+
+func (s *Server) wrapSSOSAMLRedirect(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			IdpEntityID string `json:"idp_entity_id"`
+			IdpSSOURL   string `json:"idp_sso_url"`
+			RelayState  string `json:"relay_state"`
+		}
+		decodeJSON(r, &req)
+		ext.SSO.ConfigureSAML(req.IdpEntityID, req.IdpSSOURL, "")
+		url, err := ext.SSO.GenerateSAMLRedirect(req.RelayState)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"redirect_url": url})
+	}
+}
+
+func (s *Server) wrapSSOSAMLCallback(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			SAMLResponse string `json:"saml_response"`
+			RelayState   string `json:"relay_state"`
+		}
+		decodeJSON(r, &req)
+		resp, err := ext.SSO.HandleSAMLCallback(req.SAMLResponse, req.RelayState)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, resp)
+	}
+}
+
+func (s *Server) wrapSSOOIDCAuthURL(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		redirectURI := r.URL.Query().Get("redirect_uri")
+		state := r.URL.Query().Get("state")
+		issuer := r.URL.Query().Get("issuer")
+		clientID := r.URL.Query().Get("client_id")
+		ext.SSO.ConfigureOIDC(issuer, clientID, "")
+		url, err := ext.SSO.OIDCAuthURL(redirectURI, state)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"auth_url": url})
+	}
+}
+
+func (s *Server) wrapSSOOIDCCallback(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Code        string `json:"code"`
+			RedirectURI string `json:"redirect_uri"`
+		}
+		decodeJSON(r, &req)
+		resp, err := ext.SSO.HandleOIDCCallback(req.Code, req.RedirectURI)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, resp)
+	}
+}
+
+func (s *Server) wrapSSOSCIM(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ext.SSO.HandleSCIMRequest(w, r)
+	}
+}
+
+// --- Sovereign Handlers ---
+
+func (s *Server) wrapSovImportBundle(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var bundle sovereign.TrustBundle
+		if err := decodeJSON(r, &bundle); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		result, err := ext.Sovereign.ImportTrustBundle(bundle)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+	}
+}
+
+func (s *Server) wrapSovImportUpdate(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var update sovereign.OfflineUpdate
+		if err := decodeJSON(r, &update); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		result, err := ext.Sovereign.ImportUpdate(update)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+	}
+}
+
+func (s *Server) wrapSovApplyUpdate(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		if err := ext.Sovereign.ApplyUpdate(id); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "applied"})
+	}
+}
+
+func (s *Server) wrapSovPendingUpdates(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, ext.Sovereign.ListPendingUpdates())
+	}
+}
+
+func (s *Server) wrapSovTimeProof(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID := getOrgID(r)
+		proof := ext.Sovereign.GenerateTimeProof(orgID)
+		writeJSON(w, http.StatusOK, proof)
+	}
+}
+
+// --- Realtime Handler ---
+
+func (s *Server) wrapRealtimeStatus(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"connected_clients": ext.Realtime.ConnectedClients(),
+		})
+	}
+}
+
 
 // Ensure imports used
 var _ = fmt.Sprintf
