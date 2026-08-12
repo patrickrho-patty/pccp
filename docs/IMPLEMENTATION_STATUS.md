@@ -69,7 +69,7 @@
 - ✅ Expandable detail
 - ✅ **Health indicator dot (green/yellow/red)**
 - ✅ **Model package column**
-- ❌ Latency/TTFT metrics
+- ✅ Performance metrics in endpoint detail (TTFT P50/P95)
 
 ### Security (§15-16)
 - ✅ SOC with 4 tabs (Dashboard/Findings/Rules/Scanner)
@@ -85,7 +85,7 @@
 - ✅ Assessment with control details
 - ✅ Evidence tab
 - ✅ Last assessment date
-- ❌ Remediation tracking
+- ✅ Remediation plan input for compliance gaps
 
 ### Audit (§40)
 - ✅ FilterBar: date range + type + result + actor
