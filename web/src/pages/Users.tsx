@@ -49,6 +49,7 @@ export default function Users() {
   const [sessions, setSessions] = useState<any[]>([])
   const [harnesses, setHarnesses] = useState<any[]>([])
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [form, setForm] = useState({
     email: '', name: '', name_ko: '', title: '', auth_method: 'local', business_unit_id: '',
   })
@@ -98,6 +99,33 @@ export default function Users() {
   const handleStatusChange = async (user: any, newStatus: string) => {
     try { await api.updateUser(user.id, { status: newStatus }); load() }
     catch (err: any) { alert('상태 변경 실패: ' + err.message) }
+  }
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const handleBulkSuspend = async () => {
+    if (!confirm(selectedIds.size + '명을 정지하시겠습니까?')) return
+    for (const id of selectedIds) {
+      try { await api.updateUser(id, { status: 'suspended' }) } catch {}
+    }
+    setSelectedIds(new Set())
+    load()
+  }
+
+  const handleBulkOffboard = async () => {
+    if (!confirm(selectedIds.size + '명을 퇴사 처리하시겠습니까?')) return
+    for (const id of selectedIds) {
+      try { await api.deleteUser(id) } catch {}
+    }
+    setSelectedIds(new Set())
+    load()
   }
 
   const handleDelete = async (user: any) => {
@@ -191,13 +219,22 @@ export default function Users() {
         </form>
       )}
 
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 mb-4 p-3 bg-blue-50 rounded-lg">
+          <span className="text-sm font-medium text-blue-700">{selectedIds.size}명 선택됨</span>
+          <button onClick={handleBulkSuspend} className="btn-sm btn-secondary">일괄 정지</button>
+          <button onClick={handleBulkOffboard} className="btn-sm btn-danger">일괄 퇴사</button>
+          <button onClick={() => setSelectedIds(new Set())} className="btn-sm btn-secondary">취소</button>
+        </div>
+      )}
+
       <FilterBar config={FILTER_CONFIG} onChange={setFilters} />
 
       <div className="card">
         <table className="w-full">
           <thead>
             <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
-              <th className="pb-3">이름 · Name</th>
+              <th className="pb-3 w-8"><input type="checkbox" onChange={(e) => { if (e.target.checked) setSelectedIds(new Set(paged.map(u => u.id))); else setSelectedIds(new Set()) }} /></th><th className="pb-3">이름 · Name</th>
               <th className="pb-3">이메일</th>
               <th className="pb-3">직함</th>
               <th className="pb-3">인증</th>
@@ -207,7 +244,7 @@ export default function Users() {
           </thead>
           <tbody>
             {paged.length === 0 ? (
-              <tr><td colSpan={8} className="py-8 text-center text-gray-400">
+              <tr><td colSpan={9} className="py-8 text-center text-gray-400">
                 {filters.search ? '검색 결과가 없습니다' : '등록된 사용자가 없습니다'}
               </td></tr>
             ) : paged.map(u => (
@@ -232,7 +269,7 @@ export default function Users() {
                 </tr>
                 {expandedUserId === u.id && (
                     <tr className="bg-gray-50">
-                      <td colSpan={8} className="p-4">
+                      <td colSpan={9} className="p-4">
                         <div className="grid grid-cols-3 gap-6">
                           {/* Sessions */}
                           <div>
