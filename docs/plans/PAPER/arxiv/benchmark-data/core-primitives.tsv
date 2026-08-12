@@ -1,0 +1,12 @@
+benchmark	payload_bytes	median_ns_per_op	median_MB_per_s	bytes_per_op	allocs_per_op	runs
+record_round_trip	1024	290.2	3528.89	2384	7	5
+record_round_trip	65536	8457	7748.87	139472	7	5
+record_round_trip	1048576	97016	10808.33	2105556	7	5
+canonical_cbor_hello_round_trip	0	599.4	0	592	9	5
+evidence_chain_next	64	73.05	876.13	32	1	5
+provenance_object_digest	1024	403.1	2540.41	32	1	5
+ed25519_sign_verify	32	42688	0	64	1	5
+
+# Environment: Apple M4 Pro; 14 logical CPUs; 48 GiB RAM; macOS 27.0; arm64; Go 1.26.5.
+# Repository commit: 0234034b51fb6f1a5127280ce1e9c209b8198004.
+# Scope: in-memory primitive benchmarks only; no network, database, model, GPU, TTFT, or end-to-end measurements.

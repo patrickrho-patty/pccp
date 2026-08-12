@@ -2,9 +2,16 @@ package relay
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"log"
+	"math/big"
 	"net"
 	"sync"
 	"time"
@@ -29,11 +36,48 @@ type PaperListener struct {
 
 // NewPaperListener creates a native PAPER protocol listener.
 func NewPaperListener(svc *Service, tlsConfig *tls.Config) *PaperListener {
+	if tlsConfig == nil {
+		tlsConfig = &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13, NextProtos: []string{PaperALPN}}
+		cert, err := generateListenerCert()
+		if err == nil {
+			tlsConfig.Certificates = []tls.Certificate{cert}
+		}
+	}
+	if tlsConfig.NextProtos == nil {
+		tlsConfig.NextProtos = []string{PaperALPN}
+	}
 	return &PaperListener{
 		svc:       svc,
 		tlsConfig: tlsConfig,
 		conns:     make(map[string]*paper.TransportConn),
 	}
+}
+
+func generateListenerCert() (tls.Certificate, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{Organization: []string{"PAPER Relay"}},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		DNSNames:     []string{"localhost", "relay"},
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return tls.X509KeyPair(certPEM, keyPEM)
 }
 
 // ListenTCP starts listening for PAPER connections over TLS/TCP (PAPER §7.2).

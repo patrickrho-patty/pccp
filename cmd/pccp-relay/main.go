@@ -58,7 +58,9 @@ func main() {
 		NextProtos:         []string{relay.PaperALPN},
 	}
 	// In production, load actual certs from cfg.TLSCertFile / cfg.TLSKeyFile
-	paperListener := relay.NewPaperListener(svc, paperTLS)
+	// For dev: pass nil so NewPaperListener generates self-signed certs
+	_ = paperTLS // keep for production config reference
+	paperListener := relay.NewPaperListener(svc, nil)
 	go func() {
 		log.Printf("Starting PAPER native listener on %s", *paperAddr)
 		if err := paperListener.ListenTCP(ctx, *paperAddr); err != nil && ctx.Err() == nil {
