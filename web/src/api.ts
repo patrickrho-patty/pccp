@@ -92,4 +92,106 @@ export const api = {
 
   // Audit
   listAudit: () => request<any[]>('/api/audit'),
+
+
+  // Security
+  securityCheck: (text: string) =>
+    request<any>('/api/security/check', { method: 'POST', body: JSON.stringify({ text }) }),
+
+  // Fleet
+  fleetInventory: () => request<any[]>('/api/fleet/inventory'),
+  fleetAction: (data: any) =>
+    request<any>('/api/fleet/actions', { method: 'POST', body: JSON.stringify(data) }),
+
+  // SCM
+  repoHeatmap: () => request<any[]>('/api/scm/heatmaps'),
+
+  // Impact
+  analyzeChange: (data: any) =>
+    request<any>('/api/impact/analyze', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Context
+  evaluateContext: (data: any) =>
+    request<any>('/api/context/evaluate', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Sandbox
+  listSandboxes: () => request<any[]>('/api/sandboxes'),
+  createSandbox: (data: any) =>
+    request<any>('/api/sandboxes', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Events
+  queryEvents: (type?: string) =>
+    request<any[]>(`/api/events${type ? '?type=' + type : ''}`),
+
+  // MCP
+  mcpServers: () => request<any[]>('/api/mcp/servers'),
+  mcpEvaluate: (data: any) =>
+    request<any>('/api/mcp/evaluate', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Network
+  networkEvaluate: (data: any) =>
+    request<any>('/api/network/evaluate', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Commands
+  commandEvaluate: (data: any) =>
+    request<any>('/api/commands/evaluate', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Billing
+  entitlement: () => request<any>('/api/billing/entitlement'),
+
+  // Incidents
+  listIncidents: () => request<any[]>('/api/incidents'),
+  createIncident: (data: any) =>
+    request<any>('/api/incidents', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Korean
+  governanceBrief: () => request<any>('/api/korean/governance-brief'),
+  skillsMatrix: () => request<any[]>('/api/korean/skills-matrix'),
+
+  // Privacy
+  legalHold: () => request<any>('/api/privacy/legal-hold'),
+
+  // Reports
+  generateReport: (type: string) =>
+    request<any>('/api/reports/generate', { method: 'POST', body: JSON.stringify({ type }) }),
+
+  // Telemetry
+  telemetrySnapshot: () => request<any>('/api/telemetry/snapshot'),
+
+  // Tools
+  listTools: () => request<any[]>('/api/tools'),
+  seedTools: () =>
+    request<any>('/api/tools/seed-defaults', { method: 'POST' }),
+
+  // Attestation
+  attestLevels: (level: string) => request<any>(`/api/attestation/levels/${level}`),
+
+  // Compliance
+  complianceCerts: () => request<any[]>('/api/compliance/certifications'),
+  complianceAssess: (cert: string) =>
+    request<any>('/api/compliance/assess', { method: 'POST', body: JSON.stringify({ certification: cert }) }),
+
+  // Connectors
+  connectorsTypes: () => request<any[]>('/api/connectors/types'),
+  listConnectors: () => request<any[]>('/api/connectors'),
+
+  // GPU
+  gpuEndpoints: () => request<any[]>('/api/gpu/endpoints'),
+  gpuModels: () => request<any[]>('/api/gpu/models'),
+
+  // Keys
+  generateKey: (domain: string) =>
+    request<any>('/api/keys/generate', { method: 'POST', body: JSON.stringify({ domain, validity_hours: 2160 }) }),
+
+  // MCP Marketplace
+  mcpMarketSearch: (q?: string) => request<any[]>(`/api/mcp-market?q=${q || ''}`),
+  mcpMarketSeed: () =>
+    request<any>('/api/mcp-market/seed', { method: 'POST' }),
+
+  // Sovereign
+  sovereignPendingUpdates: () => request<any[]>('/api/sovereign/updates/pending'),
+  sovereignTimeProof: () => request<any>('/api/sovereign/time-proof'),
+
+  // Realtime
+  realtimeStatus: () => request<any>('/api/realtime/status'),
 };
