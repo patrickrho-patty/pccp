@@ -5,14 +5,18 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"log"
 	"math/big"
+	"os"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 
@@ -222,8 +226,9 @@ func (pl *PaperListener) handleApplicationMessages(ctx context.Context, conn *pa
 			log.Printf("relay: paper SESSION_OPEN from %s", connID)
 
 		case record.Kind == paper.KindMessage && msgType == paper.MsgAIOpen:
-			// Handle AI inference request via the governance layer
-			log.Printf("relay: paper AI_OPEN from %s", connID)
+			// Forward AI inference request to PIA via PAPER
+			log.Printf("relay: paper AI_OPEN from %s, forwarding to PIA", connID)
+			pl.forwardAIToPIA(ctx, conn, record, connID)
 
 		case record.Kind == paper.KindData:
 			// Handle data stream (token chunks, etc.)
@@ -233,6 +238,131 @@ func (pl *PaperListener) handleApplicationMessages(ctx context.Context, conn *pa
 			log.Printf("relay: paper %s/%s from %s (unhandled)", record.Kind, msgType, connID)
 		}
 	}
+}
+
+// forwardAIToPIA forwards an AI_OPEN from a harness to the PIA via PAPER
+// and streams the response back to the harness.
+func (pl *PaperListener) forwardAIToPIA(ctx context.Context, harnessConn *paper.TransportConn, reqRecord *paper.Record, connID string) {
+	// Get PAPER inference client (connects to PIA)
+	pic := getPaperInferenceClient()
+	if pic == nil {
+		// No PAPER path — try HTTP fallback to PIA
+		pl.forwardAIHTTP(ctx, harnessConn, reqRecord, connID)
+		return
+	}
+
+	// Parse the AI_OPEN request
+	var aiReq struct {
+		Model     string                   `json:"model"`
+		Messages  []map[string]interface{} `json:"messages"`
+		MaxTokens int                      `json:"max_tokens"`
+	}
+	json.Unmarshal(reqRecord.Payload, &aiReq)
+
+	// Forward to PIA via PAPER
+	result, err := pic.SendInference(ctx, aiReq.Model, aiReq.Messages, aiReq.MaxTokens)
+	if err != nil {
+		log.Printf("relay: paper PIA inference error from %s: %v", connID, err)
+		errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
+		harnessConn.SendMessage(paper.MsgClose, nil, errPayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
+		return
+	}
+
+	// Send response back to harness as AI_COMPLETE
+	completePayload, _ := json.Marshal(result)
+	harnessConn.SendMessage(paper.MsgAIComplete, nil, completePayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
+	log.Printf("relay: paper AI_COMPLETE sent to %s", connID)
+}
+
+// forwardAIHTTP forwards an AI request to PIA via HTTP (fallback).
+func (pl *PaperListener) forwardAIHTTP(ctx context.Context, harnessConn *paper.TransportConn, reqRecord *paper.Record, connID string) {
+	// Parse the request
+	var aiReq struct {
+		Model     string                   `json:"model"`
+		Messages  []map[string]interface{} `json:"messages"`
+		MaxTokens int                      `json:"max_tokens"`
+	}
+	json.Unmarshal(reqRecord.Payload, &aiReq)
+
+	// Use the HTTP inference client
+	piaURL := os.Getenv("PCCP_PIA_URL")
+	if piaURL == "" {
+		errPayload, _ := json.Marshal(map[string]string{"error": "PIA not configured"})
+		harnessConn.SendMessage(paper.MsgClose, nil, errPayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
+		return
+	}
+
+	// Build PIA request
+	type piaMsg struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	var msgs []piaMsg
+	for _, m := range aiReq.Messages {
+		role, _ := m["role"].(string)
+		content, _ := m["content"].(string)
+		msgs = append(msgs, piaMsg{Role: role, Content: content})
+	}
+
+	vllmModel := os.Getenv("PCCP_VLLM_MODEL")
+	if vllmModel == "" {
+		vllmModel = aiReq.Model
+	}
+
+	promptParts := []string{}
+	for _, m := range msgs {
+		promptParts = append(promptParts, m.Role+": "+m.Content)
+	}
+	prompt := "You are a helpful coding assistant.\n\n"
+	for i, p := range promptParts {
+		if i > 0 {
+			prompt += "\n"
+		}
+		prompt += p
+	}
+	prompt += "\n\nAssistant:"
+
+	piaReq := map[string]interface{}{
+		"model":       vllmModel,
+		"prompt":      prompt,
+		"max_tokens":  aiReq.MaxTokens,
+		"temperature": 0.0,
+		"stream":      false,
+	}
+
+	piaBody, _ := json.Marshal(piaReq)
+	piaResp, err := http.Post(piaURL+"/v1/completions", "application/json", bytes.NewReader(piaBody))
+	if err != nil {
+		errPayload, _ := json.Marshal(map[string]string{"error": "PIA unreachable: " + err.Error()})
+		harnessConn.SendMessage(paper.MsgClose, nil, errPayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
+		return
+	}
+	defer piaResp.Body.Close()
+
+	var piaResult map[string]interface{}
+	json.NewDecoder(piaResp.Body).Decode(&piaResult)
+
+	// Extract text and usage
+	text := ""
+	if choices, ok := piaResult["choices"].([]interface{}); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]interface{}); ok {
+			text, _ = choice["text"].(string)
+		}
+	}
+
+	inputTokens, _ := piaResult["usage"].(map[string]interface{})["prompt_tokens"].(float64)
+	outputTokens, _ := piaResult["usage"].(map[string]interface{})["completion_tokens"].(float64)
+
+	// Build AI_COMPLETE response
+	completePayload, _ := json.Marshal(map[string]interface{}{
+		"content":      text,
+		"finish_reason": "stop",
+		"input_tokens":  int(inputTokens),
+		"output_tokens": int(outputTokens),
+		"total_tokens":  int(inputTokens + outputTokens),
+	})
+	harnessConn.SendMessage(paper.MsgAIComplete, nil, completePayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
+	log.Printf("relay: paper AI_COMPLETE sent to %s (via HTTP)", connID)
 }
 
 // ActiveConnections returns the number of active PAPER connections.
