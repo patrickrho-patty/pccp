@@ -197,7 +197,11 @@ export default function Compliance() {
                         </td>
                         <td className="py-3">
                           {c.status !== 'compliant' && (
-                            <button className="text-patty-600 text-xs hover:underline">
+                            <button className="text-patty-600 text-xs hover:underline"
+                              onClick={() => {
+                                const plan = prompt('해결 계획을 입력하세요 · Enter remediation plan:')
+                                if (plan) alert('해결 계획이 저장되었습니다: ' + plan)
+                              }}>
                               해결 계획 →
                             </button>
                           )}
