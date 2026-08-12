@@ -71,10 +71,16 @@ export default function Sessions() {
   const handlePause = async (id: string) => { try { await api.pauseSession(id); load() } catch {} }
   const handleResume = async (id: string) => { try { await api.resumeSession(id); load() } catch {} }
 
+  const [usageData, setUsageData] = useState<Record<string, any>>({})
   const toggleExpand = async (session: any) => {
     if (expandedId === session.id) { setExpandedId(null); return }
     setExpandedId(session.id)
     try { const chain = await api.getProvenance(session.id); setProvenance(chain) } catch { setProvenance(null) }
+    // Fetch usage data
+    try {
+      const res = await fetch(`/api/sessions/${session.id}/usage`, { headers: authHeaders() })
+      if (res.ok) { const usage = await res.json(); setUsageData(prev => ({ ...prev, [session.id]: usage })) }
+    } catch {}
   }
 
   const getUserName = (userId: string) => {
@@ -169,6 +175,17 @@ export default function Sessions() {
                         <div><span className="text-gray-500">하네스:</span> <span className="font-mono text-xs">{s.harness_id}</span></div>
                         <div><span className="text-gray-500">시작:</span> <span className="text-xs">{s.opened_at?.slice(0, 19)}</span></div>
                       </div>
+                      {usageData[s.id] && (
+                        <div className="mt-2 pt-2 border-t border-gray-200">
+                          <div className="text-xs font-semibold text-gray-600 mb-1">토큰 사용량 · Token Usage</div>
+                          <div className="flex gap-4 text-xs">
+                            <span>입력: <strong className="text-blue-600">{(usageData[s.id].input_tokens || 0).toLocaleString()}</strong></span>
+                            <span>출력: <strong className="text-green-600">{(usageData[s.id].output_tokens || 0).toLocaleString()}</strong></span>
+                            <span>총: <strong>{(usageData[s.id].total_tokens || 0).toLocaleString()}</strong></span>
+                            <span>추론 수: <strong>{usageData[s.id].total_records || 0}</strong></span>
+                          </div>
+                        </div>
+                      )}
                       {provenance && provenance.actions?.length > 0 && (
                         <div className="mt-3 pt-3 border-t border-gray-200"><div className="text-xs font-semibold text-gray-600 mb-2">액션 이력 ({provenance.actions.length})</div>
                         <div className="space-y-1">{provenance.actions.slice(0, 5).map((a: any, i: number) => (<div key={i} className="flex items-center gap-2 text-xs"><span className="text-blue-500">●</span><span className="font-mono">{a.action_type}</span><span className="text-gray-400">{a.occurred_at?.slice(0, 19)}</span><span className="badge-green">{a.verdict_result}</span></div>))}</div></div>
@@ -185,3 +202,5 @@ export default function Sessions() {
     </div>
   )
 }
+
+function authHeaders() { const token = localStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }

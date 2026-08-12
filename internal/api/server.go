@@ -180,6 +180,7 @@ func (s *Server) setupRouter() {
 			r.Post("/{id}/pause", s.handlePauseSession)
 			r.Post("/{id}/resume", s.handleResumeSession)
 			r.Get("/{id}/provenance", s.handleGetProvenance)
+			r.Get("/{id}/usage", s.handleGetSessionUsage)
 		})
 
 		// Model registry
@@ -803,6 +804,42 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "closed"})
 }
+
+func (s *Server) handleGetSessionUsage(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		var sess models.Session
+		if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		var records []models.UsageRecord
+		s.db.Where("session_id = ?", sess.SessionID).Find(&records)
+
+		summary := map[string]interface{}{
+			"total_records":    len(records),
+			"input_tokens":     0,
+			"output_tokens":    0,
+			"total_tokens":     0,
+			"by_metric":        map[string]int64{},
+			"by_model":         map[string]int64{},
+		}
+		totalIn, totalOut := 0, 0
+		for _, rec := range records {
+			if rec.MetricType == "tokens_in" {
+				totalIn += int(rec.Quantity)
+			}
+			if rec.MetricType == "tokens_out" {
+				totalOut += int(rec.Quantity)
+			}
+			summary["by_metric"].(map[string]int64)[rec.MetricType] += rec.Quantity
+			summary["by_model"].(map[string]int64)[rec.ModelPackageID] += rec.Quantity
+		}
+		summary["input_tokens"] = totalIn
+		summary["output_tokens"] = totalOut
+		summary["total_tokens"] = totalIn + totalOut
+
+		writeJSON(w, http.StatusOK, summary)
+	}
 
 func (s *Server) handleGetProvenance(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
