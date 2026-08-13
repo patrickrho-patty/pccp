@@ -21,6 +21,7 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/fleet"
 	"github.com/patrickrho-patty/pccp/internal/gitscm"
 	"github.com/patrickrho-patty/pccp/internal/impact"
+	"github.com/patrickrho-patty/pccp/internal/korean"
 	"github.com/patrickrho-patty/pccp/internal/sandbox"
 	"github.com/patrickrho-patty/pccp/internal/security"
 	"github.com/patrickrho-patty/pccp/internal/workintel"
@@ -48,6 +49,7 @@ type Server struct {
 	fleet      *fleet.Service
 	context    *context.Service
 	sandbox    *sandbox.Service
+	korean     *korean.Service
 	jwtSecret  string
 	router     *chi.Mux
 }
@@ -77,6 +79,7 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 	fleetSvc := fleet.New(db)
 	ctxSvc := context.New(db, secSvc)
 	sandboxSvc := sandbox.New(db)
+	koreanSvc := korean.New(db)
 	if err != nil {
 		return nil, fmt.Errorf("api: init provenance: %w", err)
 	}
@@ -97,6 +100,7 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 		fleet:      fleetSvc,
 		context:    ctxSvc,
 		sandbox:    sandboxSvc,
+		korean:     koreanSvc,
 		jwtSecret:  jwtSecret,
 	}
 	s.setupRouter()
@@ -3100,6 +3104,16 @@ func min(a, b int) int {
 }
 
 // --- Enterprise Harness Feature Handlers ---
+
+func (s *Server) handleShadowAI(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	findings, err := s.korean.DetectShadowAI(orgID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, findings)
+}
 
 func (s *Server) handleListEnterpriseFeatures(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)

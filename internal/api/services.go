@@ -166,6 +166,7 @@ func (s *Server) setupAdditionalRoutes(r chi.Router, ext *AdditionalServices) {
 	r.Route("/korean", func(r chi.Router) {
 		r.Get("/skills-matrix", s.wrapKoreanSkills(ext))
 		r.Get("/governance-brief", s.wrapKoreanBrief(ext))
+		r.Get("/shadow-ai", s.handleShadowAI)
 		r.Post("/change-freeze", s.wrapKoreanFreeze(ext))
 		r.Post("/model-recall", s.wrapKoreanRecall(ext))
 	})
