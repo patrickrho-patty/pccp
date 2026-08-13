@@ -249,7 +249,7 @@ export default function Users() {
                 {filters.search ? '검색 결과가 없습니다' : '등록된 사용자가 없습니다'}
               </td></tr>
             ) : paged.map(u => (
-              <>
+              <Fragment key={u.id}>
                 <tr key={u.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer" onClick={() => setExpandedUserId(expandedUserId === u.id ? null : u.id)}>
                 <td className="py-3" onClick={e => e.stopPropagation()}>
                   <div className="font-medium text-sm">{u.name_ko || u.name}</div>
