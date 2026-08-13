@@ -1612,6 +1612,17 @@ func (s *Server) handleCreateConversation(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.comms.conversation_created",
+		ActorType:      "admin",
+		Action:         "create_conversation",
+		ResourceType:   "conversation",
+		ResourceID:     conv.ID,
+		Details:        fmt.Sprintf("type: %s", req.Type),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusCreated, conv)
 }
 
@@ -1701,6 +1712,17 @@ func (s *Server) handleSendBroadcast(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: getOrgID(r),
+		EventType:      "cp.comms.broadcast_sent",
+		ActorType:      "admin",
+		Action:         "send_broadcast",
+		ResourceType:   "broadcast",
+		ResourceID:     bc.ID,
+		Details:        fmt.Sprintf("severity: %s, title: %s", req.Severity, req.Title),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusCreated, bc)
 }
 
