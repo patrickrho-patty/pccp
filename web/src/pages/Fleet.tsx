@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 
 const FLEET_ACTIONS = [
   { id: 'request_reauthentication', label: '재인증 요청', labelEn: 'Re-auth', severity: 'normal', icon: '🔑' },

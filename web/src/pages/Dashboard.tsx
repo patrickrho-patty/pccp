@@ -35,6 +35,26 @@ export default function Dashboard() {
     <div>
       <SeatWidget />
 
+      {/* Demo data seed */}
+      {stats.length === 0 || (data?.users === 0) ? (
+        <div className="card mb-6 border-l-4 border-l-blue-400">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold">데모 데이터가 없습니다 · No Demo Data</h3>
+              <p className="text-xs text-gray-400 mt-1">모든 페이지에 표시할 샘플 데이터를 생성하려면 아래 버튼을 클릭하세요</p>
+            </div>
+            <button onClick={async () => {
+              try {
+                await fetch('/api/enterprise/features/seed', { method: 'POST', headers: authHeaders() })
+                await fetch('/api/tools/seed-defaults', { method: 'POST', headers: authHeaders() })
+                await fetch('/api/enterprise/demo-seed', { method: 'POST', headers: authHeaders() })
+                window.location.reload()
+              } catch { alert('시드 실패') }
+            }} className="btn-primary text-sm">📊 데모 데이터 생성</button>
+          </div>
+        </div>
+      ) : null}
+
       {/* Stat cards */}
       <div className="grid grid-cols-4 gap-3 mb-6">
         {stats.map(s => (

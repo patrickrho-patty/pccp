@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth, ConsoleProfile } from '../hooks/useAuth'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
 
