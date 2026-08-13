@@ -134,6 +134,7 @@ func (s *Server) setupRouter() {
 		r.Route("/organizations", func(r chi.Router) {
 			r.Get("/", s.handleListOrganizations)
 		r.Get("/seats", s.handleGetSeatUsage)
+		r.Get("/seats", s.handleGetSeatUsage)
 			r.Post("/", s.handleCreateOrganization)
 			r.Get("/{id}", s.handleGetOrganization)
 		})
@@ -297,6 +298,7 @@ func (s *Server) setupRouter() {
 			r.Get("/violations", s.handleListEnterpriseViolations)
 			r.Put("/violations/{id}", s.handleResolveViolation)
 			r.Post("/features/seed", s.handleSeedEnterpriseFeatures)
+		r.Post("/demo-seed", s.handleSeedDemoData)
 		})
 
 		// Audit
@@ -2129,6 +2131,129 @@ func (s *Server) handleListBroadcasts(w http.ResponseWriter, r *http.Request) {
 		s.db.Where("organization_id = ?", orgID).Order("created_at DESC").Limit(50).Find(&transfers)
 		writeJSON(w, http.StatusOK, transfers)
 	}
+
+
+func (s *Server) handleSeedDemoData(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	results := map[string]int{}
+
+	demoUsers := []struct{ Email, Name, NameKo, Title, Dept string }{
+		{"kim@patty.dev", "Kim Gaebal", "김개발", "시니어 개발자", "dev"},
+		{"lee@patty.dev", "Lee Tester", "이테스트", "QA 엔지니어", "qa"},
+		{"park@patty.dev", "Park Secur", "박보안", "보안 엔지니어", "security"},
+		{"choi@patty.dev", "Choi Lead", "최리드", "테크 리드", "dev"},
+	}
+	userIDs := map[string]string{}
+	for _, u := range demoUsers {
+		existing := &models.User{}
+		if s.db.Where("email = ?", u.Email).First(existing).Error == nil {
+			userIDs[u.Email] = existing.ID
+			continue
+		}
+		usr, err := s.identity.CreateUser(orgID, u.Email, u.Name, u.NameKo, "local", "")
+		if err != nil { continue }
+		usr.Title = u.Title
+		usr.BusinessUnitID = u.Dept
+		s.db.Save(usr)
+		userIDs[u.Email] = usr.ID
+		results["users"]++
+	}
+
+	for _, p := range []struct{ Name, NameKo, Slug string }{
+		{"backend-api", "백엔드 API", "backend-api"},
+		{"frontend-app", "프론트엔드 앱", "frontend-app"},
+		{"infra", "인프라", "infra"},
+	} {
+		existing := &models.Project{}
+		if s.db.Where("slug = ?", p.Slug).First(existing).Error == nil { continue }
+		s.db.Create(&models.Project{
+			AuditBase: models.AuditBase{OrganizationID: orgID, Classification: "internal"},
+			Name: p.Name, NameKo: p.NameKo, Slug: p.Slug, Status: "active",
+		})
+		results["projects"]++
+	}
+
+	for _, repo := range []struct{ Name, Provider, URL string }{
+		{"backend-api", "github", "https://github.com/patty/backend-api.git"},
+		{"frontend-app", "github", "https://github.com/patty/frontend-app.git"},
+	} {
+		existing := &models.Repository{}
+		if s.db.Where("name = ?", repo.Name).First(existing).Error == nil { continue }
+		var proj models.Project
+		s.db.Where("slug = ?", repo.Name).First(&proj)
+		s.db.Create(&models.Repository{
+			AuditBase: models.AuditBase{OrganizationID: orgID, Classification: "internal"},
+			Name: repo.Name, FullName: repo.Name, ProjectID: proj.ID,
+			SCMProvider: repo.Provider, CloneURL: repo.URL, DefaultBranch: "main",
+		})
+		results["repos"]++
+	}
+
+	for email, hid := range map[string]string{"kim@patty.dev":"hrn_kim_001","lee@patty.dev":"hrn_lee_002","park@patty.dev":"hrn_park_003","choi@patty.dev":"hrn_choi_004"} {
+		if _, ok := userIDs[email]; !ok { continue }
+		existing := &models.Harness{}
+		if s.db.Where("harness_id = ?", hid).First(existing).Error == nil { continue }
+		s.db.Create(&models.Harness{
+			Base: models.Base{}, OrganizationID: orgID,
+			HarnessID: hid, Status: "active", BinaryVersion: "1.2.0",
+			BuildChannel: "stable", PublicKey: "demo-" + hid,
+		})
+		results["harnesses"]++
+	}
+
+	var projAPI models.Project
+	s.db.Where("slug = ?", "backend-api").First(&projAPI)
+	var projFE models.Project
+	s.db.Where("slug = ?", "frontend-app").First(&projFE)
+	var projInfra models.Project
+	s.db.Where("slug = ?", "infra").First(&projInfra)
+
+	demoSess := []struct{ Title, UserID, HID, PID, Status string }{
+		{"환불 로직 구현", userIDs["kim@patty.dev"], "hrn_kim_001", projAPI.ID, "active"},
+		{"테스트 코드 작성", userIDs["lee@patty.dev"], "hrn_lee_002", projAPI.ID, "active"},
+		{"보안 취약점 분석", userIDs["park@patty.dev"], "hrn_park_003", projAPI.ID, "closed"},
+		{"UI 리팩토링", userIDs["choi@patty.dev"], "hrn_choi_004", projFE.ID, "paused"},
+		{"인프라 설정", userIDs["kim@patty.dev"], "hrn_kim_001", projInfra.ID, "completed"},
+		{"API 문서화", userIDs["lee@patty.dev"], "hrn_lee_002", projAPI.ID, "terminated"},
+	}
+	for i, ds := range demoSess {
+		sm := &models.Session{
+			AuditBase: models.AuditBase{OrganizationID: orgID, Classification: "internal"},
+			SessionID: fmt.Sprintf("sess_demo_%03d", i+1),
+			UserID: ds.UserID, HarnessID: ds.HID, ProjectID: ds.PID,
+			Title: ds.Title, Status: ds.Status, ModelClass: "patty-code-standard",
+			OpenedAt: time.Now().Add(-time.Duration(i) * time.Hour).Format(time.RFC3339),
+		}
+		if ds.Status == "closed" || ds.Status == "completed" || ds.Status == "terminated" {
+			sm.ClosedAt = time.Now().Add(-time.Duration(i-2) * time.Hour).Format(time.RFC3339)
+		}
+		s.db.Create(sm)
+		results["sessions"]++
+	}
+
+	for _, f := range []struct{ Type, Sev, Title, TitleKo string }{
+		{"pii_leak", "high", "Korean RRN detected", "주민번호 감지"},
+		{"secret_exposure", "critical", "AWS key in context", "AWS 키 노출"},
+		{"prompt_injection", "medium", "Indirect injection", "간접 인젝션"},
+	} {
+		s.db.Create(&models.SecurityFinding{
+			Base: models.Base{}, OrganizationID: orgID,
+			FindingType: f.Type, Severity: f.Sev, Title: f.Title, TitleKo: f.TitleKo,
+			Status: "open", OccurredAt: time.Now().Add(-time.Hour).Format(time.RFC3339),
+		})
+		results["findings"]++
+	}
+
+	conv, _ := s.comms.CreateConversation(orgID, "channel", "개발팀 채널", []string{})
+	if conv != nil {
+		s.comms.SendMessage(conv.ID, "admin", "user", "text", "팀 미팅이 3시에 있습니다", "")
+		results["conversations"]++
+	}
+	s.comms.SendBroadcast(orgID, "info", "Scheduled Maintenance", "예정된 유지보수", "Saturday 2-4 AM", "토요일 새벽 2-4시", "all", "", false)
+	results["broadcasts"]++
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "seeded", "results": results})
+}
 
 func min(a, b int) int {
 	if a < b {
