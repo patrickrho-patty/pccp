@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import { formatRelative } from '../utils/format'
 
 // Policy domains per PRD §13 — each has real, usable templates
 const POLICY_DOMAINS = [
@@ -343,7 +344,7 @@ export default function Policy() {
                     <td className="py-3 font-mono text-xs">{e.epoch_id?.slice(0, 30) || e.id?.slice(0, 30) || '-'}</td>
                     <td className="py-3 text-xs"><span className="badge-gray">{e.transition_mode || '-'}</span></td>
                     <td className="py-3 text-xs text-gray-500">{Array.isArray(e.allowed_models) ? e.allowed_models.join(', ') : e.allowed_models || '-'}</td>
-                    <td className="py-3 text-xs text-gray-400">{e.created_at?.slice(0, 19) || '-'}</td>
+                    <td className="py-3 text-xs text-gray-400">{formatRelative(e.created_at)}</td>
                   </tr>
                 ))}
               </tbody>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { formatRelative } from '../utils/format'
 
 export default function Dashboard() {
   const [data, setData] = useState<any>(null)
@@ -71,7 +72,7 @@ export default function Dashboard() {
                     <span>{icon}</span>
                     <span className="font-medium w-40 truncate">{a.action || a.event_type}</span>
                     <span className="text-xs text-gray-400 truncate flex-1">{a.resource_type || a.details?.slice(0, 40)}</span>
-                    <span className="text-xs text-gray-400">{a.occurred_at?.slice(11, 19) || ''}</span>
+                    <span className="text-xs text-gray-400">{formatRelative(a.occurred_at)}</span>
                   </div>
                 )
               })}
