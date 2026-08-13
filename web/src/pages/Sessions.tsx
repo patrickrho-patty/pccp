@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { api } from '../api'
 import { Link } from 'react-router-dom'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
@@ -208,7 +208,7 @@ export default function Sessions() {
             </thead>
             <tbody>
               {paged.map(s => (
-                <>
+                <Fragment key={s.id || s.key || i}>
                   <tr key={s.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer" onClick={() => toggleExpand(s)}>
                     <td className="py-3"><div className="font-medium text-sm">{s.title || '제목 없음'}</div><div className="text-xs text-gray-400">{s.task_purpose}</div></td>
                     <td className="py-3 text-sm">{getUserName(s.user_id)}</td>
@@ -250,7 +250,7 @@ export default function Sessions() {
                       )}
                     </td></tr>
                   )}
-                </>
+</Fragment>
               ))}
             </tbody>
           </table>

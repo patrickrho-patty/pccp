@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth, ConsoleProfile } from '../hooks/useAuth'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
@@ -350,7 +350,7 @@ export default function UnifiedUsers() {
               </tr></thead>
               <tbody>
                 {paged.map(row => (
-                  <>
+                  <Fragment key={row.id || row.key || i}>
                     <tr key={row.id} className={`border-b border-gray-100 last:border-0 ${selectedId === row.id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}>
                       <td className="py-3" onClick={e => e.stopPropagation()}><input type="checkbox" checked={selectedIds.has(row.id)} onChange={() => toggleSelect(row.id)} /></td>
                       {config.columns.map(c => c.render ? c.render(row[c.key], row) : <td key={c.key} className="py-3 text-sm">{row[c.key]}</td>)}
@@ -382,7 +382,7 @@ export default function UnifiedUsers() {
                         </div>
                       </td></tr>
                     )}
-                  </>
+                  </Fragment>
                 ))}
               </tbody>
             </table>

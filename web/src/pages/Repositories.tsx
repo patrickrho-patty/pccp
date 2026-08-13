@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
@@ -136,7 +136,7 @@ export default function Repositories() {
             {paged.map(r => {
               const project = getProject(r.project_id)
               return (
-                <>
+<Fragment key={r.id}>
                   <tr key={r.id} className={`border-b border-gray-100 last:border-0 cursor-pointer ${expandedId === r.id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
                     onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}>
                     <td className="py-3">
@@ -204,7 +204,7 @@ export default function Repositories() {
                       </div>
                     </td></tr>
                   )}
-                </>
+</Fragment>
               )
             })}
           </tbody>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
 
@@ -77,7 +77,7 @@ export default function Endpoints() {
             </tr></thead>
             <tbody>
               {paged.map(e => (
-                <>
+                <Fragment key={e.id || e.key || i}>
                   <tr key={e.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer" onClick={() => setExpandedId(expandedId === e.id ? null : e.id)}>
                     <td className="py-3"><div className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${e.status === 'active' ? 'bg-green-500' : e.status === 'draining' ? 'bg-yellow-500' : e.status === 'revoked' ? 'bg-red-500' : 'bg-gray-300'}`} /><span className="font-mono text-xs">{e.endpoint_id?.slice(0, 25)}</span></div></td>
                     <td className="py-3 font-mono text-xs">{e.pia_peer_id}</td>
@@ -134,7 +134,7 @@ export default function Endpoints() {
                       </div>
                     </td></tr>
                   )}
-                </>
+                </Fragment>
               ))}
             </tbody>
           </table>

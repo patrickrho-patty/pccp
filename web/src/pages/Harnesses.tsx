@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
@@ -101,7 +101,7 @@ export default function Harnesses() {
               const activeSessions = getActiveSessions(h.harness_id)
               const allSessions = getHarnessSessions(h.harness_id)
               return (
-                <>
+                <Fragment key={h.id || h.key || i}>
                   <tr key={h.id} className={`border-b border-gray-100 last:border-0 cursor-pointer ${expandedId === h.id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
                     onClick={() => setExpandedId(expandedId === h.id ? null : h.id)}>
                     <td className="py-3 font-mono text-xs">{h.harness_id?.slice(0, 20)}</td>
@@ -191,7 +191,7 @@ export default function Harnesses() {
                       </div>
                     </td></tr>
                   )}
-                </>
+                </Fragment>
               )
             })}
           </tbody>

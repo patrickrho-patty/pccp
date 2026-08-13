@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
@@ -252,7 +252,7 @@ function EndpointsTab() {
           </tr></thead>
           <tbody>
             {filtered.map(e => (
-              <>
+              <Fragment key={e.id || e.key || i}>
                 <tr key={e.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer"
                   onClick={() => setExpandedId(expandedId === e.id ? null : e.id)}>
                   <td className="py-3">
@@ -295,7 +295,7 @@ function EndpointsTab() {
                     </div>
                   </td></tr>
                 )}
-              </>
+              </Fragment>
             ))}
           </tbody>
         </table>

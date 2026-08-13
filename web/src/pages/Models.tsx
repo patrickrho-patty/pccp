@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
 
@@ -82,7 +82,7 @@ export default function Models() {
             </tr></thead>
             <tbody>
               {paged.map(m => (
-                <>
+                <Fragment key={m.id || m.key || i}>
                   <tr key={m.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer" onClick={() => setExpandedId(expandedId === m.id ? null : m.id)}>
                     <td className="py-3">
                     <div className="font-medium text-sm">{m.name_ko || m.name}</div>
@@ -119,7 +119,7 @@ export default function Models() {
                       </div>
                     </td></tr>
                   )}
-                </>
+                </Fragment>
               ))}
             </tbody>
           </table>
