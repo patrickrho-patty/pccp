@@ -27,6 +27,7 @@ export default function Harnesses() {
   const [projects, setProjects] = useState<any[]>([])
   const [org, setOrg] = useState<any>(null)
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null)
+  const [selectedHarnesses, setSelectedHarnesses] = useState<Set<string>>(new Set())
   const [showForm, setShowForm] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
@@ -95,11 +96,20 @@ export default function Harnesses() {
         </form>
       )}
 
+      {selectedHarnesses.size > 0 && (
+        <div className="flex items-center gap-3 mb-4 p-3 bg-blue-50 rounded-lg">
+          <span className="text-sm font-medium text-blue-700">{selectedHarnesses.size}개 하네스 선택됨</span>
+          <button onClick={async () => { for (const id of selectedHarnesses) { try { await api.quarantineHarness(id) } catch {} } setSelectedHarnesses(new Set()); load() }} className="btn-sm btn-secondary">일괄 격리</button>
+          <button onClick={() => { if (confirm(`${selectedHarnesses.size}개 하네스를 폐기하시겠습니까?`)) { for (const id of selectedHarnesses) { api.revokeHarness(id, 'bulk revoke') } setSelectedHarnesses(new Set()); load() } }} className="btn-sm btn-danger">일괄 폐기</button>
+          <button onClick={() => setSelectedHarnesses(new Set())} className="btn-sm btn-secondary">취소</button>
+        </div>
+      )}
       <FilterBar config={FILTER_CONFIG} onChange={setFilters} />
 
       <div className="card">
         <table className="w-full">
           <thead><tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
+            <th className="pb-3 w-8"><input type="checkbox" onChange={(e) => { if (e.target.checked) setSelectedHarnesses(new Set(paged.map(h => h.id))); else setSelectedHarnesses(new Set()) }} /></th>
             <th className="pb-3">하네스 ID</th>
             <th className="pb-3">사용자 · User</th>
             <th className="pb-3">상태</th>
@@ -118,6 +128,7 @@ export default function Harnesses() {
                 <Fragment key={h.id || h.key || i}>
                   <tr key={h.id} className={`border-b border-gray-100 last:border-0 cursor-pointer ${expandedId === h.id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
                     onClick={() => setExpandedId(expandedId === h.id ? null : h.id)}>
+                    <td className="py-3" onClick={e => e.stopPropagation()}><input type="checkbox" checked={selectedHarnesses.has(h.id)} onChange={() => { const next = new Set(selectedHarnesses); if (next.has(h.id)) next.delete(h.id); else next.add(h.id); setSelectedHarnesses(next) }} /></td>
                     <td className="py-3 font-mono text-xs"><Link to={`/harnesses/${h.id}`} className="text-blue-600 hover:underline">{h.harness_id?.slice(0, 20)}</Link></td>
                     {/* USER COLUMN — clickable link to user detail */}
                     <td className="py-3">
@@ -149,7 +160,7 @@ export default function Harnesses() {
                   </tr>
                   {/* EXPANDED DETAIL */}
                   {expandedId === h.id && (
-                    <tr className="bg-gray-50"><td colSpan={8} className="p-4">
+                    <tr className="bg-gray-50"><td colSpan={9} className="p-4">
                       <div className="grid grid-cols-4 gap-6">
                         {/* Harness info */}
                         <div>
