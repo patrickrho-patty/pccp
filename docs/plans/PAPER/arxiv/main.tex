@@ -71,7 +71,7 @@ Consider a plausible incident. A developer asks an agent to repair a failing aut
   \item Was that agent allowed to disclose those six files to that model?
   \item Which immutable policy version permitted the migration command?
   \item Did the model merely propose the command, or did an authorized runtime execute it?
-  \item Which exact model package and serving endpoint produced the proposal?
+  \item Which exact model artifact and Inference Peer produced the proposal?
   \item Which parts of the final commit survived from model output after human edits?
 \end{itemize}
 
@@ -419,7 +419,7 @@ The comparison bundle occupies 0.0097\% of the referenced interactive LLM latenc
 \small
 \begin{tabularx}{\textwidth}{@{}l Y Y Y Y@{}}
 \toprule
-System family & Primary boundary & Live purpose-bound authority & Inline model/package identity & Interactive causal code provenance \\
+System family & Primary boundary & Live purpose-bound authority & Inline model/artifact identity & Interactive causal code provenance \\
 \midrule
 Model API & application--model service & typically application-defined & usually caller-visible model identifier & external \\
 AI gateway & application--provider mediation & gateway/policy dependent & provider-route dependent & logs/plug-ins \\
@@ -537,7 +537,7 @@ The following experiments extend the evidence associated with system-level perfo
   \item \textbf{Transport and authentication:} exercise full certificate and COSE proof verification, revocation, transcript binding, resumption, and QUIC-to-TCP fallback with p50/p95/p99 connection measurements.
   \item \textbf{End-to-end inference:} compare B0--B4 on identical payloads and model output, reporting Authorization Decision latency, TTFT, streaming throughput, CPU, allocation, and memory.
   \item \textbf{Governance negatives:} reject expired or replayed grants, non-attenuating child scopes, unknown policy states, stale catalogs, unapproved manifests, invalid Inference Peers, profile-confused messages, and duplicate side effects through the actual Governance Relay path.
-  \item \textbf{Scale and failure:} measure concurrent sessions/streams, Relay restart, control-plane loss, bounded-stale caches, capacity-authority loss, and evidence-backend degradation.
+  \item \textbf{Scale and failure:} measure concurrent sessions/streams, Governance Relay restart, administrative-authority loss, bounded-stale caches, capacity-authority loss, and evidence-backend degradation.
   \item \textbf{Provenance fidelity:} publish a labeled dataset covering human edits, file/function moves, rebases, merges, and multi-agent changes with precision, recall, and confidence calibration.
   \item \textbf{Independent evidence:} demonstrate an implementation not sharing the same implementation stack, publish golden vectors/fuzz results, and obtain an external security review for the production-security profile.
 \end{enumerate}

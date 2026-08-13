@@ -179,6 +179,18 @@ export default function Users() {
         }} className="btn-primary">
           {showForm ? '취소' : '+ 사용자 추가'}
         </button>
+        <button onClick={() => {
+          const headers = ['이메일', '이름', '한글명', '직함', '인증방식', '부서', '상태', '등록일']
+          const rows = users.map(u => [u.email, u.name, u.name_ko, u.title, u.auth_method, u.business_unit_id, u.status, u.created_at?.slice(0,10)])
+          const csv = [headers, ...rows].map(r => r.map(c => `"${c || ''}"`).join(',')).join('\n')
+          const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = `users_${new Date().toISOString().slice(0,10)}.csv`
+          a.click()
+          URL.revokeObjectURL(url)
+        }} className="btn-sm btn-secondary ml-2">📥 CSV 내보내기</button>
       </div>
 
       {showForm && (
