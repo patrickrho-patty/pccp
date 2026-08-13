@@ -298,6 +298,8 @@ func (s *Server) setupRouter() {
 			r.Get("/repos/{repoId}/spans", s.handleGetRepoSpans)
 			r.Get("/repos/{repoId}/stats", s.handleGetRepoProvenanceStats)
 			r.Get("/repos/{repoId}/code-span", s.handleCodeSpanLookup)
+			r.Post("/changeset", s.handlePostChangeSet)
+			r.Post("/span", s.handlePostProvenanceSpan)
 		})
 
 		// Impact Analysis
@@ -3131,6 +3133,88 @@ func (s *Server) handleCodeSpanLookup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// handlePostChangeSet receives a ChangeSet from a harness with file-level provenance.
+// The harness submits this after applying code mutations (Plan B — provenance evidence).
+func (s *Server) handlePostChangeSet(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var req struct {
+		SessionID        string   `json:"session_id"`
+		ExchangeID       string   `json:"exchange_id"`
+		RepositoryID     string   `json:"repository_id"`
+		Branch           string   `json:"branch"`
+		FilesChanged     []string `json:"files_changed"`
+		DiffSummary      string   `json:"diff_summary"`
+		LinesAdded       int      `json:"lines_added"`
+		LinesRemoved     int      `json:"lines_removed"`
+		AttributionState string   `json:"attribution_state"`
+		Confidence       float64  `json:"confidence"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	cs, err := s.provenance.CreateChangeSet(provenance.CreateChangeSetRequest{
+		OrganizationID:   orgID,
+		SessionID:        req.SessionID,
+		ExchangeID:       req.ExchangeID,
+		RepositoryID:     req.RepositoryID,
+		Branch:           req.Branch,
+		FilesChanged:     req.FilesChanged,
+		DiffSummary:      req.DiffSummary,
+		LinesAdded:       req.LinesAdded,
+		LinesRemoved:     req.LinesRemoved,
+		AttributionState: req.AttributionState,
+		Confidence:       req.Confidence,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, cs)
+}
+
+// handlePostProvenanceSpan receives a ProvenanceSpan from a harness, mapping a
+// code region to its origin session/user/model (Plan B — provenance evidence).
+func (s *Server) handlePostProvenanceSpan(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var req struct {
+		RepositoryID     string   `json:"repository_id"`
+		ChangeSetID      string   `json:"change_set_id"`
+		FilePath         string   `json:"file_path"`
+		CommitSHA        string   `json:"commit_sha"`
+		SymbolLang       string   `json:"symbol_lang"`
+		SymbolName       string   `json:"symbol_name"`
+		StartLine        int      `json:"start_line"`
+		EndLine          int      `json:"end_line"`
+		AttributionState string   `json:"attribution_state"`
+		Confidence       float64  `json:"confidence"`
+		SessionID        string   `json:"session_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	span, err := s.provenance.CreateProvenanceSpan(provenance.CreateSpanRequest{
+		OrganizationID:   orgID,
+		RepositoryID:     req.RepositoryID,
+		ChangeSetID:      req.ChangeSetID,
+		FilePath:         req.FilePath,
+		CommitSHA:        req.CommitSHA,
+		SymbolLang:       req.SymbolLang,
+		SymbolName:       req.SymbolName,
+		StartLine:        req.StartLine,
+		EndLine:          req.EndLine,
+		AttributionState: req.AttributionState,
+		Confidence:       req.Confidence,
+		SessionID:        req.SessionID,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, span)
 }
 
 func (s *Server) handleForcedVersion(w http.ResponseWriter, r *http.Request) {
