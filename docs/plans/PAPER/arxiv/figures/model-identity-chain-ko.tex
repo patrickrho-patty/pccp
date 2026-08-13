@@ -10,20 +10,20 @@
   local/.style={-{Latex[length=2.2mm]}, thick, dashed, draw=paperblueedge},
   kind/.style={font=\scriptsize, text=paperblueedge, align=center}
 ]
-  \node[identity] (catalog) {Catalog Model};
-  \node[identity, right=0.52cm of catalog] (pmp) {서명된 PMP};
-  \node[identity, right=0.52cm of pmp] (lease) {Endpoint Lease};
-  \node[runtime, right=0.52cm of lease] (pia) {등록된 PIA};
-  \node[runtime, right=0.52cm of pia] (engine) {서빙 엔진};
+  \node[identity] (catalog) {Service Model};
+  \node[identity, right=0.52cm of catalog] (manifest) {모델 아티팩트\\명세서};
+  \node[identity, right=0.52cm of manifest] (grant) {인가 증서};
+  \node[runtime, right=0.52cm of grant] (peer) {추론 피어};
+  \node[runtime, right=0.52cm of peer] (engine) {서빙 엔진};
 
   \node[kind, below=0.16cm of catalog] {제품 식별자\\사용자에게 표시};
-  \node[kind, below=0.16cm of pmp] {아티팩트 식별자\\서명된 구성};
-  \node[kind, below=0.16cm of lease] {배포 식별자\\시간 제한};
-  \node[kind, below=0.16cm of pia] {PAPER 피어\\라우팅 대상};
-  \node[kind, below=0.16cm of engine] {로컬 어댑터\\Harness에 비공개};
+  \node[kind, below=0.16cm of manifest] {아티팩트 식별자\\서명된 구성};
+  \node[kind, below=0.16cm of grant] {제한적 권한\\대상과 범위};
+  \node[kind, below=0.16cm of peer] {배포 식별자\\라우팅 대상};
+  \node[kind, below=0.16cm of engine] {로컬 어댑터\\응용에 비공개};
 
-  \draw[resolve] (catalog) -- (pmp);
-  \draw[resolve] (pmp) -- (lease);
-  \draw[resolve] (lease) -- (pia);
-  \draw[local] (pia) -- (engine);
+  \draw[resolve] (catalog) -- (manifest);
+  \draw[resolve] (manifest) -- (grant);
+  \draw[resolve] (grant) -- (peer);
+  \draw[local] (peer) -- (engine);
 \end{tikzpicture}
