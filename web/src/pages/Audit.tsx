@@ -80,15 +80,15 @@ export default function Audit() {
       {/* Stats */}
       <div className="grid grid-cols-4 gap-3 mb-4">
         <div className="card py-3 text-center">
-          <div className="text-2xl font-bold">{stats.total}</div>
+          <div className="text-2xl font-bold cursor-pointer hover:text-blue-600" onClick={() => setFilters({ ...filters, dropdowns: {} })}>{stats.total}</div>
           <div className="text-xs text-gray-500">전체 이벤트 · Total</div>
         </div>
         <div className="card py-3 text-center">
-          <div className="text-2xl font-bold text-green-600">{stats.success}</div>
+          <div className="text-2xl font-bold text-green-600 cursor-pointer hover:text-green-700" onClick={() => setFilters({ ...filters, dropdowns: { result: 'success' } })}>{stats.success}</div>
           <div className="text-xs text-gray-500">성공 · Success</div>
         </div>
         <div className="card py-3 text-center">
-          <div className="text-2xl font-bold text-red-600">{stats.denied}</div>
+          <div className="text-2xl font-bold text-red-600 cursor-pointer hover:text-red-700" onClick={() => setFilters({ ...filters, dropdowns: { result: 'denied' } })}>{stats.denied}</div>
           <div className="text-xs text-gray-500">거부/실패 · Denied</div>
         </div>
         <div className="card py-3 text-center">
