@@ -85,9 +85,9 @@ export default function Sessions() {
     } catch (err: any) { showToast('세션 생성 실패: ' + err.message) }
   }
 
-  const handleClose = async (id: string) => { if (confirm('종료하시겠습니까?')) { try { await api.closeSession(id); load() } catch {} } }
-  const handlePause = async (id: string) => { try { await api.pauseSession(id); load() } catch {} }
-  const handleResume = async (id: string) => { try { await api.resumeSession(id); load() } catch {} }
+  const handleClose = async (id: string) => { if (confirm('종료하시겠습니까?')) { try { await api.closeSession(id); showToast('세션 종료됨', 'success'); load() } catch { showToast('종료 실패', 'error') } } }
+  const handlePause = async (id: string) => { try { await api.pauseSession(id); showToast('세션 일시정지', 'info'); load() } catch { showToast('일시정지 실패', 'error') } }
+  const handleResume = async (id: string) => { try { await api.resumeSession(id); showToast('세션 재개', 'success'); load() } catch { showToast('재개 실패', 'error') } }
 
   const [usageData, setUsageData] = useState<Record<string, any>>({})
   const toggleExpand = async (session: any) => {
