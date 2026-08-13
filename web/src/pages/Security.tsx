@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { formatRelative } from '../utils/format'
 import { showToast } from '../components/Toast'
+import { exportCSV } from '../utils/csv'
 
 // Pattern presets — plain-language options, no regex visible to user
 const PATTERN_PRESETS = {
@@ -364,12 +365,7 @@ export default function Security() {
                 <option value="open">미해결만</option>
               </select>
               {findings.length > 0 && (
-              <button onClick={() => {
-                const csv = ['timestamp,type,severity,title,status,session_id']
-                findings.forEach(f => { csv.push([f.occurred_at, f.finding_type, f.severity, (f.title_ko || f.title || '').replace(/,/g, ';'), f.status, f.session_id || ''].join(',')) })
-                const blob = new Blob([csv.join('\n')], { type: 'text/csv' })
-                const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'security_findings.csv'; a.click()
-              }} className="btn-sm btn-secondary">CSV</button>
+              <button onClick={() => exportCSV('security_findings.csv', ['timestamp', 'type', 'severity', 'title', 'status', 'session_id'], findings.map(f => [f.occurred_at, f.finding_type, f.severity, f.title_ko || f.title, f.status, f.session_id]))} className="btn-sm btn-secondary">CSV</button>
               )}
             </div>
           </div>
