@@ -4,6 +4,7 @@ import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
 import ConfirmDialog from '../components/ConfirmDialog'
 import EmptyState from '../components/EmptyState'
+import { formatRelative } from '../utils/format'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['name', 'name_ko', 'slug'],
@@ -200,7 +201,7 @@ export default function Projects() {
                     <span className="font-medium">프로젝트 ID:</span> <span className="font-mono">{p.id}</span>
                   </div>
                   <div className="text-xs text-gray-500">
-                    <span className="font-medium">생성일:</span> {p.created_at?.slice(0, 10)}
+                    <span className="font-medium">생성일:</span> {formatRelative(p.created_at)}
                   </div>
                   {allSessions.length > 0 && (
                     <div>

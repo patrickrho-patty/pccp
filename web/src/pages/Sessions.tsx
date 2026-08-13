@@ -3,6 +3,7 @@ import { api } from '../api'
 import { Link } from 'react-router-dom'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
 import EmptyState from '../components/EmptyState'
+import { formatRelative } from '../utils/format'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['title', 'task_purpose', 'session_id', 'harness_id'],
@@ -232,7 +233,7 @@ export default function Sessions() {
                         <div><span className="text-gray-500">세션 ID:</span> <span className="font-mono text-xs">{s.session_id?.slice(0, 30)}</span></div>
                         <div><span className="text-gray-500">하네스:</span> <Link to={`/harnesses/${s.harness_id}`} className="font-mono text-xs text-blue-600 hover:underline">{s.harness_id}</Link></div>
                         <div><span className="text-gray-500">개발자:</span> <Link to={`/users/${s.user_id}`} className="text-blue-600 hover:underline">{getUserName(s.user_id)}</Link></div>
-                        <div><span className="text-gray-500">시작:</span> <span className="text-xs">{s.opened_at?.slice(0, 19)}</span></div>
+                        <div><span className="text-gray-500">시작:</span> <span className="text-xs">{formatRelative(s.opened_at)}</span></div>
                       </div>
                       {usageData[s.id] && (
                         <div className="mt-2 pt-2 border-t border-gray-200">

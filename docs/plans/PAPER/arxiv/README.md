@@ -1,6 +1,9 @@
-# PAPER arXiv publication package
+# DARI arXiv publication package
 
-This directory contains the self-contained LaTeX source and compiled PDF for the PAPER preprint.
+This directory contains the self-contained LaTeX source and compiled PDF for
+the DARI preprint, *DARI: Delegated Authorization and Receipts for Governed AI
+Inference*. The directory and PDF target retain their historical names for
+build compatibility.
 
 ## Build
 
@@ -37,6 +40,20 @@ not be interpreted as a substitute for raw benchmark output.
 
 The benchmark chart in the paper reads `median_ns_per_op` directly from this
 TSV during the LaTeX build.
+
+## Interpret implementation claims
+
+`implementation-claim-matrix.tsv` is the authoritative evidence-status record.
+It distinguishes implemented framing and transport bindings from
+implementation-required authentication, authorization, delegation, and receipt
+work, and from browser and federation extension profiles. Primitive benchmark
+values must not be interpreted as measurements of those unimplemented or
+extension-profile behaviors.
+
+The two PNG diagrams are Qwen-generated conceptual artwork. They contain no
+empirical measurements or implementation-coverage claims. The model-identity
+chain and primitive-latency plot are LaTeX-native figures; the latter reads the
+checked-in benchmark TSV directly.
 
 ## Create the source archive
 

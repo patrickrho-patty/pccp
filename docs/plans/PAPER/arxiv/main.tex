@@ -274,7 +274,7 @@ Selective-export profiles may replace sensitive nodes with commitments or redact
 \section{Evidence Status and Reference Profile}
 \label{sec:implementation}
 
-DARI is published as an open specification whose evidence status is defined in the checked-in \texttt{implementation-claim-matrix.tsv}. The benchmark snapshot is repository commit \texttt{0234034}. That implementation establishes the record layer and transport bindings measured below; it does not by itself establish the stronger authentication, authorization, delegation, or receipt claims.
+DARI is published as an open specification with a checked-in implementation-claim matrix. The benchmark snapshot is repository commit \texttt{0234034}. That implementation establishes the record layer and transport bindings measured below; it does not by itself establish the stronger authentication, authorization, delegation, or receipt claims.
 
 \subsection{Authoritative implementation-claim matrix}
 
@@ -282,17 +282,17 @@ DARI is published as an open specification whose evidence status is defined in t
 \centering
 \caption{Authoritative DARI implementation status. ``Implementation-required'' denotes required protocol-source and test work, not implemented behavior.}
 \label{tab:claims}
-\small
+\scriptsize
 \begin{tabularx}{\textwidth}{@{}l Y l Y@{}}
 \toprule
 ID & Claim & Status & Evidence \\
 \midrule
 C1 & Deterministic framing and canonical CBOR & implemented & \texttt{internal/paper} tests \\
 C2 & TLS/TCP and QUIC bindings & implemented & \texttt{internal/paper} transport tests \\
-C3 & Transcript-bound peer authentication & implementation-required & \texttt{internal/relay/peer\_authenticator\_test.go} \\
-C4 & Canonical signed authorization scope & implementation-required & \texttt{internal/paper/authorization\_test.go} \\
-C5 & Delegated authorization attenuation & implementation-required & \texttt{internal/paper/delegation\_test.go} \\
-C6 & Deterministic final receipt & implementation-required & \texttt{internal/paper/receipt\_test.go} \\
+C3 & Transcript-bound peer authentication & implementation-required & \path{internal/relay/peer_authenticator_test.go} \\
+C4 & Canonical signed authorization scope & implementation-required & \path{internal/paper/authorization_test.go} \\
+C5 & Delegated authorization attenuation & implementation-required & \path{internal/paper/delegation_test.go} \\
+C6 & Deterministic final receipt & implementation-required & \path{internal/paper/receipt_test.go} \\
 C7 & Browser binding & extension-profile & \texttt{dari.web/1} vectors \\
 C8 & Cross-domain federation & extension-profile & \texttt{dari.federation/1} vectors \\
 \bottomrule
@@ -307,23 +307,23 @@ In this named reference profile, the Patty Code Harness is the application, the 
 
 \section{Evaluation Questions and Baselines}
 
-The evaluation considers whether governance can be enforced while preserving interactive performance. It asks: (Q1) what connection and pre-inference latency does PAPER add; (Q2) how does Relay cost scale with streams; (Q3) what evidence and storage cost is associated with a verifiable causal path; (Q4) which adversarial cases are rejected by protocol state; and (Q5) how accurately provenance survives software evolution?
+The evaluation considers whether governance can be enforced while preserving interactive performance. It asks: (Q1) what connection and pre-inference latency does DARI add; (Q2) how does Governance Relay cost scale with streams; (Q3) what evidence and storage cost is associated with a verifiable causal path; (Q4) which adversarial cases are rejected by protocol state; and (Q5) how accurately provenance survives software evolution?
 
 \subsection{Baselines}
 
-We define five goal-aware baselines: B0, a minimal secure binary stream; B1, bearer-authenticated HTTPS/JSON streaming; B2, HTTPS/JSON plus comparable gateway policy and logging; B3, PAPER with identity/session and minimal governance; and B4, PAPER with lease, policy, content checks, verdicts, and provenance. The primary comparisons are B2 versus B4 (comparable governance, different lifecycle) and B3 versus B4 (the marginal cost of governance). MCP and A2A are treated as semantic neighbors rather than performance baselines.
+We define five goal-aware baselines: B0, a minimal secure binary stream; B1, bearer-authenticated HTTPS/JSON streaming; B2, HTTPS/JSON plus comparable gateway policy and logging; B3, DARI with Credential and session binding but minimal governance; and B4, DARI with Authorization Grants, policy-state binding, content checks, Authorization Decisions, and evidence. The primary comparisons are B2 versus B4 (comparable governance, different lifecycle) and B3 versus B4 (the marginal cost of governance). MCP and A2A are treated as semantic neighbors rather than performance baselines.
 
-End-to-end experiments must report connection p50/p95/p99, time to first Relay verdict, TTFT, inter-token latency, sustained throughput, CPU time, allocation, memory per stream, and evidence bytes. The environment disclosure must include CPU, memory, NIC, RTT, topology, OS, runtime and transport-library versions, model/quantization, GPU, policy modules, and storage backend.
+End-to-end experiments must report connection p50/p95/p99, time to first Authorization Decision, TTFT, inter-token latency, sustained throughput, CPU time, allocation, memory per stream, and evidence bytes. The environment disclosure must include CPU, memory, NIC, RTT, topology, OS, runtime and transport-library versions, model/quantization, GPU, policy modules, and storage backend.
 
 \subsection{Security and provenance experiments}
 
-Negative tests include an unknown peer, expired/replayed lease, unknown Policy Epoch, stale catalog, unapproved model package, invalid endpoint lease, profile-confused message, malformed state sequence, duplicate side effect after resume, prompt-injected capability escalation, and modified receipt. Provenance fidelity should be measured on generated functions followed by human edits, file renames, function moves, rebases, merges, and multi-agent changes. Precision/recall and confidence calibration are more appropriate than anecdotal examples.
+Negative tests include an unknown peer, expired or replayed grant, non-attenuating child scope, unknown policy-state digest, stale catalog, unapproved Model Artifact Manifest, invalid Inference Peer, profile-confused message, malformed state sequence, duplicate side effect after resume, prompt-injected authority escalation, and modified receipt. Provenance fidelity should be measured on generated functions followed by human edits, file renames, function moves, rebases, merges, and multi-agent changes. Precision/recall and confidence calibration are more appropriate than anecdotal examples.
 
 \section{Measured System Primitives}
 
 \subsection{Experimental setup}
 
-This paper isolates PAPER's framing, cryptographic, and evidence operations so that their cost remains visible rather than being absorbed into network or model variance. Measurements ran locally on an Apple M4 Pro with 14 logical CPUs and 48~GiB RAM under macOS~27.0 on arm64. Each benchmark was repeated five times; Table~\ref{tab:microbench} reports the median. The resulting measurements provide a reproducible lower-layer baseline for the B0--B4 system comparisons.
+This paper isolates the evaluated implementation's framing, cryptographic, and evidence primitives so that their cost remains visible rather than being absorbed into network or model variance. Measurements ran locally on an Apple M4 Pro with 14 logical CPUs and 48~GiB RAM under macOS~27.0 on arm64. Each benchmark was repeated five times; Table~\ref{tab:microbench} reports the median. The resulting measurements provide a reproducible lower-layer baseline for the B0--B4 system comparisons. They do not measure Authorization Grant validation, attenuation, browser bindings, federation, or deterministic receipt finalization.
 
 For operation $o$, the reported latency is
 
@@ -368,7 +368,7 @@ The measured $c(s)$ decreases from 0.283~ns/byte at 1~KiB to 0.0925~ns/byte at 1
 To give these isolated numbers an application-level point of reference, we construct a comparison bundle from four primitives used across the governed-exchange lifecycle: 1~KiB record round trip, evidence-chain update, object digest, and Ed25519 sign-and-verify. Their arithmetic sum is
 
 \begin{equation}
-L_{\mathrm{PAPER},1\mathrm{KiB}}
+L_{\mathrm{DARI},1\mathrm{KiB}}
 = 0.2902 + 0.07305 + 0.4031 + 42.688
 = 43.45435~\mu\mathrm{s}.
 \label{eq:interactive-budget}
@@ -377,12 +377,12 @@ L_{\mathrm{PAPER},1\mathrm{KiB}}
 MLPerf Inference uses a 450~ms 99th-percentile TTFT criterion for interactive Llama~2 70B serving~\cite{mlperf2025llm}. Relative to this reference,
 
 \begin{equation}
-\rho = \frac{L_{\mathrm{PAPER},1\mathrm{KiB}}}{450~\mathrm{ms}}
+\rho = \frac{L_{\mathrm{DARI},1\mathrm{KiB}}}{450~\mathrm{ms}}
 = 9.66 \times 10^{-5} = 0.0097\%.
 \label{eq:budget-ratio}
 \end{equation}
 
-The reference budget is more than 10,000 times larger than the combined primitive cost. Ed25519 sign-and-verify accounts for 98.2\% of the bundle; PAPER's framing, digest, and evidence-chain operations contribute the remaining 0.77~$\mu$s. The measured core cost is therefore four orders of magnitude below the interactive LLM response budget used for comparison.
+The reference budget is more than 10,000 times larger than the combined primitive cost. Ed25519 sign-and-verify accounts for 98.2\% of the bundle; framing, digest, and evidence-chain operations contribute the remaining 0.77~$\mu$s. The measured primitive bundle is therefore four orders of magnitude below the interactive LLM response budget used for comparison.
 
 To expose memory cost separately, let $B_{\mathrm{op}}(s)$ be bytes allocated per record benchmark operation. Its allocation amplification is
 
@@ -404,17 +404,17 @@ Figure~\ref{fig:primitive-latency} makes the four-order-of-magnitude range visib
 
 These primitives are the repeated building blocks for canonical evidence construction, indexing, retention, and signed receipts. Even before further allocation optimization, their combined 1~KiB cost consumes less than one ten-thousandth of the interactive TTFT reference budget, leaving substantial room for policy evaluation, transport, storage, and model serving.
 
-The full repository suite passed at the evaluated commit. A separate coverage audit found that several conformance-test names exceed the properties exercised by their assertions. The package exposes tests named for invariants 1--5 and 7--12, with no named test for invariant 6; several passing tests exercise only a proxy for their stated property. For example, the Policy Epoch test checks connection readiness rather than unknown-epoch rejection, and the reconnect test contains no assertion. We therefore report repository test completion separately from invariant coverage. The detailed audit appears in Appendix~A.
+The full repository suite passed at the evaluated commit. A separate coverage audit found that several conformance-test names exceed the properties exercised by their assertions. The package exposes tests named for invariants 1--5 and 7--12, with no named test for invariant 6; several passing tests exercise only a proxy for their stated property. For example, the legacy policy-state test checks connection readiness rather than unknown-state rejection, and the reconnect test contains no assertion. We therefore report repository test completion separately from invariant coverage. The detailed audit appears in Appendix~A.
 
 \subsection{Interpretation}
 
-The comparison bundle occupies 0.0097\% of the referenced interactive LLM latency target, while large-record processing exceeds 10~GiB/s. These measurements indicate that the evaluated primitive costs leave substantial latency budget for TLS/QUIC establishment, policy modules, database/cache access, content classifiers, network placement, model scheduling, and evidence storage. B0--B4 experiments can quantify those system-level components, while the negative-test suite evaluates whether the Relay converts PAPER's authority model into enforced denials.
+The comparison bundle occupies 0.0097\% of the referenced interactive LLM latency target, while large-record processing exceeds 10~GiB/s. These measurements indicate that the evaluated primitive costs leave substantial latency budget for TLS/QUIC establishment, policy modules, database/cache access, content classifiers, network placement, model scheduling, and evidence storage. B0--B4 experiments can quantify those system-level components, while the implementation-required negative-test suite must evaluate whether the Governance Relay converts DARI's authority model into enforced denials.
 
 \section{Comparative Scope}
 
 \begin{table*}[t]
 \centering
-\caption{Scope-aligned qualitative comparison of PAPER and adjacent system families.}
+\caption{Scope-aligned qualitative comparison of DARI and adjacent system families.}
 \label{tab:comparison}
 \small
 \begin{tabularx}{\textwidth}{@{}l Y Y Y Y@{}}
@@ -426,44 +426,44 @@ AI gateway & application--provider mediation & gateway/policy dependent & provid
 MCP & AI application--tool/context provider & authorization is deployment-specific & not its objective & not its objective \\
 A2A & agent--agent task/artifact exchange & protocol/task dependent & not its objective & not its objective \\
 in-toto/SLSA & software supply-chain steps/artifacts & step/build policy & artifact identity & post-step/build provenance \\
-\papername{} & Harness--Relay--PIA/runtime & Capability Lease + Policy Epoch & Catalog Model + PMP + Endpoint Lease & native exchange graph/receipt \\
+\dariname{} & application--Governance Relay--Inference Peer/runtime & Authorization Grant + bound policy state & Service Model + Model Artifact Manifest + Inference Peer & governed exchange graph/receipt \\
 \bottomrule
 \end{tabularx}
 \end{table*}
 
-Table~\ref{tab:comparison} locates the contribution in composition and lifecycle semantics rather than lower-layer mechanisms. A conventional gateway could implement many PAPER concepts; the empirical distinction is whether deployment-specific middleware and shared protocol state produce different interoperability, authority-gap, and failure-behavior outcomes. The proposed B2--B4 comparison is designed to measure this distinction.
+Table~\ref{tab:comparison} locates the contribution in composition and lifecycle semantics rather than lower-layer mechanisms. A conventional gateway could implement many DARI concepts; the empirical distinction is whether deployment-specific middleware and shared protocol state produce different interoperability, authority-gap, and failure-behavior outcomes. The proposed B2--B4 comparison is designed to measure this distinction.
 
 \section{Security Consequences of Externalizing Authority}
 
-PAPER treats the model as an untrusted principal and constrains the authority available through its output channel. An unregistered generic client lacks a valid peer credential and session grant. A stolen Harness key remains bounded by lease lifetime, repository/purpose scope, revocation, and optional device evidence. A fake model name cannot select an endpoint when the Relay resolves only an authorized Catalog Model through a signed PMP and active Endpoint Lease. A prompt-injected tool call cannot grant itself authority because execution requires an independent lease/policy transition outside the model's output channel.
+DARI treats the model as an untrusted principal and constrains the authority available through its output channel. An unregistered generic client lacks a valid Credential and Authorization Grant. A stolen application key remains bounded by grant lifetime, repository/purpose scope, revocation, and optional device evidence. A fake model name cannot select an endpoint when the Governance Relay resolves only an authorized Service Model through a signed Model Artifact Manifest and authenticated Inference Peer. A prompt-injected tool call cannot grant itself authority because execution requires an independent authorization transition outside the model's output channel. These are specified security consequences; C3--C6 identify the implementation work needed to claim their enforcement by the evaluated code.
 
 Replay protection requires transcript-bound authentication and idempotency evidence. Transport fallback must preserve the same authorization objects and state machine. Evidence tampering changes the chain root, while an attacker able to compromise all receipt signers can still forge a consistent account. A malicious inspectable Relay can read plaintext and may omit or distort events; cross-component receipts, limited retention, independent export, and optional payload protection reduce but do not eliminate this trust.
 
-These security properties require the protocol's verification profile. The checked-in local-development profile uses self-signed certificates and simplified proof provisioning for installation convenience. The commercial profile specifies organization-issued peer credentials, certificate verification, revocation, and transcript-bound proof validation. The profiles share the integrated Harness--Relay--PIA product path but provide different assurance levels.
+These security properties require the protocol's verification profile. The checked-in local-development profile uses self-signed certificates and simplified proof provisioning for installation convenience. A deployment profile may require organization-issued Credentials, certificate verification, revocation, and transcript-bound proof validation. Such configuration does not substitute for the implementation-required peer-authenticator and authorization tests.
 
 \section{Incremental Gateway Migration}
 
-One protocol kernel supports public cloud, enterprise, and sovereign profiles by varying enabled modules, policy defaults, retention, mobility, and infrastructure placement rather than forking wire semantics. Sovereign deployments can use local PKI, catalogs, PIA endpoints, and offline-signed update bundles. Cross-vendor interoperability remains a distinct empirical claim and is not inferred from profile support.
+One protocol kernel supports public cloud, enterprise, and sovereign profiles by varying enabled modules, policy defaults, retention, mobility, and infrastructure placement rather than forking wire semantics. Sovereign deployments can use local PKI, catalogs, Inference Peers, and offline-signed update bundles. Browser binding and cross-domain federation remain extension profiles, and cross-vendor interoperability is not inferred from profile support.
 
-PCCP supports brownfield adoption through caller inventory, additive catalog/control schemas, parallel observation beside a legacy gateway, dual recording of comparable requests, canary Harness cohorts, and rollback gates. Patty Code implements the migrated client boundary: the official Harness uses PAPER for service communication and exposes no generic model-provider fallback. Administrative APIs and PIA-local adapter APIs remain outside that Harness trust path by design.
+Brownfield adoption can proceed through caller inventory, additive catalog/control schemas, parallel observation beside a legacy gateway, dual recording of comparable requests, canary application cohorts, and rollback gates. The evaluated Patty compatibility profile demonstrates preservation of the existing client and message boundary; it does not establish independent cross-vendor interoperability.
 
 \section{Discussion: Protocol Scope and Consequence Governance}
 
-PAPER suggests that agent protocols should represent the consequences of messages in addition to their transport. Request authentication and application logs may be sufficient for systems that only return text. Systems that disclose private context, invoke tools, mutate repositories, and create durable artifacts also require authority over state transitions at the protocol boundary.
+DARI suggests that agent protocols should represent the consequences of messages in addition to their transport. Request authentication and application logs may be sufficient for systems that only return text. Systems that disclose private context, invoke tools, mutate repositories, and create durable artifacts also require authority over state transitions at the protocol boundary.
 
 The protocol complements rather than absorbs adjacent standards. Its adoption criterion is the durability and privilege of an application's effects: a chat application can use identity, model authority, and evidence without enabling repository tools, while a coding agent can activate capabilities for durable state changes.
 
 \paragraph{Application breadth.}
-Inference, tools, context, files, chat, multimodal input, and directives share identity and session infrastructure while remaining capability-separated. This is what lets a conventional chat application adopt the same protocol core used by Patty Code without inheriting file mutation or tool execution authority.
+Inference, tools, context, files, chat, multimodal input, and directives share identity and session infrastructure while remaining capability-separated. This lets a conventional chat application adopt the same protocol core without inheriting file mutation or tool execution authority.
 
 \paragraph{State and operations.}
-Leases, epochs, resumption, revocation, catalogs, and evidence add operational burden. Cache staleness and control-plane partitions require explicit fail-closed, bounded-stale, or degrade behavior. Binary framing also requires first-class diagnostics and capture tooling.
+Grants, policy-state digests, resumption, revocation, catalogs, and evidence add operational burden. Cache staleness and administrative-plane partitions require explicit fail-closed, bounded-stale, or degrade behavior. Binary framing also requires first-class diagnostics and capture tooling.
 
 \paragraph{Privacy.}
 Fine-grained provenance can become employee surveillance. Deployments need purpose limitation, minimization, role-separated access, retention bounds, selective export, and notice. Content-addressing does not anonymize sensitive content; unsalted hashes can enable guessing attacks.
 
 \paragraph{Deployment and assurance profiles.}
-The implemented product surface spans the complete Harness--Relay--PIA path, while its evidence is organized by assurance profile. The measured profile provides primitive latency, throughput, and allocation results; the commercial profile uses organization-issued peer credentials, certificate validation, revocation state, and transcript-bound proof verification; and the research matrix identifies the experiments that deepen scale, provenance-fidelity, interoperability, and formal-analysis evidence. This separation turns deployment obligations into explicit engineering choices instead of leaving them implicit in middleware configuration.
+The evidence package separates implemented substrate, implementation-required kernel behavior, and extension profiles. The measured profile provides primitive latency, throughput, and allocation results; the claim matrix identifies required authentication, authorization, delegation, and receipt work; and the research matrix identifies the experiments that deepen scale, provenance-fidelity, interoperability, and formal-analysis evidence. This separation prevents deployment intent from being mistaken for completed implementation.
 
 \paragraph{Formal analysis.}
 The state machine and invariants are candidates for formal modeling. This paper provides no formal security proof; provenance establishes recorded causality under component assumptions rather than semantic correctness or authorship truth.
@@ -476,7 +476,7 @@ Generated conceptual artwork is used for Figures~\ref{fig:overview} and~\ref{fig
 
 \section{Reproducibility}
 
-The arXiv source package contains the exact LaTeX source, bibliography, conceptual figures, benchmark dataset, and build instructions. The open implementation repository contains the protocol library, Relay, PIA, Control Plane services, vLLM/SGLang adapters, PIA SDK examples, registries, benchmark harness, and deployment material; the Patty Code repository contains the official Harness integration. From the implementation repository root, the reported primitive measurements can be reproduced with:
+The arXiv source package contains the exact LaTeX source, bibliography, conceptual figures, benchmark dataset, implementation-claim matrix, and build instructions. The implementation repository contains the evaluated framing and transport substrate, benchmark harness, and the Patty compatibility profile described above. From the implementation repository root, the reported primitive measurements can be reproduced with:
 
 \begin{quote}\small
 \texttt{go test ./internal/paper -run '\^\$' -bench 'Benchmark(...)' -benchmem -count=5}
@@ -488,11 +488,11 @@ where the artifact README provides the complete regular expression. The PDF buil
 
 Accountability for an AI-generated commit requires more than identifying the model that produced its tokens. It requires evidence that the path from human intent to durable effect remained within bounded authority across context disclosure, model resolution, tool authorization, and artifact creation.
 
-PAPER represents this path as a Governed Exchange that binds identity, purpose, bounded capability, immutable policy, model and package resolution, inline enforcement, and causal evidence. Model output remains a proposal, while independent protocol transitions authorize protected effects. The resulting receipt records why those transitions were permitted and how their outputs reached an artifact.
+DARI represents this path as a Governed Exchange that binds a Credential, purpose, bounded Authorization Grant, policy state, Model Artifact Manifest, authorization decisions, and causal evidence. Model output remains a proposal, while independent protocol transitions authorize protected effects. An Evidence Receipt is the specified verifiable output of that path.
 
-The implementation comprises a protocol core and governance services, an official Patty Code Harness that uses PAPER for service inference, a Relay--PIA path, reusable vLLM and SGLang adapters, and an SDK boundary for chat, copilots, automation, and custom engines. The measured primitive bundle occupies 0.0097\% of the referenced interactive TTFT budget, and 1~MiB record processing reaches 10.81~GB/s. The assurance matrix reports the validation depth associated with each additional security and system-level claim.
+The evaluated implementation establishes deterministic framing, canonical CBOR, and TLS/TCP and QUIC bindings. Transcript-bound authentication, canonical signed scope, delegated attenuation, and deterministic final receipts remain implementation-required; browser and federation bindings are extension profiles. The measured primitive bundle occupies 0.0097\% of the referenced interactive TTFT budget, and 1~MiB record processing reaches 10.81~GB/s. These values remain primitive measurements rather than evidence of the unimplemented or extension-profile claims.
 
-Together, the specification, integrated implementation, and measured primitive costs support governance as a shared protocol property connecting applications, policy authorities, model infrastructure, tools, and causal evidence. This shifts authority over system effects from model output and deployment-specific convention to explicit, verifiable protocol state.
+Together, the specification, implemented substrate, compatibility lineage, and measured primitive costs define an evidence-bounded path toward governance as a shared protocol property connecting applications, authorization authorities, model infrastructure, tools, and causal evidence. The implementation-claim matrix makes the remaining work explicit.
 
 \bibliographystyle{abbrv}
 \bibliography{references}
@@ -514,9 +514,9 @@ Together, the specification, integrated implementation, and measured primitive c
 ID & Candidate invariant & Coverage & Audit note \\
 \midrule
 I1 & No protected action before peer authentication & Partial & connection-state gating asserted; listener proof verification incomplete \\
-I2 & No protected action outside a valid Capability Lease & Weak & test checks credential time validity, not action authorization \\
-I3 & No action under an unknown Policy Epoch & Weak & test checks connection readiness, not epoch lookup/rejection \\
-I4 & No invocation against an unapproved package/endpoint lease & Partial & signature mutation tested; full route binding not exercised \\
+I2 & No protected action outside a valid Authorization Grant & Weak & test checks credential time validity, not action authorization \\
+I3 & No action under an unknown policy-state digest & Weak & test checks connection readiness, not policy-state lookup/rejection \\
+I4 & No invocation against an unapproved manifest/Inference Peer & Partial & signature mutation tested; full route binding not exercised \\
 I5 & Tool proposal grants no authority by itself & Weak & test checks only a valid peer credential \\
 I6 & Context disclosure requires explicit authority & Missing & no named conformance test \\
 I7 & Transport fallback preserves authorization semantics & Weak & ALPN constant checked; fallback exchange not exercised \\
@@ -535,8 +535,8 @@ The following experiments extend the evidence associated with system-level perfo
 
 \begin{enumerate}
   \item \textbf{Transport and authentication:} exercise full certificate and COSE proof verification, revocation, transcript binding, resumption, and QUIC-to-TCP fallback with p50/p95/p99 connection measurements.
-  \item \textbf{End-to-end inference:} compare B0--B4 on identical payloads and model output, reporting Relay verdict latency, TTFT, streaming throughput, CPU, allocation, and memory.
-  \item \textbf{Governance negatives:} reject expired/replayed leases, unknown epochs, stale catalogs, unapproved packages, invalid endpoints, profile-confused messages, and duplicate side effects through the actual Relay path.
+  \item \textbf{End-to-end inference:} compare B0--B4 on identical payloads and model output, reporting Authorization Decision latency, TTFT, streaming throughput, CPU, allocation, and memory.
+  \item \textbf{Governance negatives:} reject expired or replayed grants, non-attenuating child scopes, unknown policy states, stale catalogs, unapproved manifests, invalid Inference Peers, profile-confused messages, and duplicate side effects through the actual Governance Relay path.
   \item \textbf{Scale and failure:} measure concurrent sessions/streams, Relay restart, control-plane loss, bounded-stale caches, capacity-authority loss, and evidence-backend degradation.
   \item \textbf{Provenance fidelity:} publish a labeled dataset covering human edits, file/function moves, rebases, merges, and multi-agent changes with precision, recall, and confidence calibration.
   \item \textbf{Independent evidence:} demonstrate an implementation not sharing the same implementation stack, publish golden vectors/fuzz results, and obtain an external security review for the production-security profile.

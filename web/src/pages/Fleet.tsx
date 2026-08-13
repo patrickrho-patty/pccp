@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import ConfirmDialog from '../components/ConfirmDialog'
 import EmptyState from '../components/EmptyState'
+import { formatRelative } from '../utils/format'
 
 const FLEET_ACTIONS = [
   { id: 'request_reauthentication', label: '재인증 요청', labelEn: 'Re-auth', severity: 'normal', icon: '🔑' },
@@ -182,7 +183,7 @@ export default function Fleet() {
               <div className="space-y-1">
                 {actionHistory.slice(0, 8).map((e: any, i: number) => (
                   <div key={i} className="flex items-center gap-3 text-xs py-1 border-b border-gray-50 last:border-0">
-                    <span className="font-mono text-gray-500">{e.occurred_at?.slice(11, 19)}</span>
+                    <span className="text-gray-500">{formatRelative(e.occurred_at)}</span>
                     <span className="font-medium text-gray-700">{e.action?.replace(/_/g, ' ')}</span>
                     <span className="text-gray-400">{e.resource_id?.slice(0, 15)}</span>
                     <span className="text-gray-400 ml-auto">{e.details?.slice(0, 40)}</span>
@@ -320,7 +321,7 @@ export default function Fleet() {
                   <div className="space-y-1 max-h-48 overflow-y-auto">
                     {sessionInspector.actions?.map((a: any, i: number) => (
                       <div key={i} className="flex items-center gap-3 text-xs py-1 px-2 bg-gray-50 rounded">
-                        <span className="font-mono text-gray-400 w-20">{a.occurred_at?.slice(11, 19)}</span>
+                        <span className="text-gray-400 w-20">{formatRelative(a.occurred_at)}</span>
                         <span className="font-medium w-32 truncate">{a.action_type || a.action || '-'}</span>
                         <span className="text-gray-500 truncate flex-1">{a.description || a.tool_name || '-'}</span>
                         <span className={`px-1.5 py-0.5 rounded text-[10px] ${a.outcome === 'success' ? 'bg-green-100 text-green-700' : a.outcome === 'error' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>{a.outcome || a.policy_decision || '-'}</span>

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
 import ConfirmDialog from '../components/ConfirmDialog'
+import { formatRelative } from '../utils/format'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['harness_id', 'binary_version', 'device_id'],
@@ -134,7 +135,7 @@ export default function Harnesses() {
                         {activeSessions.length} 활성
                       </Link>
                     </td>
-                    <td className="py-3 text-xs text-gray-400">{h.enrolled_at?.slice(0, 10) || '-'}</td>
+                    <td className="py-3 text-xs text-gray-400">{formatRelative(h.enrolled_at)}</td>
                     <td className="py-3" onClick={e => e.stopPropagation()}>
                       <div className="flex gap-1 flex-wrap">
                         {(h.status === 'active' || h.status === 'enrolled') && <button onClick={() => handleQuarantine(h.id)} className="text-xs text-yellow-600 hover:underline">격리</button>}
@@ -155,7 +156,7 @@ export default function Harnesses() {
                             <div>하네스 ID: <span className="font-mono">{h.harness_id?.slice(0, 30)}</span></div>
                             <div>빌드 해시: <span className="font-mono">{h.build_hash?.slice(0, 16) || '-'}</span></div>
                             <div>릴리스 채널: {h.release_channel || 'stable'}</div>
-                            <div>등록일: {h.enrolled_at?.slice(0, 10)}</div>
+                            <div>등록일: {formatRelative(h.enrolled_at)}</div>
                             <div>등록 모드: {h.enrollment_mode || 'sso'}</div>
                           </div>
                         </div>

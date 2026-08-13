@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import { formatRelative } from '../utils/format'
 
 // Pattern presets — plain-language options, no regex visible to user
 const PATTERN_PRESETS = {
@@ -369,7 +370,7 @@ export default function Security() {
                     <td className="py-3"><span className={sevBadge(f.severity)}>{f.severity}</span></td>
                     <td className="py-3 text-sm">{f.title_ko || f.title}</td>
                     <td className="py-3"><span className={statusBadge(f.status)}>{f.status}</span></td>
-                    <td className="py-3 text-xs text-gray-400">{f.occurred_at?.slice(0, 19)}</td>
+                    <td className="py-3 text-xs text-gray-400">{formatRelative(f.occurred_at)}</td>
                   </tr>
                 ))}
               </tbody>
