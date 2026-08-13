@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import EmptyState from '../components/EmptyState'
 import { Link } from 'react-router-dom'
+import { showToast } from '../components/Toast'
 
 const healthIcon = (status: string) => {
   if (status === 'ok' || status === 'healthy') return { icon: '✅', color: 'text-green-600' }

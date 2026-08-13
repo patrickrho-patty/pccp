@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import EmptyState from '../components/EmptyState'
+import { showToast } from '../components/Toast'
 
 const CATEGORY_INFO: Record<string, { icon: string; name: string; nameEn: string }> = {
   governance: { icon: '⚖️', name: '거버넌스', nameEn: 'Governance' },
@@ -58,6 +59,7 @@ export default function EnterpriseFeatures() {
 
   const seed = async () => {
     await fetch('/api/enterprise/features/seed', { method: 'POST', headers: authHeaders() })
+    showToast('20개 기능 등록됨', 'success')
     load()
   }
 

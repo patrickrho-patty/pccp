@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import EmptyState from '../components/EmptyState'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import { showToast } from '../components/Toast'
 
 export default function SREConsole() {
   const [tab, setTab] = useState<'overview' | 'accounts' | 'capacity' | 'risk'>('overview')
