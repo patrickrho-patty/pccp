@@ -3,7 +3,7 @@
 **Status:** Normative Phase 2 contract
 **Protocol:** DARI — Delegated Authorization and Receipts for Inference
 **Companion specification:** `PAPER_Protocol_Specification_v1.0.md`, Appendix F
-**Implementation status:** Contract only; this document does not claim runtime implementation or measurement
+**Implementation status:** Runtime gates specified; this document does not claim that the current checkout has passed them or provide a deployment measurement
 
 ## 1. Purpose and precedence
 
@@ -22,8 +22,10 @@ Profile identifiers are case-sensitive ASCII strings.
 | `dari.ai/1` | Active extension contract | Provider-neutral inference request/response streaming, usage, cancellation, and model/endpoint binding | `dari/1`; `dari.model-supply/1` when a model or endpoint is selected |
 | `dari.tools/1` | Active extension contract | Transactional effects and tool bridges, including prepare/authorize/commit/abort/status | `dari/1` |
 | `dari.model-supply/1` | Active extension contract | Model Artifact Manifest and Endpoint Authorization | `dari/1` |
-| `dari.web/1` | Schema only | Origin binding, proof of possession, reconnect, and unchanged DARI authorization and receipt semantics | `dari/1`; runtime is `UNSUPPORTED` |
-| `dari.federation/1` | Schema only | Issuer, audience, trust domain, policy intersection, residency constraints, and receipt keys | `dari/1`; runtime is `UNSUPPORTED` |
+| `dari.web/1` | Runtime profile | WebTransport/HTTP/3 browser binding, constrained WebSocket fallback, origin/proof binding, reconnect, and unchanged DARI authorization and receipt semantics | `dari/1`; implementation gate Task 13 |
+| `dari.federation/1` | Runtime profile | Issuer, audience, trust domain, policy intersection, residency constraints, trust-bundle freshness, and receipt keys | `dari/1`; implementation gate Task 14 |
+| `dari.collab/1` | Runtime profile | Governed chat, presence, broadcasts, encrypted delivery, and resumable file transfer | `dari/1`; implementation gate Task 18 |
+| `dari.media/1` | Runtime profile | Governed live-media/voice streams with explicit authorization, cancellation, usage, and receipts | `dari/1`; implementation gate Task 18 |
 
 “Active extension contract” means the normative behavior is frozen for implementation and testing. It does not mean that the current runtime already implements or conforms to it.
 
@@ -39,7 +41,7 @@ The responder MUST return one result for every offer and MUST NOT return a resul
 
 `DEGRADED` MUST NOT weaken authentication, subject-key binding, grant attenuation, deny-overrides, state freshness or rollback, required obligations, receipt truthfulness, attestation scope, evidence verification, or transactional-effect replay protection. A transport change MUST NOT change those semantics.
 
-Until both runtime behavior and its conformance suite exist, `dari.web/1` and `dari.federation/1` MUST always produce `UNSUPPORTED`. Schema parsing, generated types, documentation, a feature flag, or an experimental adapter is not sufficient to return `EXACT` or `DEGRADED`.
+Until the runtime behavior, deployment evidence, and conformance suite for a profile exist, that profile MUST produce `UNSUPPORTED`. Schema parsing, generated types, documentation, a feature flag, or an experimental adapter is not sufficient to return `EXACT` or `DEGRADED`. The implementation plan assigns those runtime gates to Tasks 13, 14, and 18; this document does not permit a schema-only release.
 
 ## 4. Kernel and extension ownership
 
@@ -54,8 +56,10 @@ Until both runtime behavior and its conformance suite exist, `dari.web/1` and `d
 | Inference request/stream/result/usage/cancel | `dari.ai/1` | Kernel validates the enclosing authority and evidence |
 | Effect Prepare, Effect Authorization, Effect Result, and status | `dari.tools/1` | Kernel validates decisions and records evidence |
 | Model Artifact Manifest and Endpoint Authorization | `dari.model-supply/1` | `dari.ai/1` binds selected artifacts/endpoints by digest |
-| Browser origin and reconnect schemas | `dari.web/1` | MUST preserve kernel semantics; runtime unavailable |
-| Cross-domain trust and policy-intersection schemas | `dari.federation/1` | MUST preserve kernel semantics; runtime unavailable |
+| Browser origin and reconnect binding | `dari.web/1` | MUST preserve kernel semantics; runtime uses WebTransport/HTTP/3 with a constrained WebSocket fallback |
+| Cross-domain trust and policy-intersection binding | `dari.federation/1` | MUST preserve kernel semantics; runtime validates bilateral trust, residency, and receipts |
+| Collaboration and encrypted delivery | `dari.collab/1` | MUST preserve kernel semantics; runtime emits ordered evidence |
+| Live media and voice streams | `dari.media/1` | MUST preserve kernel semantics; runtime reports usage, cancellation, and terminal receipts |
 
 An extension MAY add only labels inside the kernel object's extension map and MUST mark any security-critical extension label as critical. An extension MUST NOT reinterpret a registered core label, outcome, state, signature input, digest, or message ID.
 
@@ -146,29 +150,36 @@ When a request selects a model or endpoint, `dari.ai/1` MUST also negotiate `dar
 
 Legacy propose/authorize/execute/result messages remain `paper/1` operations and do not satisfy `dari.tools/1`. A receiver MUST reject a DARI effect message sent without `dari.tools/1`, and MUST reject a legacy tool message presented as a DARI Effect Prepare.
 
-## 10. Schema-only web boundary
+## 10. Web runtime profile
 
-`dari.web/1` reserves schemas for:
+`dari.web/1` defines the executable browser binding for:
 
 - exact web origin and top-level site binding;
 - proof of possession for the browser-held subject key;
 - authenticated channel/exporter or equivalent session binding;
 - reconnect and status-query behavior that cannot duplicate effects;
 - the same Authorization Grant, decision, obligation, freshness, receipt, and attestation semantics as `dari/1`.
+- WebTransport over HTTP/3 as the primary carrier, with a deployment-controlled WebSocket fallback carrying the identical canonical DARI envelope;
+- durable browser-session state containing origin, subject-key thumbprint, last sequence, grant digest, and effect operation IDs;
+- bounded queues, per-origin rate limits, idle expiry, health/readiness, and metrics for proof failure, reconnect conflict, and backpressure.
 
-A web transport MUST NOT treat cookies, origin headers, bearer tokens, or reconnect identifiers alone as proof of possession. Publishing these schemas does not establish browser runtime safety, transport binding, storage protection, reconnect correctness, or conformance. Until those are implemented and tested, the only valid runtime result is `UNSUPPORTED`.
+A web transport MUST NOT treat cookies, origin headers, bearer tokens, or reconnect identifiers alone as proof of possession. A runtime claiming `EXACT` MUST pass the Task 13 browser SDK, transport parity, origin, reconnect, and effect-status vectors. A deployment that has not passed those gates returns `UNSUPPORTED` and records the reason in its capability manifest.
 
-## 11. Schema-only federation boundary
+## 11. Federation runtime profile
 
-`dari.federation/1` reserves schemas for:
+`dari.federation/1` defines the executable cross-domain binding for:
 
 - credential and grant issuer identity;
 - exact audience and trust-domain binding;
 - deterministic intersection of local and remote policy, where denial and the narrower authority win;
 - residency and routing constraints that cannot be weakened in transit;
 - receipt-verification keys and their signed freshness/rollback state.
+- signed trust-bundle discovery/import over configured HTTPS/mTLS or sovereign offline media;
+- monotonic trust-bundle high-water marks, predecessor checks, maximum staleness, and emergency domain quarantine;
+- local and remote decision intersection before forwarding, with the narrower authority and denial winning;
+- cross-domain provenance roots and scoped receipt attestations that remain independently verifiable.
 
-Federation MUST NOT treat a remote signature as local authorization. Each trust domain MUST validate the full chain and apply its local policy; the resulting authority is the intersection of all valid grants and policies. Missing trust, state, residency, or receipt-key material fails closed. Until runtime and cross-domain conformance tests exist, the only valid runtime result is `UNSUPPORTED`.
+Federation MUST NOT treat a remote signature as local authorization. Each trust domain MUST validate the full chain and apply its local policy; the resulting authority is the intersection of all valid grants and policies. Missing trust, state, residency, or receipt-key material fails closed. A runtime claiming `EXACT` MUST pass the Task 14 trust-bundle, issuer/audience, policy-intersection, residency, rollback, offline, and receipt vectors. A deployment that has not passed those gates returns `UNSUPPORTED` and records the reason in its capability manifest.
 
 ## 12. Named Patty reference and legacy profile
 
@@ -197,7 +208,7 @@ A compatibility suite MUST demonstrate all of the following:
 5. A legacy receipt is reported as legacy evidence and never as a DARI multi-party receipt.
 6. A DARI object is never accepted after fallback to a legacy decoder.
 7. A critical unsupported profile fails negotiation; a non-critical unsupported profile is reported explicitly.
-8. `dari.web/1` and `dari.federation/1` always return `UNSUPPORTED` until their respective runtime conformance gates are enabled by a later normative release.
-9. No product/provider name is required to encode or validate a `dari/1`, `dari.ai/1`, `dari.tools/1`, or `dari.model-supply/1` object.
+8. `dari.web/1`, `dari.federation/1`, `dari.collab/1`, and `dari.media/1` return `UNSUPPORTED` until their named runtime and conformance gates pass; a schema-only implementation never reports `EXACT` or `DEGRADED`.
+9. No product/provider name is required to encode or validate a `dari/1`, `dari.ai/1`, `dari.tools/1`, `dari.model-supply/1`, `dari.web/1`, `dari.federation/1`, `dari.collab/1`, or `dari.media/1` object.
 
 Passing these cases demonstrates compatibility behavior only. Runtime conformance for the DARI kernel additionally requires every negative and positive vector in Appendix F.14.

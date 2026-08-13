@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Evolve the actively developed PAPER implementation into the DARI open protocol by updating the English and Korean arXiv paper first, completing the protocol's security-critical behavior second, and performing a compatibility-preserving repository-wide rename last.
+**Goal:** Deliver DARI as a complete, enterprise-ready open protocol and product runtime: publication-quality English/Korean papers, a compatibility-preserving secure data plane, browser and cross-domain bindings, wired control-plane enforcement, governed collaboration/tooling, conformance, operations, and the final repository-wide rename.
 
-**Architecture:** Reuse the existing framing, deterministic CBOR, COSE, TLS/TCP, QUIC, connection state, Relay, inference adapters, and registries. Deepen four kernel objects—Peer Credential, Authorization Grant, Governed Exchange, and Evidence Receipt—behind neutral interfaces. Preserve `paper/1` only in a legacy adapter while all active packages, comments, documentation, UI copy, and publication artifacts move to DARI.
+**Architecture:** Reuse the existing framing, deterministic CBOR, COSE, TLS/TCP, QUIC, connection state, Relay, inference adapters, control-plane services, and registries. Deepen the DARI kernel—Peer Credential, Authorization Grant, Governed Exchange, Authorization Decision, Evidence Receipt, and transactional effects—behind neutral interfaces, then wire those interfaces into every live request path. Add WebTransport/HTTP/3 and constrained WebSocket browser binding, bilateral federation, durable hot-path state, enterprise operations, and governed collaboration as executable profiles. Preserve `paper/1` only in a legacy adapter while all active packages, comments, documentation, UI copy, and publication artifacts move to DARI.
 
 **Tech Stack:** Go 1.26, `fxamacker/cbor`, COSE-Sign1, Ed25519, TLS 1.3, `quic-go`, GORM, LaTeX/XeLaTeX, BibTeX, vLLM/SGLang adapters.
 
@@ -23,8 +23,32 @@
 - Credit **Patty Co., Ltd.** as originator and principal steward; never use “Patty Research.”
 - Korean prose must read as native research writing. Introduce `위임 인가(delegated authorization)` once, then use `권한 위임`; never translate protocol time as `시계`.
 - No paper claim may describe an unimplemented property as measured or enforced.
+- Full-delivery rule: no advertised DARI profile may remain schema-only, documentation-only, generated-code-only, feature-flag-only, deferred, or experimental at the project release gate. Each advertised profile requires a runtime path, durable state where applicable, operator controls, telemetry, failure semantics, black-box conformance, and deployment evidence.
+- Runtime-first enterprise scope: browser access, cross-domain federation, inference/tool/model-supply adapters, collaboration/media, catalog/policy enforcement, metering, provenance, compliance, onboarding, and sovereign operations are implementation tracks in this plan—not future placeholders.
+- A capability may be marked `UNSUPPORTED` during development, but only until its named runtime and conformance tasks below pass. The release gate must not ship a profile whose only evidence is a schema or registry row.
 - Generated LaTeX outputs are rebuilt, never hand-edited.
 - Every behavior change starts with a failing test and ends with targeted tests plus `go test ./...`.
+
+## Deferred-item closure map
+
+The older paper, product, and protocol plans remain historical references. Their unfinished items are absorbed into this plan as executable work:
+
+| Existing wording or gap | Closed by this plan | Required runtime evidence |
+|---|---|---|
+| `implementation-required` peer authentication | Task 6 | transcript-bound proof, revocation termination, black-box negatives |
+| `implementation-required` authorization and attenuation | Tasks 7–8 | signed grants, parent-chain validation, broadening rejection matrix |
+| `implementation-required` decisions, freshness, receipts, selective disclosure | Tasks 9–10 | deny-overrides, checkpoint high-water marks, multi-party receipts, MMR proofs |
+| `implementation-required` transactional effects | Task 11 | durable prepare/authorize/execute/commit/abort/status and reconnect tests |
+| `dari.web/1` “schema only” | Task 13 | WebTransport/HTTP/3 runtime, constrained WebSocket fallback, browser proof-of-possession, origin binding, reconnect and effect-status tests |
+| `dari.federation/1` “schema only” | Task 14 | trust-bundle discovery, bilateral issuer/audience validation, policy intersection, residency enforcement, cross-domain receipt verification |
+| dead or partially wired 14-stage governance path | Task 15 | live Harness→Relay→PIA pipeline, hot-state cache, catalog/PMP/endpoint chain, DLP, scheduler, metering, evidence, backpressure |
+| enterprise stubs and declarative-only controls | Task 16 | SSO/SCIM, hierarchy/delegated admin, KMS/HSM seam, compliance evidence, retention/legal hold, onboarding/migration, rollout/rollback, KPIs |
+| tool/network/secret, SCM, sandbox, and provenance gaps | Task 17 | governed MCP/tool/network/secret calls, real Git/SCM/change-set binding, isolated sandbox executor, provenance-fed live path |
+| chat/presence/file/voice and non-compilable SDK artifacts | Task 18 | DARI collaboration/media streams, encrypted delivery, resumable scanned files, browser/Go SDKs, provider capability adapters |
+| proxy or comment-only conformance tests | Task 19 | capability manifests, canonical/negative vectors, stateful black-box runner, two-implementation interoperability |
+| future wording for live audio, connectors, approved engines, and standards adapters | Tasks 12, 17–19 | versioned runtime profiles with explicit capability reporting and integration tests; no unimplemented feature is advertised |
+
+The following earlier planning documents are retained as publication history, not independent execution sources. Any unfinished implementation language in them is superseded by this closure map and Tasks 1–24: `docs/superpowers/plans/2026-08-12-paper-arxiv-publication-plan.md`, `docs/superpowers/plans/2026-08-12-paper-benchmark-mathematics-implementation.md`, `docs/superpowers/plans/2026-08-12-paper-korean-edition-implementation.md`, `docs/superpowers/plans/2026-08-12-paper-visual-evidence-implementation-plan.md`, `docs/superpowers/plans/2026-08-13-paper-product-positioning-implementation.md`, and `docs/superpowers/plans/2026-08-13-paper-professional-rhetoric-audit.md`.
 
 ---
 
@@ -208,7 +232,7 @@ git commit -m "docs: build DARI English and Korean papers"
 
 **Interfaces:**
 - Consumes: the reviewed English/Korean paper and implementation claim matrix.
-- Produces: normative schemas, invariants, compatibility rules, and profile boundaries consumed by Tasks 5–13.
+- Produces: normative schemas, invariants, compatibility rules, and profile boundaries consumed by Tasks 5–19.
 
 - [ ] **Step 1: Define the neutral kernel and Patty reference profile**
 
@@ -216,7 +240,7 @@ Specify Peer Credential, Authorization Grant, Governed Exchange, Authorization D
 
 - [ ] **Step 2: Add complete normative schemas and validation algorithms**
 
-Add deterministic CDDL for Authorization Grant, parent binding, attenuation, policy decisions/obligations, signed state checkpoints, receipt body/attestations, selective-disclosure proof, and transactional effect messages. Specify fail-closed behavior, validation order, stable message allocations, and required negative conformance cases.
+Add deterministic CDDL for Authorization Grant, parent binding, attenuation, policy decisions/obligations, signed state checkpoints, receipt body/attestations, selective-disclosure proof, transactional effect messages, browser origin/proof/reconnect, federation trust bundles/policy intersections, collaboration envelopes, media chunks, and resumable file transfers. Specify fail-closed behavior, validation order, stable message allocations, operator configuration, and required negative conformance cases.
 
 - [ ] **Step 3: Define compatibility and extension boundaries**
 
@@ -228,11 +252,11 @@ dari/1 kernel -> active protocol
 dari.ai/1 -> provider-neutral inference
 dari.tools/1 -> effects and tool bridges
 dari.model-supply/1 -> model artifact and endpoint authorization
-dari.web/1 -> schema only until runtime conformance exists
-dari.federation/1 -> schema only until runtime conformance exists
+dari.web/1 -> browser/WebTransport and constrained WebSocket runtime profile
+dari.federation/1 -> bilateral cross-domain trust and policy-intersection runtime profile
 ```
 
-The spec must prohibit claiming web or federation runtime conformance from schema publication alone.
+The spec must define wire behavior, persistence, failure modes, operator configuration, and conformance vectors for web and federation. During development a runtime may return `UNSUPPORTED` until Tasks 13–14 pass; schema publication alone must never upgrade the result to `EXACT` or `DEGRADED`.
 
 - [ ] **Step 4: Verify every Phase 2 implementation object has a normative section**
 
@@ -257,7 +281,7 @@ git commit -m "docs: define the normative DARI protocol contract"
 - Create: `conformance/testdata/paper1/record.bin.hex`
 
 **Interfaces:**
-- Produces byte-for-byte fixtures that Task 14 must continue to decode.
+- Produces byte-for-byte fixtures that Task 19 must continue to decode.
 
 - [ ] **Step 1: Write a golden HELLO test**
 
@@ -314,11 +338,11 @@ func TestPeerAuthenticatorRejectsAnotherTranscript(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Implement the verifier**
+- [ ] **Step 2: Implement the verifier and reconcile the wire binding**
 
-Decode the COSE credential; verify issuer signature, validity, protocol version, and revocation epoch; verify proof of possession over transcript hash plus challenge ID. `PeerCredential.VerifySignature` must decode the COSE object and compare its payload byte-for-byte with `Credential.SigningBytes()` after signature verification; a valid signature over a different credential payload must fail. Remove `harnessID := string(proof.Credential)` and derive identity only from the verified credential.
+Decode the COSE credential; verify issuer signature, validity, protocol version, and revocation epoch; verify proof of possession over the canonical transcript hash, negotiated profile/transport binding, challenge ID, and credential digest. `PeerCredential.VerifySignature` must decode the COSE object and compare its payload byte-for-byte with `Credential.SigningBytes()` after signature verification; a valid signature over a different credential payload must fail. Remove `harnessID := string(proof.Credential)` and derive identity only from the verified credential. Reconcile the transcript, epoch-evidence, and credential-body encodings with Appendix F.3 and add the exact CDDL/golden vectors before enabling the live listener.
 
-- [ ] **Step 3: Terminate active sessions by revoked serial and verify**
+- [ ] **Step 3: Terminate active sessions by revoked serial and verify propagation**
 
 ```bash
 go test ./internal/paper ./internal/identity ./internal/relay -run 'Auth|Peer|Revok|Transcript' -count=1
@@ -331,6 +355,8 @@ git -C patty-code-pccp commit -m "feat: present transcript-bound protocol creden
 git diff --cached --name-only -- '*.go' >> /tmp/dari-owned-go-files.txt
 git commit -m "feat: enforce transcript-bound peer authentication"
 ```
+
+The identity revocation snapshot must be pushed to every active Relay listener (not merely stored in the identity service), and the Patty Code client must load its enrolled credential/private key and construct the real proof rather than sending an identifier placeholder. Add a reconnect test that revokes a serial in the control plane and observes the existing stream terminate before the next protected message.
 
 ### Task 7: Introduce a completely signed Authorization Grant
 
@@ -569,7 +595,7 @@ git commit -m "feat: add transactional effect lifecycle"
 - Modify: `adapters/sglang/adapter.go`
 
 **Interfaces:**
-- Produces `dari.ai/1`, `dari.tools/1`, `dari.model-supply/1`, `dari.web/1`, `dari.federation/1`, `NegotiateProfiles(local, remote []ProfileOffer) ([]ProfileResult, error)`, and `EXACT|DEGRADED|UNSUPPORTED`.
+- Produces `dari.ai/1`, `dari.tools/1`, `dari.model-supply/1`, `dari.web/1`, `dari.federation/1`, `dari.collab/1`, `dari.media/1`, `NegotiateProfiles(local, remote []ProfileOffer) ([]ProfileResult, error)`, and `EXACT|DEGRADED|UNSUPPORTED`.
 
 - [ ] **Step 1: Test exact agreement, degraded disclosure, and critical-profile rejection**
 
@@ -587,9 +613,9 @@ func TestProfilesRejectUnsupportedCriticalOffer(t *testing.T) {
 
 Use Inference Peer, Model Artifact Manifest, Endpoint Authorization, and Governance Relay. Keep PIA/PMP as Patty product adapter names outside the kernel.
 
-- [ ] **Step 3: Register bounded web and federation schemas**
+- [ ] **Step 3: Register executable profile contracts and provider capability adapters**
 
-Web declares origin binding, proof-of-possession, reconnect, and unchanged authorization/receipt semantics. Federation declares issuer, audience, trust domain, policy intersection, residency constraints, and receipt keys. Runtime support reports `UNSUPPORTED` until tested.
+Register `dari.ai/1`, `dari.tools/1`, and `dari.model-supply/1` with exact mandatory/optional capability sets, adapter-loss reporting (`EXACT`, `DEGRADED`, or `UNSUPPORTED`), and provider-neutral model/endpoint bindings. Reserve `dari.web/1`, `dari.federation/1`, `dari.collab/1`, and `dari.media/1` for the concrete runtime tasks below; their registry entries must point to executable handlers and conformance manifests rather than schema-only status.
 
 - [ ] **Step 4: Test and commit**
 
@@ -599,7 +625,349 @@ git add internal/paper/profiles.go internal/paper/profiles_test.go registry/exte
 git commit -m "feat: define vendor-neutral protocol profiles"
 ```
 
-### Task 13: Replace proxy conformance tests with black-box invariants
+### Task 13: Implement the browser/WebTransport runtime profile
+
+**Files:**
+- Create: `internal/webbinding/server.go`
+- Create: `internal/webbinding/server_test.go`
+- Create: `internal/webbinding/session_store.go`
+- Create: `internal/webbinding/session_store_test.go`
+- Modify: `internal/relay/paper_listener.go`
+- Modify: `internal/relay/server.go`
+- Modify: `internal/api/server.go`
+- Modify: `internal/api/services.go`
+- Modify: `internal/paper/transport.go`
+- Create: `sdk/web/package.json`
+- Create: `sdk/web/src/client.ts`
+- Create: `sdk/web/src/client.test.ts`
+- Create: `sdk/web/README.md`
+- Create: `conformance/testdata/dariweb1/`
+- Modify: `deployments/kubernetes/relay.yaml`
+- Modify: `deployments/docker/docker-compose.yml`
+
+**Interfaces:**
+- Produces `WebBindingServer`, `AcceptWebTransport`, `AcceptWebSocketFallback`, `VerifyWebOrigin`, `VerifyBrowserProof`, `ReconnectSession`, and a browser `DariClient` with `open`, `send`, `close`, and `status` methods.
+- WebTransport over HTTP/3 is the primary carrier. The constrained WebSocket fallback carries the same canonical DARI envelope and never introduces cookie, bearer-token, or alternate authorization semantics.
+
+- [ ] **Step 1: Write failing browser-binding tests**
+
+Cover exact origin/site binding, browser-held proof-of-possession, transcript/channel binding, challenge freshness, cross-site rejection, cookie-only rejection, and critical-profile negotiation. The first integration test must prove that a copied bearer token cannot open a governed exchange.
+
+```go
+func TestWebBindingRejectsCookieWithoutProofOfPossession(t *testing.T) {
+    server := newWebBindingFixture(t)
+    _, err := server.Open(webbinding.OpenRequest{Origin: "https://app.example", Cookie: "session-only"})
+    if !errors.Is(err, webbinding.ErrMissingProofOfPossession) { t.Fatalf("got %v", err) }
+}
+```
+
+- [ ] **Step 2: Implement the HTTP/3 and fallback listeners**
+
+Bind the authenticated transcript to the HTTP/3 exporter (or negotiated equivalent), validate `Origin` against organization policy, issue a one-use challenge, and pass the proof to the same peer-authenticator, grant, decision, freshness, effect, and receipt code used by native transports. The WebSocket path must reject an envelope whose profile, transcript digest, or sequence differs.
+
+- [ ] **Step 3: Add durable browser sessions and safe reconnect**
+
+Persist session ID, browser-key thumbprint, origin, last sequence, grant digest, and effect operation IDs in the database/cache boundary. Reconnect requires a fresh proof, replays only missing evidence, and queries `EFFECT_STATUS` instead of re-executing. Add bounded send queues, per-origin rate limits, idle expiry, and metrics for proof failures, reconnect conflicts, and backpressure.
+
+- [ ] **Step 4: Publish the browser SDK and deployment configuration**
+
+Implement `sdk/web/src/client.ts` with WebCrypto key generation/import, challenge signing, canonical DARI framing, status-query reconnect, and explicit `EXACT|DEGRADED|UNSUPPORTED` results. Do not expose raw model endpoints or bypass the Relay. Add HTTP/3 certificates, origin allowlists, proxy headers, and health/readiness checks without putting credentials in manifests.
+
+- [ ] **Step 5: Run profile conformance and commit**
+
+```bash
+go test ./internal/webbinding ./internal/relay ./internal/paper -run 'Web|Origin|Browser|Reconnect|WebSocket' -count=1
+(cd sdk/web && npm test)
+go test ./conformance -run 'DARIWeb|WebTransport|Browser' -count=1
+git add internal/webbinding internal/relay/paper_listener.go internal/relay/server.go internal/api/server.go internal/api/services.go internal/paper/transport.go sdk/web conformance/testdata/dariweb1 deployments
+git commit -m "feat: implement DARI browser transport profile"
+```
+
+### Task 14: Implement bilateral federation and cross-domain verification
+
+**Files:**
+- Create: `internal/federation/trust_bundle.go`
+- Create: `internal/federation/trust_bundle_test.go`
+- Create: `internal/federation/validator.go`
+- Create: `internal/federation/validator_test.go`
+- Create: `internal/federation/policy_intersection.go`
+- Create: `internal/federation/policy_intersection_test.go`
+- Modify: `internal/relay/service.go`
+- Modify: `internal/relay/pipeline.go`
+- Modify: `internal/config/config.go`
+- Modify: `internal/sovereign/service.go`
+- Create: `conformance/testdata/darifederation1/`
+- Modify: `registry/profiles.csv`
+- Modify: `registry/crypto.csv`
+- Modify: `deployments/kubernetes/relay.yaml`
+
+**Interfaces:**
+- Produces `TrustDomain`, `FederationTrustBundle`, `DiscoverTrustBundle`, `ValidateFederatedGrant`, `IntersectPolicy`, `ValidateResidency`, and `VerifyFederatedReceipt`.
+- A remote signature is evidence, not local authorization. Every request passes issuer/audience/subject-key validation, local policy, residency, freshness, and receipt-key validation in the receiving domain.
+
+- [ ] **Step 1: Write failing federation tests**
+
+Cover unknown issuer, wrong audience, stale/rolled-back trust bundle, revoked issuer key, policy conflict, narrowed authority, residency violation, missing receipt key, remote-only authorization, and offline cached-bundle expiry.
+
+```go
+func TestFederationUsesPolicyIntersection(t *testing.T) {
+    local := policy.Allow("repo.read", "kr"); remote := policy.Allow("repo.read", "us")
+    if _, err := federation.IntersectPolicy(local, remote); !errors.Is(err, federation.ErrResidencyConflict) { t.Fatalf("got %v", err) }
+}
+```
+
+- [ ] **Step 2: Implement signed trust-bundle discovery and rollback protection**
+
+Define stable issuer, audience, and trust-domain identifiers. Fetch bundles over configured HTTPS/mTLS endpoints, verify signature and predecessor, persist a monotonic high-water mark, enforce issued/expiry/max-staleness, and fail closed for integrity state. Sovereign deployments import the same bundle format offline and emit an evidence event for import and activation.
+
+- [ ] **Step 3: Implement grant, policy, and receipt federation**
+
+Validate the full parent grant chain, bind the receiving audience and local subject key, intersect every action/resource/time/budget/residency constraint, and require local `ALLOW` plus the remote decision. Verify attestations against the correct domain trust bundle and preserve both domains' provenance roots without rewriting either root.
+
+- [ ] **Step 4: Add federation controls and observability**
+
+Add organization peer allowlists, trust-bundle rotation, emergency domain quarantine, per-domain rate/budget limits, residency configuration, and metrics for stale bundles, rejected issuers, intersection denials, and receipt failures. Health/readiness must distinguish “trust not configured” from “trust stale.”
+
+- [ ] **Step 5: Run profile conformance and commit**
+
+```bash
+go test ./internal/federation ./internal/relay ./internal/sovereign -run 'Federat|Trust|Residency|Intersection|Receipt' -count=1
+go test ./conformance -run 'Federation|CrossDomain|TrustBundle' -count=1
+git add internal/federation internal/relay/service.go internal/relay/pipeline.go internal/config/config.go internal/sovereign/service.go conformance/testdata/darifederation1 registry deployments
+git commit -m "feat: implement DARI federation profile"
+```
+
+### Task 15: Wire the complete governance hot path into the live inference exchange
+
+**Files:**
+- Modify: `internal/relay/paper_listener.go`
+- Modify: `internal/relay/pipeline.go`
+- Modify: `internal/relay/service.go`
+- Modify: `internal/relay/server.go`
+- Modify: `internal/paper/ai_v2.go`
+- Modify: `internal/catalog/service.go`
+- Modify: `internal/policy/service.go`
+- Modify: `internal/scheduler/service.go`
+- Modify: `internal/detection/service.go`
+- Modify: `internal/security/service.go`
+- Modify: `internal/context/service.go`
+- Modify: `internal/network/service.go`
+- Modify: `internal/tools/service.go`
+- Modify: `internal/workintel/service.go`
+- Modify: `internal/events/service.go`
+- Modify: `internal/provenance/service.go`
+- Modify: `internal/gpuops/service.go`
+- Modify: `internal/replay/service.go`
+- Modify: `internal/pia/service.go`
+- Modify: `internal/pia/vllm.go`
+- Modify: `internal/pia/paper_listener.go`
+- Create: `internal/relay/hot_state.go`
+- Create: `internal/relay/hot_state_test.go`
+- Create: `internal/relay/inference_stream.go`
+- Create: `internal/relay/inference_stream_test.go`
+
+**Interfaces:**
+- Produces `HotStateCache`, `GovernedInference`, `StreamResult`, and one live `HandleApplicationMessage` path that invokes the 14 stages in order and returns a signed verdict/receipt.
+- The hot path reads immutable snapshots from memory or a bounded local cache, never queries the database per token/chunk, and emits usage, event, provenance, and evidence records asynchronously with durable retry semantics.
+
+- [ ] **Step 1: Write the end-to-end failing test**
+
+Start an in-process Harness→Relay→PIA exchange with a fake model endpoint. Assert that an unregistered model, revoked Harness, stale policy epoch, DLP violation, capacity denial, unauthorized tool, and unapproved endpoint are rejected before the fake PIA observes the request. Assert that an allowed streaming request produces ordered chunks, usage, provenance, and a final receipt without a manual close call.
+
+- [ ] **Step 2: Implement hot-state snapshots and stage enforcement**
+
+Build versioned snapshots for trust bundles, revocations, leases, policy epochs, model catalog, endpoint authorization, capacity, and risk state. Replace permissive helpers in `pipeline.go` with fail-closed lookups that validate the grant/decision/checkpoint chain. Wire the live listener to the pipeline and remove the silent HTTP/OpenAI fallback for protected requests.
+
+- [ ] **Step 3: Implement provider-neutral streaming and admission**
+
+Translate `dari.ai/1` requests to vLLM/SGLang through a common stream interface. Enforce catalog-model → signed model artifact → endpoint authorization → PIA identity before dispatch. Connect the fair scheduler, capacity lease, account-integrity detector, tool/network/secret brokers, per-exchange token accounting, cancellation, backpressure, and bounded retries. A provider-specific field that cannot be translated must be reported as `DEGRADED` or rejected.
+
+- [ ] **Step 4: Emit live usage, events, provenance, and receipts**
+
+Record normalized usage and latency from actual stream telemetry, append signed events with causal sequence, create provenance spans for prompt/context/model/tool/file/code edges, and call `CloseExchange` automatically on success, denial, cancellation, and transport failure. Evidence failure must be visible to the caller and operator.
+
+- [ ] **Step 5: Verify PIA trust and model supply**
+
+Verify the signed Model Artifact Manifest before model load, bind endpoint leases to the verified artifact digest, replace placeholder attestation/key-release values with an explicit software-only or hardware-backed provider result, and enforce re-attestation/revocation on the PIA connection.
+
+- [ ] **Step 6: Test the live path and commit**
+
+```bash
+go test ./internal/relay ./internal/pia ./internal/paper ./internal/catalog ./internal/scheduler ./internal/detection ./internal/security ./internal/context ./internal/network ./internal/tools ./internal/provenance ./internal/workintel -run 'Pipeline|Inference|Stream|Catalog|Lease|DLP|Scheduler|Usage|Evidence|Provenance|Attestation' -count=1
+go test ./test ./... -count=1
+git add internal/relay internal/paper/ai_v2.go internal/catalog internal/policy internal/scheduler internal/detection internal/security internal/context internal/network internal/tools internal/workintel internal/events internal/provenance internal/gpuops internal/replay internal/pia
+git commit -m "feat: wire DARI governance into live inference"
+```
+
+### Task 16: Close the enterprise control-plane, security, and sovereign operations gaps
+
+**Files:**
+- Modify: `internal/identity/service.go`
+- Modify: `internal/identity/auth.go`
+- Modify: `internal/sso/service.go`
+- Modify: `internal/models/identity.go`
+- Modify: `internal/models/enterprise.go`
+- Modify: `internal/policy/service.go`
+- Modify: `internal/models/policy.go`
+- Modify: `internal/configmgmt/service.go`
+- Modify: `internal/compliance/service.go`
+- Modify: `internal/privacy/service.go`
+- Modify: `internal/keymgmt/service.go`
+- Modify: `internal/events/service.go`
+- Modify: `internal/reporting/service.go`
+- Modify: `internal/sovereign/service.go`
+- Modify: `internal/attestation/service.go`
+- Modify: `internal/api/server.go`
+- Modify: `internal/api/services.go`
+- Create: `internal/retention/worker.go`
+- Create: `internal/retention/worker_test.go`
+- Create: `internal/onboarding/service.go`
+- Create: `internal/onboarding/service_test.go`
+- Create: `internal/observability/metrics.go`
+- Create: `internal/observability/metrics_test.go`
+- Modify: `deployments/kubernetes/control-plane.yaml`
+- Modify: `deployments/kubernetes/relay.yaml`
+- Modify: `deployments/docker/docker-compose.yml`
+
+**Interfaces:**
+- Produces `OrgHierarchyResolver`, `AdminAuthorization`, `SignedSSOProvider`, `SCIMProvisioner`, `RetentionWorker`, `KMSProvider`, `ComplianceAssessment`, `RolloutCoordinator`, and `EnterpriseMetrics`.
+- Administrative reads and writes use a server-side privacy-aware authorization boundary regardless of which console rendered the request. Platform operators cannot infer prompt, billing, communications, or work-intelligence content without an explicit scoped grant and audit event.
+
+- [ ] **Step 1: Test identity, hierarchy, and admin isolation**
+
+Add failing tests for SAML signature rejection, OIDC state/nonce validation, SCIM create/update/deactivate, group→affiliate→division resolution, delegated-admin scope, contractor expiry, Harness quarantine, and the two-console privacy boundary. Exercise HTTP authorization middleware rather than only service methods.
+
+- [ ] **Step 2: Implement real policy/compliance records and approvals**
+
+Persist policy packs, ABAC attributes, epoch diffs, exception approvals, acknowledgement campaigns, compliance controls, evidence attachments, remediation tasks, CSAP/ISMS-P overlays, and government/sovereign applicability. Replace static template scoring and “assessment pending” strings with evidence-backed evaluation that cites source, version, and evidence digest for every control.
+
+- [ ] **Step 3: Implement key, attestation, retention, and offline operations**
+
+Define a `KMSProvider` interface with local-development, customer-KMS, and HSM-backed implementations. Rotate/revoke signing keys with signed checkpoints, never persist plaintext private keys in ordinary models, and make trust-bundle/model/update imports verify signatures and rollback state. Run retention/purge workers that honor legal holds, emit deletion evidence, and preserve redaction manifests. Make sovereign offline updates and time proofs real state transitions rather than “would apply” placeholders.
+
+- [ ] **Step 4: Implement onboarding, rollout, migration, and HA controls**
+
+Provide an idempotent organization/onboarding flow, import existing v1 data into DARI compatibility records, stage policy/catalog changes through validation→approval→rollout→rollback, and expose readiness for PostgreSQL, durable event storage, cache, object storage, and multi-replica Relay deployment. Health checks fail closed when required trust/policy/catalog state is unavailable.
+
+- [ ] **Step 5: Add metrics, reports, audit, and operator evidence**
+
+Instrument request admission, policy denials, queue time, TTFT, streaming throughput, GPU/model health, usage, security findings, evidence finalization, federation, WebTransport, and retention jobs. Generate signed scheduled governance/usage/security/executive reports and export machine-verifiable bundles without leaking secrets. Every admin action and configuration transition enters the durable event spine.
+
+- [ ] **Step 6: Test and commit**
+
+```bash
+go test ./internal/identity ./internal/sso ./internal/policy ./internal/compliance ./internal/privacy ./internal/keymgmt ./internal/events ./internal/reporting ./internal/sovereign ./internal/attestation ./internal/retention ./internal/onboarding ./internal/observability ./internal/api -run 'SSO|OIDC|SCIM|Hierarchy|Admin|Policy|Compliance|Retention|LegalHold|KMS|Attestation|Offline|Onboard|Rollout|Metric' -count=1
+go test ./test ./... -count=1
+git add internal/identity internal/sso internal/models internal/policy internal/configmgmt internal/compliance internal/privacy internal/keymgmt internal/events internal/reporting internal/sovereign internal/attestation internal/retention internal/onboarding internal/observability internal/api deployments
+git commit -m "feat: complete enterprise control-plane operations"
+```
+
+### Task 17: Make tools, SCM, sandbox, and provenance executable enterprise boundaries
+
+**Files:**
+- Modify: `internal/tools/service.go`
+- Modify: `internal/mcp/service.go`
+- Modify: `internal/mcpmarket/service.go`
+- Modify: `internal/network/service.go`
+- Modify: `internal/secret/service.go`
+- Modify: `internal/gitscm/service.go`
+- Modify: `internal/sandbox/service.go`
+- Modify: `internal/connectors/service.go`
+- Modify: `internal/provenance/service.go`
+- Modify: `internal/models/tool_runtime.go`
+- Modify: `internal/models/project.go`
+- Create: `internal/tools/executor.go`
+- Create: `internal/tools/executor_test.go`
+- Create: `internal/sandbox/runtime.go`
+- Create: `internal/sandbox/runtime_test.go`
+- Create: `internal/gitscm/provider.go`
+- Create: `internal/gitscm/provider_test.go`
+
+**Interfaces:**
+- Produces `ToolExecutor`, `NetworkBroker`, `SecretBroker`, `RepositoryProvider`, `SandboxRuntime`, `ConnectorDispatcher`, and `ProvenanceRecorder` implementations that accept only a verified DARI grant/decision and return evidence references.
+
+- [ ] **Step 1: Test tool/MCP/network/secret denial before execution**
+
+Use fake executors and assert that an unauthorized command, MCP server, destination, or secret request is rejected before the external process/socket is touched. Verify approval obligations, tool descriptors, network byte accounting, secret lease expiry, kill switches, and transactional effect receipts.
+
+- [ ] **Step 2: Implement real tool and connector execution**
+
+Resolve registered MCP/tools through signed descriptors, enforce input/output schemas, run high-risk actions through the effect lifecycle, and dispatch Slack/Teams/Kakao Work/Jira/CI connectors only through stored scoped credentials. Normalize provider-specific results and record retries/failures in the event spine.
+
+- [ ] **Step 3: Implement SCM and change-set binding**
+
+Add GitHub/GitLab/local provider adapters for clone/fetch/webhook, branch protection, baseline tagging, diff/commit binding, and repository sensitivity. Bind every accepted file/code change to session, exchange, model, tool, policy, and commit digests; reject writes to frozen or unapproved branches.
+
+- [ ] **Step 4: Implement isolated sandbox execution**
+
+Run commands in an actual isolated runtime selected by policy (container/VM/remote worker), enforce CPU/memory/network/filesystem limits, stream output with backpressure, capture forensic snapshots, and reconcile crash/retry state through `EFFECT_STATUS`. A recorded sandbox definition alone is not evidence of execution.
+
+- [ ] **Step 5: Feed live provenance and test the boundaries**
+
+Create an end-to-end test that performs a governed tool call, network request, secret lease, sandbox command, repository diff, and commit candidate, then verifies the complete provenance graph and receipt. Include changed-input, replay, timeout, connector outage, branch-policy, and crash cases.
+
+- [ ] **Step 6: Test and commit**
+
+```bash
+go test ./internal/tools ./internal/mcp ./internal/mcpmarket ./internal/network ./internal/secret ./internal/gitscm ./internal/sandbox ./internal/connectors ./internal/provenance -run 'Tool|MCP|Network|Secret|Git|SCM|Sandbox|Connector|Provenance|Effect' -count=1
+go test ./... -count=1
+git add internal/tools internal/mcp internal/mcpmarket internal/network internal/secret internal/gitscm internal/sandbox internal/connectors internal/provenance internal/models
+git commit -m "feat: enforce governed tools SCM and sandbox boundaries"
+```
+
+### Task 18: Deliver governed collaboration, media, and compilable SDKs
+
+**Files:**
+- Create: `internal/paper/collaboration.go`
+- Create: `internal/paper/collaboration_test.go`
+- Create: `internal/paper/media.go`
+- Create: `internal/paper/media_test.go`
+- Modify: `internal/paper/messages.go`
+- Modify: `internal/communications/service.go`
+- Modify: `internal/realtime/service.go`
+- Modify: `internal/models/communications.go`
+- Modify: `internal/provenance/service.go`
+- Rename: `sdk/piapi/piapi.go.txt` → `sdk/piapi/piapi.go`
+- Rename: `sdk/examples/simple-pia.go.txt` → `sdk/examples/simple-pia.go`
+- Create: `sdk/dari/dari.go`
+- Create: `sdk/dari/dari_test.go`
+- Modify: `web/src/pages/Communications.tsx`
+- Modify: `web/src/pages/Sessions.tsx`
+- Modify: `web/src/pages/LiveView.tsx`
+- Create: `conformance/testdata/daricollab1/`
+- Create: `conformance/testdata/darimedia1/`
+- Modify: `registry/profiles.csv`
+
+**Interfaces:**
+- Produces `CollaborationStream`, `PresenceUpdate`, `BroadcastDelivery`, `FileTransfer`, `VoiceMessage`, and importable Go/TypeScript DARI clients. `dari.collab/1` and `dari.media/1` reuse grant, decision, freshness, receipt, and effect semantics; they are not side channels.
+
+- [ ] **Step 1: Test ordered encrypted delivery**
+
+Write tests for per-conversation authorization, presence expiry, targeted broadcasts, direct/group message encryption using a standard MLS/AEAD adapter, ordered delivery, reconnect replay, and unauthorized administrative reads. The Harness must receive the same event and evidence semantics as the web client.
+
+- [ ] **Step 2: Implement chat, presence, broadcast, and voice-message streams**
+
+Carry content class, sender/conversation, sequence, classification, retention, and content digest in canonical messages. Keep asynchronous voice messages distinct from any live-media extension; when `dari.media/1` is negotiated, stream Opus/WebRTC-compatible chunks with explicit authorization, cancellation, usage, and receipt events.
+
+- [ ] **Step 3: Implement governed file transfer**
+
+Implement `OFFER → METADATA_POLICY → CONTENT_POLICY → RECIPIENT_AUTHORIZATION → ACCEPT → CHUNK_TRANSFER → VERIFY → STORE/DELIVER → RECEIPT`, with resumable ranges, per-chunk digests, malware/PII scanning hooks, storage encryption, retention/legal hold, and no delivery after a failed policy decision.
+
+- [ ] **Step 4: Turn SDK examples into tested libraries and wire the UI**
+
+Replace `.go.txt` examples with compilable packages that open DARI sessions, negotiate profiles, send governed inference/collaboration messages, reconnect safely, and verify receipts. Update the web console to consume live streams, show policy/evidence state, and deep-link to sessions, exchanges, files, and provenance instead of rendering scripted data.
+
+- [ ] **Step 5: Test and commit**
+
+```bash
+go test ./internal/paper ./internal/communications ./internal/realtime ./internal/provenance ./sdk/... -run 'Collab|Media|Presence|Broadcast|File|Voice|Receipt|SDK' -count=1
+(cd sdk/web && npm test)
+go test ./conformance -run 'Collab|Media|File|SDK' -count=1
+git add internal/paper internal/communications internal/realtime internal/provenance internal/models sdk web/src/pages/Communications.tsx web/src/pages/Sessions.tsx web/src/pages/LiveView.tsx conformance/testdata/daricollab1 conformance/testdata/darimedia1 registry/profiles.csv
+git commit -m "feat: deliver governed collaboration and SDKs"
+```
+
+### Task 19: Replace proxy conformance tests with black-box invariants
 
 **Files:**
 - Modify: `conformance/conformance_test.go`
@@ -607,6 +975,10 @@ git commit -m "feat: define vendor-neutral protocol profiles"
 - Create: `conformance/runner_test.go`
 - Create: `conformance/manifest.json`
 - Create: `conformance/testdata/dari1/`
+- Create: `conformance/testdata/dariweb1/`
+- Create: `conformance/testdata/darifederation1/`
+- Create: `conformance/testdata/daricollab1/`
+- Create: `conformance/testdata/darimedia1/`
 
 **Interfaces:**
 - Produces capability-scoped results and canonical/negative vectors.
@@ -621,7 +993,7 @@ Attempt excluded context and prove denial before the fake Inference Peer receive
 
 - [ ] **Step 3: Publish exact support in `manifest.json`**
 
-Each record names profile, test, normative requirement, and result. Do not report web/federation runtime support without runtime tests.
+Each record names profile, capability, test, normative requirement, deployment mode, and result. Do not report any profile runtime support without runtime tests, deployment evidence, and a capability manifest. Web, federation, collaboration, and media profiles are executable tracks; `UNSUPPORTED` is valid only when a deployment explicitly disables a tested capability and the manifest records the reason. The runner must execute against at least the root implementation and one independent SDK/client implementation, compare canonical bytes and state transitions, and fail if a negative case reaches the external executor.
 
 - [ ] **Step 4: Test and commit**
 
@@ -638,7 +1010,7 @@ git commit -m "test: enforce protocol invariants end to end"
 
 **Phase entry gate:** Before any `git mv`, every rename target must be free of uncommitted, non-task-owned changes in its owning repository. Compare each path against the `/tmp/dari-task-*-before.patch` snapshots. Commit or preserve task-owned work with patch staging; if unrelated user changes remain inseparable, stop the rename phase and report the exact paths instead of staging them through a move.
 
-### Task 14: Rename the Go package with a bounded compatibility adapter
+### Task 20: Rename the Go package with a bounded compatibility adapter
 
 **Files:**
 - Rename: `internal/paper/` → `internal/dari/`
@@ -689,7 +1061,7 @@ git commit -m "refactor: rename protocol package from PAPER to DARI"
 
 Before `git add -p`, confirm the already-staged `git mv` entries and stage only the moved paths plus exact dependent Go files shown by `git status --short`. Do not stage unrelated pre-existing hunks.
 
-### Task 15: Rename Patty Code's protocol client
+### Task 21: Rename Patty Code's protocol client
 
 **Files:**
 - Rename: `patty-code-pccp/internal/paperproto/` → `patty-code-pccp/internal/dariproto/`
@@ -712,7 +1084,7 @@ git -C patty-code-pccp status --short
 
 - [ ] **Step 2: Move the package in its owning repository and update imports/selectors**
 
-New clients offer `dari/1` first. They accept `paper/1` only when compatibility is enabled and never drop authorization or receipt requirements.
+New clients offer `dari/1` first. They load the enrolled Peer Credential and private proof-of-possession key from the configured secure provider, bind each proof to the negotiated transcript/challenge/profile, and accept `paper/1` only when compatibility is enabled. They never drop authorization or receipt requirements.
 
 Keep the legacy ALPN literal and its byte-level compatibility assertion only in `legacy_paper1.go` and `compatibility_test.go`; active client paths refer to the named legacy constant.
 
@@ -729,7 +1101,7 @@ git -C patty-code-pccp commit -m "refactor: rename protocol client from PAPER to
 
 `patty-code-pccp/.git` is a gitdir file, so this task is committed in the nested repository and never staged in the PCCP root repository.
 
-### Task 16: Rename every active document, artifact, registry entry, comment, and UI label
+### Task 22: Rename every active document, artifact, registry entry, comment, and UI label
 
 **Files:**
 - Rename: `docs/plans/PAPER/` → `docs/plans/DARI/`
@@ -793,7 +1165,7 @@ git diff --cached --check
 git commit -m "docs: complete repository-wide DARI naming migration"
 ```
 
-### Task 17: Add open-spec governance and durable Patty attribution
+### Task 23: Add open-spec governance and durable Patty attribution
 
 **Files:**
 - Create: `NOTICE`
@@ -847,7 +1219,7 @@ test -e LICENSE || test -d LICENSES || test -e docs/plans/DARI/LICENSE
 git commit -m "docs: publish DARI open-spec governance and attribution"
 ```
 
-### Task 18: Final release gate
+### Task 24: Final release gate
 
 **Files:**
 - Modify only files proven defective by these checks.
@@ -875,12 +1247,16 @@ go vet ./...
 
 ```bash
 go test ./conformance -count=1
-go test ./internal/dari ./internal/relay ./internal/policy ./internal/provenance -run 'Auth|Grant|Delegation|Decision|Checkpoint|Receipt|Evidence|Effect|Compatibility' -count=1
+go test ./internal/dari ./internal/relay ./internal/policy ./internal/provenance ./internal/webbinding ./internal/federation ./internal/communications ./internal/realtime ./internal/gitscm ./internal/sandbox ./internal/tools -run 'Auth|Grant|Delegation|Decision|Checkpoint|Receipt|Evidence|Effect|Compatibility|Web|Federat|Collab|Media|SCM|Sandbox|Tool' -count=1
+go test ./... -count=1
 ```
 
-- [ ] **Step 4: Rebuild and inspect papers**
+- [ ] **Step 4: Reconcile claims and rebuild the papers**
+
+Update `docs/plans/DARI/arxiv/implementation-claim-matrix.tsv` only from passing runtime/conformance evidence: move C3–C8 and the collaboration/media rows to `implemented` only when their named gates pass, record exact test/manifest identifiers, and keep primitive benchmark values unchanged. Remove internal source file paths from publication prose; describe evidence by subsystem and public artifact instead.
 
 ```bash
+rg -n 'implementation-required|extension-profile|schema-only|prototype|MVP|Patty Research|internal/paper|paperproto' docs/plans/DARI/arxiv/main.tex docs/plans/DARI/arxiv/main_ko.tex
 make -C docs/plans/DARI/arxiv clean
 make -C docs/plans/DARI/arxiv verify
 pdfinfo docs/plans/DARI/arxiv/DARI_arXiv.pdf
@@ -897,7 +1273,7 @@ git diff --check
 git diff --stat
 ```
 
-Confirm only the bounded compatibility/lineage locations from Task 16 match, every normative-document match is compatibility-only, no protected environment/secrets file changed, no unrelated user work is staged, and no LaTeX temporary file was added.
+Confirm only the bounded compatibility/lineage locations from Task 22 match, every normative-document match is compatibility-only, no protected environment/secrets file changed, no unrelated user work is staged, and no LaTeX temporary file was added.
 
 - [ ] **Step 6: Commit verification fixes only when checks required source changes**
 
@@ -914,7 +1290,7 @@ Skip the commit if verification produced no source change.
 ### Gate A — Paper
 
 - English and Korean PDFs build without undefined references.
-- The claim matrix distinguishes implemented, implementation-required, and extension-profile claims.
+- The claim matrix distinguishes implemented, implementation-required, and runtime-gated claims during development, then records every promoted claim with a passing runtime/conformance manifest before release.
 - DARI terminology and Patty Co., Ltd. attribution are consistent.
 - Existing benchmark values remain unchanged unless raw benchmarks are rerun and retained.
 
@@ -928,7 +1304,17 @@ Skip the commit if verification produced no source change.
 - Reconnect cannot duplicate committed effects.
 - Conformance tests exercise real enforcement seams.
 
-### Gate C — Rename
+### Gate C — Enterprise runtime
+
+- WebTransport/HTTP/3 and constrained WebSocket clients prove origin binding, browser proof-of-possession, safe reconnect, and effect-status behavior.
+- Federation proves bilateral trust-bundle freshness, issuer/audience validation, policy intersection, residency enforcement, and cross-domain receipt verification.
+- Every protected inference request traverses the live 14-stage Relay pipeline; no direct OpenAI-compatible fallback can bypass it.
+- Catalog → signed model artifact → endpoint authorization → PIA identity is enforced before model dispatch, and real stream telemetry feeds metering, events, provenance, and receipts.
+- SSO/SCIM, delegated administration, privacy-aware console authorization, KMS/HSM seams, retention/legal hold, compliance evidence, onboarding/migration, rollout/rollback, and sovereign offline operations are executable and tested.
+- Tools, MCP, network, secrets, SCM, sandbox, collaboration, media, file transfer, and SDKs return verifiable evidence and cannot create an ungoverned side channel.
+- `manifest.json` reports exact capabilities and deployment evidence for every advertised profile; schema presence alone never qualifies.
+
+### Gate D — Rename
 
 - Active packages, symbols, comments, docs, UI, registries, SDK examples, LaTeX, PDFs, and archives use DARI.
 - `paper/1` is accepted only by the compatibility adapter.

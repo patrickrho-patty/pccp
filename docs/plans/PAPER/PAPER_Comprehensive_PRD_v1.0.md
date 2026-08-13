@@ -4068,9 +4068,9 @@ That—not custom encryption or different endpoint names—is the product PAPER 
 
 ## 75.1 Status and product boundary
 
-This addendum freezes the implementation acceptance contract for **DARI — Delegated Authorization and Receipts for Inference**. It is consumed by Phase 2 implementation Tasks 5–13. Normative schemas and algorithms are in Appendix F of `PAPER_Protocol_Specification_v1.0.md`; profile and migration behavior is in `DARI_COMPATIBILITY_AND_PROFILE_MAP.md`. Those two documents control if older PAPER requirements conflict with this addendum for a DARI profile.
+This addendum freezes the implementation acceptance contract for **DARI — Delegated Authorization and Receipts for Inference**. It is consumed by Phase 2 implementation Tasks 5–19. Normative schemas and algorithms are in Appendix F of `PAPER_Protocol_Specification_v1.0.md`; profile and migration behavior is in `DARI_COMPATIBILITY_AND_PROFILE_MAP.md`. Those two documents control if older PAPER requirements conflict with this addendum for a DARI profile.
 
-This is a design and acceptance baseline. It MUST NOT be cited as evidence that a runtime feature is implemented, conformant, deployed, secure in production, or measured. The implementation claim matrix remains authoritative: framing/canonical-CBOR and supported transports are implementation claims; transcript authentication, complete signed authorization, attenuation, and deterministic receipts are implementation-required; web and federation are extension-profile claims only.
+This is a design and acceptance baseline. It MUST NOT be cited as evidence that a runtime feature is implemented, conformant, deployed, secure in production, or measured. The implementation claim matrix remains authoritative until the named runtime gates pass: framing/canonical-CBOR and supported transports are implementation claims; transcript authentication, complete signed authorization, attenuation, and deterministic receipts are implementation-required; web, federation, collaboration, and media are runtime-gated profiles rather than schema-only placeholders.
 
 Phase 2 adds the neutral protocol kernel without performing the Phase 3 product-wide rename. Core implementation APIs and new wire objects MUST use neutral names. Existing product names MAY remain in legacy files, adapters, user-facing product material, and the clearly named Patty reference/legacy profile.
 
@@ -4165,13 +4165,15 @@ dari/1 kernel -> active protocol
 dari.ai/1 -> provider-neutral inference
 dari.tools/1 -> effects and tool bridges
 dari.model-supply/1 -> model artifact and endpoint authorization
-dari.web/1 -> schema only until runtime conformance exists
-dari.federation/1 -> schema only until runtime conformance exists
+dari.web/1 -> WebTransport/HTTP/3 browser runtime with constrained WebSocket fallback
+dari.federation/1 -> bilateral trust-bundle, policy-intersection, residency, and receipt runtime
+dari.collab/1 -> governed chat, presence, broadcasts, encrypted delivery, and file runtime
+dari.media/1 -> governed voice/live-media runtime with cancellation, usage, and receipts
 ```
 
 Negotiation MUST return `EXACT`, `DEGRADED`, or `UNSUPPORTED` per the compatibility map. Critical unsupported offers fail negotiation. Degradation MUST enumerate only omitted optional capabilities and MUST NOT weaken kernel security semantics.
 
-`dari.web/1` and `dari.federation/1` MUST report runtime `UNSUPPORTED` until a later release supplies both runtime behavior and conformance tests. Schema publication, generated types, documentation, or experimental code MUST NOT be reported as runtime conformance.
+During development, `dari.web/1`, `dari.federation/1`, `dari.collab/1`, and `dari.media/1` MUST report runtime `UNSUPPORTED` until their named runtime behavior, deployment evidence, and conformance tests pass. Schema publication, generated types, documentation, a feature flag, or experimental code MUST NOT be reported as runtime conformance. The implementation plan treats those gates as Tasks 13, 14, and 18; no later placeholder release is implied.
 
 ## 75.9 Phase 2 task gates
 
@@ -4184,8 +4186,14 @@ Negotiation MUST return `EXACT`, `DEGRADED`, or `UNSUPPORTED` per the compatibil
 | Task 9 — decisions/state | Fixed outcomes, deny-overrides, obligation lifecycle, freshness, predecessor, and rollback tests pass |
 | Task 10 — receipts | Real roots, finalization order, scoped multi-party signatures, MMR proofs, omission rules, and evidence-failure behavior pass |
 | Task 11 — effects | Exact message IDs, durable state machine, reconnect/status, conflict, retry-owner, and single-execution tests pass |
-| Task 12 — profiles | Neutral registries and `EXACT|DEGRADED|UNSUPPORTED`; web/federation remain runtime unsupported |
-| Task 13 — end-to-end conformance | Negative matrix and positive byte vectors cover the complete validation pipeline without placeholder assertions |
+| Task 12 — profiles | Neutral registries, provider capability-loss reporting, and executable profile contracts |
+| Task 13 — web runtime | WebTransport/HTTP/3, constrained WebSocket, origin/proof binding, reconnect, and effect-status tests pass |
+| Task 14 — federation runtime | Trust-bundle freshness, issuer/audience, policy intersection, residency, offline, and receipt tests pass |
+| Task 15 — live hot path | Every protected inference request traverses governance, streaming, metering, provenance, and evidence stages |
+| Task 16 — enterprise operations | Identity, admin isolation, compliance evidence, KMS/attestation, retention, onboarding, rollout, and sovereign operations are executable |
+| Task 17 — tools/SCM/sandbox | Tool, network, secret, SCM, sandbox, connector, and provenance paths enforce DARI authority and emit evidence |
+| Task 18 — collaboration/SDK | Chat, presence, broadcasts, files, media, and compilable SDKs pass runtime tests |
+| Task 19 — end-to-end conformance | Negative matrix, positive byte vectors, deployment manifests, and stateful black-box runner cover every advertised profile |
 
 Each task MUST add executable tests before its runtime claim changes. A passing unit test for a serializer alone MUST NOT upgrade an implementation-required or extension-profile claim to implemented.
 
@@ -4202,7 +4210,7 @@ Before a runtime may claim `dari/1`, independent black-box tests MUST verify:
 - selective-disclosure event mutation/removal, padding/path/peak/root mismatch, and omission-manifest mutation;
 - effect duplicate/reconnect/conflict/retry-owner/crash-boundary behavior;
 - legacy/DARI parser isolation and frozen `paper/1` bytes;
-- critical unsupported-profile failure and mandatory `UNSUPPORTED` for web/federation.
+- critical unsupported-profile failure and mandatory `UNSUPPORTED` for any profile whose runtime/deployment/conformance gate has not passed.
 
 The test harness MUST assert that every rejected case performs no protected forwarding, inference allocation, or external effect and never returns a successful receipt.
 
@@ -4211,10 +4219,10 @@ The test harness MUST assert that every rejected case performs no protected forw
 Phase 2 MUST NOT:
 
 - rewrite the complete historical PAPER specification or product vocabulary merely to rename it;
-- claim deployed web, browser, federation, cross-domain, or exactly-once behavior without its runtime and conformance evidence;
+- claim deployed web, browser, federation, cross-domain, collaboration, media, or exactly-once behavior without its runtime, deployment, and conformance evidence;
 - silently normalize conflicting legacy client constants or encoders;
 - replace standard cryptographic primitives with a new primitive;
 - broaden authorization to preserve a permissive legacy behavior;
 - treat documentation, schemas, fixtures, or generated code as a runtime measurement.
 
-Phase 3 may perform the broader repository and product-language rename after the Phase 2 contract and conformance surface are stable.
+The repository/product-language rename follows the runtime and conformance work in the implementation plan; it does not substitute for that work.
