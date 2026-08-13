@@ -116,10 +116,13 @@ function GlobalSearch() {
       const matches: any[] = []
       ;(Array.isArray(users) ? users : []).filter((u: any) =>
         (u.name_ko || '').toLowerCase().includes(ql) || (u.email || '').toLowerCase().includes(ql)
-      ).slice(0, 3).forEach((u: any) => matches.push({ type: '사용자', label: u.name_ko || u.name, sub: u.email, path: '/users' }))
+      ).slice(0, 3).forEach((u: any) => matches.push({ type: '사용자', label: u.name_ko || u.name, sub: u.email, path: `/users/${u.id}` }))
       ;(Array.isArray(harnesses) ? harnesses : []).filter((h: any) =>
         (h.harness_id || '').toLowerCase().includes(ql)
-      ).slice(0, 3).forEach((h: any) => matches.push({ type: '하네스', label: h.harness_id?.slice(0, 25), sub: h.status, path: '/harnesses' }))
+      ).slice(0, 3).forEach((s: any) => matches.push({ type: '세션', label: s.title || '제목 없음', sub: s.session_id?.slice(0, 20), path: '/sessions' }))
+      ;(Array.isArray(harnesses) ? harnesses : []).filter((h: any) =>
+        (h.harness_id || '').toLowerCase().includes(ql)
+      ).slice(0, 3).forEach((h: any) => matches.push({ type: '하네스', label: h.harness_id?.slice(0, 25), sub: h.status, path: `/harnesses/${h.id}` }))
       ;(Array.isArray(sessions) ? sessions : []).filter((s: any) =>
         (s.title || s.session_id || '').toLowerCase().includes(ql)
       ).slice(0, 3).forEach((s: any) => matches.push({ type: '세션', label: s.title || '제목 없음', sub: s.session_id?.slice(0, 20), path: '/sessions' }))
