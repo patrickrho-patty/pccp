@@ -169,6 +169,7 @@ func (s *Server) setupAdditionalRoutes(r chi.Router, ext *AdditionalServices) {
 		r.Get("/shadow-ai", s.handleShadowAI)
 		r.Post("/change-freeze", s.wrapKoreanFreeze(ext))
 		r.Post("/model-recall", s.wrapKoreanRecall(ext))
+		r.Post("/forced-version", s.handleForcedVersion)
 	})
 
 	// Privacy & Access Control

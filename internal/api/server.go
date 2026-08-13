@@ -3133,6 +3133,29 @@ func (s *Server) handleCodeSpanLookup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (s *Server) handleForcedVersion(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var req struct {
+		MinVersion  string `json:"min_version"`
+		ReleaseRing string `json:"release_ring"`
+		Deadline    string `json:"deadline"`
+		Reason      string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if req.MinVersion == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "min_version required"})
+		return
+	}
+	if err := s.korean.SetForcedHarnessVersion(orgID, req.MinVersion, req.ReleaseRing, req.Deadline, req.Reason); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "forced version set"})
+}
+
 func (s *Server) handleListEnterpriseFeatures(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
 	var features []models.EnterpriseHarnessFeature
