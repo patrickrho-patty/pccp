@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { FilterBar, useFilteredData, FilterConfig } from '../components/FilterBar'
 import { showToast } from '../components/Toast'
+import { useConfirm } from '../components/useConfirm'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['name', 'name_ko', 'tool_class'],
@@ -20,6 +21,7 @@ const FILTER_CONFIG: FilterConfig = {
 }
 
 export default function Tools() {
+  const confirm = useConfirm()
   const [tools, setTools] = useState<any[]>([])
   const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
   const [showForm, setShowForm] = useState(false)
@@ -91,7 +93,7 @@ export default function Tools() {
   }
 
   const handleDelete = async (t: any) => {
-    if (!confirm(`"${t.name}" 도구를 삭제하시겠습니까?`)) return
+    if (!await confirm({ title: '확인', message: `"${t.name}" 도구를 삭제하시겠습니까?`, danger: true })) return
     try {
       await fetch(`/api/tools/${t.id}`, { method: 'DELETE', headers: authHeaders() })
       load()

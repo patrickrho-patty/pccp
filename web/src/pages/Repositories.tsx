@@ -5,6 +5,7 @@ import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../compone
 import EmptyState from '../components/EmptyState'
 import { exportCSV } from '../utils/csv'
 import { showToast } from '../components/Toast'
+import { useConfirm } from '../components/useConfirm'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['name', 'slug', 'clone_url', 'scm_provider'],
@@ -18,6 +19,7 @@ const FILTER_CONFIG: FilterConfig = {
 }
 
 export default function Repositories() {
+  const confirm = useConfirm()
   const [repos, setRepos] = useState<any[]>([])
   const [projects, setProjects] = useState<any[]>([])
   const [showForm, setShowForm] = useState(false)
@@ -67,7 +69,7 @@ export default function Repositories() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('이 저장소를 삭제하시겠습니까?')) return
+    if (!await confirm({ title: '확인', message: '이 저장소를 삭제하시겠습니까?', danger: true })) return
     try { await api.deleteRepository(id); load() } catch {}
   }
 

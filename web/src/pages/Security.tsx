@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { formatRelative } from '../utils/format'
 import { showToast } from '../components/Toast'
+import { useConfirm } from '../components/useConfirm'
 import { exportCSV } from '../utils/csv'
 
 // Pattern presets — plain-language options, no regex visible to user
@@ -113,6 +114,7 @@ type Finding = {
 }
 
 export default function Security() {
+  const confirm = useConfirm()
   const [tab, setTab] = useState<'dashboard' | 'rules' | 'findings' | 'scanner'>('dashboard')
   const [rules, setRules] = useState<Rule[]>(buildDefaultRules())
 
@@ -197,8 +199,8 @@ export default function Security() {
     setEditingRule(null)
   }
 
-  const deleteRule = (id: string) => {
-    if (!confirm('이 규칙을 삭제하시겠습니까?')) return
+  const deleteRule = async (id: string) => {
+    if (!await confirm({ title: '확인', message: '이 규칙을 삭제하시겠습니까?', danger: true })) return
     setRules(rs => rs.filter(r => r.id !== id))
   }
 
@@ -285,7 +287,7 @@ export default function Security() {
           <div className="card">
             <h3 className="text-sm font-semibold mb-3">인시던트 대응</h3>
             <button className="btn-danger w-full text-sm" onClick={async () => {
-              if (!confirm('전체 조직을 잠금하시겠습니까? 모든 AI 세션이 중지됩니다.')) return
+              if (!await confirm({ title: '확인', message: '전체 조직을 잠금하시겠습니까? 모든 AI 세션이 중지됩니다.', danger: true })) return
               try { await fetch('/api/security/lockdown', { method: 'POST', headers: authHeaders() }); showToast('긴급 잠금 활성화', 'success') } catch { showToast('실패', 'error') }
             }}>⚠ 긴급 조직 잠금 · Emergency Lockdown</button>
           </div>

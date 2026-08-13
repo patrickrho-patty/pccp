@@ -6,6 +6,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import EmptyState from '../components/EmptyState'
 import { exportCSV } from '../utils/csv'
 import { showToast } from '../components/Toast'
+import { useConfirm } from '../components/useConfirm'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['name', 'name_ko', 'email', 'auth_method', 'title'],
@@ -43,6 +44,7 @@ const AUTH_METHODS = [
 ]
 
 export default function Users() {
+  const confirm = useConfirm()
   const [users, setUsers] = useState<any[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -123,7 +125,7 @@ export default function Users() {
   }
 
   const handleBulkSuspend = async () => {
-    if (!confirm(selectedIds.size + '명을 정지하시겠습니까?')) return
+    if (!await confirm({ title: '확인', message: selectedIds.size + '명을 정지하시겠습니까?', danger: true })) return
     for (const id of selectedIds) {
       try { await api.updateUser(id, { status: 'suspended' }) } catch {}
     }
@@ -132,7 +134,7 @@ export default function Users() {
   }
 
   const handleBulkOffboard = async () => {
-    if (!confirm(selectedIds.size + '명을 퇴사 처리하시겠습니까?')) return
+    if (!await confirm({ title: '확인', message: selectedIds.size + '명을 퇴사 처리하시겠습니까?', danger: true })) return
     for (const id of selectedIds) {
       try { await api.deleteUser(id) } catch {}
     }
@@ -141,7 +143,7 @@ export default function Users() {
   }
 
   const handleDelete = async (user: any) => {
-    if (!confirm(`${user.name_ko || user.name}을(를) 퇴사 처리하시겠습니까?`)) return
+    if (!await confirm({ title: '퇴사 처리', message: `${user.name_ko || user.name}을(를) 퇴사 처리하시겠습니까?`, danger: true })) return
     try { await api.deleteUser(user.id); load() }
     catch (err: any) { showToast('삭제 실패: ' + err.message) }
   }

@@ -5,6 +5,7 @@ import EmptyState from '../components/EmptyState'
 import { formatRelative } from '../utils/format'
 import { exportCSV } from '../utils/csv'
 import { showToast } from '../components/Toast'
+import { useConfirm } from '../components/useConfirm'
 
 const FLEET_ACTIONS = [
   { id: 'request_reauthentication', label: '재인증 요청', labelEn: 'Re-auth', severity: 'normal', icon: '🔑' },
@@ -32,6 +33,7 @@ const EMERGENCY_ACTIONS = [
 ]
 
 export default function Fleet() {
+  const confirm = useConfirm()
   const [inventory, setInventory] = useState<any[]>([])
   const [selectedHarness, setSelectedHarness] = useState<string | null>(null)
   const [actionPanel, setActionPanel] = useState<string | null>(null)
@@ -237,8 +239,8 @@ export default function Fleet() {
                       </div>
                       <div className="flex gap-1">
                         <button onClick={() => inspectSession(s.session_id)} className="btn-sm btn-secondary">검사</button>
-                        <button onClick={() => {
-                          if (confirm('세션을 종료하시겠습니까?')) executeAction(selectedH.harness.harness_id, 'terminate_session', 'Session terminated by admin')
+                        <button onClick={async () => {
+                          if (await confirm({ title: '세션 종료', message: '세션을 종료하시겠습니까?', danger: true })) executeAction(selectedH.harness.harness_id, 'terminate_session', 'Session terminated by admin')
                         }} className="btn-sm btn-danger">종료</button>
                       </div>
                     </div>
@@ -266,9 +268,9 @@ export default function Fleet() {
                   {FLEET_ACTIONS.map(a => (
                     <button key={a.id}
                       disabled={!actionReason}
-                      onClick={() => {
+                      onClick={async () => {
                         if (a.severity === 'danger') {
-                          if (confirm(`⚠️ ${a.label} (${a.labelEn})을(를) 실행하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) {
+                          if (await confirm({ title: a.label, message: `${a.label} (${a.labelEn})을(를) 실행하시겠습니까? 이 작업은 되돌릴 수 없습니다.`, danger: true })) {
                             executeAction(actionPanel, a.id, actionReason)
                           }
                         } else {

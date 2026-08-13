@@ -101,6 +101,7 @@ type PolicyRule = {
 }
 
 export default function Policy() {
+  const confirm = useConfirm()
   const [rules, setRules] = useState<PolicyRule[]>([])
   const [epochs, setEpochs] = useState<any[]>([])
   const [tab, setTab] = useState<'active' | 'templates' | 'epochs'>('active')
@@ -128,8 +129,8 @@ export default function Policy() {
     if (r) api.createPolicyRule({ ...r, enabled: !r.enabled }).then(reloadRules).catch(() => {})
   }
 
-  const deleteRule = (id: string) => {
-    if (!confirm('이 정책을 삭제하시겠습니까?')) return
+  const deleteRule = async (id: string) => {
+    if (!await confirm({ title: '확인', message: '이 정책을 삭제하시겠습니까?', danger: true })) return
     api.deletePolicyRule(id).then(() => { reloadRules(); showToast('정책 삭제됨', 'info') }).catch(() => {})
   }
 

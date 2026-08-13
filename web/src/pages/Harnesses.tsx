@@ -6,6 +6,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import { formatRelative } from '../utils/format'
 import { exportCSV } from '../utils/csv'
 import { showToast } from '../components/Toast'
+import { useConfirm } from '../components/useConfirm'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['harness_id', 'binary_version', 'device_id'],
@@ -22,6 +23,7 @@ const FILTER_CONFIG: FilterConfig = {
 }
 
 export default function Harnesses() {
+  const confirm = useConfirm()
   const [harnesses, setHarnesses] = useState<any[]>([])
   const [users, setUsers] = useState<any[]>([])
   const [sessions, setSessions] = useState<any[]>([])
@@ -67,8 +69,8 @@ export default function Harnesses() {
       setShowForm(false); setForm({ user_id: '', harness_id: '', public_key_hex: '', binary_version: '1.0.0' }); load()
     } catch (err: any) { showToast('등록 실패: ' + err.message) }
   }
-  const handleRevoke = async (id: string) => { if (confirm('폐기하시겠습니까?')) { try { await api.revokeHarness(id, 'manual revoke'); load() } catch {} } }
-  const handleQuarantine = async (id: string) => { if (confirm('격리하시겠습니까? 모든 활성 세션이 종료됩니다.')) { try { await api.quarantineHarness(id); load() } catch {} } }
+  const handleRevoke = async (id: string) => { if (await confirm({ title: '확인', message: '폐기하시겠습니까?', danger: true })) { try { await api.revokeHarness(id, 'manual revoke'); load() } catch {} } }
+  const handleQuarantine = async (id: string) => { if (await confirm({ title: '확인', message: '격리하시겠습니까? 모든 활성 세션이 종료됩니다.', danger: true })) { try { await api.quarantineHarness(id); load() } catch {} } }
   const handleReactivate = async (id: string) => { try { await api.reactivateHarness(id); load() } catch {} }
 
   const statusBadge = (s: string) => { const m: Record<string,string> = { enrolled:'badge-green', active:'badge-green', pending:'badge-yellow', quarantined:'badge-red', revoked:'badge-gray' }; return m[s] || 'badge-gray' }
@@ -101,7 +103,7 @@ export default function Harnesses() {
         <div className="flex items-center gap-3 mb-4 p-3 bg-blue-50 rounded-lg">
           <span className="text-sm font-medium text-blue-700">{selectedHarnesses.size}개 하네스 선택됨</span>
           <button onClick={async () => { for (const id of selectedHarnesses) { try { await api.quarantineHarness(id) } catch {} } setSelectedHarnesses(new Set()); load() }} className="btn-sm btn-secondary">일괄 격리</button>
-          <button onClick={() => { if (confirm(`${selectedHarnesses.size}개 하네스를 폐기하시겠습니까?`)) { for (const id of selectedHarnesses) { api.revokeHarness(id, 'bulk revoke') } setSelectedHarnesses(new Set()); load() } }} className="btn-sm btn-danger">일괄 폐기</button>
+          <button onClick={async () => { if (await confirm({ title: '확인', message: `${selectedHarnesses.size}개 하네스를 폐기하시겠습니까?`, danger: true })) { for (const id of selectedHarnesses) { api.revokeHarness(id, 'bulk revoke') } setSelectedHarnesses(new Set()); load() } }} className="btn-sm btn-danger">일괄 폐기</button>
           <button onClick={() => setSelectedHarnesses(new Set())} className="btn-sm btn-secondary">취소</button>
         </div>
       )}

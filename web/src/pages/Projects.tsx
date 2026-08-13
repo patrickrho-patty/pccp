@@ -7,6 +7,7 @@ import EmptyState from '../components/EmptyState'
 import { formatRelative } from '../utils/format'
 import { exportCSV } from '../utils/csv'
 import { showToast } from '../components/Toast'
+import { useConfirm } from '../components/useConfirm'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['name', 'name_ko', 'slug'],
@@ -19,6 +20,7 @@ const FILTER_CONFIG: FilterConfig = {
 }
 
 export default function Projects() {
+  const confirm = useConfirm()
   const [projects, setProjects] = useState<any[]>([])
   const [repos, setRepos] = useState<any[]>([])
   const [sessions, setSessions] = useState<any[]>([])
@@ -80,7 +82,7 @@ export default function Projects() {
   }
 
   const handleArchive = async (id: string) => {
-    if (!confirm('이 프로젝트를 보관 처리하시겠습니까?')) return
+    if (!await confirm({ title: '확인', message: '이 프로젝트를 보관 처리하시겠습니까?', danger: true })) return
     try { await api.deleteProject(id); load() } catch {}
   }
 

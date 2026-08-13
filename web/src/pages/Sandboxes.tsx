@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { showToast } from '../components/Toast'
+import { useConfirm } from '../components/useConfirm'
 
 export default function Sandboxes() {
+  const confirm = useConfirm()
   const [sandboxes, setSandboxes] = useState<any[]>([])
   const [sessions, setSessions] = useState<any[]>([])
   const [showForm, setShowForm] = useState(false)
@@ -29,7 +31,7 @@ export default function Sandboxes() {
   }
 
   const destroy = async (id: string) => {
-    if (!confirm('이 샌드박스를 파기하시겠습니까? 모든 데이터가 삭제됩니다.')) return
+    if (!await confirm({ title: '확인', message: '이 샌드박스를 파기하시겠습니까? 모든 데이터가 삭제됩니다.', danger: true })) return
     try { await fetch(`/api/sandboxes/${id}/destroy`, { method: 'POST', headers: authHeaders() }); load() } catch {}
   }
 

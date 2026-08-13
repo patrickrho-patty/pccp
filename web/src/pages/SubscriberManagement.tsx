@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
 import { showToast } from '../components/Toast'
+import { useConfirm } from '../components/useConfirm'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['email', 'display_name', 'display_name_ko', 'oauth_provider'],
@@ -38,6 +39,7 @@ const subStatusBadge: Record<string, string> = {
 const riskBadge = (s: string) => s === 'normal' ? 'badge-green' : s === 'flagged' || s === 'suspicious' ? 'badge-yellow' : 'badge-red'
 
 export default function SubscriberManagement() {
+  const confirm = useConfirm()
   const [accounts, setAccounts] = useState<any[]>([])
   const [harnesses, setHarnesses] = useState<any[]>([])
   const [usage, setUsage] = useState<any[]>([])
@@ -235,8 +237,8 @@ export default function SubscriberManagement() {
               <div className="flex flex-wrap gap-2">
                 <button className="btn-sm btn-secondary" onClick={() => showToast('이메일 발송 기능은 마케팅 도구 연동 필요')}>📧 이메일</button>
                 <button className="btn-sm btn-secondary" onClick={() => showToast('플랜 변경')}>플랜 변경</button>
-                <button className="btn-sm btn-secondary" onClick={() => { if (confirm('재인증 요청?')) {} }}>재인증 요청</button>
-                <button className="btn-sm btn-danger" onClick={() => { if (confirm('계정 정지?')) {} }}>계정 정지</button>
+                <button className="btn-sm btn-secondary" onClick={async () => { if (await confirm({ title: '재인증 요청', message: '재인증을 요청하시겠습니까?', danger: false })) { showToast('재인증 요청 전송됨', 'info') } }}>재인증 요청</button>
+                <button className="btn-sm btn-danger" onClick={async () => { if (await confirm({ title: '계정 정지', message: '이 계정을 정지하시겠습니까?', danger: true })) { showToast('계정 정지됨', 'success') } }}>계정 정지</button>
               </div>
             </div>
           </div>

@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth, AuthProvider } from './hooks/useAuth'
+import { ConfirmProvider } from './components/useConfirm'
 import { ToastContainer } from './components/Toast'
 import Login from './pages/Login'
 import Bootstrap from './pages/Bootstrap'
@@ -42,7 +43,9 @@ import EnterpriseFeatures from './pages/EnterpriseFeatures'
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <ConfirmProvider>
+        <AppContent />
+      </ConfirmProvider>
     </AuthProvider>
   )
 }

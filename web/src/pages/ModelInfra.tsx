@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
 import { showToast } from '../components/Toast'
+import { useConfirm } from '../components/useConfirm'
 
 const MODEL_FILTER: FilterConfig = {
   searchFields: ['name', 'name_ko', 'package_id', 'model_id'],
@@ -31,6 +32,7 @@ const EP_FILTER: FilterConfig = {
 }
 
 export default function ModelInfra() {
+  const confirm = useConfirm()
   const [tab, setTab] = useState<'catalog' | 'packages' | 'endpoints'>('catalog')
 
   return (
@@ -88,7 +90,7 @@ function CatalogTab() {
   if (loading) return <div className="text-gray-500">로딩 중...</div>
 
   const handleSeed = async () => { await api.catalogSeed(); window.location.reload() }
-  const handleWithdraw = async (id: string) => { if (confirm('이 모델을 철회하시겠습니까?')) { await api.catalogWithdraw(id); window.location.reload() } }
+  const handleWithdraw = async (id: string) => { if (await confirm({ title: '확인', message: '이 모델을 철회하시겠습니까?', danger: true })) { await api.catalogWithdraw(id); window.location.reload() } }
 
   return (
     <div>
@@ -167,7 +169,7 @@ function PackagesTab() {
     try { await fetch('/api/models', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, state: 'draft' }) }); setShowForm(false); showToast('모델 등록됨', 'success'); load() } catch { showToast('실패', 'error') }
   }
   const handlePublish = async (id: string) => { try { await fetch(`/api/models/${id}/publish`, { method: 'POST', headers: authHeaders() }); load() } catch {} }
-  const handleRecall = async (id: string) => { if (confirm('리콜하시겠습니까?')) { await fetch(`/api/models/${id}/recall`, { method: 'POST', headers: authHeaders() }); load() } }
+  const handleRecall = async (id: string) => { if (await confirm({ title: '확인', message: '리콜하시겠습니까?', danger: true })) { await fetch(`/api/models/${id}/recall`, { method: 'POST', headers: authHeaders() }); load() } }
   const handleEdit = (m: any) => { setEditingId(m.id); setForm({ package_id: m.package_id || '', model_id: m.model_id || '', name: m.name || '', name_ko: m.name_ko || '', family: m.family || 'code', version: m.version || '1.0.0' }); setShowForm(true) }
   const getEpCount = (pkgId: string) => endpoints.filter(e => e.model_package_id === pkgId && e.status === 'active').length
 
