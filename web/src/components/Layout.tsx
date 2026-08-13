@@ -1,4 +1,4 @@
-import { ReactNode, useState } from 'react'
+import { ReactNode, useState, useEffect, useRef } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 
@@ -99,6 +99,21 @@ function GlobalSearch() {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<any[]>([])
   const [showResults, setShowResults] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // ⌘K / Ctrl+K focuses the global search (Plan A8 — command palette)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        inputRef.current?.focus()
+        inputRef.current?.select()
+      }
+      if (e.key === 'Escape') inputRef.current?.blur()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   const search = async (q: string) => {
     setQuery(q)
@@ -119,9 +134,6 @@ function GlobalSearch() {
       ).slice(0, 3).forEach((u: any) => matches.push({ type: '사용자', label: u.name_ko || u.name, sub: u.email, path: `/users/${u.id}` }))
       ;(Array.isArray(harnesses) ? harnesses : []).filter((h: any) =>
         (h.harness_id || '').toLowerCase().includes(ql)
-      ).slice(0, 3).forEach((s: any) => matches.push({ type: '세션', label: s.title || '제목 없음', sub: s.session_id?.slice(0, 20), path: '/sessions' }))
-      ;(Array.isArray(harnesses) ? harnesses : []).filter((h: any) =>
-        (h.harness_id || '').toLowerCase().includes(ql)
       ).slice(0, 3).forEach((h: any) => matches.push({ type: '하네스', label: h.harness_id?.slice(0, 25), sub: h.status, path: `/harnesses/${h.id}` }))
       ;(Array.isArray(sessions) ? sessions : []).filter((s: any) =>
         (s.title || s.session_id || '').toLowerCase().includes(ql)
@@ -131,7 +143,7 @@ function GlobalSearch() {
       ).slice(0, 3).forEach((m: any) => matches.push({ type: '모델', label: m.display_name || m.model_id, sub: m.engine_type, path: '/models' }))
       ;(Array.isArray(repos) ? repos : []).filter((r: any) =>
         (r.name || '').toLowerCase().includes(ql)
-      ).slice(0, 3).forEach((r: any) => matches.push({ type: '저장소', label: r.name, sub: r.scm_provider, path: '/repositories' }))
+      ).slice(0, 3).forEach((r: any) => matches.push({ type: '저장소', label: r.name, sub: r.scm_provider, path: `/repositories/${r.id}` }))
       setResults(matches)
     } catch {}
   }
@@ -139,8 +151,9 @@ function GlobalSearch() {
   return (
     <div className="relative max-w-2xl mx-auto">
       <input
+        ref={inputRef}
         className="w-full px-3 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 focus:bg-white transition-colors"
-        placeholder="🔍 전역 검색 · Search users, harnesses, sessions, models, repositories..."
+        placeholder="🔍 전역 검색 (⌘K) · Search users, harnesses, sessions..."
         value={query}
         onChange={e => search(e.target.value)}
         onFocus={() => setShowResults(true)}
