@@ -26,3 +26,13 @@ pccp-server
 
 # Environment Variables
 .env
+docs/plans/PAPER/arxiv/*.aux
+docs/plans/PAPER/arxiv/*.bbl
+docs/plans/PAPER/arxiv/*.blg
+docs/plans/PAPER/arxiv/*.fdb_latexmk
+docs/plans/PAPER/arxiv/*.fls
+docs/plans/PAPER/arxiv/*.log
+docs/plans/PAPER/arxiv/*.out
+docs/plans/PAPER/arxiv/*.xdv
+docs/plans/PAPER/arxiv/*.pdf
+docs/plans/PAPER/arxiv/*.tar.gz
