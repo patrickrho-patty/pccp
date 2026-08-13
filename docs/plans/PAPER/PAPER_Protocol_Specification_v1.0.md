@@ -3077,3 +3077,632 @@ The following invariants are useful implementation and formal-analysis targets:
 12. **Administrative communication and administrative enforcement are separate message classes.**
 
 These invariants should be expressed in executable conformance scenarios and, for critical subsets, model-checked state machines where practical.
+
+---
+
+# Appendix F. Normative DARI v1 Contract (Phase 2 Freeze)
+
+This appendix freezes the Phase 2 wire and semantic contract for **DARI — Delegated Authorization and Receipts for Inference**. It is normative for `dari/1` and every `dari.*` profile. Earlier PAPER sections remain the bounded `paper/1` legacy specification. Where an earlier PAPER rule conflicts with this appendix for a negotiated DARI profile, this appendix takes precedence. This appendix does not assert that the new behavior is implemented or measured.
+
+## F.1 Scope, roles, and conformance
+
+DARI is an application- and vendor-neutral kernel. Its protocol roles are:
+
+- **Governance Relay** — authenticates peers, evaluates authority and policy, and assembles evidence.
+- **Inference Peer** — performs an authorized inference operation and attests only what it observed.
+- **Effect Executor** — performs a transactional external effect under an authorization.
+- **Evidence Verifier** — validates credentials, grants, decisions, state, receipts, attestations, and disclosure proofs without trusting the producer.
+
+A deployment MAY combine roles, but it MUST apply the validation and attestation rules independently for each role. Possession of one role MUST NOT imply another role or any authority not present in an Authorization Grant.
+
+The five protected kernel objects are **Peer Credential**, **Authorization Grant**, **Governed Exchange**, **Authorization Decision**, and **Evidence Receipt**. Signed State Checkpoints, Receipt Attestations, selective-disclosure proofs, and transactional effect objects support those kernel objects. The word “Credential” in DARI prose is shorthand for Peer Credential; it does not define a second credential type.
+
+An implementation claiming `dari/1` conformance MUST implement all of Sections F.2 through F.12 and the negative cases in F.14. An extension-profile implementation MUST also satisfy the dependency and runtime rules in F.13. Schema recognition alone is not runtime conformance.
+
+## F.2 Encoding, hashing, COSE, and extension rules
+
+All DARI structured values MUST use deterministic CBOR as defined by RFC 8949 Core Deterministic Encoding. Maps MUST have unique keys, indefinite-length items and floating-point numbers MUST NOT appear in a DARI object, and text MUST be valid UTF-8. A receiver MUST parse with finite depth, item-count, and byte limits before allocating application resources. After parsing, the receiver MUST deterministically re-encode the item and compare the result byte-for-byte with the received encoding. A mismatch is `NON_CANONICAL`.
+
+The following common CDDL is used by the remainder of this appendix:
+
+```cddl
+dari-version = 1
+uint16 = 0..65535
+uint32 = 0..4294967295
+uint64 = 0..18446744073709551615
+time-ms = -9223372036854775808..9223372036854775807
+digest32 = bstr .size 32
+nonce32 = bstr .size 32
+identifier = tstr .size (1..255)
+uri = tstr .size (1..2048)
+critical-fields = [0*32 uint]
+extensions = { * (256..65535) => any }
+
+; RFC 9052 COSE_Sign1 array. A CBOR tag is forbidden in dari/1.
+cose-sign1 = [
+  protected : bstr,
+  unprotected : {},
+  payload : bstr,
+  signature : bstr
+]
+```
+
+Every DARI schema uses integer labels. Label `254`, when present, lists extension-map labels that are critical. Label `255`, when present, contains the extension map. Every label named in `254` MUST occur in `255`. A receiver MUST reject an unknown critical label with `UNSUPPORTED_CRITICAL_FIELD`; it MAY ignore an unknown non-critical extension after retaining its encoded bytes for signature and digest verification. Unknown top-level labels are forbidden.
+
+The baseline content hash is SHA-256. The DARI object digest is:
+
+```text
+object_digest(T, body) =
+  SHA-256("DARI-OBJ-v1\0" || uint16_be(T) || deterministic_cbor(body))
+```
+
+The type value `T` comes from F.12. The encoded body MUST omit any field that would contain its own digest. A digest of a signed envelope is explicitly named `signed_object_digest` and is:
+
+```text
+signed_object_digest(T, cose) =
+  SHA-256("DARI-SIGNED-OBJ-v1\0" || uint16_be(T) || deterministic_cbor(cose))
+```
+
+A DARI signature uses an attached-payload, untagged RFC 9052 `COSE_Sign1`. The protected header bytes MUST be the deterministic encoding of a map containing `alg` (label `1`) and `kid` (label `4`); both MUST be protected. The unprotected map MUST be empty. The payload MUST equal the deterministic encoding of the parsed body. The signing input is:
+
+```text
+Sig_structure = deterministic_cbor([
+  "Signature1",
+  protected,
+  external_aad,
+  payload
+])
+```
+
+`external_aad` is the exact ASCII byte string specified for each object below, including its terminal NUL byte. A verifier MUST verify the signature over this `Sig_structure`, parse the attached payload, deterministically re-encode the parsed body, and require exact byte equality with the attached payload. Verifying the COSE signature without establishing this body-to-payload equality is non-conforming.
+
+The baseline signature algorithm is Ed25519 (`alg = -8`). Another algorithm MAY be negotiated by a future profile, but a receiver MUST NOT substitute an unnegotiated algorithm. A `kid` identifies a key; it is not a trust decision. The verifier MUST resolve the key through a valid Peer Credential or configured trust anchor and then perform the object-specific authorization checks.
+
+`paper/1` preserves its frozen legacy signing and digest bytes, including any documented compatibility quirk. A receiver MUST NOT apply `paper/1` map-form COSE or legacy object-digest bytes to a `dari/1` object, and MUST NOT silently rewrite one form into the other.
+
+## F.3 Peer Credential and proof-of-possession linkage
+
+```cddl
+peer-credential-body = {
+  1 => dari-version,                 ; version
+  2 => identifier,                   ; issuer
+  3 => identifier,                   ; subject peer ID
+  4 => identifier,                   ; trust domain / organization
+  5 => identifier,                   ; authorized peer profile
+  6 => bstr,                         ; deterministic CBOR COSE_Key
+  7 => time-ms,                      ; not before
+  8 => time-ms,                      ; not after
+  9 => identifier,                   ; serial
+  10 => identifier,                  ; revocation authority
+  11 => [1*16 uint16],               ; protocol versions
+  ? 12 => identifier,                ; build channel
+  ? 13 => identifier,                ; deployment zone
+  ? 254 => critical-fields,
+  ? 255 => extensions
+}
+
+peer-credential = cose-sign1
+```
+
+The Peer Credential external AAD is `DARI-PEER-CREDENTIAL-v1\0`. Its COSE payload is exactly `deterministic_cbor(peer-credential-body)`. The issuer MUST be authorized by the configured trust domain to issue the stated peer profile. `not_after` MUST be greater than `not_before`; the credential is valid only at times `not_before <= now < not_after`, subject to the negotiated clock-skew bound.
+
+The subject-key thumbprint used by grants and handshakes is:
+
+```text
+subject_key_thumbprint =
+  SHA-256("DARI-SUBJECT-KEY-v1\0" || deterministic_cbor(subject COSE_Key))
+```
+
+During authentication, the subject MUST prove possession of the private key corresponding to label `6` by signing the transport transcript, both nonces, the challenge identifier, the negotiated profile set, the channel binding, and the Peer Credential signed-object digest. The authentication proof MUST bind all of those values in one signed structure. A credential is not authenticated merely because its issuer signature verifies.
+
+A verifier MUST, in order: validate canonical encodings and critical fields; validate the issuer signature and protected headers; require body/payload equality; validate issuer authority and trust domain; validate time; validate current revocation state from a fresh Signed State Checkpoint; validate the negotiated profile against label `5` and `11`; validate the transcript signature and subject-key thumbprint; and only then bind the authenticated peer ID to the connection. Failure at any step is `AUTHENTICATION_FAILED`; an implementation MAY expose a more specific code only to an authorized diagnostic principal.
+
+## F.4 Authorization Grant and attenuation
+
+```cddl
+path-scope = {
+  1 => identifier,                   ; resource authority/repository
+  2 => identifier,                   ; revision/branch namespace
+  3 => tstr,                         ; normalized slash-delimited prefix
+  4 => [1*16 identifier]             ; permitted operations
+}
+
+network-scope = {
+  1 => identifier,                   ; scheme
+  2 => identifier,                   ; exact DNS name or address
+  3 => uint16,                       ; first port
+  4 => uint16,                       ; last port
+  5 => [1*16 identifier]             ; permitted purposes
+}
+
+authorization-scope = {
+  1 => [0*64 identifier],            ; action classes
+  2 => [0*64 identifier],            ; model identifiers
+  3 => [0*128 path-scope],            ; readable context
+  4 => [0*128 path-scope],            ; writable context
+  5 => [0*64 identifier],            ; tools/effect kinds
+  6 => [0*64 network-scope],         ; network destinations
+  7 => [0*64 identifier],            ; data classifications
+  8 => { * identifier => uint64 },   ; resource-budget maxima
+  9 => [0*16 identifier],            ; allowed protection profiles
+  10 => [0*32 identifier]            ; required approval classes
+}
+
+authorization-grant-body = {
+  1 => dari-version,                 ; version
+  2 => identifier,                   ; grant ID
+  3 => identifier,                   ; issuer peer ID
+  4 => identifier,                   ; subject peer ID
+  5 => digest32,                     ; subject-key thumbprint
+  6 => [1*16 identifier],            ; audience
+  7 => identifier,                   ; organization/trust domain
+  8 => identifier,                   ; user ID
+  9 => identifier,                   ; session ID
+  10 => identifier,                  ; policy epoch ID
+  11 => authorization-scope,
+  12 => time-ms,                     ; not before
+  13 => time-ms,                     ; not after
+  14 => uint64,                      ; issuer sequence
+  ? 15 => digest32,                  ; parent signed-object digest
+  ? 16 => uint16,                    ; remaining delegation depth
+  ? 254 => critical-fields,
+  ? 255 => extensions
+}
+
+authorization-grant = cose-sign1
+```
+
+The Authorization Grant external AAD is `DARI-AUTHORIZATION-GRANT-v1\0`. The grant digest used by a child, decision, exchange, or effect is `signed_object_digest(0x0202, authorization-grant)`.
+
+All scope arrays are mathematical sets encoded as arrays sorted by the deterministic encoding of each element, with no duplicates. An empty permission set grants no permission; omission is not a wildcard. Path prefixes MUST be normalized UTF-8 segments, MUST NOT contain `.` or `..` segments, and MUST use `/` as the separator. A child path rule is covered only when authority and revision equal the parent, every child operation occurs in the parent operation set, and the child prefix equals the parent prefix or begins with the parent prefix followed by `/`. Network hosts are exact values; suffix wildcards are not defined. A child network rule is covered only when scheme and host equal the parent, its port interval is contained by the parent interval, and its purpose set is a subset.
+
+A root grant has no label `15`. Omitted label `16` means zero remaining delegation depth. A delegated grant MUST contain label `15`. The complete attenuation algorithm is:
+
+1. Resolve the parent by label `15` and require the digest to equal the parent Authorization Grant signed-object digest. Reject a missing parent, a repeated digest, or a chain longer than 32 with `INVALID_GRANT_CHAIN`.
+2. Validate every grant in root-to-leaf order: canonical CBOR, critical fields, COSE headers, body/payload equality, signature, issuer credential, issuer proof-of-possession binding, time, revocation, and issuer-sequence replay state.
+3. For each parent/child pair, require the child issuer peer ID to equal the parent subject peer ID and require the child signing-key thumbprint to equal the parent subject-key thumbprint. The child subject peer ID and subject-key thumbprint identify the delegate and MAY differ from the parent subject.
+4. Require organization, user, session, policy epoch, and audience to be byte-for-byte equal. A changed audience is invalid; narrowing an audience requires a new root grant from an authorized issuer.
+5. Require `child.not_before >= parent.not_before` and `child.not_after <= parent.not_after`. Require `child.not_after > child.not_before`.
+6. Require the parent remaining delegation depth to be present and greater than zero. Require the child remaining depth to equal the parent depth minus one; zero MUST be encoded by omission.
+7. For action classes, models, tools, data classifications, and allowed protection profiles, require every child element to occur in the parent set. For every child path and network rule, require coverage as defined above.
+8. For each child resource-budget entry, require the same parent key and a value less than or equal to the parent maximum. A child MUST NOT introduce a budget key. Budget consumption is cumulative across descendants and MUST be charged against every grant in the chain.
+9. Require the child's approval-class set to be a superset of the parent's set. Adding an approval requirement is attenuation; removing one is escalation.
+10. Require the root issuer to be authorized for the full root scope by fresh policy state. Validate the leaf subject, subject-key thumbprint, audience, organization, user, session, policy epoch, and requested action against live connection and exchange bindings.
+
+Any failed comparison rejects the entire chain with `AUTHORITY_ESCALATION` and no partial authority. A verifier MUST NOT choose a more permissive ancestor, ignore a malformed descendant, or fall back to a legacy lease. Revocation of any credential or grant in the chain revokes all descendants. A later expiry, added model, wider path, added tool, new network destination, higher budget, weaker protection set, removed approval, changed audience, changed organization/user/session/epoch, incorrect parent digest, skipped depth, or replayed issuer sequence is a required negative conformance case.
+
+## F.5 Governed Exchange
+
+```cddl
+governed-exchange-body = {
+  1 => dari-version,
+  2 => identifier,                   ; exchange ID
+  3 => identifier,                   ; session ID
+  4 => identifier,                   ; exchange class
+  5 => identifier,                   ; initiating peer ID
+  6 => digest32,                     ; leaf Authorization Grant digest
+  7 => digest32,                     ; policy checkpoint digest
+  8 => [1*16 identifier],            ; required profiles
+  9 => digest32,                     ; canonical request/action digest
+  10 => time-ms,                     ; opened at
+  ? 11 => [1*16 identifier],         ; causal parent exchange IDs
+  ? 12 => identifier,                ; declared purpose
+  ? 254 => critical-fields,
+  ? 255 => extensions
+}
+```
+
+The Governed Exchange digest is `object_digest(0x0303, governed-exchange-body)`. A Governance Relay MUST create it only after authentication, state, grant, audience, and session validation succeeds. The exchange binds all subsequent decisions, evidence events, inference operations, and effects through its exchange ID and digest. Reuse of an exchange ID with any different body is `REPLAY_CONFLICT`.
+
+An exchange state is `OPEN`, `AUTHORIZED`, `RUNNING`, `COMPLETED`, `DENIED`, `ABORTED`, or `EVIDENCE_FAILURE`. A terminal state MUST NOT transition. `COMPLETED` is permitted only after every required obligation is satisfied, every transactional effect is terminal, all required evidence is durably committed, the Evidence Receipt body is finalized, and every required Receipt Attestation is present and valid. A protected operation MUST NOT be forwarded before the exchange reaches `AUTHORIZED`.
+
+## F.6 Authorization Decision and obligation lifecycle
+
+```cddl
+decision-outcome = 1 / 2 / 3          ; ALLOW / DENY / ALLOW_WITH_OBLIGATIONS
+obligation-phase = 1 / 2              ; PRE_ACTION / POST_ACTION
+obligation-state = 1 / 2 / 3          ; PENDING / SATISFIED / FAILED
+
+obligation = {
+  1 => identifier,                   ; obligation ID
+  2 => identifier,                   ; kind
+  3 => digest32,                     ; canonical parameter digest
+  4 => obligation-phase,
+  5 => obligation-state,
+  6 => identifier,                   ; responsible peer ID
+  ? 7 => time-ms,                    ; deadline
+  ? 8 => digest32                    ; satisfaction/failure evidence digest
+}
+
+authorization-decision-body = {
+  1 => dari-version,
+  2 => identifier,                   ; decision ID
+  3 => identifier,                   ; exchange ID
+  4 => digest32,                     ; governed-exchange digest
+  5 => digest32,                     ; request/action digest
+  6 => digest32,                     ; leaf grant digest
+  7 => digest32,                     ; policy checkpoint digest
+  8 => identifier,                   ; evaluator peer ID
+  9 => decision-outcome,
+  10 => [0*64 obligation],
+  11 => [0*32 identifier],           ; stable reason codes
+  12 => time-ms,                     ; issued at
+  13 => time-ms,                     ; expires at
+  ? 14 => [1*16 digest32],           ; supporting evidence digests
+  ? 254 => critical-fields,
+  ? 255 => extensions
+}
+
+authorization-decision = cose-sign1
+```
+
+The Authorization Decision external AAD is `DARI-AUTHORIZATION-DECISION-v1\0`; its digest is `signed_object_digest(0x0304, authorization-decision)`. `expires_at` MUST be greater than `issued_at`. The evaluator MUST be authorized by the fresh policy checkpoint and trust domain to decide the bound action. A `DENY` decision MUST contain no obligations. An `ALLOW` decision MUST contain no obligations. `ALLOW_WITH_OBLIGATIONS` MUST contain at least one obligation, and every newly issued obligation MUST be `PENDING` unless its evidence digest proves a satisfaction that preceded and is explicitly bound into the decision.
+
+When multiple required decisions apply, the deterministic aggregate is:
+
+1. A missing, invalid, stale, or expired required decision produces `DENY`.
+2. Any valid `DENY` overrides every `ALLOW` and `ALLOW_WITH_OBLIGATIONS`.
+3. Otherwise, union obligations by obligation ID. Two different encodings for the same ID are `DECISION_CONFLICT` and produce `DENY`.
+4. A non-empty union produces `ALLOW_WITH_OBLIGATIONS`; an empty union produces `ALLOW`.
+
+A signed decision is immutable. Obligation state is maintained as an append-only state machine keyed by decision digest and obligation ID. The only transitions are `PENDING -> SATISFIED` and `PENDING -> FAILED`; both require canonical evidence from the responsible peer. Terminal obligation states MUST NOT change. An expired deadline changes a pending obligation to `FAILED`. Every `PRE_ACTION` obligation MUST be satisfied before a protected action or effect starts. Every `POST_ACTION` obligation MUST be satisfied before the exchange becomes `COMPLETED`. A failed required obligation denies an unstarted action or aborts/fails an active exchange. An implementation MUST NOT represent a transform, approval, quarantine, or other condition as an unqualified `ALLOW`; it MUST encode the condition as an obligation or return `DENY`.
+
+## F.7 Signed State Checkpoint, freshness, and rollback
+
+```cddl
+state-class = 1 / 2 / 3 / 4 / 5 / 255
+; 1 revocation, 2 issuer keys, 3 policy epochs,
+; 4 model manifests, 5 endpoint authorizations, 255 extension state
+
+freshness-class = 1 / 2              ; INTEGRITY / LOW_RISK_READONLY
+
+signed-state-checkpoint-body = {
+  1 => dari-version,
+  2 => identifier,                   ; checkpoint ID
+  3 => identifier,                   ; issuer
+  4 => identifier,                   ; trust domain
+  5 => state-class,
+  6 => uint64,                       ; strictly increasing sequence
+  7 => time-ms,                      ; issued at
+  8 => time-ms,                      ; expires at
+  9 => uint64,                       ; maximum staleness in milliseconds
+  10 => digest32,                    ; canonical state snapshot/delta digest
+  ? 11 => digest32,                  ; previous checkpoint signed-object digest
+  ? 12 => [1*16 identifier],         ; audience restriction
+  13 => freshness-class,
+  ? 254 => critical-fields,
+  ? 255 => extensions
+}
+
+signed-state-checkpoint = cose-sign1
+```
+
+The Signed State Checkpoint external AAD is `DARI-SIGNED-STATE-CHECKPOINT-v1\0`; its digest is `signed_object_digest(0x0305, signed-state-checkpoint)`. The signer MUST be authorized for the state class and trust domain. `expires_at` MUST be greater than `issued_at`, and `maximum staleness` MUST be nonzero and within the implementation's configured upper bound.
+
+A verifier MUST keep a durable high-water mark `(sequence, checkpoint digest)` for each `(issuer, trust domain, state class, audience)` tuple. The first accepted checkpoint MUST either be an explicitly provisioned trust baseline or have sequence `0` and no previous digest. For a later checkpoint:
+
+- a lower sequence is `STATE_ROLLBACK`;
+- an equal sequence is accepted only when the signed-object digest is identical, as an idempotent replay;
+- a higher sequence MUST contain label `11` equal to the current high-water digest.
+
+A fork, missing predecessor, or reset not authorized by an out-of-band trust-baseline operation is `STATE_ROLLBACK`. Rollback MUST fail closed for every freshness class.
+
+At evaluation time `now`, allowing negotiated clock skew, a checkpoint is fresh only if `issued_at <= now < expires_at` and `now - issued_at <= maximum staleness`. Revocation, issuer-key, policy-epoch, model-manifest, and endpoint-authorization state are integrity state and MUST use `INTEGRITY`; stale or unavailable integrity state MUST fail closed before a protected transition. `LOW_RISK_READONLY` MAY be used only by an extension for an action that cannot disclose protected data, allocate a model, mutate state, consume a delegated budget, or cause an external effect, and only when fresh policy explicitly authorizes degraded evaluation. Such degradation MUST be reported and evidenced; it MUST NOT be inferred from transport failure.
+
+The required validation order is: canonical form and critical fields; COSE headers and body/payload equality; signature and signer authority; trust domain and audience; time bounds; high-water sequence and predecessor; state digest resolution; then the protected object's use of the state. A failure MUST leave the previous high-water mark unchanged.
+
+## F.8 Evidence Receipt and scoped multi-party attestations
+
+```cddl
+receipt-final-state = 1 / 2 / 3 / 4
+; COMPLETED / DENIED / ABORTED / EVIDENCE_FAILURE
+
+evidence-receipt-body = {
+  1 => dari-version,
+  2 => identifier,                   ; receipt ID
+  3 => identifier,                   ; exchange ID
+  4 => digest32,                     ; governed-exchange digest
+  5 => identifier,                   ; session ID
+  6 => identifier,                   ; organization/trust domain
+  7 => receipt-final-state,
+  8 => uint64,                       ; first event sequence
+  9 => uint64,                       ; last event sequence
+  10 => uint64,                      ; event count
+  11 => digest32,                    ; linear evidence-chain root
+  12 => digest32,                    ; segmented MMR root
+  13 => [1*32 digest32],             ; grant digests
+  14 => [0*64 digest32],             ; decision digests
+  15 => [1*32 digest32],             ; state-checkpoint digests
+  16 => [0*64 digest32],             ; effect-result digests
+  ? 17 => digest32,                  ; model-manifest digest
+  ? 18 => digest32,                  ; endpoint-authorization digest
+  ? 19 => digest32,                  ; provenance root
+  ? 20 => digest32,                  ; omission-manifest digest
+  21 => time-ms,                     ; issued at
+  22 => [1*4 uint],                  ; required attestation roles
+  ? 23 => identifier,                ; retention/export profile
+  ? 254 => critical-fields,
+  ? 255 => extensions
+}
+
+attestation-claim = {
+  1 => uint,                         ; registered claim class
+  2 => [1*64 digest32],              ; objects actually observed
+  ? 3 => uint64,                     ; first observed event sequence
+  ? 4 => uint64                      ; last observed event sequence
+}
+
+receipt-attestation-body = {
+  1 => dari-version,
+  2 => digest32,                     ; Evidence Receipt body digest
+  3 => digest32,                     ; signer Peer Credential digest
+  4 => 1 / 2 / 3,                    ; Relay / Inference Peer / Effect Executor
+  5 => [1*16 attestation-claim],
+  6 => time-ms,
+  ? 254 => critical-fields,
+  ? 255 => extensions
+}
+
+receipt-attestation = cose-sign1
+
+evidence-receipt = {
+  1 => evidence-receipt-body,
+  2 => [1*16 receipt-attestation]
+}
+```
+
+The Evidence Receipt body digest is `object_digest(0x0302, evidence-receipt-body)`. The Receipt Attestation external AAD is `DARI-RECEIPT-ATTESTATION-v1\0`; its digest is `signed_object_digest(0x0703, receipt-attestation)`. The Evidence Receipt is complete only when its body is canonical and every role listed at label `22` has at least one valid, in-scope attestation.
+
+A Governance Relay MAY attest decisions it evaluated or relayed, routing it performed, state it validated, and the evidence roots it assembled. An Inference Peer MAY attest inference inputs, model/endpoint identity, and inference outputs it directly observed. An Effect Executor MAY attest prepares, authorizations, and results it directly processed. A signer MUST NOT attest another role's observation. The verifier MUST validate the signer's current Peer Credential, role, signature, body-digest binding, event range, and every claimed object against the committed evidence. An out-of-scope claim is `ATTESTATION_SCOPE_VIOLATION` and invalidates that attestation.
+
+The producer MUST derive every receipt field from durably committed protocol objects and events. It MUST NOT populate a digest from requested, expected, configured, randomly generated, or merely logged data. It MUST NOT infer an Inference Peer or Effect Executor attestation from Relay observation. Missing required evidence yields `EVIDENCE_FAILURE`; it MUST NOT be replaced by an empty, placeholder, synthetic, or unsigned receipt. In particular, a receipt MUST NOT claim `COMPLETED` while a required obligation is pending or failed, an effect is non-terminal, a required state checkpoint is missing/stale, an evidence append failed, or a required attestation is absent.
+
+## F.9 Ordered evidence and selective disclosure
+
+For a Governed Exchange with digest `X`, the linear evidence chain is:
+
+```text
+R0 = SHA-256("DARI-EVIDENCE-START-v1\0" || X)
+Ri = SHA-256(
+  "DARI-EVIDENCE-EVENT-v1\0" || uint64_be(sequence_i) ||
+  R(i-1) || event_digest_i
+)
+```
+
+Sequences MUST be contiguous and strictly increasing. The receipt `first event sequence`, `last event sequence`, and `event count` MUST agree with the committed sequence. The linear root proves ordering; the segmented commitment below enables selective disclosure.
+
+The `dari/1` baseline segment size is 1024 events. Another power of two from 16 through 65536 MAY be negotiated before the exchange opens and MUST be bound into its extension map. It MUST NOT change within an exchange.
+
+For zero-based segment index `s` and leaf position `p`, compute:
+
+```text
+event_digest = object_digest(event_type, event_body)
+leaf = SHA-256(
+  "DARI-EVIDENCE-LEAF-v1\0" || uint64_be(sequence) || event_digest
+)
+empty = SHA-256(
+  "DARI-EVIDENCE-EMPTY-v1\0" || uint64_be(s) || uint32_be(p)
+)
+node = SHA-256("DARI-EVIDENCE-NODE-v1\0" || left || right)
+```
+
+The final partial segment MUST be padded with the position-specific `empty` leaves. Folding adjacent pairs left-to-right produces the segment root. Commit each completed or final partial segment as an MMR leaf:
+
+```text
+segment_leaf = SHA-256(
+  "DARI-EVIDENCE-SEGMENT-v1\0" || uint64_be(s) ||
+  uint64_be(first_sequence) || uint32_be(actual_count) || segment_root
+)
+```
+
+Segment leaves are appended to a binary Merkle Mountain Range by binary carry: equal-height adjacent peaks combine as `SHA-256("DARI-EVIDENCE-MMR-NODE-v1\0" || left || right)`. List the remaining peaks from highest covered range to lowest covered range. Bag them right-to-left with `SHA-256("DARI-EVIDENCE-MMR-BAG-v1\0" || left_peak || accumulator)`. The receipt root is `SHA-256("DARI-EVIDENCE-MMR-ROOT-v1\0" || uint64_be(segment_count) || bagged_peaks)`. For one segment, `bagged_peaks` is its segment leaf. An Evidence Receipt MUST contain at least one event and one segment.
+
+```cddl
+proof-step = [0 / 1, digest32]        ; sibling is left / right
+mmr-peak = [uint, digest32]           ; height, digest
+
+event-disclosure = {
+  1 => uint16,                       ; registered event object type
+  2 => bstr,                         ; canonical event body bytes
+  3 => uint64,                       ; event sequence
+  4 => uint64,                       ; segment index
+  5 => uint32,                       ; position in segment
+  6 => uint32,                       ; actual count in segment
+  7 => [* proof-step],               ; leaf-to-segment-root path
+  8 => [* proof-step],               ; segment-leaf-to-peak path
+  9 => uint                          ; target peak height
+}
+
+omitted-range = {
+  1 => uint64,
+  2 => uint64,
+  3 => identifier,                   ; policy reason, not existence claim
+  ? 4 => digest32                    ; commitment to separately held material
+}
+
+omission-manifest = [1*256 omitted-range]
+
+selective-disclosure-proof = {
+  1 => dari-version,
+  2 => digest32,                     ; Evidence Receipt body digest
+  3 => uint32,                       ; segment size
+  4 => uint64,                       ; segment count
+  5 => [1*256 event-disclosure],
+  6 => [1*64 mmr-peak],              ; complete canonical peak list
+  ? 7 => bstr,                       ; canonical omission-manifest bytes
+  ? 254 => critical-fields,
+  ? 255 => extensions
+}
+```
+
+Peak heights and covered ranges are determined uniquely by the binary decomposition of `segment_count`; label `6` MUST contain that exact peak list in range order, with no duplicate height or extra peak. For each disclosure, a verifier MUST: validate canonical event bytes; recompute the event digest and leaf; require the segment index and position implied by the receipt's first sequence; require the exact `log2(segment_size)` segment steps, including deterministic empty padding; reconstruct the segment leaf; reconstruct its unique MMR peak from label `8`; replace exactly one matching peak in label `6`; bag all peaks; and compare the resulting root to the receipt. A duplicated sequence, inconsistent path direction, wrong height/count, uncommitted event, extra peak, or altered event MUST fail.
+
+If label `7` is present, its canonical digest MUST equal receipt label `20`; if receipt label `20` is present, label `7` is required when verifying disclosure completeness. Omitted ranges MUST be ordered, non-overlapping, within receipt sequence bounds, and disjoint from disclosed events. An omission manifest states only that a committed range was withheld for the named policy reason. It MUST NOT state or imply that undisclosed content did not exist, was harmless, or was observed by a party that did not attest it. A selective proof proves inclusion and receipt consistency, not the truth of undisclosed content.
+
+## F.10 Transactional effects
+
+```cddl
+effect-prepare-body = {
+  1 => dari-version,
+  2 => identifier,                   ; operation ID
+  3 => identifier,                   ; exchange ID
+  4 => nonce32,                      ; operation nonce
+  5 => digest32,                     ; leaf grant digest
+  6 => digest32,                     ; canonical input digest
+  7 => identifier,                   ; effect kind/tool ID
+  8 => identifier,                   ; executor peer ID
+  9 => identifier,                   ; retry-owner peer ID
+  10 => time-ms,                     ; expires at
+  ? 11 => uri,                       ; opaque input reference
+  ? 254 => critical-fields,
+  ? 255 => extensions
+}
+
+effect-authorization-body = {
+  1 => dari-version,
+  2 => identifier,                   ; operation ID
+  3 => digest32,                     ; Effect Prepare signed-object digest
+  4 => digest32,                     ; Authorization Decision digest
+  5 => identifier,                   ; authorizing Relay peer ID
+  6 => time-ms,                      ; issued at
+  7 => time-ms,                      ; expires at
+  ? 254 => critical-fields,
+  ? 255 => extensions
+}
+
+effect-terminal-state = 1 / 2        ; COMMITTED / ABORTED
+
+effect-result-body = {
+  1 => dari-version,
+  2 => identifier,                   ; operation ID
+  3 => digest32,                     ; Effect Prepare digest
+  4 => digest32,                     ; Effect Authorization digest
+  5 => identifier,                   ; executor peer ID
+  6 => effect-terminal-state,
+  7 => digest32,                     ; input digest repeated for binding
+  ? 8 => digest32,                   ; result digest
+  ? 9 => uri,                        ; opaque result reference
+  10 => time-ms,                     ; terminal time
+  ? 254 => critical-fields,
+  ? 255 => extensions
+}
+
+effect-state = 1 / 2 / 3 / 4 / 5
+; PREPARED / AUTHORIZED / EXECUTING / COMMITTED / ABORTED
+
+effect-status-body = {
+  1 => dari-version,
+  2 => identifier,                   ; operation ID
+  3 => nonce32,                      ; request correlation nonce
+  ? 4 => effect-state,
+  ? 5 => digest32,                   ; Effect Prepare digest
+  ? 6 => digest32,                   ; terminal Effect Result digest
+  ? 7 => identifier,                 ; retry-owner peer ID
+  ? 254 => critical-fields,
+  ? 255 => extensions
+}
+```
+
+Effect Prepare, Effect Authorization, Effect Result, and a status response each use an attached COSE signature. Their external AAD values are respectively `DARI-EFFECT-PREPARE-v1\0`, `DARI-EFFECT-AUTHORIZATION-v1\0`, `DARI-EFFECT-RESULT-v1\0`, and `DARI-EFFECT-STATUS-v1\0`. Their signed-object types are `0x0610`, `0x0611`, `0x0612`, and `0x0613`. A status request MAY be authenticated by its enclosing DARI connection rather than signed; a status response carrying state or a result MUST be signed by the executor.
+
+The executor MUST persist the operation ID, nonce, prepare digest, grant digest, input digest, executor, retry owner, and state before acknowledging `PREPARED`. It MUST persist the authorization digest before acknowledging `AUTHORIZED`, and MUST atomically persist the terminal state, result digest/reference, and Effect Result before sending `COMMIT` or `ABORT`.
+
+The only effect transitions are:
+
+```text
+ABSENT -> PREPARED -> AUTHORIZED -> EXECUTING -> COMMITTED
+                                           \-> ABORTED
+```
+
+The executor MUST validate the complete Peer Credential, state, grant, decision, and pre-action obligation chain before `AUTHORIZED`, and MUST use an atomic compare-and-set before entering `EXECUTING`. A terminal state MUST NOT transition. Only the named retry owner MAY reconcile an operation left in `PREPARED`, `AUTHORIZED`, or `EXECUTING` after disconnect.
+
+The operation ID is the idempotency key. Repeating an operation ID with the same nonce, prepare digest, grant digest, input digest, executor, and retry owner MUST return the durable current status or terminal result without executing again. Repeating it with any different binding is `REPLAY_CONFLICT`. After an uncertain disconnect, a caller MUST issue `EFFECT_STATUS`; it MUST NOT automatically submit another prepare or execute. An operation stranded in `EXECUTING` MUST remain there until the retry owner obtains authoritative proof from an idempotent/transactional external system or aborts without claiming an unproved outcome. If the external system cannot make the effect and durable result atomic or idempotently reconcilable, the implementation MUST NOT claim exactly-once completion.
+
+An effect's `COMMITTED` result becomes eligible for an Evidence Receipt only after all post-action obligations are satisfied and the result event is durably appended. A failure to append evidence yields `EVIDENCE_FAILURE`; it does not erase or repeat an already committed external effect.
+
+## F.11 Validation order and failure semantics
+
+For every protected inbound transition, a conforming receiver MUST apply this order and stop at the first failure:
+
+1. Validate record framing, declared size, resource bounds, deterministic CBOR, duplicate keys, exact schema, version, and critical fields.
+2. Validate that the negotiated profile, message type, sender role, stream contract, and current connection/exchange state permit the object.
+3. Validate COSE structure, protected headers, algorithm, `kid`, attached payload equality, and signature.
+4. Validate the signer's Peer Credential chain, trust domain, time, revocation, transcript proof-of-possession, and connection binding.
+5. Validate object identifiers and digest bindings to session, exchange, request/action, subject key, audience, organization, user, and policy epoch.
+6. Validate Signed State Checkpoint authority, freshness, high-water sequence, predecessor, and referenced state.
+7. Validate the complete Authorization Grant chain, attenuation, replay sequence, scope, budget availability, and requested action.
+8. Validate and aggregate Authorization Decisions; enforce pre-action obligations.
+9. Validate action-specific model, endpoint, context, inference, or effect constraints.
+10. Perform the durable replay/idempotency and state transition.
+11. Append the canonical evidence event durably before forwarding protected data, acknowledging a protected transition, or declaring completion.
+
+Later success MUST NOT override an earlier failure. Caches MAY accelerate a step only when their cache key covers every normative input and their validity is bounded by the earliest credential, grant, decision, or checkpoint expiry and by revocation high-water state.
+
+On any failure, the receiver MUST NOT forward protected content, allocate inference, consume an effect, or advance to a more privileged state. Malformed framing, authentication-integrity failure, or repeated hostile input SHOULD close the connection. An object-scoped policy, authority, freshness, obligation, or replay failure SHOULD deny or abort the affected exchange without disrupting unrelated exchanges when isolation is safe. The receiver SHOULD append a denial/failure event when doing so does not trust unvalidated attacker-controlled claims. A failure to durably append required evidence MUST produce `EVIDENCE_FAILURE`, never `COMPLETED`.
+
+Profile negotiation failure uses `UNSUPPORTED`. A critical requested profile with `UNSUPPORTED` MUST terminate negotiation. A non-critical `DEGRADED` result MUST enumerate every omitted capability and MUST NOT weaken the `dari/1` authorization, receipt, freshness, rollback, or effect semantics. A receiver MUST NOT silently fall back from a DARI object to a `paper/1` parser after any DARI validation failure.
+
+## F.12 Stable allocations
+
+Object-type numbers and message-type numbers are independent registries. Existing `paper/1` numbers are not renumbered. This appendix reserves these object types for DARI signed-object domain separation:
+
+| Object | Object type |
+|---|---:|
+| Peer Credential | `0x0100` (existing) |
+| Authorization Grant | `0x0202` |
+| Evidence Receipt body | `0x0302` (existing) |
+| Governed Exchange | `0x0303` |
+| Authorization Decision | `0x0304` |
+| Signed State Checkpoint | `0x0305` |
+| Effect Prepare | `0x0610` |
+| Effect Authorization | `0x0611` |
+| Effect Result | `0x0612` |
+| Effect Status response | `0x0613` |
+| Receipt Attestation | `0x0703` |
+| Selective Disclosure Proof | `0x0704` |
+
+Authorization Grants use existing message carriers `SESSION_GRANT` (`0x0201`) and `LEASE_ISSUE` (`0x0210`) according to exchange phase. Authorization Decisions use `RELAY_VERDICT` (`0x0304`). Evidence Receipts use `EVIDENCE_RECEIPT` (`0x0307`). A Signed State Checkpoint is carried by the state-bearing message that references it or by a profile extension; no new core message type is allocated for it in Phase 2.
+
+The only new message allocations are the transactional-effect subfamily:
+
+| Constant | Message type | Payload |
+|---|---:|---|
+| `EFFECT_PREPARE` | `0x0610` | signed Effect Prepare |
+| `EFFECT_AUTHORIZE` | `0x0611` | signed Effect Authorization |
+| `EFFECT_COMMIT` | `0x0612` | signed Effect Result with `COMMITTED` |
+| `EFFECT_ABORT` | `0x0613` | signed Effect Result with `ABORTED` |
+| `EFFECT_STATUS` | `0x0614` | Effect Status request or signed response |
+
+Values `0x0604` through `0x0606` are not available: the legacy specification already assigns them even though current source registries are inconsistent. The `0x0610` through `0x0614` allocation MUST NOT be reused by `paper/1`, another extension, or an object registry. A profile that does not negotiate `dari.tools/1` MUST report these messages as `UNSUPPORTED_MESSAGE_TYPE` without attempting a legacy interpretation.
+
+## F.13 Protocol and extension profiles
+
+The normative profile and compatibility table is `DARI_COMPATIBILITY_AND_PROFILE_MAP.md`. The following profile identifiers are exact and case-sensitive:
+
+- `paper/1` is bounded legacy compatibility for the frozen preface, record/message encoding, and documented legacy objects. It is not the active DARI kernel and confers no DARI conformance.
+- `dari/1` is the active, application-neutral DARI kernel defined by this appendix.
+- `dari.ai/1` is provider-neutral inference request, streaming response, usage, cancellation, and model/endpoint binding.
+- `dari.tools/1` is the transactional effects and tool-bridge profile defined by F.10 and F.12.
+- `dari.model-supply/1` is model-artifact manifest and endpoint-authorization binding.
+- `dari.web/1` is a schema-only profile for origin binding, proof of possession, reconnect behavior, and unchanged DARI authorization/receipt semantics. Until its runtime and conformance suite exist, every runtime MUST return `UNSUPPORTED` for this profile.
+- `dari.federation/1` is a schema-only profile for issuer, audience, trust domain, policy intersection, residency constraints, and receipt keys. Until its runtime and conformance suite exist, every runtime MUST return `UNSUPPORTED` for this profile.
+
+All `dari.*` profiles depend on `dari/1`. An implementation MUST negotiate each requested profile as `EXACT`, `DEGRADED`, or `UNSUPPORTED`. `EXACT` means every required behavior is implemented and conformant. `DEGRADED` is permitted only for explicitly optional capabilities and MUST enumerate them. It MUST NOT be returned for `dari.web/1` or `dari.federation/1` before runtime conformance exists.
+
+## F.14 Required black-box negative conformance cases
+
+A conformance suite MUST exercise at least these cases and observe no protected side effect on rejection:
+
+1. Non-canonical CBOR, duplicate map key, indefinite length, unknown top-level label, and unknown critical extension.
+2. COSE signature valid over a payload that differs from the decoded object presented to the application.
+3. Wrong external AAD, unprotected `alg`/`kid`, unnegotiated algorithm, unknown key, expired/revoked credential, altered transcript, wrong challenge, wrong channel binding, or missing subject proof of possession.
+4. Every attenuation failure enumerated in F.4, including changed audience and parent-digest substitution.
+5. Missing, invalid, stale, forked, replayed-lower-sequence, or wrong-audience Signed State Checkpoint.
+6. Missing decision, deny-overrides-allow, conflicting obligation ID, expired decision, pending pre-action obligation, failed obligation, and completion with a pending post-action obligation.
+7. Receipt field not derived from committed evidence, random/placeholder root, sequence gap, absent required signer, signer-role overclaim, changed body after attestation, and claimed completion after evidence append failure.
+8. Altered disclosed event, wrong leaf position, bad empty padding, wrong segment count, malformed MMR peak list, altered omission manifest, overlapping omission range, or proof for an event outside receipt bounds.
+9. Duplicate operation with identical binding returns the stored state/result without another execution; duplicate operation with changed nonce, input, grant, executor, or retry owner returns `REPLAY_CONFLICT`; reconnect queries status rather than re-executing; unauthorized retry owner is rejected; crash in `EXECUTING` never fabricates `COMMITTED`.
+10. Critical `dari.web/1` or `dari.federation/1` negotiation fails with `UNSUPPORTED`; a non-critical request is explicitly omitted and never reported as `EXACT` or `DEGRADED`.
+11. A DARI validation error never triggers silent parsing as `paper/1`; a legacy `paper/1` object never acquires delegation, fresh-state, multi-party-attestation, selective-disclosure, or exactly-once claims that its bytes do not prove.
+
+Positive conformance vectors MUST include byte-exact deterministic CBOR, protected-header bytes, `Sig_structure`, signature, object digest, grant-chain digest, checkpoint high-water transition, linear evidence root, segment root, MMR root, disclosure proof, and duplicate-effect result. These are required contract tests for implementation work; this specification does not claim they exist yet.

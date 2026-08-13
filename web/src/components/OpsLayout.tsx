@@ -1,6 +1,7 @@
 import { ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import GlobalSearch from './GlobalSearch'
 
 type NavItem = { path: string; label: string; labelEn: string; icon: string }
 
@@ -102,8 +103,11 @@ export default function OpsLayout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-y-auto main-scroll">
-        <div className="p-6 max-w-[1600px] mx-auto">{children}</div>
+      <main className="main-content flex-1 overflow-y-auto main-scroll">
+        <div className="p-6 max-w-[1600px] mx-auto">
+          <div className="mb-4"><GlobalSearch /></div>
+          {children}
+        </div>
       </main>
     </div>
   )

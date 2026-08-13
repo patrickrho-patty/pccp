@@ -2,6 +2,7 @@ import { ReactNode, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { SeatWidget } from './SeatWidget'
+import GlobalSearch from './GlobalSearch'
 
 type NavItem = { path: string; label: string; labelEn: string; icon: string }
 
@@ -135,8 +136,11 @@ export default function CustomerLayout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-y-auto main-scroll">
-        <div className="p-6 max-w-[1600px] mx-auto animate-fadeIn">{children}</div>
+      <main className="main-content flex-1 overflow-y-auto main-scroll">
+        <div className="p-6 max-w-[1600px] mx-auto animate-fadeIn">
+          <div className="mb-4"><GlobalSearch /></div>
+          {children}
+        </div>
       </main>
     </div>
   )
