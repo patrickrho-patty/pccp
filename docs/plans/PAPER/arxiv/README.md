@@ -50,10 +50,11 @@ work, and from browser and federation extension profiles. Primitive benchmark
 values must not be interpreted as measurements of those unimplemented or
 extension-profile behaviors.
 
-The two PNG diagrams are Qwen-generated conceptual artwork. They contain no
-empirical measurements or implementation-coverage claims. The model-identity
-chain and primitive-latency plot are LaTeX-native figures; the latter reads the
-checked-in benchmark TSV directly.
+The overview PNG is Qwen-generated conceptual artwork. The lifecycle PNG is
+YOLO AUTO-generated and rendered with ImageMagick from model-produced SVG.
+They contain no empirical measurements or implementation-coverage claims. The
+model-identity chain and primitive-latency plot are LaTeX-native figures; the
+latter reads the checked-in benchmark TSV directly.
 
 ## Create the source archive
 
