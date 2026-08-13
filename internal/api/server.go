@@ -1578,9 +1578,21 @@ func (s *Server) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListConversations(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	// For now, return all org conversations
+	q := s.db.Model(&models.Conversation{}).Where("organization_id = ?", orgID)
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		page, _ := strconv.Atoi(pageStr)
+		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+		if size == 0 { size = 25 }
+		if page == 0 { page = 1 }
+		var total int64
+		q.Count(&total)
+		var convs []models.Conversation
+		q.Order("last_message_at DESC").Offset((page - 1) * size).Limit(size).Find(&convs)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"data": convs, "total": total, "page": page, "size": size})
+		return
+	}
 	var convs []models.Conversation
-	s.db.Where("organization_id = ?", orgID).Order("last_message_at DESC").Find(&convs)
+	q.Order("last_message_at DESC").Find(&convs)
 	writeJSON(w, http.StatusOK, convs)
 }
 
@@ -2543,8 +2555,21 @@ func (s *Server) handleUpdateSecurityPolicy(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) handleSecurityFindings(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
+	q := s.db.Model(&models.SecurityFinding{}).Where("organization_id = ?", orgID)
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		page, _ := strconv.Atoi(pageStr)
+		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+		if size == 0 { size = 25 }
+		if page == 0 { page = 1 }
+		var total int64
+		q.Count(&total)
+		var findings []models.SecurityFinding
+		q.Order("occurred_at DESC").Offset((page - 1) * size).Limit(size).Find(&findings)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"data": findings, "total": total, "page": page, "size": size})
+		return
+	}
 	var findings []models.SecurityFinding
-	s.db.Where("organization_id = ?", orgID).Order("occurred_at DESC").Limit(100).Find(&findings)
+	q.Order("occurred_at DESC").Limit(100).Find(&findings)
 	writeJSON(w, http.StatusOK, findings)
 }
 
