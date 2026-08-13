@@ -15,6 +15,7 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/paper"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
+	"github.com/patrickrho-patty/pccp/internal/realtime"
 	"github.com/patrickrho-patty/pccp/internal/security"
 	"github.com/patrickrho-patty/pccp/internal/workintel"
 	"gorm.io/gorm"
@@ -29,6 +30,7 @@ type Service struct {
 	provenance *provenance.Service
 	security   *security.Service
 	workintel  *workintel.Service
+	realtime   *realtime.Service
 	forwarder  inferenceForwarder
 	cpURL      string
 	relayID    string
@@ -83,6 +85,7 @@ func New(db *gorm.DB, cpURL, relayID string) (*Service, error) {
 		provenance: provSvc,
 		security:   security.New(db),
 		workintel:  workintel.New(db),
+		realtime:   realtime.New(),
 		cpURL:      cpURL,
 		relayID:    relayID,
 		httpClient: &http.Client{Timeout: 120 * time.Second},
@@ -484,6 +487,7 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest) (*Infe
 	if secResult := s.security.CheckContext(orgID, combinedText); len(secResult.Findings) > 0 {
 		for _, f := range secResult.Findings {
 			s.security.RecordFinding(orgID, req.SessionID, ex.ID, f)
+			s.realtime.NotifySecurityFinding(orgID, f.Severity, f.TitleKo)
 		}
 		if secResult.Verdict == "DENY" {
 			s.CloseExchange(ctx, ex.ID)
