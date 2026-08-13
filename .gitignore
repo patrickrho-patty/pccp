@@ -36,3 +36,4 @@ docs/plans/PAPER/arxiv/*.out
 docs/plans/PAPER/arxiv/*.xdv
 docs/plans/PAPER/arxiv/*.pdf
 docs/plans/PAPER/arxiv/*.tar.gz
+docs/plans/PAPER/arxiv/Makefile
