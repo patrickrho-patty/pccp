@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
@@ -321,7 +321,7 @@ export default function Users() {
                       </td>
                     </tr>
                   )}
-              </>
+              </Fragment>
                 ))}
           </tbody>
         </table>
