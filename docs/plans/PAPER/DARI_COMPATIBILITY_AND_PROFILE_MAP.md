@@ -75,7 +75,7 @@ Message-type and object-type registries are independent. Existing legacy message
 | `EFFECT_ABORT` | `0x0613` | `dari.tools/1` |
 | `EFFECT_STATUS` | `0x0614` | `dari.tools/1` |
 
-Values `0x0604` through `0x0606` MUST NOT be allocated: the legacy specification already claims them. Values `0x0610` through `0x0614` MUST be rejected as unsupported unless `dari.tools/1` is negotiated.
+Values `0x0604` through `0x0606` MUST NOT be reallocated for DARI: the legacy specification already claims them. Values `0x0610` through `0x0614` MUST be rejected as unsupported unless `dari.tools/1` is negotiated.
 
 The DARI object-type allocation is:
 

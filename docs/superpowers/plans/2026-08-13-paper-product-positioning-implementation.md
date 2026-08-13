@@ -1,6 +1,8 @@
 # PAPER Product-Positioning Revision Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **Historical notice:** This positioning plan is superseded by the DARI full-enterprise execution plan at `docs/superpowers/plans/2026-08-14-dari-protocol-evolution-implementation.md`. It remains a record of the earlier paper revision and does not authorize a prototype or schema-only release.
 
 **Goal:** Publish synchronized English and Korean arXiv manuscripts that present PAPER as an open, product-integrated AI communication system with reusable SDK and serving-engine support.
 

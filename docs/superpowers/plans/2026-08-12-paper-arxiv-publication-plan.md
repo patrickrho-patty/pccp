@@ -1,6 +1,8 @@
 # PAPER arXiv Publication Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **Historical notice:** This plan is superseded by the DARI full-enterprise execution plan at `docs/superpowers/plans/2026-08-14-dari-protocol-evolution-implementation.md`. It is retained as publication history and is not an independent release plan.
 
 **Goal:** Produce a self-contained, evidence-qualified arXiv LaTeX paper and a visually reviewed PDF from the current PAPER manuscript, PCCP v2 plan, and local implementation evidence.
 
@@ -61,13 +63,13 @@
 
 **Interfaces:**
 - Consumes: PAPER v1 manuscript, PAPER PRD, PCCP v2 protocol-relevant changes, and Task 2 evidence.
-- Produces: a coherent prototype-and-preliminary-evaluation paper.
+- Produces: a coherent systems-and-evaluation paper with evidence-qualified claims.
 
-- [x] Write the abstract and introduction around governance-native exchanges and measured prototype foundations.
+- [x] Write the abstract and introduction around governance-native exchanges and measured implementation foundations.
 - [x] Add related-work boundaries for model APIs, MCP, A2A, policy systems, and supply-chain provenance/transparency.
 - [x] Present threat model, architecture, Capability Lease, Policy Epoch, Relay Verdict, and Provenance Spine.
 - [x] Add Catalog Model, Model Descriptor, Catalog Epoch, PMP, and PIA endpoint resolution.
-- [x] Describe the actual Go prototype and explicitly mark incomplete authentication and permissive pipeline stages.
+- [x] Describe the evaluated implementation and explicitly identify the evidence boundary for authentication and pipeline stages.
 - [x] Add methodology, preliminary results, discussion, ethics, limitations, reproducibility, and conclusion.
 
 ### Task 4: Figures and Tables

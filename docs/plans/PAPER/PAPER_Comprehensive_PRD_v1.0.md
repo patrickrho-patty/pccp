@@ -13,6 +13,8 @@
 **Core transport decision:** QUIC first; native TLS 1.3/TCP fallback; no HTTP/REST/WebSocket compatibility mode  
 **Architecture decision:** All governed AI traffic traverses a horizontally scalable PAPER Relay data plane controlled by Patty Code Control Plane (CP)
 
+**DARI execution status:** This PRD is the product/design baseline. The active execution source is `docs/superpowers/plans/2026-08-14-dari-protocol-evolution-implementation.md`, whose enterprise coverage matrix maps every known gap to an implementation task and release test. “Future,” “optional,” and “prototype” wording retained in historical requirements describes a capability that must be implemented and verified by that plan; it is not permission to ship a schema-only, documentation-only, or MVP release.
+
 ---
 
 # Table of Contents
@@ -4070,7 +4072,7 @@ That—not custom encryption or different endpoint names—is the product PAPER 
 
 This addendum freezes the implementation acceptance contract for **DARI — Delegated Authorization and Receipts for Inference**. It is consumed by Phase 2 implementation Tasks 5–19. Normative schemas and algorithms are in Appendix F of `PAPER_Protocol_Specification_v1.0.md`; profile and migration behavior is in `DARI_COMPATIBILITY_AND_PROFILE_MAP.md`. Those two documents control if older PAPER requirements conflict with this addendum for a DARI profile.
 
-This is a design and acceptance baseline. It MUST NOT be cited as evidence that a runtime feature is implemented, conformant, deployed, secure in production, or measured. The implementation claim matrix remains authoritative until the named runtime gates pass: framing/canonical-CBOR and supported transports are implementation claims; transcript authentication, complete signed authorization, attenuation, and deterministic receipts are implementation-required; web, federation, collaboration, and media are runtime-gated profiles rather than schema-only placeholders.
+This is a design and acceptance baseline. It MUST NOT be cited as evidence that a runtime feature is implemented, conformant, deployed, secure in production, or measured. The implementation claim matrix remains authoritative until the named runtime gates pass: framing/canonical-CBOR and supported transports are implementation claims; transcript authentication, complete signed authorization, attenuation, and deterministic receipts are implementation-required; web, federation, collaboration, and media are runtime-gated profiles that cannot be advertised until their executable gates pass. `UNSUPPORTED` is a readiness result, not a release deferral.
 
 Phase 2 adds the neutral protocol kernel without performing the Phase 3 product-wide rename. Core implementation APIs and new wire objects MUST use neutral names. Existing product names MAY remain in legacy files, adapters, user-facing product material, and the clearly named Patty reference/legacy profile.
 

@@ -2,10 +2,10 @@
 
 ## Patty AI Provenance & Enforcement Relay
 
-**Manuscript status:** Design and evaluation manuscript for arXiv preprint  
+**Manuscript status:** Historical design and evaluation manuscript; canonical submission source is the DARI LaTeX edition
 **Version:** 1.0  
 **Date:** 2026-08-11  
-**Authors:** *To be supplied before submission*  
+**Authors:** Use the approved author list in the canonical DARI LaTeX edition before submission.
 **Companion specification:** `PAPER Protocol Specification v1.0`  
 **Open-source intent:** Protocol specification, schemas, reference implementations, conformance tests, test vectors, fuzzers, and benchmark harnesses are intended for public release.
 
@@ -1606,7 +1606,7 @@ Semantic lineage through arbitrary refactoring, copying, code generation, confli
 
 ### 19.6 Protocol scope is large
 
-Inference plus collaboration creates implementation and attack-surface complexity. Extension separation and conformance levels mitigate this, but a minimal research prototype should implement core/governed/AI first before enterprise collaboration extensions.
+Inference plus collaboration creates implementation and attack-surface complexity. Extension separation and conformance levels mitigate this; the full enterprise implementation must implement core, governed inference, collaboration, and the applicable runtime profiles behind executable conformance gates.
 
 ### 19.7 Not a substitute for endpoint/network security
 
@@ -1638,7 +1638,7 @@ Government deployments should additionally ensure that protocol evidence and cry
 
 ---
 
-## 21. Future Work
+## 21. Research Extensions Beyond the Current Release
 
 ### 21.1 Argument-level provenance
 
@@ -1682,11 +1682,11 @@ Explore whether zero-knowledge proofs, private-set membership, trusted execution
 
 ### 21.8 Live voice and richer collaboration
 
-PAPER v1 voice is asynchronous. Future work may examine real-time voice/video while preserving enterprise authorization, recording policy, QoS, and provenance without turning PAPER into a general-purpose conferencing protocol.
+The current release boundary treats voice/media as governed runtime profiles. Further work may evaluate real-time voice/video performance and interoperability while preserving enterprise authorization, recording policy, QoS, and provenance without turning PAPER into a general-purpose conferencing protocol.
 
 ### 21.9 Cross-organization federation
 
-Current enterprise semantics assume one authoritative organization/trust domain for a session. Federation would require explicit trust negotiation, policy intersection, provenance disclosure rules, and model/data residency constraints.
+The DARI evolution plan defines federation as an executable profile with explicit trust negotiation, policy intersection, provenance disclosure rules, and model/data residency constraints. Further work is limited to deployment-scale interoperability and performance evaluation after those gates pass.
 
 ---
 
@@ -1900,7 +1900,7 @@ A generic model endpoint cannot treat this as an ordinary completion request wit
 
 Before submitting this manuscript to arXiv:
 
-1. Replace author placeholder with approved author list and affiliations.
+1. Use the approved author list and affiliations in the canonical DARI LaTeX source; this historical Markdown copy is not the submission source.
 2. Run a fresh literature and standards search for overlapping 2026 work.
 3. Verify all RFC publication metadata and current errata.
 4. Publish or link the exact PAPER specification revision discussed in the paper.

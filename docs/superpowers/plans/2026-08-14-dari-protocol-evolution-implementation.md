@@ -25,11 +25,11 @@
 - No paper claim may describe an unimplemented property as measured or enforced.
 - Full-delivery rule: no advertised DARI profile may remain schema-only, documentation-only, generated-code-only, feature-flag-only, deferred, or experimental at the project release gate. Each advertised profile requires a runtime path, durable state where applicable, operator controls, telemetry, failure semantics, black-box conformance, and deployment evidence.
 - Runtime-first enterprise scope: browser access, cross-domain federation, inference/tool/model-supply adapters, collaboration/media, catalog/policy enforcement, metering, provenance, compliance, onboarding, and sovereign operations are implementation tracks in this plan—not future placeholders.
-- A capability may be marked `UNSUPPORTED` during development, but only until its named runtime and conformance tasks below pass. The release gate must not ship a profile whose only evidence is a schema or registry row.
+- A capability may be marked `UNSUPPORTED` during development, but only until its named runtime and conformance tasks below pass. `UNSUPPORTED` is a development/release-readiness result, never a way to defer a promised release capability. The release gate must not ship a profile whose only evidence is a schema or registry row.
 - Generated LaTeX outputs are rebuilt, never hand-edited.
 - Every behavior change starts with a failing test and ends with targeted tests plus `go test ./...`.
 
-## Deferred-item closure map
+## Gap-closure map
 
 The older paper, product, and protocol plans remain historical references. Their unfinished items are absorbed into this plan as executable work:
 
@@ -39,16 +39,34 @@ The older paper, product, and protocol plans remain historical references. Their
 | `implementation-required` authorization and attenuation | Tasks 7–8 | signed grants, parent-chain validation, broadening rejection matrix |
 | `implementation-required` decisions, freshness, receipts, selective disclosure | Tasks 9–10 | deny-overrides, checkpoint high-water marks, multi-party receipts, MMR proofs |
 | `implementation-required` transactional effects | Task 11 | durable prepare/authorize/execute/commit/abort/status and reconnect tests |
-| `dari.web/1` “schema only” | Task 13 | WebTransport/HTTP/3 runtime, constrained WebSocket fallback, browser proof-of-possession, origin binding, reconnect and effect-status tests |
-| `dari.federation/1` “schema only” | Task 14 | trust-bundle discovery, bilateral issuer/audience validation, policy intersection, residency enforcement, cross-domain receipt verification |
+| `dari.web/1` previously schema-only | Task 13 | WebTransport/HTTP/3 runtime, constrained WebSocket fallback, browser proof-of-possession, origin binding, reconnect and effect-status tests |
+| `dari.federation/1` previously schema-only | Task 14 | trust-bundle discovery, bilateral issuer/audience validation, policy intersection, residency enforcement, cross-domain receipt verification |
 | dead or partially wired 14-stage governance path | Task 15 | live Harness→Relay→PIA pipeline, hot-state cache, catalog/PMP/endpoint chain, DLP, scheduler, metering, evidence, backpressure |
 | enterprise stubs and declarative-only controls | Task 16 | SSO/SCIM, hierarchy/delegated admin, KMS/HSM seam, compliance evidence, retention/legal hold, onboarding/migration, rollout/rollback, KPIs |
 | tool/network/secret, SCM, sandbox, and provenance gaps | Task 17 | governed MCP/tool/network/secret calls, real Git/SCM/change-set binding, isolated sandbox executor, provenance-fed live path |
 | chat/presence/file/voice and non-compilable SDK artifacts | Task 18 | DARI collaboration/media streams, encrypted delivery, resumable scanned files, browser/Go SDKs, provider capability adapters |
 | proxy or comment-only conformance tests | Task 19 | capability manifests, canonical/negative vectors, stateful black-box runner, two-implementation interoperability |
-| future wording for live audio, connectors, approved engines, and standards adapters | Tasks 12, 17–19 | versioned runtime profiles with explicit capability reporting and integration tests; no unimplemented feature is advertised |
+| previously future-labeled live audio, connectors, approved engines, and standards adapters | Tasks 12, 17–19 | versioned runtime profiles with explicit capability reporting and integration tests; no unimplemented feature is advertised |
 
 The following earlier planning documents are retained as publication history, not independent execution sources. Any unfinished implementation language in them is superseded by this closure map and Tasks 1–24: `docs/superpowers/plans/2026-08-12-paper-arxiv-publication-plan.md`, `docs/superpowers/plans/2026-08-12-paper-benchmark-mathematics-implementation.md`, `docs/superpowers/plans/2026-08-12-paper-korean-edition-implementation.md`, `docs/superpowers/plans/2026-08-12-paper-visual-evidence-implementation-plan.md`, `docs/superpowers/plans/2026-08-13-paper-product-positioning-implementation.md`, and `docs/superpowers/plans/2026-08-13-paper-professional-rhetoric-audit.md`.
+
+## Current implementation status
+
+This is the release-readiness source of truth. Tasks 1–5 are complete in the root repository (`672e7d8` and its preceding commits) and have passing targeted tests/build checks. Task 4's normative appendix is being corrected by this review before it is considered complete. Task 6 has a partial root implementation, but it is **not release-complete**: the nested `patty-code-pccp` checkout is dirty and still contains placeholder provider proof bytes, and trust-bundle injection, revocation propagation, and the exact Appendix-F wire vectors remain open. Tasks 7–19 (runtime behavior), Tasks 20–23 (rename/governance), and Task 24 (release gate) remain unchecked until their runtime, deployment, and conformance evidence exists. A clean root checkout or passing root unit tests does not imply a complete DARI product while the nested client or any listed runtime task remains unfinished.
+
+The plan never converts a schema, registry entry, feature flag, generated client, or documentation row into product support. Every task below ends with executable behavior, durable state where needed, operator controls, telemetry, negative tests, and a commit in the owning repository.
+
+## Enterprise coverage matrix
+
+The following known gaps are explicit work, not out-of-scope notes. Each row must have an implementation, an end-to-end test, and an operator/deployment record before Gate C can pass.
+
+| Existing gap inventory | Full-product owner | Required evidence |
+|---|---|---|
+| Live 14-stage pipeline, PAPER-only path, metering/evidence, fleet revocation/catalog chain, PMP signature/hash, catalog push, inline DLP/injection, scheduler, tokenizer/structured AI output, no mock inference fallback, PIA attestation | Task 15 | live request traces, provider admission tests, signed catalog/model/endpoint chain, usage/evidence receipts, failure/backpressure tests |
+| SSO/SAML/OIDC, SCIM, organization hierarchy, delegated administration, ABAC/policy acknowledgement/exception/epochs, CSAP/ISMS-P evidence, KMS/HSM, retention/legal hold, offline updates, onboarding/migration, rollout/rollback/HA, KPIs and observability, work-intelligence dispute/bias/gaming controls, console privacy boundary, global search, payment/billing, wallboard and historical comparison, Korean enterprise differentiators | Task 16 | executable control-plane flows, access-denial tests, audit/compliance exports, operator runbooks, dashboards and migration/rollback evidence |
+| Tools/MCP/network/secrets, SCM/change-set binding, sandbox isolation, connectors, live provenance, model-supply and hardware attestation/reattestation seams | Task 17 | executor denial-before-side-effect tests, isolated runtime tests, signed change/provenance receipts, attestation/key-release tests |
+| Governed chat/presence/broadcast, E2E encrypted voice/media, resumable scanned files, compilable Go/web SDKs, live UI streams, wallboard/history integration | Task 18 | encrypted ordered delivery, file scan/retention receipts, SDK compile/interoperability tests, live UI evidence |
+| IA.2–IA.6 privacy/search/payment/wallboard surfaces; X.1–X.12 semantic contract, chargeback, GPU telemetry, event spine, retention, SDK, reporting, config, onboarding, acceptance, KPIs; P.2–P.4 attestation/reattestation/mock fallback; 5.3 tokenizer; 9.3/10.3 work-intelligence and privacy enforcement; Korean differentiators 33.1–33.15 | Tasks 15–18 | each item linked to a named test and deployment artifact; unresolved rows fail the release gate |
 
 ---
 
@@ -69,7 +87,7 @@ The following earlier planning documents are retained as publication history, no
 - Consumes: current benchmark TSV and invariant audit.
 - Produces: authoritative terminology and evidence status for Task 2 and Phase 2.
 
-- [ ] **Step 1: Create the claim matrix**
+- [x] **Step 1: Create the claim matrix**
 
 ```tsv
 claim_id	claim	status	evidence
@@ -83,15 +101,15 @@ C7	Browser binding	extension-profile	dari.web/1 vectors
 C8	Cross-domain federation	extension-profile	dari.federation/1 vectors
 ```
 
-- [ ] **Step 2: Rewrite the title and kernel description**
+- [x] **Step 2: Rewrite the title and kernel description**
 
 Use `\title{DARI: Delegated Authorization and Receipts for Governed AI Inference}`. Define Credential, Authorization Grant, Governed Exchange, and Evidence Receipt as the kernel. Move PIA/PMP into the Patty reference profile and use Inference Peer/Model Artifact Manifest in the neutral core.
 
-- [ ] **Step 3: Add the compatibility lineage without co-branding**
+- [x] **Step 3: Add the compatibility lineage without co-branding**
 
 Use: “DARI evolved from Patty Co., Ltd.'s earlier internal protocol implementation. The evaluated compatibility profile preserves its deployed record and message semantics while the open specification generalizes authorization and receipt interfaces.”
 
-- [ ] **Step 4: Add the attenuation equation**
+- [x] **Step 4: Add the attenuation equation**
 
 ```latex
 G_i = \operatorname{Sign}_{K_i}(\mathrm{iss},\mathrm{sub},\mathrm{aud},\mathrm{cnf},\mathrm{scope}_i,t_{nbf},t_{exp},H(G_{i-1})),
@@ -100,11 +118,11 @@ G_i = \operatorname{Sign}_{K_i}(\mathrm{iss},\mathrm{sub},\mathrm{aud},\mathrm{c
 
 Retain existing primitive benchmarks as primitive measurements; do not portray them as delegation, browser, or federation measurements.
 
-- [ ] **Step 5: Preserve the evidence package and regenerate stale conceptual graphics**
+- [x] **Step 5: Preserve the evidence package and regenerate stale conceptual graphics**
 
 Retain the existing four figures, three empirical/comparison tables, equations, B0--B4 baseline design, and checked-in benchmark dataset. Regenerate the two raster conceptual figures with the previously selected Qwen image model so they use DARI and the neutral kernel vocabulary; do not hand-draw replacements. The overview currently contains embedded `PAPER PATH` and `PAPER RELAY` labels, while the lifecycle graphic still embeds lease/PMP-era terms. Treat both as stale publication artifacts. Generated figures remain conceptual and must not depict unmeasured performance or implementation coverage. If regeneration would incur new paid API usage beyond the already approved graphics work, obtain explicit execution-time consent before invoking it.
 
-- [ ] **Step 6: Verify terminology and commit**
+- [x] **Step 6: Verify terminology and commit**
 
 ```bash
 rg -n 'Patty Research|prototype|MVP|시계' docs/plans/PAPER/arxiv/main.tex
@@ -127,7 +145,7 @@ Expected: the prohibited-term search is empty and all DARI concepts are present.
 - Consumes: Task 1 structure, claims, equations, and citations.
 - Produces: a Korean edition with identical technical meaning and evidence status.
 
-- [ ] **Step 1: Use the Korean title and definition**
+- [x] **Step 1: Use the Korean title and definition**
 
 ```latex
 \title{DARI: 거버넌스 기반 AI 추론을 위한 위임 인가와 검증 가능 실행 증거}
@@ -135,7 +153,7 @@ Expected: the prohibited-term search is empty and all DARI concepts are present.
 
 Define: `위임 인가(delegated authorization)는 권한 주체가 보유한 권한의 일부를 명시적인 범위와 조건에 따라 다른 참여자에게 부여하는 검증 가능한 관계를 의미한다. 이하에서는 이를 권한 위임이라 한다.`
 
-- [ ] **Step 2: Apply this terminology consistently**
+- [x] **Step 2: Apply this terminology consistently**
 
 ```text
 Authorization Grant = 인가 증서
@@ -146,7 +164,7 @@ Model Artifact Manifest = 모델 아티팩트 명세서
 Policy Epoch = 정책 에포크
 ```
 
-- [ ] **Step 3: Verify parity and commit**
+- [x] **Step 3: Verify parity and commit**
 
 ```bash
 rg -n '시계|프로토타입|MVP|Patty Research' docs/plans/PAPER/arxiv/main_ko.tex
@@ -168,7 +186,7 @@ git commit -m "docs: publish native Korean DARI manuscript"
 - Consumes: Tasks 1–2.
 - Produces: reproducible English and Korean publication artifacts before source changes.
 
-- [ ] **Step 1: Add a strict verification target**
+- [x] **Step 1: Add a strict verification target**
 
 ```make
 EN_TARGET := PAPER_arXiv
@@ -199,7 +217,7 @@ clean:
 	$(LATEXMK) -C -xelatex -jobname=$(KO_TARGET) main_ko.tex
 ```
 
-- [ ] **Step 2: Build and render every page**
+- [x] **Step 2: Build and render every page**
 
 ```bash
 make -C docs/plans/PAPER/arxiv clean
@@ -212,7 +230,7 @@ pdftoppm -png -r 120 docs/plans/PAPER/arxiv/PAPER_arXiv_KO.pdf /tmp/dari-paper-k
 
 Inspect every figure, equation, table, reference page, and appendix for clipping, missing glyphs, arrow overlap, overflow, and untranslated Korean body prose.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs/plans/PAPER/arxiv/Makefile docs/plans/PAPER/arxiv/PAPER_arXiv.pdf docs/plans/PAPER/arxiv/PAPER_arXiv_KO.pdf docs/plans/PAPER/arxiv/PAPER-arXiv-source.tar.gz
@@ -234,15 +252,15 @@ git commit -m "docs: build DARI English and Korean papers"
 - Consumes: the reviewed English/Korean paper and implementation claim matrix.
 - Produces: normative schemas, invariants, compatibility rules, and profile boundaries consumed by Tasks 5–19.
 
-- [ ] **Step 1: Define the neutral kernel and Patty reference profile**
+- [x] **Step 1: Define the neutral kernel and Patty reference profile**
 
 Specify Peer Credential, Authorization Grant, Governed Exchange, Authorization Decision, and Evidence Receipt as neutral objects. Define Governance Relay, Inference Peer, Effect Executor, and Evidence Verifier as roles. Keep Harness, PIA, PMP, Patty Code, vLLM, and SGLang in a named Patty reference profile rather than the core.
 
-- [ ] **Step 2: Add complete normative schemas and validation algorithms**
+- [x] **Step 2: Add complete normative schemas and validation algorithms**
 
 Add deterministic CDDL for Authorization Grant, parent binding, attenuation, policy decisions/obligations, signed state checkpoints, receipt body/attestations, selective-disclosure proof, transactional effect messages, browser origin/proof/reconnect, federation trust bundles/policy intersections, collaboration envelopes, media chunks, and resumable file transfers. Specify fail-closed behavior, validation order, stable message allocations, operator configuration, and required negative conformance cases.
 
-- [ ] **Step 3: Define compatibility and extension boundaries**
+- [x] **Step 3: Define compatibility and extension boundaries**
 
 The map must state:
 
@@ -254,18 +272,20 @@ dari.tools/1 -> effects and tool bridges
 dari.model-supply/1 -> model artifact and endpoint authorization
 dari.web/1 -> browser/WebTransport and constrained WebSocket runtime profile
 dari.federation/1 -> bilateral cross-domain trust and policy-intersection runtime profile
+dari.collab/1 -> governed chat, presence, broadcast, encryption, and file-transfer runtime profile
+dari.media/1 -> governed voice/live-media runtime profile
 ```
 
 The spec must define wire behavior, persistence, failure modes, operator configuration, and conformance vectors for web and federation. During development a runtime may return `UNSUPPORTED` until Tasks 13–14 pass; schema publication alone must never upgrade the result to `EXACT` or `DEGRADED`.
 
-- [ ] **Step 4: Verify every Phase 2 implementation object has a normative section**
+- [x] **Step 4: Verify every Phase 2 implementation object has a normative section**
 
 ```bash
-rg -n 'Authorization Grant|attenuation|Authorization Decision|Signed State Checkpoint|Receipt Attestation|selective disclosure|Effect Prepare|dari\.ai/1|dari\.web/1|dari\.federation/1' docs/plans/PAPER/PAPER_Protocol_Specification_v1.0.md docs/plans/PAPER/DARI_COMPATIBILITY_AND_PROFILE_MAP.md
+rg -n 'Authorization Grant|attenuation|Authorization Decision|Signed State Checkpoint|Receipt Attestation|selective disclosure|Effect Prepare|dari\.ai/1|dari\.web/1|dari\.federation/1|dari\.collab/1|dari\.media/1|profile-negotiation|obligation-update|auth-proof' docs/plans/PAPER/PAPER_Protocol_Specification_v1.0.md docs/plans/PAPER/DARI_COMPATIBILITY_AND_PROFILE_MAP.md
 git diff --check -- docs/plans/PAPER/PAPER_Protocol_Specification_v1.0.md docs/plans/PAPER/PAPER_Comprehensive_PRD_v1.0.md docs/plans/PAPER/DARI_COMPATIBILITY_AND_PROFILE_MAP.md
 ```
 
-- [ ] **Step 5: Commit only the normative contract hunks**
+- [x] **Step 5: Commit only the normative contract hunks**
 
 ```bash
 git add -p docs/plans/PAPER/PAPER_Protocol_Specification_v1.0.md docs/plans/PAPER/PAPER_Comprehensive_PRD_v1.0.md
@@ -283,7 +303,7 @@ git commit -m "docs: define the normative DARI protocol contract"
 **Interfaces:**
 - Produces byte-for-byte fixtures that Task 19 must continue to decode.
 
-- [ ] **Step 1: Write a golden HELLO test**
+- [x] **Step 1: Write a golden HELLO test**
 
 ```go
 func readFixture(t *testing.T, path string) string {
@@ -301,7 +321,7 @@ func TestLegacyPaper1HelloGoldenVector(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Capture current bytes and commit**
+- [x] **Step 2: Capture current bytes and commit**
 
 Run the test once to print the canonical bytes, store the exact hex in the fixtures, remove diagnostic output, then run:
 
@@ -323,12 +343,16 @@ git commit -m "test: freeze PAPER v1 compatibility vectors"
 - Modify: `internal/identity/service.go`
 - Modify: `patty-code-pccp/internal/paperproto/messages.go`
 - Modify: `patty-code-pccp/internal/paperproto/transport.go`
+- Modify: `patty-code-pccp/internal/provider/paper/paper.go`
+- Modify: `patty-code-pccp/internal/provider/provider.go`
+- Modify: `patty-code-pccp/cmd/patcode/main.go`
+- Modify: `patty-code-pccp/internal/config/config.go`
 
 **Interfaces:**
 - Produces `TrustBundle`, `NewPeerAuthenticator(TrustBundle)`, and `VerifyPeerProof(ctx context.Context, transcript []byte, proof *paper.AuthProofMessage) (*paper.PeerCredential, error)`.
 - Test helper: `signedProofFixture(t *testing.T, transcript []byte) (*paper.AuthProofMessage, relay.TrustBundle)` creates an issuer, a signed credential, and a proof bound to the supplied transcript.
 
-- [ ] **Step 1: Write valid, tampered, replayed, expired, and revoked proof tests**
+- [x] **Step 1: Write valid, tampered, replayed, expired, and revoked proof tests**
 
 ```go
 func TestPeerAuthenticatorRejectsAnotherTranscript(t *testing.T) {
@@ -357,6 +381,10 @@ git commit -m "feat: enforce transcript-bound peer authentication"
 ```
 
 The identity revocation snapshot must be pushed to every active Relay listener (not merely stored in the identity service), and the Patty Code client must load its enrolled credential/private key and construct the real proof rather than sending an identifier placeholder. Add a reconnect test that revokes a serial in the control plane and observes the existing stream terminate before the next protected message.
+
+- [ ] **Step 4: Close the release-blocking client and wire-vector gaps**
+
+Replace every placeholder credential/signature byte in the nested provider with an enrolled Peer Credential and Ed25519 private-key load from the configured secure provider. Inject signed trust bundles into every Relay listener, propagate revocation checkpoints to `RevokeCredential`, and add byte-exact Appendix-F.3 vectors for the credential body, challenge, transcript hash, channel binding, COSE protected headers, `Sig_structure`, and proof carrier. This step is incomplete until the nested repository is cleanly committed and the root and nested black-box tests observe the same proof semantics.
 
 ### Task 7: Introduce a completely signed Authorization Grant
 
@@ -790,6 +818,8 @@ Record normalized usage and latency from actual stream telemetry, append signed 
 
 Verify the signed Model Artifact Manifest before model load, bind endpoint leases to the verified artifact digest, replace placeholder attestation/key-release values with an explicit software-only or hardware-backed provider result, and enforce re-attestation/revocation on the PIA connection.
 
+Task 15 also owns the currently missing AI semantic contract, real tokenizer/structured-output accounting, GPU telemetry/event-spine wiring, fleet catalog push, inline DLP/injection enforcement, scheduler admission, and the removal of mock inference fallbacks. Each must be observable in the end-to-end trace; a model adapter that returns a plausible response without these records is not a completed path.
+
 - [ ] **Step 6: Test the live path and commit**
 
 ```bash
@@ -852,6 +882,8 @@ Provide an idempotent organization/onboarding flow, import existing v1 data into
 - [ ] **Step 5: Add metrics, reports, audit, and operator evidence**
 
 Instrument request admission, policy denials, queue time, TTFT, streaming throughput, GPU/model health, usage, security findings, evidence finalization, federation, WebTransport, and retention jobs. Generate signed scheduled governance/usage/security/executive reports and export machine-verifiable bundles without leaking secrets. Every admin action and configuration transition enters the durable event spine.
+
+Task 16 also closes the explicit control-plane gaps for scalable global search, account billing/payment and chargeback, wallboard/kiosk and historical comparison, two-console privacy enforcement, onboarding/migration, scheduled reporting, and work-intelligence dispute/bias/gaming controls. The Korean enterprise differentiators (group/affiliate and SI modes, shadow-AI inventory, change board, sensitivity heatmap, policy acknowledgement, skills matrix, exception marketplace, model recall, forced versions/rings, architecture packs, executive brief, freeze, offboarding/evidence handoff, and ROI comparison) are product workflows with persisted state and tests, not future-facing copy.
 
 - [ ] **Step 6: Test and commit**
 
@@ -944,6 +976,8 @@ git commit -m "feat: enforce governed tools SCM and sandbox boundaries"
 - [ ] **Step 1: Test ordered encrypted delivery**
 
 Write tests for per-conversation authorization, presence expiry, targeted broadcasts, direct/group message encryption using a standard MLS/AEAD adapter, ordered delivery, reconnect replay, and unauthorized administrative reads. The Harness must receive the same event and evidence semantics as the web client.
+
+Task 18 also owns the E2E encrypted voice/media path, resumable file scanning/retention/legal-hold behavior, compilable SDKs (including replacing `.go.txt` examples), and live UI streams for communications, sessions, and wallboard/history views. A generated client or scripted page without a real DARI session and receipt is not an implementation.
 
 - [ ] **Step 2: Implement chat, presence, broadcast, and voice-message streams**
 
@@ -1227,6 +1261,8 @@ git commit -m "docs: publish DARI open-spec governance and attribution"
 **Interfaces:**
 - Produces release-ready DARI source, PDFs, and bounded PAPER v1 compatibility.
 
+The release gate is two-repository: a clean root checkout is insufficient while `patty-code-pccp` has uncommitted source or placeholder authentication. Gate D cannot pass until both repositories have owning-repository commits and the nested status is empty.
+
 - [ ] **Step 1: Format and test root source**
 
 ```bash
@@ -1269,6 +1305,7 @@ pdfinfo docs/plans/DARI/arxiv/DARI_arXiv_KO.pdf
 rg -n --hidden --glob '!.git/**' --glob '!**/node_modules/**' --glob '!**/*.pdf' '(PAPER|Paper|paper/1|paper\.[a-z]|internal/paper|paperproto)' . > /tmp/dari-legacy-matches-final.txt
 cut -d: -f1 /tmp/dari-legacy-matches-final.txt | sort -u
 git status --short
+git -C patty-code-pccp status --short
 git diff --check
 git diff --stat
 ```
