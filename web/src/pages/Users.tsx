@@ -7,6 +7,7 @@ import EmptyState from '../components/EmptyState'
 import { exportCSV } from '../utils/csv'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
+import { useRowNav } from '../hooks/useRowNav'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['name', 'name_ko', 'email', 'auth_method', 'title'],
@@ -75,6 +76,7 @@ export default function Users() {
 
   const filtered = useFilteredData(users, filters, FILTER_CONFIG)
   const paged = filtered.slice((page - 1) * pageSize, page * pageSize)
+  const { selectedIndex } = useRowNav(paged.length, (i) => setExpandedUserId(expandedUserId === paged[i].id ? null : paged[i].id))
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -273,7 +275,7 @@ export default function Users() {
               </td></tr>
             ) : paged.map(u => (
               <Fragment key={u.id}>
-                <tr key={u.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer" onClick={() => setExpandedUserId(expandedUserId === u.id ? null : u.id)}>
+                <tr key={u.id} className={`border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer ${selectedIndex === paged.indexOf(u) ? 'bg-blue-50 ring-1 ring-blue-300' : ''}`} onClick={() => setExpandedUserId(expandedUserId === u.id ? null : u.id)}>
                 <td className="py-3" onClick={e => e.stopPropagation()}>
                   <Link to={`/users/${u.id}`} className="font-medium text-sm text-blue-600 hover:underline">{u.name_ko || u.name}</Link>
                   <div className="text-xs text-gray-400">{u.name}</div>

@@ -6,6 +6,7 @@ import EmptyState from '../components/EmptyState'
 import { formatRelative } from '../utils/format'
 import { exportCSV } from '../utils/csv'
 import { showToast } from '../components/Toast'
+import { useRowNav } from '../hooks/useRowNav'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['title', 'task_purpose', 'session_id', 'harness_id'],
@@ -72,6 +73,7 @@ export default function Sessions() {
 
   const filtered = useFilteredData(sessions, filters, FILTER_CONFIG)
   const paged = filtered.slice((page - 1) * pageSize, page * pageSize)
+  const { selectedIndex } = useRowNav(paged.length, (i) => toggleExpand(paged[i]))
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -227,7 +229,7 @@ export default function Sessions() {
             <tbody>
               {paged.map(s => (
                 <Fragment key={s.id}>
-                  <tr className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer" onClick={() => toggleExpand(s)}>
+                  <tr className={`border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer ${selectedIndex === paged.indexOf(s) ? 'bg-blue-50 ring-1 ring-blue-300' : ''}`} onClick={() => toggleExpand(s)}>
                     <td className="py-3" onClick={e => e.stopPropagation()}><input type="checkbox" checked={selectedSessions.has(s.id)} onChange={() => { const next = new Set(selectedSessions); if (next.has(s.id)) next.delete(s.id); else next.add(s.id); setSelectedSessions(next) }} /></td>
                     <td className="py-3"><div className="font-medium text-sm">{s.title || '제목 없음'}</div><div className="text-xs text-gray-400">{s.task_purpose}</div></td>
                     <td className="py-3 text-sm"><Link to={`/users/${s.user_id}`} className="text-blue-600 hover:underline">{getUserName(s.user_id)}</Link></td>
