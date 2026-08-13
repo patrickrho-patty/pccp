@@ -80,6 +80,7 @@ export default function Users() {
       await api.createUser({ ...form, business_unit_id: form.business_unit_id })
       setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local' })
       setShowForm(false)
+      showToast('사용자 생성됨', 'success')
       load()
     } catch (err: any) { showToast('생성 실패: ' + err.message) }
   }
@@ -102,6 +103,7 @@ export default function Users() {
       setEditingId(null)
       setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local' })
       setShowForm(false)
+      showToast('수정 완료', 'success')
       load()
     } catch (err: any) { showToast('수정 실패: ' + err.message) }
   }

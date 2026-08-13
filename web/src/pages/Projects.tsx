@@ -51,6 +51,7 @@ export default function Projects() {
       })
       setForm({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard', description: '' })
       setShowForm(false)
+      showToast('프로젝트 생성됨', 'success')
       load()
     } catch (err: any) { showToast('생성 실패: ' + err.message) }
   }
@@ -73,6 +74,7 @@ export default function Projects() {
       setEditingId(null)
       setForm({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard', description: '' })
       setShowForm(false)
+      showToast('수정 완료', 'success')
       load()
     } catch (err: any) { showToast('수정 실패: ' + err.message) }
   }
