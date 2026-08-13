@@ -377,7 +377,7 @@ func (s *Service) CloseExchange(ctx context.Context, exchangeID string) (*models
 
 	// Record a ChangeSet with provenance lineage (§19) — the exchange produced
 	// an attributable AI exchange even without file-level detail from the harness.
-	s.provenance.CreateChangeSet(provenance.CreateChangeSetRequest{
+	cs, csErr := s.provenance.CreateChangeSet(provenance.CreateChangeSetRequest{
 		OrganizationID:  exchange.OrganizationID,
 		SessionID:       exchange.SessionID,
 		ExchangeID:      exchange.ID,
@@ -388,6 +388,22 @@ func (s *Service) CloseExchange(ctx context.Context, exchangeID string) (*models
 		AttributionState: "AI_GENERATED",
 		Confidence:      1.0,
 	})
+	if csErr != nil {
+		log.Printf("relay: warning: create changeset failed: %v", csErr)
+	} else {
+		// Map the full exchange to a provenance span (§19 Appendix B.1).
+		s.provenance.CreateProvenanceSpan(provenance.CreateSpanRequest{
+			OrganizationID:  exchange.OrganizationID,
+			ChangeSetID:     cs.ID,
+			SessionID:       exchange.SessionID,
+			UserID:          exchange.UserID,
+			HarnessID:       exchange.HarnessID,
+			ModelPackageID:  exchange.ModelPackageID,
+			EndpointID:      exchange.EndpointID,
+			AttributionState: "AI_GENERATED",
+			Confidence:      1.0,
+		})
+	}
 
 	s.mu.Lock()
 	exchange.State = paper.ExchangeCompleted
