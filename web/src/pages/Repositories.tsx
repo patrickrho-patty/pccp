@@ -26,7 +26,7 @@ export default function Repositories() {
   const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
   const [page, setPage] = useState(1)
   const pageSize = 25
-  const [form, setForm] = useState({ name: '', slug: '', project_id: '', scm_provider: 'github', clone_url: '', default_branch: 'main' })
+  const [form, setForm] = useState({ name: '', slug: '', project_id: '', scm_provider: 'github', clone_url: '', default_branch: 'main', sensitivity: 'internal' })
 
   const load = () => {
     api.listRepositories().then(data => setRepos(Array.isArray(data) ? data : []))
@@ -41,7 +41,7 @@ export default function Repositories() {
     e.preventDefault()
     try {
       await api.createRepository(form)
-      setForm({ name: '', slug: '', project_id: '', scm_provider: 'github', clone_url: '', default_branch: 'main' })
+      setForm({ name: '', slug: '', project_id: '', scm_provider: 'github', clone_url: '', default_branch: 'main', sensitivity: 'internal' })
       setShowForm(false)
       load()
     } catch (err: any) { showToast('생성 실패: ' + err.message) }
@@ -100,7 +100,7 @@ export default function Repositories() {
           <h1 className="text-2xl font-bold">저장소 <span className="text-gray-400 text-lg font-normal">Repositories</span></h1>
           <p className="text-xs text-gray-400 mt-1">Git 저장소 관리 · 브랜치 보호 · 프로젝트 연결 · PRD §18</p>
         </div>
-        <button onClick={() => { setEditingId(null); setForm({ name: '', slug: '', project_id: '', scm_provider: 'github', clone_url: '', default_branch: 'main' }); setShowForm(!showForm) }} className="btn-primary">
+        <button onClick={() => { setEditingId(null); setForm({ name: '', slug: '', project_id: '', scm_provider: 'github', clone_url: '', default_branch: 'main', sensitivity: 'internal' }); setShowForm(!showForm) }} className="btn-primary">
           {showForm ? '취소' : '+ 저장소 추가'}
         </button>
         <button onClick={() => exportCSV(`repos_${new Date().toISOString().slice(0,10)}.csv`, ['저장소명', 'SCM', 'Clone URL', '기본 브랜치', '민감도', '상태'], repos.map(r => [r.name, r.scm_provider, r.clone_url, r.default_branch, r.sensitivity, r.status]))} className="btn-sm btn-secondary ml-2">📥 CSV</button>
@@ -127,6 +127,14 @@ export default function Repositories() {
             </div>
             <div><label className="label">Clone URL</label><input className="input font-mono text-xs" value={form.clone_url} onChange={e => setForm({ ...form, clone_url: e.target.value })} placeholder="https://github.com/org/repo.git" /></div>
             <div><label className="label">기본 브랜치</label><input className="input" value={form.default_branch} onChange={e => setForm({ ...form, default_branch: e.target.value })} placeholder="main" /></div>
+            <div><label className="label">민감도 · Sensitivity</label>
+              <select className="input" value={form.sensitivity || 'internal'} onChange={e => setForm({ ...form, sensitivity: e.target.value })}>
+                <option value="public">공개 · Public</option>
+                <option value="internal">내부 · Internal</option>
+                <option value="confidential">기밀 · Confidential</option>
+                <option value="restricted">제한 · Restricted</option>
+              </select>
+            </div>
           </div>
           <button type="submit" className="btn-primary">{editingId ? '수정 저장' : '생성'}</button>
         </form>
