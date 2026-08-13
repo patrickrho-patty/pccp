@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
 import EmptyState from '../components/EmptyState'
+import { showToast } from '../components/Toast'
+import { formatRelative } from '../utils/format'
 
 const CERT_NAMES: Record<string, { ko: string; en: string }> = {
   CSAP: { ko: '클라우드보안인증', en: 'CSAP' },
@@ -31,7 +33,7 @@ export default function Compliance() {
   useEffect(() => {
     if (!selected) return
     setLoading(true)
-    api.complianceAssess(selected).then(data => setAssessment(data)).catch(() => setAssessment(null)).finally(() => setLoading(false))
+    api.complianceAssess(selected).then(data => { setAssessment(data); showToast('평가 완료', 'success') }).catch(() => { setAssessment(null); showToast('평가 실패', 'error') }).finally(() => setLoading(false))
   }, [selected])
 
   const overallBadge = (s: string) => {
@@ -65,7 +67,7 @@ export default function Compliance() {
           <div className="card mb-6 flex items-center justify-between">
             <div>
               <h2 className="text-sm font-semibold">{CERT_NAMES[assessment.certification]?.ko || assessment.certification} 평가</h2>
-              <p className="text-xs text-gray-400 mt-1">평가 시간: {assessment.assessed_at?.slice(0, 19) || '-'}</p>
+              <p className="text-xs text-gray-400 mt-1">평가 시간: {formatRelative(assessment.assessed_at)} <span title={assessment.assessed_at?.slice(0, 19)}></span></p>
             </div>
             <span className={overallBadge(assessment.overall_status)}>{overallLabel(assessment.overall_status)}</span>
           </div>
