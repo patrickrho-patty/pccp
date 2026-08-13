@@ -302,12 +302,12 @@ DARI는 체크인된 구현 주장 행렬과 함께 개방형 명세로 공개�
 \toprule
 ID & 주장 & 상태 & 증거 \\
 \midrule
-C1 & 결정적 프레이밍과 정규 CBOR & 구현됨 & \texttt{internal/paper} 테스트 \\
-C2 & TLS/TCP 및 QUIC 바인딩 & 구현됨 & \texttt{internal/paper} 전송 테스트 \\
-C3 & transcript 결합 피어 인증 & 구현 필요 & \path{internal/relay/peer_authenticator_test.go} \\
-C4 & 정규 형식의 서명된 인가 범위 & 구현 필요 & \path{internal/paper/authorization_test.go} \\
-C5 & 권한 위임 범위 축소 & 구현 필요 & \path{internal/paper/delegation_test.go} \\
-C6 & 결정적 최종 검증 가능 실행 증거 & 구현 필요 & \path{internal/paper/receipt_test.go} \\
+C1 & 결정적 프레이밍과 정규 CBOR & 구현됨 & 프레이밍 및 직렬화 테스트 \\
+C2 & TLS/TCP 및 QUIC 바인딩 & 구현됨 & TLS/TCP 및 QUIC 전송 테스트 \\
+C3 & transcript 결합 피어 인증 & 구현 필요 & transcript 결합 인증 테스트 \\
+C4 & 정규 형식의 서명된 인가 범위 & 구현 필요 & 인가 테스트 \\
+C5 & 권한 위임 범위 축소 & 구현 필요 & 권한 위임 테스트 \\
+C6 & 결정적 최종 검증 가능 실행 증거 & 구현 필요 & 검증 가능 실행 증거 테스트 \\
 C7 & 브라우저 바인딩 & 확장 프로파일 & \texttt{dari.web/1} 벡터 \\
 C8 & 도메인 간 연합 & 확장 프로파일 & \texttt{dari.federation/1} 벡터 \\
 \bottomrule
@@ -494,7 +494,12 @@ DARI는 인접 표준을 대체하지 않고 보완한다. 적용 기준은 응�
 arXiv 소스 패키지는 정확한 LaTeX 소스, 참고문헌, 개념 그림, 벤치마크 데이터셋, 구현 주장 행렬, 빌드 지침을 포함한다. 구현 저장소에는 평가 대상 프레이밍·전송 기반, 벤치마크 하네스, 앞에서 설명한 Patty 호환 프로파일이 포함된다. 구현 저장소 루트에서 다음 명령으로 보고된 핵심 연산 측정을 재현할 수 있다.
 
 \begin{quote}\small
-\texttt{go test ./internal/paper -run '\^\$' -bench 'Benchmark(...)' -benchmem -count=5}
+\begin{verbatim}
+go test ./... -run '^$' \
+  -bench 'Benchmark(RecordRoundTrip|CanonicalCBOR|'\
+'EvidenceChainNext|ObjectDigest|Ed25519SignVerify)$' \
+  -benchmem -count=5
+\end{verbatim}
 \end{quote}
 
 전체 정규식은 아티팩트 README에 제시한다. PDF는 \texttt{latexmk}와 BibTeX로 오프라인 빌드할 수 있다. 개별 실행 원자료, 네트워크/부하 생성기, 토폴로지 자동화, 부정 보안 fixture, 프로비넌스 데이터셋, 독립 구현 결과는 각각 더 강한 통계, 확장성, 공격 저항성, 충실도, 상호운용성 주장을 제시할 때 요구된다.

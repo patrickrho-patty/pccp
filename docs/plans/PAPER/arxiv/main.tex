@@ -287,12 +287,12 @@ DARI is published as an open specification with a checked-in implementation-clai
 \toprule
 ID & Claim & Status & Evidence \\
 \midrule
-C1 & Deterministic framing and canonical CBOR & implemented & \texttt{internal/paper} tests \\
-C2 & TLS/TCP and QUIC bindings & implemented & \texttt{internal/paper} transport tests \\
-C3 & Transcript-bound peer authentication & implementation-required & \path{internal/relay/peer_authenticator_test.go} \\
-C4 & Canonical signed authorization scope & implementation-required & \path{internal/paper/authorization_test.go} \\
-C5 & Delegated authorization attenuation & implementation-required & \path{internal/paper/delegation_test.go} \\
-C6 & Deterministic final receipt & implementation-required & \path{internal/paper/receipt_test.go} \\
+C1 & Deterministic framing and canonical CBOR & implemented & framing and serialization tests \\
+C2 & TLS/TCP and QUIC bindings & implemented & TLS/TCP and QUIC transport tests \\
+C3 & Transcript-bound peer authentication & implementation-required & transcript-authentication tests \\
+C4 & Canonical signed authorization scope & implementation-required & authorization tests \\
+C5 & Delegated authorization attenuation & implementation-required & delegation tests \\
+C6 & Deterministic final receipt & implementation-required & receipt tests \\
 C7 & Browser binding & extension-profile & \texttt{dari.web/1} vectors \\
 C8 & Cross-domain federation & extension-profile & \texttt{dari.federation/1} vectors \\
 \bottomrule
@@ -479,7 +479,12 @@ Generated conceptual artwork is used for Figures~\ref{fig:overview} and~\ref{fig
 The arXiv source package contains the exact LaTeX source, bibliography, conceptual figures, benchmark dataset, implementation-claim matrix, and build instructions. The implementation repository contains the evaluated framing and transport substrate, benchmark harness, and the Patty compatibility profile described above. From the implementation repository root, the reported primitive measurements can be reproduced with:
 
 \begin{quote}\small
-\texttt{go test ./internal/paper -run '\^\$' -bench 'Benchmark(...)' -benchmem -count=5}
+\begin{verbatim}
+go test ./... -run '^$' \
+  -bench 'Benchmark(RecordRoundTrip|CanonicalCBOR|'\
+'EvidenceChainNext|ObjectDigest|Ed25519SignVerify)$' \
+  -benchmem -count=5
+\end{verbatim}
 \end{quote}
 
 where the artifact README provides the complete regular expression. The PDF builds offline with \texttt{latexmk} and BibTeX. Raw per-run output, network/load generators, topology automation, negative-security fixtures, provenance datasets, and independent implementation results are required only for the corresponding stronger statistical, scale, attack-resistance, fidelity, or interoperability claims.
