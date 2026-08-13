@@ -16,6 +16,16 @@ export default function Analytics() {
 
   const fmt = (n: number) => n?.toLocaleString() || '0'
 
+  const exportCSV = () => {
+    const rows = ['metric,value']
+    if (usage) {
+      rows.push('total_tokens_in,' + (usage.total_tokens_in || 0))
+      rows.push('total_tokens_out,' + (usage.total_tokens_out || 0))
+    }
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv' })
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'analytics.csv'; a.click()
+  }
+
   // Simple bar chart component using CSS
   const Bar = ({ label, value, max, color }: { label: string; value: number; max: number; color: string }) => {
     const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0
@@ -50,6 +60,7 @@ export default function Analytics() {
 
   return (
     <div>
+      <div className="flex justify-end mb-4"><button onClick={exportCSV} className="btn-secondary text-sm">CSV Export</button></div>
       <h1 className="text-2xl font-bold mb-6">분석 <span className="text-gray-400 text-lg font-normal">Analytics & Work Intelligence</span></h1>
 
       {/* Executive Summary */}
