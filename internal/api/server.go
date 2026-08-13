@@ -1798,6 +1798,17 @@ func (s *Server) handleFleetAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: req.OrganizationID,
+		EventType:      "cp.fleet.action",
+		ActorType:      "admin",
+		Action:         string(req.Action),
+		ResourceType:   "harness",
+		ResourceID:     req.HarnessID,
+		Details:        req.Reason,
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "executed"})
 }
 
