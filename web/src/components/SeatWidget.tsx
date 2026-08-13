@@ -12,19 +12,45 @@ export function SeatWidget({ compact = false }: { compact?: boolean }) {
   const [seats, setSeats] = useState<SeatData | null>(null)
 
   useEffect(() => {
-    const load = () => {
-      fetch('/api/organizations/seats', { headers: authHeaders() })
-        .then(r => r.json()).then(d => setSeats(d)).catch(() => {})
+    let active = true
+    let interval: ReturnType<typeof setInterval> | null = null
+
+    const load = async () => {
+      const token = localStorage.getItem('pccp_token')
+      if (!token) return // Don't fetch without a token
+
+      try {
+        const res = await fetch('/api/organizations/seats', {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        if (!res.ok) {
+          // Stop polling on auth failure
+          if (interval) clearInterval(interval)
+          return
+        }
+        const d = await res.json()
+        if (active && d && d.user_seats) {
+          setSeats(d)
+        }
+      } catch {
+        // Network error - stop polling
+        if (interval) clearInterval(interval)
+      }
     }
+
     load()
-    const interval = setInterval(load, 30000)
-    return () => clearInterval(interval)
+    interval = setInterval(load, 30000)
+
+    return () => {
+      active = false
+      if (interval) clearInterval(interval)
+    }
   }, [])
 
   if (!seats || !seats.user_seats || !seats.harness_seats) return null
 
-  const userPct = seats?.user_seats?.utilization ? parseInt(seats.user_seats.utilization) : 0
-  const harnessPct = seats?.harness_seats?.utilization ? parseInt(seats.harness_seats.utilization) : 0
+  const userPct = seats.user_seats.utilization ? parseInt(seats.user_seats.utilization) : 0
+  const harnessPct = seats.harness_seats.utilization ? parseInt(seats.harness_seats.utilization) : 0
 
   if (compact) {
     return (
@@ -59,23 +85,11 @@ export function SeatWidget({ compact = false }: { compact?: boolean }) {
         </div>
       </div>
       <div className="grid grid-cols-2 gap-6">
-        <SeatBar
-          label="사용자 시트 · User Seats"
-          used={seats.user_seats.used}
-          max={seats.user_seats.max}
-          pct={userPct}
-        />
-        <SeatBar
-          label="하네스 시트 · Harness Seats"
-          used={seats.harness_seats.used}
-          max={seats.harness_seats.max}
-          pct={harnessPct}
-        />
+        <SeatBar label="사용자 시트 · User Seats" used={seats.user_seats.used} max={seats.user_seats.max} pct={userPct} />
+        <SeatBar label="하네스 시트 · Harness Seats" used={seats.harness_seats.used} max={seats.harness_seats.max} pct={harnessPct} />
       </div>
       {seats.plan_renewal_date && !seats.plan_renewal_date.startsWith('0001') && (
-        <div className="mt-3 text-xs text-gray-400">
-          플랜 갱신일: {seats.plan_renewal_date.slice(0, 10)}
-        </div>
+        <div className="mt-3 text-xs text-gray-400">플랜 갱신일: {seats.plan_renewal_date.slice(0, 10)}</div>
       )}
     </div>
   )
@@ -99,9 +113,4 @@ function SeatBar({ label, used, max, pct }: { label: string; used: number; max: 
       </div>
     </div>
   )
-}
-
-function authHeaders() {
-  const token = localStorage.getItem('pccp_token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
 }
