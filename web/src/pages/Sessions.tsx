@@ -81,6 +81,7 @@ export default function Sessions() {
       await api.openSession({ ...form, organization_id: orgId, harness_id: harnessId })
       setShowForm(false)
       setForm({ user_id: '', project_id: '', repository_id: '', branch: '', title: '', task_purpose: '', model_class: 'patty-code-standard' })
+      showToast('세션 시작됨', 'success')
       load()
     } catch (err: any) { showToast('세션 생성 실패: ' + err.message) }
   }

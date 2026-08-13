@@ -43,6 +43,7 @@ export default function Repositories() {
       await api.createRepository(form)
       setForm({ name: '', slug: '', project_id: '', scm_provider: 'github', clone_url: '', default_branch: 'main', sensitivity: 'internal' })
       setShowForm(false)
+      showToast('저장소 등록됨', 'success')
       load()
     } catch (err: any) { showToast('생성 실패: ' + err.message) }
   }
@@ -60,8 +61,9 @@ export default function Repositories() {
       await api.updateRepository(editingId, form)
       setEditingId(null)
       setShowForm(false)
+      showToast('수정 완료', 'success')
       load()
-    } catch { showToast('수정 실패') }
+    } catch { showToast('수정 실패', 'error') }
   }
 
   const handleDelete = async (id: string) => {
