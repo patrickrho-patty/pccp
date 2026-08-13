@@ -50,6 +50,7 @@ export default function Sessions() {
   const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
   const [page, setPage] = useState(1)
   const pageSize = 25
+  const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
   const [form, setForm] = useState({ user_id: '', project_id: '', repository_id: '', branch: '', title: '', task_purpose: '', model_class: 'patty-code-standard' })
 
   const load = () => {
@@ -158,6 +159,14 @@ export default function Sessions() {
         </form>
       )}
 
+      {selectedSessions.size > 0 && (
+        <div className="flex items-center gap-3 mb-4 p-3 bg-blue-50 rounded-lg">
+          <span className="text-sm font-medium text-blue-700">{selectedSessions.size}개 세션 선택됨</span>
+          <button onClick={async () => { for (const id of selectedSessions) { try { await api.closeSession(id) } catch {} } setSelectedSessions(new Set()); load() }} className="btn-sm btn-secondary">일괄 종료</button>
+          <button onClick={async () => { for (const id of selectedSessions) { try { await api.pauseSession(id) } catch {} } setSelectedSessions(new Set()); load() }} className="btn-sm btn-secondary">일괄 일시정지</button>
+          <button onClick={() => setSelectedSessions(new Set())} className="btn-sm btn-secondary">취소</button>
+        </div>
+      )}
       {/* View mode toggle */}
       <div className="flex items-center gap-2 mb-4">
         <button onClick={() => setViewMode('table')} className={`btn-sm ${viewMode === 'table' ? 'btn-primary' : 'btn-secondary'}`}>표</button>
@@ -202,6 +211,7 @@ export default function Sessions() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
+                <th className="pb-3 w-8"><input type="checkbox" onChange={(e) => { if (e.target.checked) setSelectedSessions(new Set(paged.map(s => s.id))); else setSelectedSessions(new Set()) }} /></th>
                 <th className="pb-3">제목 · Title</th>
                 <th className="pb-3">개발자</th>
                 <th className="pb-3">모델</th>
@@ -214,6 +224,7 @@ export default function Sessions() {
               {paged.map(s => (
                 <Fragment key={s.id}>
                   <tr className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer" onClick={() => toggleExpand(s)}>
+                    <td className="py-3" onClick={e => e.stopPropagation()}><input type="checkbox" checked={selectedSessions.has(s.id)} onChange={() => { const next = new Set(selectedSessions); if (next.has(s.id)) next.delete(s.id); else next.add(s.id); setSelectedSessions(next) }} /></td>
                     <td className="py-3"><div className="font-medium text-sm">{s.title || '제목 없음'}</div><div className="text-xs text-gray-400">{s.task_purpose}</div></td>
                     <td className="py-3 text-sm"><Link to={`/users/${s.user_id}`} className="text-blue-600 hover:underline">{getUserName(s.user_id)}</Link></td>
                     <td className="py-3 text-sm">{s.model_class}</td>
