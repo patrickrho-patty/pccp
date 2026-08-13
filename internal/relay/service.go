@@ -375,6 +375,20 @@ func (s *Service) CloseExchange(ctx context.Context, exchangeID string) (*models
 		log.Printf("relay: warning: issue receipt failed: %v", err)
 	}
 
+	// Record a ChangeSet with provenance lineage (§19) — the exchange produced
+	// an attributable AI exchange even without file-level detail from the harness.
+	s.provenance.CreateChangeSet(provenance.CreateChangeSetRequest{
+		OrganizationID:  exchange.OrganizationID,
+		SessionID:       exchange.SessionID,
+		ExchangeID:      exchange.ID,
+		UserID:          exchange.UserID,
+		HarnessID:       exchange.HarnessID,
+		ModelPackageID:  exchange.ModelPackageID,
+		EndpointID:      exchange.EndpointID,
+		AttributionState: "AI_GENERATED",
+		Confidence:      1.0,
+	})
+
 	s.mu.Lock()
 	exchange.State = paper.ExchangeCompleted
 	delete(s.exchanges, exchangeID)
