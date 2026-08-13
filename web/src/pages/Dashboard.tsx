@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { SeatWidget } from '../components/SeatWidget'
 
 export default function Dashboard() {
   const [data, setData] = useState<any>(null)
@@ -33,9 +32,7 @@ export default function Dashboard() {
 
   return (
     <div>
-      <SeatWidget />
-
-      {/* Demo data seed */}
+            {/* Demo data seed */}
       {stats.length === 0 || (data?.users === 0) ? (
         <div className="card mb-6 border-l-4 border-l-blue-400">
           <div className="flex items-center justify-between">
