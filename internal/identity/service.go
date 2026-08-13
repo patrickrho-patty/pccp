@@ -16,8 +16,9 @@ import (
 
 // Service handles identity, enrollment, and authentication operations.
 type Service struct {
-	db  *gorm.DB
-	ca  *paper.PeerCredentialIssuer
+	db          *gorm.DB
+	ca          *paper.PeerCredentialIssuer
+	revocations *CredentialRevocations
 }
 
 // New creates a new identity service. It initializes or loads the control
@@ -27,7 +28,7 @@ func New(db *gorm.DB) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("identity: init CA: %w", err)
 	}
-	return &Service{db: db, ca: ca}, nil
+	return &Service{db: db, ca: ca, revocations: newCredentialRevocations()}, nil
 }
 
 // CACAPublicKey returns the CA's public key (hex-encoded).
@@ -131,7 +132,8 @@ func (s *Service) EnrollHarness(req EnrollHarnessRequest) (*models.Harness, *pap
 		return nil, nil, fmt.Errorf("identity: issue PPC: %w", err)
 	}
 
-	credJSON, _ := json.Marshal(cred)
+	credentialHex := hex.EncodeToString(cred.SignedCredential)
+	credentialDigest := paper.ComputeObjectDigest(paper.ObjTypePeerCredential, cred.SignedCredential)
 
 	// Create harness record
 	harness := &models.Harness{
@@ -143,7 +145,8 @@ func (s *Service) EnrollHarness(req EnrollHarnessRequest) (*models.Harness, *pap
 		ExtensionVersion: req.ExtensionVersion,
 		CLIVersion:      req.CLIVersion,
 		PublicKey:       req.PublicKeyHex,
-		CredentialJSON:  string(credJSON),
+		CredentialJSON:  credentialHex,
+		CredentialDigest: credentialDigest.String(),
 		BuildChannel:    "stable",
 		PolicyProfile:   "enterprise",
 		LicenseState:    "active",
@@ -190,20 +193,65 @@ func (s *Service) VerifyHarnessAuth(harnessID string, signature, message []byte)
 
 // RevokeHarness revokes a harness enrollment.
 func (s *Service) RevokeHarness(orgID, harnessID, reason string) error {
-	result := s.db.Model(&models.Harness{}).
-		Where("harness_id = ? AND organization_id = ?", harnessID, orgID).
-		Updates(map[string]interface{}{
-			"status":            "revoked",
-			"revocation_reason": reason,
-		})
-	if result.Error != nil {
-		return fmt.Errorf("identity: revoke harness: %w", result.Error)
+	var harness models.Harness
+	if err := s.db.Where("harness_id = ? AND organization_id = ?", harnessID, orgID).First(&harness).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("identity: harness %s not found in org %s", harnessID, orgID)
+		}
+		return fmt.Errorf("identity: load harness for revocation: %w", err)
 	}
-	if result.RowsAffected == 0 {
+
+	serial := credentialSerial(harness.CredentialJSON)
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.Harness{}).
+			Where("harness_id = ? AND organization_id = ?", harnessID, orgID).
+			Updates(map[string]interface{}{
+				"status":            "revoked",
+				"revocation_reason": reason,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Model(&models.Session{}).
+			Where("harness_id = ? AND status IN ?", harnessID, []string{"pending", "active", "idle"}).
+			Updates(map[string]interface{}{
+				"status":    "terminated",
+				"closed_at": time.Now().Format(time.RFC3339),
+			}).Error
+	})
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return fmt.Errorf("identity: harness %s not found in org %s", harnessID, orgID)
 	}
+	if err != nil {
+		return fmt.Errorf("identity: revoke harness: %w", err)
+	}
+	s.revocations.revoke(serial)
 	s.recordAudit(orgID, "harness.revoked", "admin", "harness", harnessID, reason)
 	return nil
+}
+
+// RevocationSnapshot returns the current monotonic epoch and revoked serials.
+func (s *Service) RevocationSnapshot() (uint64, map[string]uint64) {
+	return s.revocations.snapshot()
+}
+
+func credentialSerial(encoded string) string {
+	credential, err := hex.DecodeString(encoded)
+	if err != nil {
+		return ""
+	}
+	sign1, err := paper.DecodeCOSESign1(credential)
+	if err != nil {
+		return ""
+	}
+	decoded, err := paper.DecodePeerCredential(sign1.Payload)
+	if err != nil {
+		return ""
+	}
+	return decoded.Serial
 }
 
 // CreateProject creates a project under an organization.

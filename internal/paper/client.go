@@ -15,11 +15,12 @@ import (
 // (HELLO → AUTH_CHALLENGE → AUTH_PROOF), and provides methods for
 // opening governed exchanges and sending AI inference requests.
 type Client struct {
-	conn     *TransportConn
-	peerID   string
-	orgID    string
-	privKey  ed25519.PrivateKey
-	cred     *PeerCredential
+	conn             *TransportConn
+	peerID           string
+	orgID            string
+	privKey          ed25519.PrivateKey
+	cred             *PeerCredential
+	signedCredential []byte
 }
 
 // ClientConfig holds client connection configuration.
@@ -29,8 +30,9 @@ type ClientConfig struct {
  	PeerID        string `json:"peer_i_d"`
  	OrganizationID string `json:"organization_i_d"`
  	PrivateKey    ed25519.PrivateKey `json:"private_key"`
- 	Credential    *PeerCredential `json:"credential"`
- 	Profile       PeerProfile `json:"profile"`
+	Credential       *PeerCredential `json:"credential"`
+	SignedCredential []byte `json:"signed_credential,omitempty"`
+	Profile          PeerProfile `json:"profile"`
 }
 
 // DialClient connects to a PAPER relay and performs the full handshake.
@@ -45,12 +47,17 @@ func DialClient(ctx context.Context, cfg ClientConfig) (*Client, error) {
 		return nil, fmt.Errorf("paper-client: dial: %w", err)
 	}
 
+	signedCredential := cfg.SignedCredential
+	if len(signedCredential) == 0 && cfg.Credential != nil {
+		signedCredential = cfg.Credential.SignedCredential
+	}
 	client := &Client{
-		conn:    conn,
-		peerID:  cfg.PeerID,
-		orgID:   cfg.OrganizationID,
-		privKey: cfg.PrivateKey,
-		cred:    cfg.Credential,
+		conn:             conn,
+		peerID:           cfg.PeerID,
+		orgID:            cfg.OrganizationID,
+		privKey:          cfg.PrivateKey,
+		cred:             cfg.Credential,
+		signedCredential: append([]byte(nil), signedCredential...),
 	}
 
 	// Perform handshake
@@ -65,6 +72,10 @@ func DialClient(ctx context.Context, cfg ClientConfig) (*Client, error) {
 
 // handshake performs HELLO → AUTH_CHALLENGE → AUTH_PROOF.
 func (c *Client) handshake(ctx context.Context, cfg ClientConfig) error {
+	if c.cred == nil || len(c.signedCredential) == 0 {
+		return fmt.Errorf("signed peer credential is required")
+	}
+
 	// Phase 1: Send HELLO
 	clientNonce := make([]byte, 32)
 	hello := &HelloMessage{
@@ -95,22 +106,25 @@ func (c *Client) handshake(ctx context.Context, cfg ClientConfig) error {
 	//                     client_nonce || server_nonce || channel_binding || peer_credential_digest)
 	helloCBOR, _ := MarshalCBOR(hello)
 	ackCBOR, _ := MarshalCBOR(ack)
-	credDigest := ComputeObjectDigest(ObjTypePeerCredential, c.cred.SigningBytes())
+	credDigest := ComputeObjectDigest(ObjTypePeerCredential, c.signedCredential)
 	authContext := AuthContext(helloCBOR, ackCBOR, clientNonce, challenge.ServerNonce, []byte("tcp-exporter"), credDigest.Bytes())
 
-	// Sign the auth context
-	signature, err := SignWithEd25519(c.privKey, authContext.Bytes())
+	// Sign the transcript hash together with this challenge and the relay's
+	// current revocation epoch.
+	signature, err := SignWithEd25519(c.privKey, PeerProofSigningBytes(
+		authContext.Bytes(), challenge.ChallengeID, challenge.RevocationEpoch,
+	))
 	if err != nil {
 		return fmt.Errorf("sign auth context: %w", err)
 	}
 
 	// Phase 3: Send AUTH_PROOF
-	credBytes := c.cred.SigningBytes()
 	proof := &AuthProofMessage{
-		Credential:   credBytes,
-		Signature:    signature,
-		KeyAlgorithm: COSEAlgEdDSA,
-		ChallengeID:  challenge.ChallengeID,
+		Credential:         append([]byte(nil), c.signedCredential...),
+		Signature:          signature,
+		KeyAlgorithm:       COSEAlgEdDSA,
+		ChallengeID:        challenge.ChallengeID,
+		RevocationEvidence: EncodeRevocationEpoch(challenge.RevocationEpoch),
 	}
 
 	if err := c.conn.AuthProof(proof); err != nil {

@@ -23,21 +23,26 @@ import (
 // PaperALPN is the ALPN identifier for the PAPER protocol.
 const PaperALPN = "paper/1"
 
-
 // PaperListener accepts native PAPER protocol connections (QUIC/TCP with CBOR framing).
 // Per the README guardrail: "No HTTP/REST/WebSocket for protocol traffic."
 // The HTTP API in server.go is for admin/control-plane operations only;
 // the PAPER wire protocol is for Harness/PIA peer connections.
 type PaperListener struct {
-	svc       *Service
-	tlsConfig *tls.Config
-	mu        sync.Mutex
-	conns     map[string]*paper.TransportConn
-	sessions  map[string]string // connID → working sessionID (from SESSION_OPEN)
+	svc               *Service
+	tlsConfig         *tls.Config
+	authenticator     *PeerAuthenticator
+	mu                sync.Mutex
+	conns             map[string]credentialConnection
+	credentialSerials map[string]string // connID → authenticated credential serial
+	sessions          map[string]string // connID → working sessionID (from SESSION_OPEN)
+}
+
+type credentialConnection interface {
+	Close() error
 }
 
 // NewPaperListener creates a native PAPER protocol listener.
-func NewPaperListener(svc *Service, tlsConfig *tls.Config) *PaperListener {
+func NewPaperListener(svc *Service, tlsConfig *tls.Config, trust ...TrustBundle) *PaperListener {
 	if tlsConfig == nil {
 		tlsConfig = &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13, NextProtos: []string{PaperALPN}}
 		cert, err := generateListenerCert()
@@ -48,11 +53,17 @@ func NewPaperListener(svc *Service, tlsConfig *tls.Config) *PaperListener {
 	if tlsConfig.NextProtos == nil {
 		tlsConfig.NextProtos = []string{PaperALPN}
 	}
+	bundle := TrustBundle{}
+	if len(trust) > 0 {
+		bundle = trust[0]
+	}
 	return &PaperListener{
-		svc:       svc,
-		tlsConfig: tlsConfig,
-		conns:     make(map[string]*paper.TransportConn),
-		sessions:  make(map[string]string),
+		svc:               svc,
+		tlsConfig:         tlsConfig,
+		authenticator:     NewPeerAuthenticator(bundle),
+		conns:             make(map[string]credentialConnection),
+		credentialSerials: make(map[string]string),
+		sessions:          make(map[string]string),
 	}
 }
 
@@ -131,6 +142,8 @@ func (pl *PaperListener) handleConn(ctx context.Context, netConn net.Conn) {
 	defer func() {
 		pl.mu.Lock()
 		delete(pl.conns, connID)
+		delete(pl.credentialSerials, connID)
+		delete(pl.sessions, connID)
 		pl.mu.Unlock()
 	}()
 
@@ -168,7 +181,7 @@ func (pl *PaperListener) handleConn(ctx context.Context, netConn net.Conn) {
 		ServerNonce:       serverNonce,
 		ChallengeID:       []byte(connID),
 		CredentialIssuers: []string{"pccp-ca"},
-		RevocationEpoch:   uint64(time.Now().Unix()),
+		RevocationEpoch:   pl.authenticator.RevocationEpoch(),
 		AuthDeadlineMs:    uint64(time.Now().Add(30 * time.Second).UnixMilli()),
 	}
 
@@ -184,15 +197,49 @@ func (pl *PaperListener) handleConn(ctx context.Context, netConn net.Conn) {
 	}
 	log.Printf("relay: paper AUTH_PROOF received from %s", connID)
 
-	// Authorize the peer. The proof credential identifies the harness; reject
-	// unknown/revoked/quarantined harnesses so fleet actions take effect on the
-	// live path. (Full COSE-Sign1 signature verification is a follow-up — see
-	// Harness A; today the credential carries the harness peer ID.)
-	harnessID := string(proof.Credential)
+	helloCBOR, err := paper.MarshalCBOR(hello)
+	if err != nil {
+		log.Printf("relay: paper encode HELLO transcript for %s failed: %v", connID, err)
+		return
+	}
+	ackCBOR, err := paper.MarshalCBOR(ack)
+	if err != nil {
+		log.Printf("relay: paper encode HELLO_ACK transcript for %s failed: %v", connID, err)
+		return
+	}
+	credentialDigest := paper.ComputeObjectDigest(paper.ObjTypePeerCredential, proof.Credential)
+	transcript := paper.AuthContext(
+		helloCBOR,
+		ackCBOR,
+		hello.ClientNonce,
+		challenge.ServerNonce,
+		[]byte("tcp-exporter"),
+		credentialDigest.Bytes(),
+	)
+	credential, err := pl.authenticator.VerifyPeerProof(ctx, transcript.Bytes(), proof)
+	if err != nil {
+		log.Printf("relay: paper rejecting peer proof %s: %v", connID, err)
+		errPayload, _ := json.Marshal(map[string]string{"error": "authentication failed"})
+		conn.SendMessage(paper.MsgClose, nil, errPayload, 0, 1)
+		return
+	}
+	if err := validatePeerProfile(hello.PeerProfile, credential); err != nil {
+		log.Printf("relay: paper rejecting peer profile %s: %v", connID, err)
+		errPayload, _ := json.Marshal(map[string]string{"error": "authentication failed"})
+		conn.SendMessage(paper.MsgClose, nil, errPayload, 0, 1)
+		return
+	}
+
+	// Derive the live identity only from the issuer-verified credential.
+	harnessID := credential.SubjectPeerID
 	if _, err := pl.svc.AuthorizePeer(harnessID); err != nil {
 		log.Printf("relay: paper rejecting peer %s: %v", connID, err)
 		errPayload, _ := json.Marshal(map[string]string{"error": "unauthorized: " + err.Error()})
 		conn.SendMessage(paper.MsgClose, nil, errPayload, 0, 1)
+		return
+	}
+	if !pl.trackAuthenticatedConnection(connID, credential.Serial, conn) {
+		log.Printf("relay: paper credential %s revoked during authentication", credential.Serial)
 		return
 	}
 
@@ -204,6 +251,52 @@ func (pl *PaperListener) handleConn(ctx context.Context, netConn net.Conn) {
 
 	// Phase 3: Application messages (READY state) — every AI request is governed.
 	pl.handleApplicationMessages(ctx, conn, connID, hello, harnessID)
+}
+
+func validatePeerProfile(negotiated paper.PeerProfile, credential *paper.PeerCredential) error {
+	if credential == nil || credential.PeerProfile != negotiated {
+		return fmt.Errorf("credential profile does not match negotiated profile %q", negotiated)
+	}
+	return nil
+}
+
+func (pl *PaperListener) trackAuthenticatedConnection(connID, serial string, conn credentialConnection) bool {
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
+	if pl.authenticator.isRevoked(serial) {
+		_ = conn.Close()
+		delete(pl.conns, connID)
+		delete(pl.sessions, connID)
+		return false
+	}
+	pl.conns[connID] = conn
+	pl.credentialSerials[connID] = serial
+	return true
+}
+
+// RevokeCredential advances the revocation view and immediately closes every
+// active transport authenticated with the revoked serial.
+func (pl *PaperListener) RevokeCredential(serial string, epoch uint64) {
+	pl.authenticator.Revoke(serial, epoch)
+
+	pl.mu.Lock()
+	toClose := make([]credentialConnection, 0)
+	for connID, credentialSerial := range pl.credentialSerials {
+		if credentialSerial != serial {
+			continue
+		}
+		if conn := pl.conns[connID]; conn != nil {
+			toClose = append(toClose, conn)
+		}
+		delete(pl.conns, connID)
+		delete(pl.credentialSerials, connID)
+		delete(pl.sessions, connID)
+	}
+	pl.mu.Unlock()
+
+	for _, conn := range toClose {
+		_ = conn.Close()
+	}
 }
 
 // handleApplicationMessages processes PAPER application records after authentication.

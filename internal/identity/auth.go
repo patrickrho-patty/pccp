@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -11,6 +12,38 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
+
+// CredentialRevocations is the control plane's monotonic in-process view of
+// revoked peer-credential serials. Callers receive copies of its maps.
+type CredentialRevocations struct {
+	mu      sync.RWMutex
+	epoch   uint64
+	serials map[string]uint64
+}
+
+func newCredentialRevocations() *CredentialRevocations {
+	return &CredentialRevocations{serials: make(map[string]uint64)}
+}
+
+func (r *CredentialRevocations) revoke(serial string) uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.epoch++
+	if serial != "" {
+		r.serials[serial] = r.epoch
+	}
+	return r.epoch
+}
+
+func (r *CredentialRevocations) snapshot() (uint64, map[string]uint64) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	serials := make(map[string]uint64, len(r.serials))
+	for serial, epoch := range r.serials {
+		serials[serial] = epoch
+	}
+	return r.epoch, serials
+}
 
 // AdminCredentials stores admin login credentials (for local/dev auth).
 type AdminCredentials struct {

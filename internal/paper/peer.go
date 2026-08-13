@@ -1,8 +1,11 @@
 package paper
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -39,6 +42,25 @@ type PeerCredential struct {
 	BuildChannel string `cbor:"12,omitempty"`
 	// DeploymentZone is an optional deployment zone.
 	DeploymentZone string `cbor:"13,omitempty"`
+	// SignedCredential is the complete COSE-Sign1 credential presented on the
+	// wire. It is excluded from the signed credential body.
+	SignedCredential []byte `cbor:"-" json:"signed_credential,omitempty"`
+}
+
+type peerCredentialSigningBody struct {
+	CredentialVersion       uint16      `cbor:"credential_version"`
+	Issuer                  string      `cbor:"issuer"`
+	SubjectPeerID           string      `cbor:"subject_peer_id"`
+	Organization            string      `cbor:"organization"`
+	PeerProfile             PeerProfile `cbor:"peer_profile"`
+	PublicKey               []byte      `cbor:"public_key"`
+	NotBefore               int64       `cbor:"not_before"`
+	NotAfter                int64       `cbor:"not_after"`
+	Serial                  string      `cbor:"serial"`
+	RevocationAuthority     string      `cbor:"revocation_authority"`
+	AllowedProtocolVersions []uint8     `cbor:"protocol_versions"`
+	BuildChannel            string      `cbor:"build_channel,omitempty"`
+	DeploymentZone          string      `cbor:"deployment_zone,omitempty"`
 }
 
 // PeerCredentialIssuer creates and signs PPCs for a trust domain.
@@ -99,6 +121,9 @@ func (i *PeerCredentialIssuer) Issue(req IssueRequest) (*PeerCredential, error) 
 		BuildChannel:            req.BuildChannel,
 		DeploymentZone:          req.DeploymentZone,
 	}
+	if _, err := cred.SignWith(i.PrivateKey); err != nil {
+		return nil, err
+	}
 	return cred, nil
 }
 
@@ -114,27 +139,21 @@ func (i *PeerCredentialIssuer) Verify(cred *PeerCredential, signature []byte) bo
 // Per PAPER §16: "The baseline credential encoding is a COSE-signed
 // canonical CBOR object."
 func (c *PeerCredential) SigningBytes() []byte {
-	// Build a map with only the signing-relevant fields (excluding any signature)
-	signingMap := map[string]interface{}{
-		"credential_version": c.CredentialVersion,
-		"issuer":             c.Issuer,
-		"subject_peer_id":    c.SubjectPeerID,
-		"organization":       c.Organization,
-		"peer_profile":       string(c.PeerProfile),
-		"public_key":         c.PublicKey,
-		"not_before":         c.NotBefore,
-		"not_after":          c.NotAfter,
-		"serial":             c.Serial,
-		"revocation_authority": c.RevocationAuthority,
-		"protocol_versions":  c.AllowedProtocolVersions,
-	}
-	if c.BuildChannel != "" {
-		signingMap["build_channel"] = c.BuildChannel
-	}
-	if c.DeploymentZone != "" {
-		signingMap["deployment_zone"] = c.DeploymentZone
-	}
-	data, err := MarshalCBOR(signingMap)
+	data, err := MarshalCBOR(peerCredentialSigningBody{
+		CredentialVersion:       c.CredentialVersion,
+		Issuer:                  c.Issuer,
+		SubjectPeerID:           c.SubjectPeerID,
+		Organization:            c.Organization,
+		PeerProfile:             c.PeerProfile,
+		PublicKey:               c.PublicKey,
+		NotBefore:               c.NotBefore,
+		NotAfter:                c.NotAfter,
+		Serial:                  c.Serial,
+		RevocationAuthority:     c.RevocationAuthority,
+		AllowedProtocolVersions: c.AllowedProtocolVersions,
+		BuildChannel:            c.BuildChannel,
+		DeploymentZone:          c.DeploymentZone,
+	})
 	if err != nil {
 		return nil
 	}
@@ -156,6 +175,7 @@ func (c *PeerCredential) SignWith(priv ed25519.PrivateKey) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("paper: encode credential signature: %w", err)
 	}
+	c.SignedCredential = append(c.SignedCredential[:0], encoded...)
 	return hex.EncodeToString(encoded), nil
 }
 
@@ -166,7 +186,82 @@ func (c *PeerCredential) VerifySignature(pub ed25519.PublicKey, signatureHex str
 	if signingBytes == nil {
 		return errors.New("paper: failed to encode credential for verification")
 	}
-	return VerifyCOSESign1Hex(signatureHex, pub)
+	encoded, err := hex.DecodeString(signatureHex)
+	if err != nil {
+		return fmt.Errorf("paper: decode credential signature: %w", err)
+	}
+	sign1, err := DecodeCOSESign1(encoded)
+	if err != nil {
+		return err
+	}
+	if err := VerifyCOSESign1(sign1, pub); err != nil {
+		return err
+	}
+	if !bytes.Equal(sign1.Payload, signingBytes) {
+		return errors.New("paper: signed credential payload does not match presented credential")
+	}
+	return nil
+}
+
+// DecodePeerCredential decodes the canonical credential body carried as the
+// payload of a COSE-Sign1 credential.
+func DecodePeerCredential(payload []byte) (*PeerCredential, error) {
+	var body peerCredentialSigningBody
+	if err := UnmarshalCBOR(payload, &body); err != nil {
+		return nil, fmt.Errorf("paper: decode peer credential: %w", err)
+	}
+	return &PeerCredential{
+		CredentialVersion:       body.CredentialVersion,
+		Issuer:                  body.Issuer,
+		SubjectPeerID:           body.SubjectPeerID,
+		Organization:            body.Organization,
+		PeerProfile:             body.PeerProfile,
+		PublicKey:               body.PublicKey,
+		NotBefore:               body.NotBefore,
+		NotAfter:                body.NotAfter,
+		Serial:                  body.Serial,
+		RevocationAuthority:     body.RevocationAuthority,
+		AllowedProtocolVersions: body.AllowedProtocolVersions,
+		BuildChannel:            body.BuildChannel,
+		DeploymentZone:          body.DeploymentZone,
+	}, nil
+}
+
+// PeerProofSigningBytes returns the deterministic, domain-separated bytes
+// signed by the credential subject. The transcript argument is the complete
+// negotiated authentication-context hash assembled by the transport.
+func PeerProofSigningBytes(transcript, challengeID []byte, revocationEpoch uint64) []byte {
+	h := sha256.New()
+	h.Write([]byte("DARI-AUTH-PROOF-v1\x00"))
+	writeLengthPrefixed(h, transcript)
+	writeLengthPrefixed(h, challengeID)
+	var epoch [8]byte
+	binary.BigEndian.PutUint64(epoch[:], revocationEpoch)
+	h.Write(epoch[:])
+	return h.Sum(nil)
+}
+
+// EncodeRevocationEpoch encodes the revocation checkpoint carried in the
+// AUTH_PROOF revocation-evidence field.
+func EncodeRevocationEpoch(epoch uint64) []byte {
+	encoded := make([]byte, 8)
+	binary.BigEndian.PutUint64(encoded, epoch)
+	return encoded
+}
+
+// DecodeRevocationEpoch decodes the fixed-width AUTH_PROOF revocation epoch.
+func DecodeRevocationEpoch(evidence []byte) (uint64, error) {
+	if len(evidence) != 8 {
+		return 0, fmt.Errorf("paper: revocation evidence must be 8 bytes, got %d", len(evidence))
+	}
+	return binary.BigEndian.Uint64(evidence), nil
+}
+
+func writeLengthPrefixed(h interface{ Write([]byte) (int, error) }, value []byte) {
+	var length [4]byte
+	binary.BigEndian.PutUint32(length[:], uint32(len(value)))
+	h.Write(length[:])
+	h.Write(value)
 }
 
 // IsValidAt reports whether the credential is valid at the given time.
