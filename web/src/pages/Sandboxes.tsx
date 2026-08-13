@@ -23,6 +23,7 @@ export default function Sandboxes() {
         body: JSON.stringify(form)
       })
       setShowForm(false)
+      showToast('샌드박스 생성됨', 'success')
       load()
     } catch {}
   }

@@ -164,7 +164,7 @@ function PackagesTab() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
-    try { await fetch('/api/models', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, state: 'draft' }) }); setShowForm(false); load() } catch { showToast('실패') }
+    try { await fetch('/api/models', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, state: 'draft' }) }); setShowForm(false); showToast('모델 등록됨', 'success'); load() } catch { showToast('실패', 'error') }
   }
   const handlePublish = async (id: string) => { try { await fetch(`/api/models/${id}/publish`, { method: 'POST', headers: authHeaders() }); load() } catch {} }
   const handleRecall = async (id: string) => { if (confirm('리콜하시겠습니까?')) { await fetch(`/api/models/${id}/recall`, { method: 'POST', headers: authHeaders() }); load() } }

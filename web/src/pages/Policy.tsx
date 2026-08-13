@@ -117,7 +117,7 @@ export default function Policy() {
   }, [])
 
   const addRule = (rule: PolicyRule) => {
-    api.createPolicyRule(rule).then(reloadRules).catch(() => {})
+    api.createPolicyRule(rule).then(() => { reloadRules(); showToast('정책 추가됨', 'success') }).catch(() => {})
     setShowBuilder(false)
     setBuilderTemplate(null)
   }
@@ -129,7 +129,7 @@ export default function Policy() {
 
   const deleteRule = (id: string) => {
     if (!confirm('이 정책을 삭제하시겠습니까?')) return
-    api.deletePolicyRule(id).then(reloadRules).catch(() => {})
+    api.deletePolicyRule(id).then(() => { reloadRules(); showToast('정책 삭제됨', 'info') }).catch(() => {})
   }
 
   const domainIcon: Record<string,string> = {}

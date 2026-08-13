@@ -65,6 +65,7 @@ export default function Communications() {
         body: JSON.stringify({ sender_id: 'admin', sender_type: 'user', content_type: 'text', content: newMessage }),
       })
       setNewMessage('')
+      showToast('메시지 전송됨', 'success')
       loadMessages(selectedConv)
     } catch {}
   }
