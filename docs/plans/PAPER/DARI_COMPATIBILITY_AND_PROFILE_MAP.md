@@ -1,8 +1,8 @@
 # DARI Compatibility and Profile Map
 
-**Status:** Normative Phase 2 contract  
-**Protocol:** DARI — Delegated Authorization and Receipts for Inference  
-**Companion specification:** `PAPER_Protocol_Specification_v1.0.md`, Appendix F  
+**Status:** Normative Phase 2 contract
+**Protocol:** DARI — Delegated Authorization and Receipts for Inference
+**Companion specification:** `PAPER_Protocol_Specification_v1.0.md`, Appendix F
 **Implementation status:** Contract only; this document does not claim runtime implementation or measurement
 
 ## 1. Purpose and precedence
@@ -100,7 +100,7 @@ The bounded legacy contract has these rules:
 
 1. A `paper/1` sender MUST use the legacy preface `50 41 50 45 52 00 01 0a`, record major `1`, and existing message numbers. A receiver MUST NOT renumber a legacy message according to an older prose table when the deployed registry and byte fixtures use another number.
 2. Task 5 golden vectors for the root protocol package are the byte-level compatibility oracle for preface, framing, legacy map-form COSE, Peer Credential signing bytes, Capability Lease signing bytes, object-digest quirks, and Evidence Receipt signing bytes. A future implementation change MUST reproduce those vectors in `paper/1` or reject the legacy object explicitly.
-3. The canonical repository message constants and `registry/messages.csv` are the allocation source for existing root messages. The older Appendix 76 table is descriptive where it conflicts; it MUST NOT renumber deployed values. The additive DARI allocations in Section 5 are normative.
+3. The canonical repository message constants are the allocation source for existing root messages; `registry/messages.csv` corroborates them except where the two are explicitly known to drift. The older Appendix 76 table is descriptive where it conflicts; it MUST NOT renumber deployed values. Task 5 MUST freeze ambiguous legacy names or omissions by numeric value and fixture. The additive DARI allocations in Section 5 are normative.
 4. A decoder MUST select `paper/1` before parsing a legacy object. A `dari/1` parse or validation failure MUST NOT cause a retry through the legacy decoder.
 5. A legacy object MUST retain its original bytes for signature and digest verification. An adapter MAY construct a separate DARI in-memory view, but it MUST NOT present that view as the original signed object.
 6. Successful `paper/1` verification proves only the properties actually covered by the legacy bytes. It MUST NOT be reported as proof of DARI delegation, full-scope signing, state freshness, rollback protection, multi-party attestation, selective disclosure, or exactly-once effects.
@@ -191,7 +191,7 @@ The duplicated Patty client protocol package has known constant and encoder drif
 A compatibility suite MUST demonstrate all of the following:
 
 1. Frozen `paper/1` golden frames, legacy signatures, and legacy digests remain byte-for-byte stable after DARI code is added.
-2. Existing legacy message numbers are unchanged; `0x0610` through `0x0614` are unique and unavailable without `dari.tools/1`; `0x0604` through `0x0606` are not reused.
+2. Existing legacy message numbers are unchanged; message values `0x0610` through `0x0614` are unique within the message-type registry and unavailable without `dari.tools/1`; `0x0604` through `0x0606` are not reused.
 3. A valid legacy signature over different presented fields is rejected even though the original signed bytes remain unchanged.
 4. A converted Capability Lease cannot delegate, widen scope, change audience/session/epoch, or acquire an unsigned budget.
 5. A legacy receipt is reported as legacy evidence and never as a DARI multi-party receipt.
