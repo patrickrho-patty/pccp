@@ -120,6 +120,7 @@ export default function Security() {
   const [showBuilder, setShowBuilder] = useState(false)
   const [findingDetail, setFindingDetail] = useState<any>(null)
   const [editingRule, setEditingRule] = useState<Rule | null>(null)
+  const [findingFilter, setFindingFilter] = useState('all')
 
   useEffect(() => {
     fetch('/api/analytics/security', { headers: authHeaders() })
@@ -195,6 +196,12 @@ export default function Security() {
   const sevBadge = (s: string) => SEVERITY_INFO[s]?.color || 'badge-gray'
   const actionBadge = (a: string) => ACTION_INFO[a]?.color || 'badge-gray'
   const statusBadge = (s: string) => s === 'open' ? 'badge-red' : s === 'investigating' ? 'badge-yellow' : 'badge-green'
+
+  const filteredFindings = findings.filter(f => {
+    if (findingFilter === 'all') return true
+    if (findingFilter === 'open') return f.status === 'open'
+    return f.severity === findingFilter
+  })
   const postureScore = stats.total === 0 ? 100 : Math.max(0, 100 - stats.critical * 25 - stats.high * 10 - stats.open * 5)
 
   return (
@@ -347,16 +354,25 @@ export default function Security() {
         <div className="card">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-lg font-semibold">보안 발견 목록 · Findings</h3>
-            {findings.length > 0 && (
+            <div className="flex gap-2 items-center">
+              <select className="input w-auto text-xs" value={findingFilter} onChange={e => setFindingFilter(e.target.value)}>
+                <option value="all">전체 · All</option>
+                <option value="critical">🔴 치명적</option>
+                <option value="high">🟠 높음</option>
+                <option value="medium">🟡 중간</option>
+                <option value="open">미해결만</option>
+              </select>
+              {findings.length > 0 && (
               <button onClick={() => {
                 const csv = ['timestamp,type,severity,title,status,session_id']
                 findings.forEach(f => { csv.push([f.occurred_at, f.finding_type, f.severity, (f.title_ko || f.title || '').replace(/,/g, ';'), f.status, f.session_id || ''].join(',')) })
                 const blob = new Blob([csv.join('\n')], { type: 'text/csv' })
                 const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'security_findings.csv'; a.click()
               }} className="btn-sm btn-secondary">CSV</button>
-            )}
+              )}
+            </div>
           </div>
-          {findings.length === 0 ? (
+          {filteredFindings.length === 0 ? (
             <div className="text-center py-12"><div className="text-4xl mb-3">✅</div><p className="text-gray-500">활성 보안 발견이 없습니다.</p></div>
           ) : (
             <table className="w-full">
@@ -364,7 +380,7 @@ export default function Security() {
                 <th className="pb-3">유형</th><th className="pb-3">심각도</th><th className="pb-3">제목</th><th className="pb-3">상태</th><th className="pb-3">시간</th>
               </tr></thead>
               <tbody>
-                {findings.map(f => (
+                {filteredFindings.map(f => (
                   <tr key={f.id} className="border-b border-gray-100 last:border-0 cursor-pointer hover:bg-blue-50/30" onClick={() => viewFindingDetail(f.id)}>
                     <td className="py-3 text-sm font-mono">{f.finding_type}</td>
                     <td className="py-3"><span className={sevBadge(f.severity)}>{f.severity}</span></td>
