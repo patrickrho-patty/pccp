@@ -21,10 +21,10 @@ export function SeatWidget({ compact = false }: { compact?: boolean }) {
     return () => clearInterval(interval)
   }, [])
 
-  if (!seats) return null
+  if (!seats || !seats.user_seats || !seats.harness_seats) return null
 
-  const userPct = parseInt(seats.user_seats.utilization)
-  const harnessPct = parseInt(seats.harness_seats.utilization)
+  const userPct = seats?.user_seats?.utilization ? parseInt(seats.user_seats.utilization) : 0
+  const harnessPct = seats?.harness_seats?.utilization ? parseInt(seats.harness_seats.utilization) : 0
 
   if (compact) {
     return (

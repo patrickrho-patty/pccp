@@ -133,8 +133,7 @@ func (s *Server) setupRouter() {
 		// Organizations
 		r.Route("/organizations", func(r chi.Router) {
 			r.Get("/", s.handleListOrganizations)
-		r.Get("/seats", s.handleGetSeatUsage)
-		r.Get("/seats", s.handleGetSeatUsage)
+			r.Get("/seats", s.handleGetSeatUsage)
 			r.Post("/", s.handleCreateOrganization)
 			r.Get("/{id}", s.handleGetOrganization)
 		})
