@@ -1863,6 +1863,17 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: getOrgID(r),
+		EventType:      "cp.sandbox.created",
+		ActorType:      "admin",
+		Action:         "create_sandbox",
+		ResourceType:   "sandbox",
+		ResourceID:     sb.ID,
+		Details:        "sandbox created",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusCreated, sb)
 }
 
@@ -1873,6 +1884,17 @@ func (s *Server) handleDestroySandbox(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: getOrgID(r),
+		EventType:      "cp.sandbox.destroyed",
+		ActorType:      "admin",
+		Action:         "destroy_sandbox",
+		ResourceType:   "sandbox",
+		ResourceID:     id,
+		Details:        "sandbox destroyed",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusOK, sb)
 }
 
@@ -2198,6 +2220,17 @@ func (s *Server) handleCreatePolicyRule(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.policy.rule_created",
+		ActorType:      "admin",
+		Action:         "create_policy_rule",
+		ResourceType:   "policy_rule",
+		ResourceID:     rule.ID,
+		Details:        fmt.Sprintf(`{"domain":"%s","name":"%s","enabled":%v}`, rule.Domain, rule.Name, rule.Enabled),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusCreated, rule)
 }
 
@@ -2208,6 +2241,17 @@ func (s *Server) handleDeletePolicyRule(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.policy.rule_deleted",
+		ActorType:      "admin",
+		Action:         "delete_policy_rule",
+		ResourceType:   "policy_rule",
+		ResourceID:     id,
+		Details:        "policy rule deleted",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 

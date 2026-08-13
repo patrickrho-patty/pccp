@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import EmptyState from '../components/EmptyState'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 
@@ -148,7 +149,7 @@ export default function SREConsole() {
           <h3 className="text-lg font-semibold mb-4">구독자 계정 · Subscriber Accounts</h3>
           {accounts.length === 0 ? (
             <div className="text-center py-8">
-              <p className="text-gray-400">등록된 퍼블릭 계정이 없습니다.</p>
+              <EmptyState icon="📡" title="등록된 퍼블릭 계정이 없습니다" message="계정이 생성되면 표시됩니다" />
               <p className="text-sm text-gray-400 mt-1">Public Cloud 계정은 /api/public/accounts API로 생성할 수 있습니다.</p>
             </div>
           ) : (

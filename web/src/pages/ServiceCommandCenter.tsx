@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import EmptyState from '../components/EmptyState'
 import { Link } from 'react-router-dom'
 
 const healthIcon = (status: string) => {
@@ -111,7 +112,7 @@ export default function ServiceCommandCenter() {
             <button onClick={() => setSelectedStatus(null)} className="text-gray-400 hover:text-gray-600 text-sm">✕ 닫기</button>
           </div>
           {filteredAccounts.length === 0 ? (
-            <p className="text-gray-400 text-center py-6 text-sm">해당 상태의 계정이 없습니다</p>
+            <EmptyState icon="🔍" title="해당 상태의 계정이 없습니다" />
           ) : (
             <table className="w-full">
               <thead>

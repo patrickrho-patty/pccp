@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 
 function authHeaders() { const token = localStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }
 
 export default function UserDetail() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const [user, setUser] = useState<any>(null)
   const [sessions, setSessions] = useState<any[]>([])
   const [harnesses, setHarnesses] = useState<any[]>([])
@@ -81,6 +82,18 @@ export default function UserDetail() {
           <div><span className="text-gray-500">사번:</span> {user.employee_id || '-'}</div>
           <div><span className="text-gray-500">등록일:</span> {user.created_at?.slice(0, 10)}</div>
           {user.last_login_at && <div><span className="text-gray-500">마지막 로그인:</span> {user.last_login_at?.slice(0, 19)}</div>}
+          <div className="col-span-2 pt-3 border-t border-gray-100">
+            <button onClick={async () => {
+              try {
+                await fetch('/api/communications/conversations', {
+                  method: 'POST',
+                  headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ type: 'direct', title: user.name_ko || user.name, participant_ids: [id] })
+                })
+                navigate('/communications')
+              } catch {}
+            }} className="btn-sm btn-primary">💬 메시지 보내기</button>
+          </div>
         </div>
       )}
 

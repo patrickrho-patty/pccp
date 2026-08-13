@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
+import EmptyState from '../components/EmptyState'
 
 const CATEGORY_INFO: Record<string, { icon: string; name: string; nameEn: string }> = {
   governance: { icon: '⚖️', name: '거버넌스', nameEn: 'Governance' },
@@ -163,7 +164,7 @@ export default function EnterpriseFeatures() {
           })}
           {features.length === 0 && (
             <div className="card text-center py-12">
-              <p className="text-gray-400 mb-2">등록된 엔터프라이즈 기능이 없습니다</p>
+              <EmptyState icon="🏢" title="등록된 엔터프라이즈 기능이 없습니다" message="20개 기본 기능 등록 버튼으로 시작하세요" />
               <button onClick={seed} className="btn-primary text-sm mt-2">20개 기본 기능 등록</button>
             </div>
           )}

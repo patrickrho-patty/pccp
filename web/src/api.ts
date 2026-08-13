@@ -205,7 +205,8 @@ export const api = {
   // Tools
   listTools: () => request<any[]>('/api/tools'),
   seedTools: () =>
-    request<any>('/api/tools/seed-defaults', { method: 'POST' }),
+    request<any>('/api/tools/seed-defaults', { method: 'POST', body: JSON.stringify({}) }),
+  listToolApprovals: () => request<any[]>('/api/tools/approvals'),
 
   // Attestation
   attestLevels: (level: string) => request<any>(`/api/attestation/levels/${level}`),

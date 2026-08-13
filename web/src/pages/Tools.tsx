@@ -26,13 +26,17 @@ export default function Tools() {
   const [form, setForm] = useState({
     name: '', name_ko: '', category: 'read', tool_class: '', danger_level: 'low', requires_approval: false,
   })
+  const [approvals, setApprovals] = useState<any[]>([])
 
   const authHeaders = () => {
     const token = localStorage.getItem('pccp_token')
     return token ? { Authorization: `Bearer ${token}` } : {}
   }
 
-  const load = () => api.listTools().then(data => setTools(Array.isArray(data) ? data : []))
+  const load = () => {
+    api.listTools().then(data => setTools(Array.isArray(data) ? data : []))
+    api.listToolApprovals().then(data => setApprovals(Array.isArray(data) ? data : [])).catch(() => {})
+  }
   useEffect(() => { load() }, [])
 
   const filtered = useFilteredData(tools, filters, FILTER_CONFIG)
@@ -237,6 +241,24 @@ export default function Tools() {
           </table>
         )}
       </div>
+
+      {approvals.length > 0 && (
+        <div className="card mt-6">
+          <h3 className="text-sm font-semibold mb-3">⏳ 대기 중인 승인 · Pending Approvals ({approvals.length})</h3>
+          {approvals.map((a: any) => (
+            <div key={a.id} className="flex items-center justify-between py-3 border-b border-gray-100 last:border-0">
+              <div>
+                <span className="text-sm font-medium">{a.tool_name || a.name || a.tool_id || 'Unknown'}</span>
+                {a.reason && <span className="ml-2 text-xs text-gray-400">{a.reason}</span>}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={async () => { try { await fetch(`/api/tools/approvals/${a.id}/decide`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: 'approved' }) }); load() } catch {} }} className="btn-sm btn-primary">승인</button>
+                <button onClick={async () => { try { await fetch(`/api/tools/approvals/${a.id}/decide`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: 'denied' }) }); load() } catch {} }} className="btn-sm btn-danger">거부</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
