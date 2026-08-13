@@ -2396,23 +2396,47 @@ func (s *Server) handleDeleteRepository(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handlePauseSession(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
 	var sess models.Session
 	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 	s.db.Model(&sess).Update("status", "paused")
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.session.paused",
+		ActorType:      "admin",
+		Action:         "pause_session",
+		ResourceType:   "session",
+		ResourceID:     sess.ID,
+		Details:        "session paused",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "paused"})
 }
 
 func (s *Server) handleResumeSession(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
 	var sess models.Session
 	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 	s.db.Model(&sess).Update("status", "active")
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.session.resumed",
+		ActorType:      "admin",
+		Action:         "resume_session",
+		ResourceType:   "session",
+		ResourceID:     sess.ID,
+		Details:        "session resumed",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "active"})
 }
 
