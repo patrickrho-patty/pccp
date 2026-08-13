@@ -137,7 +137,7 @@ func (s *Service) InitiateChangeFreeze(orgID, reason, reasonKo string, affectedR
 func (s *Service) IsChangeFrozen(orgID, repoID string) (bool, *ChangeFreeze, error) {
 	// Check audit events for active freezes
 	var events []models.AuditEvent
-	s.db.Where("organization_id = ? AND event_type IN ('cp.korean.change_freeze_started', 'cp.korean.change_freeze_ended')").
+	s.db.Where("organization_id = ? AND event_type IN ('cp.korean.change_freeze_started', 'cp.korean.change_freeze_ended')", orgID).
 		Order("occurred_at DESC").Find(&events)
 
 	for _, e := range events {

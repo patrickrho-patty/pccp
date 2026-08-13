@@ -1,6 +1,7 @@
-This is XeTeX, Version 3.141592653-2.6-0.999998 (TeX Live 2026) (preloaded format=xelatex 2026.4.15)  12 AUG 2026 13:25
+This is XeTeX, Version 3.141592653-2.6-0.999998 (TeX Live 2026) (preloaded format=xelatex 2026.4.15)  13 AUG 2026 12:57
 entering extended mode
  restricted \write18 enabled.
+ file:line:error style messages enabled.
  %&-line parsing enabled.
 **main_ko.tex
 (./main_ko.tex
@@ -1174,15 +1175,15 @@ File: mt-cmr.cfg 2013/05/19 v2.2 microtype config. file: Computer Modern Roman
 File: figures/qwen-governed-exchange.png Graphic file (type bmp)
 <figures/qwen-governed-exchange.png>
 
-[2] [3] [4] [5]
+[2] [3] [4] [5] [6]
 File: figures/governed-exchange-lifecycle.png Graphic file (type bmp)
 <figures/governed-exchange-lifecycle.png>
- [6] (./figures/model-identity-chain-ko.tex) [7] [8] [9]
-(./figures/primitive-latency-plot-ko.tex
+ (./figures/model-identity-chain-ko.tex) [7] [8] [9]
+[10] (./figures/primitive-latency-plot-ko.tex
 PGFPlots: reading {benchmark-data/core-primitives.tsv}
 Package pgfplots info on input line 27: Using 'lua backend=false' for axis: ymo
 de=log unsupported (yet).
-) [10] [11] [12] [13]
+) [11] [12] [13] [14]
 (./PAPER_arXiv_KO.bbl
 Underfull \hbox (badness 3323) in paragraph at lines 4--7
 []\TU/STIXTwoText(0)/m/n/10 A2A Project.  Agent2agent protocol specification, 2
@@ -1190,7 +1191,7 @@ Underfull \hbox (badness 3323) in paragraph at lines 4--7
 [] []
  []
 
-[14]) [15] [16
+[15]) [16] [17
 
 
 ] (./PAPER_arXiv_KO.aux)
@@ -1199,15 +1200,15 @@ LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
 Package rerunfilecheck Info: File `PAPER_arXiv_KO.out' has not changed.
-(rerunfilecheck)             Checksum: 06470A6C3F9CCFEB43C078472978F3AD;5112.
+(rerunfilecheck)             Checksum: 3A43E7BE4AA95746A2E0C76F5FC0EB87;4965.
  ) 
 Here is how much of TeX's memory you used:
- 41043 strings out of 468168
- 952383 string characters out of 5432815
- 1549887 words of memory out of 5000000
- 69146 multiletter control sequences out of 15000+600000
- 633466 words of font info for 107 fonts, out of 8000000 for 9000
+ 41056 strings out of 468168
+ 952749 string characters out of 5432815
+ 1550573 words of memory out of 5000000
+ 69158 multiletter control sequences out of 15000+600000
+ 633474 words of font info for 108 fonts, out of 8000000 for 9000
  1348 hyphenation exceptions out of 8191
  91i,11n,94p,1004b,2825s stack positions out of 10000i,1000n,20000p,200000b,200000s
 
-Output written on PAPER_arXiv_KO.pdf (16 pages).
+Output written on PAPER_arXiv_KO.xdv (17 pages, 441180 bytes).

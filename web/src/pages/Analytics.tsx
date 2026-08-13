@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import EmptyState from '../components/EmptyState'
 import { Link } from 'react-router-dom'
 
 export default function Analytics() {
@@ -123,7 +124,7 @@ export default function Analytics() {
               })}
             </div>
           ) : (
-            <p className="text-sm text-gray-400">사용 데이터가 없습니다</p>
+            <EmptyState icon="📊" title="사용 데이터가 없습니다" message="세션이 실행되면 분석 데이터가 표시됩니다" />
           )}
         </div>
       </div>

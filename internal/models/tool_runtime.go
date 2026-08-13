@@ -112,6 +112,8 @@ func AllModels() []interface{} {
 		&Tool{},
 		&Approval{},
 		&SecurityFinding{},
+		&SecurityRule{},
+		&PolicyRule{},
 		&PolicyPack{},
 		// Communications (Phase 3)
 		&Conversation{},

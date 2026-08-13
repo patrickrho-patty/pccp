@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
+import ConfirmDialog from '../components/ConfirmDialog'
+import EmptyState from '../components/EmptyState'
 
 const FLEET_ACTIONS = [
   { id: 'request_reauthentication', label: '재인증 요청', labelEn: 'Re-auth', severity: 'normal', icon: '🔑' },
@@ -34,6 +36,7 @@ export default function Fleet() {
   const [actionHistory, setActionHistory] = useState<any[]>([])
   const [sessionInspector, setSessionInspector] = useState<any>(null)
   const [inspectorSessionId, setInspectorSessionId] = useState<string | null>(null)
+  const [showLockdownConfirm, setShowLockdownConfirm] = useState(false)
 
   const load = () => {
     fetch('/api/fleet/inventory', { headers: authHeaders() })
@@ -112,12 +115,7 @@ export default function Fleet() {
         <h1 className="text-2xl font-bold">플릿 관리 <span className="text-gray-400 text-lg font-normal">Fleet Management</span></h1>
         <div className="flex gap-3 items-center">
           <span className="text-sm text-gray-500">{inventory.filter(h => h.is_active).length} 활성 / {inventory.length} 전체</span>
-          <button onClick={() => {
-            const orgId = localStorage.getItem('pccp_org_id') || ''
-            if (confirm('⚠️ 전체 비상 잠금을 실행하시겠습니까?\n모든 활성 세션이 종료됩니다.')) {
-              executeAction('', 'emergency_lockdown', 'Emergency lockdown by admin')
-            }
-          }} className="btn-danger text-sm">🔴 비상 잠금</button>
+          <button onClick={() => setShowLockdownConfirm(true)} className="btn-danger text-sm">🔴 비상 잠금</button>
         </div>
       </div>
 
@@ -126,7 +124,7 @@ export default function Fleet() {
         <div className={selectedHarness ? 'col-span-7' : 'col-span-12'}>
           <div className="card">
             {inventory.length === 0 ? (
-              <p className="text-gray-400 text-center py-8">등록된 하네스가 없습니다</p>
+              <EmptyState icon="⬡" title="등록된 하네스가 없습니다" message="하네스를 등록하면 표시됩니다" />
             ) : (
               <table className="w-full">
                 <thead>
@@ -147,10 +145,10 @@ export default function Fleet() {
                       className={`border-b border-gray-100 last:border-0 cursor-pointer ${selectedHarness === h.harness?.harness_id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
                       onClick={() => setSelectedHarness(selectedHarness === h.harness?.harness_id ? null : h.harness?.harness_id)}>
                       <td className="py-3">
-                        <div className="font-mono text-xs">{h.harness?.harness_id?.slice(0, 20)}</div>
+                        <div className="font-mono text-xs"><Link to={`/harnesses/${h.harness?.id}`} className="text-blue-600 hover:underline" onClick={e => e.stopPropagation()}>{h.harness?.harness_id?.slice(0, 20)}</Link></div>
                         <div className="text-xs text-gray-400">v{h.harness?.binary_version}</div>
                       </td>
-                      <td className="py-3 text-sm">{h.user?.name_ko || h.user?.name || '-'}</td>
+                      <td className="py-3 text-sm">{h.user ? <Link to={`/users/${h.user.id}`} className="text-blue-600 hover:underline" onClick={e => e.stopPropagation()}>{h.user.name_ko || h.user.name}</Link> : '-'}</td>
                       <td className="py-3">{statusBadge(h.harness?.status)}</td>
                       <td className="py-3">{riskBadge(h.risk_score || 0)}</td>
                       <td className="py-3 text-sm">
@@ -389,6 +387,15 @@ export default function Fleet() {
           </div>
         )}
       </div>
+      <ConfirmDialog
+        open={showLockdownConfirm}
+        title="전체 비상 잠금 · Emergency Lockdown"
+        message="⚠️ 모든 활성 세션이 종료되고 모든 하네스의 위험도가 '높음'으로 상승합니다."
+        confirmLabel="잠금 실행"
+        danger
+        onConfirm={() => { executeAction('', 'emergency_lockdown', 'Emergency lockdown by admin'); setShowLockdownConfirm(false) }}
+        onCancel={() => setShowLockdownConfirm(false)}
+      />
     </div>
   )
 }

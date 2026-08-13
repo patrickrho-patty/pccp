@@ -59,6 +59,18 @@ func (s *Service) CheckContext(orgID, text string) CheckResult {
 	// 4. Sensitive file paths
 	findings = append(findings, s.detectSensitivePaths(text)...)
 
+	// Honor per-org disabled detection rules (admin tunability, PRD §16) — a rule
+	// toggled off in the console no longer produces actionable findings.
+	if disabled := s.DisabledRuleIDs(orgID); len(disabled) > 0 {
+		kept := make([]SecurityFinding, 0, len(findings))
+		for _, f := range findings {
+			if !disabled[f.RuleID] {
+				kept = append(kept, f)
+			}
+		}
+		findings = kept
+	}
+
 	// Determine verdict
 	verdict := "ALLOW"
 	for _, f := range findings {
@@ -372,4 +384,85 @@ func redactMatch(match string) string {
 func (s *Service) CheckContextJSON(orgID, text string) ([]byte, error) {
 	result := s.CheckContext(orgID, text)
 	return json.Marshal(result)
+}
+
+// defaultSecurityRuleDefs is the built-in detection catalog (PRD §16). Rule IDs
+// match the detectors' findings so admin toggles take effect in CheckContext.
+func defaultSecurityRuleDefs() []models.SecurityRule {
+	return []models.SecurityRule{
+		{RuleID: "pii-kr-rrn", Type: "korean_pii", Severity: "critical", Name: "Korean RRN", NameKo: "주민등록번호", Enabled: true, Action: "block"},
+		{RuleID: "pii-kr-business", Type: "korean_pii", Severity: "high", Name: "Business Registration", NameKo: "사업자등록번호", Enabled: true, Action: "mask"},
+		{RuleID: "pii-kr-phone", Type: "korean_pii", Severity: "medium", Name: "Korean Phone", NameKo: "전화번호", Enabled: true, Action: "mask"},
+		{RuleID: "pii-kr-account", Type: "korean_pii", Severity: "high", Name: "Bank Account", NameKo: "계좌번호", Enabled: true, Action: "block"},
+		{RuleID: "secret-aws", Type: "secret", Severity: "critical", Name: "AWS Access Key", NameKo: "AWS 접근키", Enabled: true, Action: "block"},
+		{RuleID: "secret-jwt", Type: "secret", Severity: "high", Name: "JWT Token", NameKo: "JWT 토큰", Enabled: true, Action: "block"},
+		{RuleID: "secret-private-key", Type: "secret", Severity: "critical", Name: "Private Key", NameKo: "개인키", Enabled: true, Action: "block"},
+		{RuleID: "secret-github", Type: "secret", Severity: "high", Name: "GitHub PAT", NameKo: "GitHub 토큰", Enabled: true, Action: "block"},
+		{RuleID: "injection-ignore", Type: "prompt_injection", Severity: "high", Name: "Instruction Override", NameKo: "명령어 재정의", Enabled: true, Action: "block"},
+		{RuleID: "injection-jailbreak", Type: "prompt_injection", Severity: "high", Name: "Jailbreak Attempt", NameKo: "탈옥 시도", Enabled: true, Action: "block"},
+	}
+}
+
+// EnsureRulesSeeded idempotently creates the default catalog rows for an org and
+// returns the current persisted configuration.
+func (s *Service) EnsureRulesSeeded(orgID string) ([]models.SecurityRule, error) {
+	for _, def := range defaultSecurityRuleDefs() {
+		var existing models.SecurityRule
+		if err := s.db.Where("organization_id = ? AND rule_id = ?", orgID, def.RuleID).First(&existing).Error; err != nil {
+			row := def
+			row.OrganizationID = orgID
+			s.db.Create(&row)
+		}
+	}
+	var rules []models.SecurityRule
+	s.db.Where("organization_id = ?", orgID).Order("type, severity desc, rule_id").Find(&rules)
+	return rules, nil
+}
+
+// ListRules returns the persisted rule configuration for an org.
+func (s *Service) ListRules(orgID string) ([]models.SecurityRule, error) {
+	var rules []models.SecurityRule
+	s.db.Where("organization_id = ?", orgID).Order("type, severity desc, rule_id").Find(&rules)
+	return rules, nil
+}
+
+// SetRule persists an enabled/action override for a rule (creating the row if the
+// rule isn't yet in the default catalog).
+func (s *Service) SetRule(orgID, ruleID string, enabled *bool, action string) error {
+	var row models.SecurityRule
+	found := s.db.Where("organization_id = ? AND rule_id = ?", orgID, ruleID).First(&row).Error == nil
+	if !found {
+		row = models.SecurityRule{OrganizationID: orgID, RuleID: ruleID, Enabled: true, Action: "block"}
+		for _, def := range defaultSecurityRuleDefs() {
+			if def.RuleID == ruleID {
+				row.Type, row.Severity, row.Name, row.NameKo, row.Action = def.Type, def.Severity, def.Name, def.NameKo, def.Action
+				break
+			}
+		}
+	}
+	if enabled != nil {
+		row.Enabled = *enabled
+	}
+	if action != "" {
+		row.Action = action
+	}
+	if found {
+		return s.db.Save(&row).Error
+	}
+	return s.db.Create(&row).Error
+}
+
+// DisabledRuleIDs returns the set of disabled rule IDs for an org (used by
+// CheckContext to honor admin toggles).
+func (s *Service) DisabledRuleIDs(orgID string) map[string]bool {
+	if s.db == nil {
+		return nil // no persisted config (e.g. unit tests) → all rules enabled
+	}
+	var rows []models.SecurityRule
+	s.db.Where("organization_id = ? AND enabled = ?", orgID, false).Find(&rows)
+	out := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		out[r.RuleID] = true
+	}
+	return out
 }

@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 export default function Sandboxes() {
   const [sandboxes, setSandboxes] = useState<any[]>([])
   const [sessions, setSessions] = useState<any[]>([])
   const [showForm, setShowForm] = useState(false)
+  const [destroyTarget, setDestroyTarget] = useState<string | null>(null)
   const [form, setForm] = useState({ runtime_mode: 'docker', image: 'patty/sandbox-base:latest', session_id: '', cpu_limit: '4', memory_limit_mb: '8192', network_policy: 'restricted' })
 
   const load = () => {
@@ -155,7 +157,7 @@ export default function Sandboxes() {
                 </div>
                 <div className="flex gap-1 mt-3">
                   <button onClick={() => snapshot(s.id)} className="btn-sm btn-secondary">📸 스냅샷</button>
-                  <button onClick={() => destroy(s.id)} className="btn-sm btn-danger">파기</button>
+                  <button onClick={() => setDestroyTarget(s.id)} className="btn-sm btn-danger">파기</button>
                   {s.session_id && <Link to="/sessions" className="btn-sm btn-secondary ml-auto">세션 →</Link>}
                 </div>
               </div>
@@ -163,6 +165,16 @@ export default function Sandboxes() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={!!destroyTarget}
+        title="샌드박스 파기 · Destroy Sandbox"
+        message="이 샌드박스를 파기하시겠습니까? 모든 데이터가 삭제됩니다."
+        confirmLabel="파기 실행"
+        danger
+        onConfirm={async () => { if (destroyTarget) { try { await fetch(`/api/sandboxes/${destroyTarget}/destroy`, { method: 'POST', headers: authHeaders() }); load() } catch {} } setDestroyTarget(null) }}
+        onCancel={() => setDestroyTarget(null)}
+      />
     </div>
   )
 }

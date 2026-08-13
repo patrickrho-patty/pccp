@@ -14,8 +14,9 @@ import (
 
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/paper"
-	"github.com/patrickrho-patty/pccp/internal/security"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
+	"github.com/patrickrho-patty/pccp/internal/security"
+	"github.com/patrickrho-patty/pccp/internal/workintel"
 	"gorm.io/gorm"
 )
 
@@ -24,17 +25,33 @@ import (
 // epochs, performs governance checks, routes to enrolled PIA, and emits
 // evidence receipts.
 type Service struct {
-	db           *gorm.DB
-	provenance   *provenance.Service
-	security     *security.Service
-	cpURL        string
-	relayID      string
-	httpClient   *http.Client
+	db         *gorm.DB
+	provenance *provenance.Service
+	security   *security.Service
+	workintel  *workintel.Service
+	forwarder  inferenceForwarder
+	cpURL      string
+	relayID    string
+	httpClient *http.Client
 
 	// In-flight exchanges
 	mu        sync.RWMutex
 	exchanges map[string]*Exchange
 }
+
+// inferenceForwarder forwards a governed inference request to a PIA.
+// Injected so the governed flow is testable without a live PIA/vLLM.
+type inferenceForwarder func(ctx context.Context, req InferenceRequest, endpointLeaseID string) (*InferenceResponse, error)
+
+// governResolution carries artifacts resolved during authorize so later
+// stages (RouteInference) can reuse them instead of re-querying.
+type governResolution struct {
+	EndpointID string
+	EpLeaseID  string
+}
+
+// SetForwarder overrides the PIA forwarder (for tests).
+func (s *Service) SetForwarder(f inferenceForwarder) { s.forwarder = f }
 
 // Exchange tracks a governed exchange in progress.
 type Exchange struct {
@@ -48,6 +65,7 @@ type Exchange struct {
 	State          paper.ExchangeState    `json:"state"`
 	ModelPackageID string                 `json:"model_package_id"`
 	EndpointID     string                 `json:"endpoint_id"`
+	EndpointLeaseID string                `json:"endpoint_lease_id,omitempty"`
 	Verdict        paper.VerdictResult    `json:"verdict"`
 	OpenedAt       time.Time              `json:"opened_at"`
 	EvidenceChain  []string               `json:"evidence_chain,omitempty"`
@@ -60,15 +78,18 @@ func New(db *gorm.DB, cpURL, relayID string) (*Service, error) {
 		return nil, fmt.Errorf("relay: init provenance: %w", err)
 	}
 
-	return &Service{
+	s := &Service{
 		db:         db,
 		provenance: provSvc,
 		security:   security.New(db),
+		workintel:  workintel.New(db),
 		cpURL:      cpURL,
 		relayID:    relayID,
 		httpClient: &http.Client{Timeout: 120 * time.Second},
 		exchanges:  make(map[string]*Exchange),
-	}, nil
+	}
+	s.forwarder = s.defaultForwarder
+	return s, nil
 }
 
 // OpenExchange starts a governed exchange for an AI inference request.
@@ -102,8 +123,9 @@ func (s *Service) OpenExchange(ctx context.Context, req OpenExchangeRequest) (*E
 		OpenedAt:       time.Now(),
 	}
 
-	// Authorize: validate the capability lease
-	verdict, err := s.authorize(ctx, req)
+	// Authorize: validate lease + policy epoch + model + endpoint (resolved once).
+	var resolution governResolution
+	verdict, err := s.authorize(ctx, req, &resolution)
 	if err != nil {
 		exchange.State = paper.ExchangeDenied
 		exchange.Verdict = paper.VerdictDeny
@@ -111,6 +133,8 @@ func (s *Service) OpenExchange(ctx context.Context, req OpenExchangeRequest) (*E
 		return exchange, paper.VerdictDeny, fmt.Errorf("relay: authorization failed: %w", err)
 	}
 	exchange.Verdict = verdict
+	exchange.EndpointID = resolution.EndpointID
+	exchange.EndpointLeaseID = resolution.EpLeaseID
 
 	if verdict == paper.VerdictDeny {
 		exchange.State = paper.ExchangeDenied
@@ -141,8 +165,9 @@ func (s *Service) OpenExchange(ctx context.Context, req OpenExchangeRequest) (*E
 	return exchange, verdict, nil
 }
 
-// authorize performs the governance checks for an exchange.
-func (s *Service) authorize(ctx context.Context, req OpenExchangeRequest) (paper.VerdictResult, error) {
+// authorize performs the governance checks for an exchange and resolves the
+// serving endpoint + lease (carried out via *res so RouteInference reuses).
+func (s *Service) authorize(ctx context.Context, req OpenExchangeRequest, res *governResolution) (paper.VerdictResult, error) {
 	// 1. Validate the capability lease
 	var lease models.CapabilityLease
 	if err := s.db.Where("lease_id = ? AND organization_id = ?", req.LeaseID, req.OrganizationID).First(&lease).Error; err != nil {
@@ -201,7 +226,8 @@ func (s *Service) authorize(ctx context.Context, req OpenExchangeRequest) (paper
 		return paper.VerdictDeny, fmt.Errorf("no valid endpoint lease for endpoint %s", endpoint.EndpointID)
 	}
 
-	// All checks passed
+	res.EndpointID = endpoint.EndpointID
+	res.EpLeaseID = epLease.LeaseID
 	return paper.VerdictAllow, nil
 }
 
@@ -234,38 +260,54 @@ func (s *Service) RouteInference(ctx context.Context, req InferenceRequest) (*In
 	exchange.State = paper.ExchangeActive
 	s.mu.Unlock()
 
-	// Find valid endpoint
-	var endpoint models.InferenceEndpoint
-	var epLease models.EndpointLease
-	err := s.db.Where("organization_id = ? AND model_package_id = ? AND status = 'active'",
-		req.OrganizationID, req.ModelPackageID).First(&endpoint).Error
-	if err != nil {
-		return nil, fmt.Errorf("relay: no active endpoint: %w", err)
+	// Endpoint + lease were resolved once during authorize (OpenExchange).
+	if exchange.EndpointID == "" {
+		return nil, fmt.Errorf("relay: exchange %s has no resolved endpoint", req.ExchangeID)
 	}
 
-	err = s.db.Where("endpoint_id = ? AND status = 'active' AND not_after > ?",
-		endpoint.EndpointID, time.Now().Format(time.RFC3339)).
-		Order("issued_at DESC").First(&epLease).Error
+	// Forward to PIA via the injectable forwarder — PAPER transport when
+	// PCCP_PIA_PAPER_ADDR is set, HTTP fallback otherwise (dev/legacy).
+	inferenceResp, err := s.forwarder(ctx, req, exchange.EndpointLeaseID)
 	if err != nil {
-		return nil, fmt.Errorf("relay: no valid endpoint lease: %w", err)
+		return nil, fmt.Errorf("relay: inference forward failed: %w", err)
 	}
 
-	exchange.EndpointID = endpoint.EndpointID
+	// Meter usage (§10.2 stage 13 / §29.13) — every governed request is accounted.
+	s.recordUsage(exchange, req, inferenceResp)
 
-	// Forward to PIA via PAPER protocol (v2 §9.2, §38.1)
-	// If PCCP_PIA_PAPER_ADDR is set, use PAPER transport
-	// Otherwise fall back to HTTP (legacy/dev mode)
+	// Record the inference action
+	s.provenance.RecordAction(provenance.RecordActionRequest{
+		OrganizationID: req.OrganizationID,
+		SessionID:      req.SessionID,
+		ExchangeID:     req.ExchangeID,
+		UserID:         exchange.UserID,
+		HarnessID:      exchange.HarnessID,
+		ModelPackageID: req.ModelPackageID,
+		EndpointID:     exchange.EndpointID,
+		PolicyEpochID:  exchange.PolicyEpochID,
+		LeaseID:        exchange.LeaseID,
+		ActionType:     "ai.inference",
+		VerdictResult:  string(paper.VerdictAllow),
+	})
+
+	// Update exchange with completion
+	s.mu.Lock()
+	exchange.State = paper.ExchangeCompleted
+	s.mu.Unlock()
+
+	return inferenceResp, nil
+}
+
+// defaultForwarder is the production forwarder: PAPER transport when configured,
+// HTTP fallback otherwise (dev/legacy only — not v2 compliant).
+func (s *Service) defaultForwarder(ctx context.Context, req InferenceRequest, endpointLeaseID string) (*InferenceResponse, error) {
 	var inferenceResp InferenceResponse
 
 	paperClient := getPaperInferenceClient()
 	if paperClient != nil {
-		// Use PAPER transport — this is the v2-compliant path
-		// Convert messages to interface{} format
 		interfaceMsgs := make([]map[string]interface{}, len(req.Messages))
 		for i, m := range req.Messages {
-			interfaceMsgs[i] = make(map[string]interface{})
-			interfaceMsgs[i]["role"] = m["role"]
-			interfaceMsgs[i]["content"] = m["content"]
+			interfaceMsgs[i] = map[string]interface{}{"role": m["role"], "content": m["content"]}
 		}
 		result, err := paperClient.SendInference(ctx, req.Model, interfaceMsgs, req.MaxTokens)
 		if err != nil {
@@ -276,7 +318,6 @@ func (s *Service) RouteInference(ctx context.Context, req InferenceRequest) (*In
 		inferenceResp.Choices = result.Choices
 		inferenceResp.Usage = result.Usage
 	} else {
-		// HTTP fallback (dev/legacy only — not v2 compliant)
 		piaURL := os.Getenv("PCCP_PIA_URL")
 		if piaURL == "" {
 			piaURL = "http://localhost:9090"
@@ -291,7 +332,7 @@ func (s *Service) RouteInference(ctx context.Context, req InferenceRequest) (*In
 		bodyJSON, _ := json.Marshal(piaReq)
 		httpReq, _ := http.NewRequestWithContext(ctx, "POST", piaURL+"/v1/chat/completions", bytes.NewReader(bodyJSON))
 		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("X-Endpoint-Lease", epLease.LeaseID)
+		httpReq.Header.Set("X-Endpoint-Lease", endpointLeaseID)
 		httpReq.Header.Set("X-Exchange-ID", req.ExchangeID)
 
 		resp, err := s.httpClient.Do(httpReq)
@@ -305,27 +346,6 @@ func (s *Service) RouteInference(ctx context.Context, req InferenceRequest) (*In
 		}
 		json.NewDecoder(resp.Body).Decode(&inferenceResp)
 	}
-
-	// Record the inference action
-	s.provenance.RecordAction(provenance.RecordActionRequest{
-		OrganizationID: req.OrganizationID,
-		SessionID:      req.SessionID,
-		ExchangeID:     req.ExchangeID,
-		UserID:         exchange.UserID,
-		HarnessID:      exchange.HarnessID,
-		ModelPackageID: req.ModelPackageID,
-		EndpointID:     endpoint.EndpointID,
-		PolicyEpochID:  exchange.PolicyEpochID,
-		LeaseID:        exchange.LeaseID,
-		ActionType:     "ai.inference",
-		VerdictResult:  string(paper.VerdictAllow),
-	})
-
-	// Update exchange with completion
-	s.mu.Lock()
-	exchange.State = paper.ExchangeCompleted
-	s.mu.Unlock()
-
 	return &inferenceResp, nil
 }
 
@@ -363,6 +383,105 @@ func (s *Service) CloseExchange(ctx context.Context, exchangeID string) (*models
 	return receipt, nil
 }
 
+// GovernRequest is a live-path inference request resolved from the authenticated peer.
+type GovernRequest struct {
+	HarnessID string
+	SessionID string
+	Model     string                 // model_id (resolved to a ModelPackage)
+	Messages  []map[string]string
+	MaxTokens int
+}
+
+// GovernInference is the live-path entry point: it resolves governance context
+// for an authenticated harness (org, active lease, active policy epoch, model
+// package) from the control-plane DB, then runs the full governed flow
+// (authorize → forward → meter → evidence). It fails closed if any required
+// governance artifact is missing or invalid. (MISSING_ITEMS Domain 1–2 P0 / Harness A)
+func (s *Service) GovernInference(ctx context.Context, req GovernRequest) (*InferenceResponse, *models.EvidenceReceipt, error) {
+	// 1. Resolve org from the enrolled harness.
+	var harness models.Harness
+	if err := s.db.Where("harness_id = ?", req.HarnessID).First(&harness).Error; err != nil {
+		return nil, nil, fmt.Errorf("relay: harness %s not enrolled: %w", req.HarnessID, err)
+	}
+	orgID := harness.OrganizationID
+
+	// Defense in depth: reject harnesses not in good standing even if a stale
+	// lease exists. (Connect-time gate is Service.AuthorizePeer.)
+	if harness.Status == "revoked" || harness.Status == "quarantined" {
+		return nil, nil, fmt.Errorf("relay: harness %s is %s", req.HarnessID, harness.Status)
+	}
+
+	// 2. Resolve the active capability lease for this harness (fail-closed).
+	var lease models.CapabilityLease
+	if err := s.db.Where("subject_peer_id = ? AND status = 'active'", req.HarnessID).
+		Order("not_after DESC").First(&lease).Error; err != nil {
+		return nil, nil, fmt.Errorf("relay: no active capability lease for harness %s: %w", req.HarnessID, err)
+	}
+	notAfter, _ := time.Parse(time.RFC3339, lease.NotAfter)
+	if !notAfter.IsZero() && time.Now().After(notAfter) {
+		return nil, nil, fmt.Errorf("relay: capability lease expired for harness %s", req.HarnessID)
+	}
+
+	// 3. Resolve model_id → published ModelPackage (reject recalled).
+	var pkg models.ModelPackage
+	if err := s.db.Where("model_id = ?", req.Model).First(&pkg).Error; err != nil {
+		return nil, nil, fmt.Errorf("relay: model %s not in registry: %w", req.Model, err)
+	}
+	if pkg.State == "recalled" {
+		return nil, nil, fmt.Errorf("relay: model %s has been recalled", req.Model)
+	}
+
+	// 4. Authorize → forward → meter via the governed exchange flow.
+	ex, verdict, err := s.OpenExchange(ctx, OpenExchangeRequest{
+		OrganizationID: orgID,
+		SessionID:      req.SessionID,
+		UserID:         lease.UserID,
+		HarnessID:      req.HarnessID,
+		LeaseID:        lease.LeaseID,
+		PolicyEpochID:  lease.PolicyEpochID,
+		ModelPackageID: pkg.PackageID,
+	})
+	if err != nil || verdict != paper.VerdictAllow {
+		return nil, nil, fmt.Errorf("relay: exchange denied for harness %s (verdict=%s): %w", req.HarnessID, verdict, err)
+	}
+
+	// Inline DLP/PII/injection scan (§16) — populates Security findings from real
+	// traffic. Blocks on DENY (critical/high); logs REQUIRE_REVIEW (medium).
+	combinedText := ""
+	for _, m := range req.Messages {
+		combinedText += m["content"] + "\n"
+	}
+	if secResult := s.security.CheckContext(orgID, combinedText); len(secResult.Findings) > 0 {
+		for _, f := range secResult.Findings {
+			s.security.RecordFinding(orgID, req.SessionID, ex.ID, f)
+		}
+		if secResult.Verdict == "DENY" {
+			s.CloseExchange(ctx, ex.ID)
+			return nil, nil, fmt.Errorf("relay: security verdict DENY — request blocked (%d findings)", len(secResult.Findings))
+		}
+	}
+
+	resp, err := s.RouteInference(ctx, InferenceRequest{
+		ExchangeID:     ex.ID,
+		OrganizationID: orgID,
+		SessionID:      req.SessionID,
+		ModelPackageID: pkg.PackageID,
+		Model:          req.Model,
+		Messages:       req.Messages,
+		MaxTokens:      req.MaxTokens,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("relay: governed inference failed: %w", err)
+	}
+
+	// 5. Evidence receipt.
+	receipt, err := s.CloseExchange(ctx, ex.ID)
+	if err != nil {
+		log.Printf("relay: warning: close exchange %s: %v", ex.ID, err)
+	}
+	return resp, receipt, nil
+}
+
 // InferenceResponse mirrors the PIA/OpenAI completion response.
 type InferenceResponse struct {
 	ID      string                   `json:"id"`
@@ -371,6 +490,40 @@ type InferenceResponse struct {
 	Model   string                   `json:"model"`
 	Choices []map[string]interface{} `json:"choices"`
 	Usage   map[string]int           `json:"usage"`
+}
+
+// recordUsage meters token usage for a completed governed inference (§10.2 stage 13).
+func (s *Service) recordUsage(ex *Exchange, req InferenceRequest, resp *InferenceResponse) {
+	if resp == nil || resp.Usage == nil || s.workintel == nil {
+		return
+	}
+	tokensIn := int64(resp.Usage["prompt_tokens"])
+	tokensOut := int64(resp.Usage["completion_tokens"])
+	if tokensIn > 0 {
+		s.workintel.RecordUsage(ex.OrganizationID, ex.UserID, ex.HarnessID, ex.SessionID, req.ModelPackageID, ex.EndpointID, "tokens_in", tokensIn, "tokens")
+	}
+	if tokensOut > 0 {
+		s.workintel.RecordUsage(ex.OrganizationID, ex.UserID, ex.HarnessID, ex.SessionID, req.ModelPackageID, ex.EndpointID, "tokens_out", tokensOut, "tokens")
+	}
+}
+
+// AuthorizePeer is the connect-time gate: an enrolled harness in good standing
+// is allowed; unknown/revoked/quarantined harnesses are rejected. This ties
+// fleet revocation/quarantine (web/09-fleet) to the live PAPER path — a revoked
+// harness can no longer authenticate. Full PPC signature verification is a
+// follow-up once the harness presents real signed credentials (Harness A).
+func (s *Service) AuthorizePeer(harnessID string) (string, error) {
+	var harness models.Harness
+	if err := s.db.Where("harness_id = ?", harnessID).First(&harness).Error; err != nil {
+		return "", fmt.Errorf("relay: unknown harness %s: %w", harnessID, err)
+	}
+	switch harness.Status {
+	case "revoked":
+		return "", fmt.Errorf("relay: harness %s is revoked", harnessID)
+	case "quarantined":
+		return "", fmt.Errorf("relay: harness %s is quarantined", harnessID)
+	}
+	return harness.OrganizationID, nil
 }
 
 // Ensure the type is used

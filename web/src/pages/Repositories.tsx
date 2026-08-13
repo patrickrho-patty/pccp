@@ -2,6 +2,7 @@ import { useState, useEffect, Fragment } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
+import EmptyState from '../components/EmptyState'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['name', 'slug', 'clone_url', 'scm_provider'],
@@ -143,7 +144,7 @@ export default function Repositories() {
                       <div className="flex items-center gap-2">
                         <span className="text-lg">{scmIcon[r.scm_provider] || '📦'}</span>
                         <div>
-                          <div className="font-medium text-sm">{r.name}</div>
+                          <div className="font-medium text-sm"><Link to={`/repositories/${r.id}`} className="text-blue-600 hover:underline">{r.name}</Link></div>
                           {r.clone_url && <div className="text-xs text-gray-400 font-mono truncate max-w-xs">{r.clone_url}</div>}
                         </div>
                       </div>
@@ -209,7 +210,7 @@ export default function Repositories() {
             })}
           </tbody>
         </table>
-        {paged.length === 0 && <p className="text-gray-400 text-center py-8">저장소가 없습니다</p>}
+        {paged.length === 0 && <div className="py-4"><EmptyState icon="📦" title="저장소가 없습니다" message="저장소 추가 버튼으로 연결하세요" /></div>}
         <Pagination total={filtered.length} page={page} pageSize={pageSize} onPageChange={setPage} />
       </div>
     </div>

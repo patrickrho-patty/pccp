@@ -2,6 +2,8 @@ import { useState, useEffect, Fragment } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
+import ConfirmDialog from '../components/ConfirmDialog'
+import EmptyState from '../components/EmptyState'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['name', 'name_ko', 'email', 'auth_method', 'title'],
@@ -49,8 +51,11 @@ export default function Users() {
   const pageSize = 25
   const [sessions, setSessions] = useState<any[]>([])
   const [harnesses, setHarnesses] = useState<any[]>([])
+  const [businessUnits, setBusinessUnits] = useState<any[]>([])
+  const [org, setOrg] = useState<any>(null)
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [offboardTarget, setOffboardTarget] = useState<any>(null)
   const [form, setForm] = useState({
     email: '', name: '', name_ko: '', title: '', auth_method: 'local', business_unit_id: '',
   })
@@ -59,6 +64,8 @@ export default function Users() {
     api.listUsers().then(data => setUsers(Array.isArray(data) ? data : []))
     api.listSessions().then(data => setSessions(Array.isArray(data) ? data : []))
     api.listHarnesses().then(data => setHarnesses(Array.isArray(data) ? data : []))
+    api.listBusinessUnits().then(data => setBusinessUnits(Array.isArray(data) ? data : []))
+    api.listOrganizations().then(data => setOrg(Array.isArray(data) && data[0] ? data[0] : null))
   }
   useEffect(() => { load() }, [])
 
@@ -165,6 +172,7 @@ export default function Users() {
     <div>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">사용자 <span className="text-gray-400 text-lg font-normal">Users</span></h1>
+          {org && <span className="text-xs text-gray-400 ml-4">{users.filter(u => u.status !== 'offboarded').length}/{org.max_user_seats || '∞'} 좌석</span>}
         <button onClick={() => {
           if (editingId) { setEditingId(null); setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local' }) }
           setShowForm(!showForm)
@@ -205,14 +213,18 @@ export default function Users() {
               <label className="label">부서 · Department</label>
               <select className="input" value={form.business_unit_id} onChange={e => setForm({ ...form, business_unit_id: e.target.value })}>
                 <option value="">선택 안함</option>
-                <option value="dev">개발팀 · Development</option>
-                <option value="qa">QA팀 · Quality Assurance</option>
-                <option value="devops">데브옵스팀 · DevOps</option>
-                <option value="security">보안팀 · Security</option>
-                <option value="data">데이터팀 · Data</option>
-                <option value="infra">인프라팀 · Infrastructure</option>
-                <option value="product">프로덕트팀 · Product</option>
-                <option value="exec">경영진 · Executive</option>
+                {businessUnits.length > 0
+                  ? businessUnits.map(bu => <option key={bu.id} value={bu.id}>{bu.name_ko || bu.name}</option>)
+                  : <>
+                    <option value="dev">개발팀 · Development</option>
+                    <option value="qa">QA팀 · Quality Assurance</option>
+                    <option value="devops">데브옵스팀 · DevOps</option>
+                    <option value="security">보안팀 · Security</option>
+                    <option value="data">데이터팀 · Data</option>
+                    <option value="infra">인프라팀 · Infrastructure</option>
+                    <option value="product">프로덕트팀 · Product</option>
+                    <option value="exec">경영진 · Executive</option>
+                  </>}
               </select>
             </div>
           </div>
@@ -245,14 +257,18 @@ export default function Users() {
           </thead>
           <tbody>
             {paged.length === 0 ? (
-              <tr><td colSpan={9} className="py-8 text-center text-gray-400">
-                {filters.search ? '검색 결과가 없습니다' : '등록된 사용자가 없습니다'}
+              <tr><td colSpan={9} className="py-8">
+                <EmptyState
+                  icon={filters.search ? '🔍' : '👥'}
+                  title={filters.search ? '검색 결과가 없습니다' : '등록된 사용자가 없습니다'}
+                  message={filters.search ? '다른 검색어로 시도해보세요' : '+ 사용자 추가 버튼으로 첫 사용자를 등록하세요'}
+                />
               </td></tr>
             ) : paged.map(u => (
               <Fragment key={u.id}>
                 <tr key={u.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer" onClick={() => setExpandedUserId(expandedUserId === u.id ? null : u.id)}>
                 <td className="py-3" onClick={e => e.stopPropagation()}>
-                  <div className="font-medium text-sm">{u.name_ko || u.name}</div>
+                  <Link to={`/users/${u.id}`} className="font-medium text-sm text-blue-600 hover:underline">{u.name_ko || u.name}</Link>
                   <div className="text-xs text-gray-400">{u.name}</div>
                 </td>
                 <td className="py-3 text-sm">{u.email}</td>
@@ -264,7 +280,7 @@ export default function Users() {
                     <button onClick={() => handleEdit(u)} className="text-blue-600 text-xs hover:underline">수정</button>
                     {u.status === 'active' && <button onClick={() => handleStatusChange(u, 'suspended')} className="text-yellow-600 text-xs hover:underline">정지</button>}
                     {u.status === 'suspended' && <button onClick={() => handleStatusChange(u, 'active')} className="text-green-600 text-xs hover:underline">활성화</button>}
-                    {u.status !== 'offboarded' && <button onClick={() => handleDelete(u)} className="text-red-600 text-xs hover:underline">퇴사</button>}
+                    {u.status !== 'offboarded' && <button onClick={() => setOffboardTarget(u)} className="text-red-600 text-xs hover:underline">퇴사</button>}
                   </div>
                 </td>
                 </tr>
@@ -328,6 +344,16 @@ export default function Users() {
       </div>
 
       <Pagination total={filtered.length} page={page} pageSize={pageSize} onPageChange={setPage} />
+
+      <ConfirmDialog
+        open={!!offboardTarget}
+        title="퇴사 처리 · Offboard User"
+        message={offboardTarget ? `${offboardTarget.name_ko || offboardTarget.name}을(를) 퇴사 처리하시겠습니까? 활성 세션이 종료되고 하네스가 폐기됩니다.` : ''}
+        confirmLabel="퇴사 실행"
+        danger
+        onConfirm={async () => { if (offboardTarget) { try { await api.deleteUser(offboardTarget.id); load() } catch {} } setOffboardTarget(null) }}
+        onCancel={() => setOffboardTarget(null)}
+      />
     </div>
   )
 }

@@ -126,6 +126,10 @@ func (s *Service) HandleSSE(jwtSecret string) http.HandlerFunc {
 		clientID := fmt.Sprintf("sse_%d", time.Now().UnixNano())
 		ch := make(chan []byte, 256)
 
+		// Initial flush so the client knows the connection is established.
+		fmt.Fprintf(w, ": connected\n\n")
+		flusher.Flush()
+
 		s.mu.Lock()
 		s.clients[clientID] = &Client{
 			ID:   clientID,

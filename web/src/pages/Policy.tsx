@@ -109,36 +109,27 @@ export default function Policy() {
   const [builderScope, setBuilderScope] = useState('org')
   const [builderScopeName, setBuilderScopeName] = useState('전체 조직')
 
+  const reloadRules = () => api.listPolicyRules().then(data => setRules(Array.isArray(data) ? data : []))
+
   useEffect(() => {
     api.listEpochs().then(data => setEpochs(Array.isArray(data) ? data : data || []))
-    // Load saved rules from localStorage for now (would be API in production)
-    const saved = localStorage.getItem('pccp_policy_rules')
-    if (saved) { try { setRules(JSON.parse(saved)) } catch {} }
+    reloadRules()
   }, [])
 
-  const saveRules = (r: PolicyRule[]) => {
-    setRules(r)
-    localStorage.setItem('pccp_policy_rules', JSON.stringify(r))
-  }
-
   const addRule = (rule: PolicyRule) => {
-    saveRules([...rules, rule])
-    // Also create a policy epoch
-    api.createEpoch({
-      allowed_models: rule.config.allowed_models || ['patty-code-standard'],
-      transition_mode: 'immediate',
-    }).catch(() => {})
+    api.createPolicyRule(rule).then(reloadRules).catch(() => {})
     setShowBuilder(false)
     setBuilderTemplate(null)
   }
 
   const toggleRule = (id: string) => {
-    saveRules(rules.map(r => r.id === id ? { ...r, enabled: !r.enabled } : r))
+    const r = rules.find(x => x.id === id)
+    if (r) api.createPolicyRule({ ...r, enabled: !r.enabled }).then(reloadRules).catch(() => {})
   }
 
   const deleteRule = (id: string) => {
     if (!confirm('이 정책을 삭제하시겠습니까?')) return
-    saveRules(rules.filter(r => r.id !== id))
+    api.deletePolicyRule(id).then(reloadRules).catch(() => {})
   }
 
   const domainIcon: Record<string,string> = {}

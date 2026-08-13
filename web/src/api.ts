@@ -48,6 +48,19 @@ export const api = {
     request<any>(`/api/users/${id}`, { method: 'DELETE' }),
   getUser: (id: string) =>
     request<any>(`/api/users/${id}`),
+  getUserAudit: (id: string) =>
+    request<any[]>(`/api/users/${id}/audit`),
+  getHarnessAudit: (id: string) =>
+    request<any[]>(`/api/harnesses/${id}/audit`),
+
+  // Business Units (Korean org hierarchy — PRD §12.1)
+  listBusinessUnits: () => request<any[]>('/api/business-units'),
+  createBusinessUnit: (data: any) =>
+    request<any>('/api/business-units', { method: 'POST', body: JSON.stringify(data) }),
+  updateBusinessUnit: (id: string, data: any) =>
+    request<any>(`/api/business-units/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteBusinessUnit: (id: string) =>
+    request<any>(`/api/business-units/${id}`, { method: 'DELETE' }),
 
   // Harnesses
   listHarnesses: () => request<any[]>('/api/harnesses'),
@@ -75,6 +88,10 @@ export const api = {
     request<any>('/api/repositories', { method: 'POST', body: JSON.stringify(data) }),
   updateRepository: (id: string, data: any) =>
     request<any>(`/api/repositories/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  createRepository: (data: any) =>
+    request<any>('/api/repositories', { method: 'POST', body: JSON.stringify(data) }),
+  deleteRepository: (id: string) =>
+    request<any>(`/api/repositories/${id}`, { method: 'DELETE' }),
 
   // Sessions
   listSessions: () => request<any[]>('/api/sessions'),
@@ -109,6 +126,13 @@ export const api = {
   listEpochs: () => request<any[]>('/api/policy/epochs'),
   createEpoch: (data: any) =>
     request<any>('/api/policy/epochs', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Policy Rules (governance rules — PRD §13)
+  listPolicyRules: () => request<any[]>('/api/policy/rules'),
+  createPolicyRule: (data: any) =>
+    request<any>('/api/policy/rules', { method: 'POST', body: JSON.stringify(data) }),
+  deletePolicyRule: (id: string) =>
+    request<any>(`/api/policy/rules/${id}`, { method: 'DELETE' }),
 
   // Audit
   listAudit: () => request<any[]>('/api/audit'),

@@ -1,28 +1,28 @@
 \relax 
 \providecommand\hyper@newdestlabel[2]{}
-\providecommand\HyField@AuxAddToFields[1]{}
-\providecommand\HyField@AuxAddToCoFields[2]{}
+\providecommand*\HyPL@Entry[1]{}
+\citation{mlperf2025llm}
+\HyPL@Entry{0<</S/D>>}
 \@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces The architectural inversion. Conventional systems transport the interaction and reconstruct authority from logs afterward. PAPER makes bounded authority, enforcement, model identity, and causal evidence conditions of the live path. The illustration is conceptual and contains no empirical data.}}{2}{figure.caption.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Comparison of retrospective governance and PAPER's governed exchange. PAPER represents bounded authority, enforcement, model identity, and causal evidence as conditions of the live path. The illustration is conceptual and contains no empirical data.}}{2}{figure.caption.1}\protected@file@percent }
 \providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
-\newlabel{fig:overview}{{1}{2}{The architectural inversion. Conventional systems transport the interaction and reconstruct authority from logs afterward. PAPER makes bounded authority, enforcement, model identity, and causal evidence conditions of the live path. The illustration is conceptual and contains no empirical data}{figure.caption.1}{}}
+\newlabel{fig:overview}{{1}{2}{Comparison of retrospective governance and PAPER's governed exchange. PAPER represents bounded authority, enforcement, model identity, and causal evidence as conditions of the live path. The illustration is conceptual and contains no empirical data}{figure.caption.1}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {1.1}Contributions}{2}{subsection.1.1}\protected@file@percent }
 \citation{mcp2025}
 \citation{a2a2026}
 \citation{wang2025mi9}
 \citation{debenedetti2024agentdojo}
 \citation{fan2026granularity}
-\citation{torresarias2019intoto,intoto}
-\citation{slsa12}
-\citation{rfc9943}
-\@writefile{toc}{\contentsline {section}{\numberline {2}The Missing Layer}{3}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}The Governance Gap in Agentic AI Communication}{3}{section.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Authentication is not authorization history.}{3}{section*.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Model output is not execution authority.}{3}{section*.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Logs record events; they do not necessarily prove one causal path.}{3}{section*.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {3}Adjacent Systems and Novelty Boundary}{3}{section.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Model APIs and gateways.}{3}{section*.5}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{MCP and A2A.}{3}{section*.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Runtime governance and agent security.}{3}{section*.7}\protected@file@percent }
+\citation{torresarias2019intoto,intoto}
+\citation{slsa12}
+\citation{rfc9943}
 \citation{spiffe}
 \citation{rfc9846}
 \citation{rfc9000}
@@ -30,6 +30,7 @@
 \citation{rfc9052}
 \citation{rfc9180}
 \citation{rfc9942}
+\@writefile{toc}{\contentsline {paragraph}{Runtime governance and agent security.}{4}{section*.7}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Supply-chain provenance.}{4}{section*.8}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Identity and cryptographic building blocks.}{4}{section*.9}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {4}Requirements and Threat Model}{4}{section.4}\protected@file@percent }
@@ -39,10 +40,10 @@
 \@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Core authority and identity objects. Objects visible to the Harness are intentionally separated from deployment identities.}}{5}{table.caption.10}\protected@file@percent }
 \newlabel{tab:objects}{{1}{5}{Core authority and identity objects. Objects visible to the Harness are intentionally separated from deployment identities}{table.caption.10}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Architecture and peers}{5}{subsection.5.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Why this is a protocol, not a larger log schema}{5}{subsection.5.2}\protected@file@percent }
-\newlabel{eq:advance}{{1}{5}{Why this is a protocol, not a larger log schema}{equation.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Transport and representation}{5}{subsection.5.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}How an Exchange Earns the Right to Advance}{6}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Protocol enforcement and retrospective logging}{5}{subsection.5.2}\protected@file@percent }
+\newlabel{eq:advance}{{1}{5}{Protocol enforcement and retrospective logging}{equation.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Transport and representation}{6}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Authorization State Transitions}{6}{section.6}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Identity, sessions, and Capability Leases}{6}{subsection.6.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Policy Epoch and Relay Verdict}{6}{subsection.6.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Exchange lifecycle}{6}{subsection.6.3}\protected@file@percent }
@@ -53,56 +54,62 @@
 \newlabel{fig:model-identity}{{3}{7}{Protocol-design view of server-authoritative model resolution. Product, artifact, and deployment identities remain distinct until the Relay resolves them to an enrolled PIA; the serving engine is a local implementation detail, not a Harness-selectable endpoint}{figure.caption.12}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.5}Tool authority and prompt injection}{7}{subsection.6.5}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {7}Causal Provenance and Receipts}{8}{section.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {8}From Design to a Running Exchange}{8}{section.8}\protected@file@percent }
-\newlabel{sec:implementation}{{8}{8}{From Design to a Running Exchange}{section.8}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Evidence boundary of the evaluated prototype. ``Partial'' means relevant code exists but the complete stated property is not exercised end to end.}}{9}{table.caption.13}\protected@file@percent }
-\newlabel{tab:claims}{{2}{9}{Evidence boundary of the evaluated prototype. ``Partial'' means relevant code exists but the complete stated property is not exercised end to end}{table.caption.13}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {9}Evaluation: What Must Be True for PAPER to Matter?}{9}{section.9}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {9.1}Baselines}{9}{subsection.9.1}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Preliminary in-memory primitive medians over five runs. Record tests include encode and decode.}}{10}{table.caption.14}\protected@file@percent }
-\newlabel{tab:microbench}{{3}{10}{Preliminary in-memory primitive medians over five runs. Record tests include encode and decode}{table.caption.14}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {8}From Open Specification to Integrated Product}{8}{section.8}\protected@file@percent }
+\newlabel{sec:implementation}{{8}{8}{From Open Specification to Integrated Product}{section.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.1}Integration with Patty Code}{8}{subsection.8.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Implemented product surface and the evidence used in this paper. Product availability and empirical measurement scope are reported separately.}}{9}{table.caption.13}\protected@file@percent }
+\newlabel{tab:claims}{{2}{9}{Implemented product surface and the evidence used in this paper. Product availability and empirical measurement scope are reported separately}{table.caption.13}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}Application-neutral integration}{9}{subsection.8.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9}Evaluation Questions and Baselines}{9}{section.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.1}Baselines}{10}{subsection.9.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.2}Security and provenance experiments}{10}{subsection.9.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {10}Preliminary Results: Are the Protocol Primitives Obviously Too Expensive?}{10}{section.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10}Measured System Primitives}{10}{section.10}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {10.1}Experimental setup}{10}{subsection.10.1}\protected@file@percent }
 \newlabel{eq:median}{{3}{10}{Experimental setup}{equation.3}{}}
 \newlabel{eq:normalized}{{4}{10}{Experimental setup}{equation.4}{}}
-\newlabel{eq:allocation}{{5}{11}{Experimental setup}{equation.5}{}}
-\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Empirical median latency of the seven measured in-memory primitives, read directly from the checked-in TSV and shown on a logarithmic axis. The plot excludes network, Relay policy, persistence, model, GPU, TTFT, and token-generation costs.}}{11}{figure.caption.15}\protected@file@percent }
-\newlabel{fig:primitive-latency}{{4}{11}{Empirical median latency of the seven measured in-memory primitives, read directly from the checked-in TSV and shown on a logarithmic axis. The plot excludes network, Relay policy, persistence, model, GPU, TTFT, and token-generation costs}{figure.caption.15}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {10.2}Interpretation}{11}{subsection.10.2}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Goal-aware qualitative comparison. A blank objective is not a deficiency when a system intentionally addresses another boundary.}}{12}{table.caption.16}\protected@file@percent }
-\newlabel{tab:comparison}{{4}{12}{Goal-aware qualitative comparison. A blank objective is not a deficiency when a system intentionally addresses another boundary}{table.caption.16}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {11}What PAPER Changes---and What It Does Not}{12}{section.11}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {12}Security Consequences of Externalizing Authority}{12}{section.12}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {13}Can This Replace a Gateway Without a Flag Day?}{12}{section.13}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {14}Discussion: From Message Protocols to Consequence Protocols}{13}{section.14}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Scope pressure.}{13}{section*.17}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{State and operations.}{13}{section*.18}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Privacy.}{13}{section*.19}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Implementation maturity.}{13}{section*.20}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{No formal proof.}{13}{section*.21}\protected@file@percent }
+\citation{mlperf2025llm}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces In-memory system-primitive medians over five runs. Record tests include encode and decode.}}{11}{table.caption.14}\protected@file@percent }
+\newlabel{tab:microbench}{{3}{11}{In-memory system-primitive medians over five runs. Record tests include encode and decode}{table.caption.14}{}}
+\newlabel{eq:interactive-budget}{{5}{11}{Experimental setup}{equation.5}{}}
+\newlabel{eq:budget-ratio}{{6}{11}{Experimental setup}{equation.6}{}}
+\newlabel{eq:allocation}{{7}{11}{Experimental setup}{equation.7}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Empirical median latency of the seven measured in-memory primitives, read directly from the checked-in TSV and shown on a logarithmic axis. The isolated view makes the protocol's CPU-side cost directly comparable with the interactive latency budget in Equation~\ref {eq:budget-ratio}.}}{12}{figure.caption.15}\protected@file@percent }
+\newlabel{fig:primitive-latency}{{4}{12}{Empirical median latency of the seven measured in-memory primitives, read directly from the checked-in TSV and shown on a logarithmic axis. The isolated view makes the protocol's CPU-side cost directly comparable with the interactive latency budget in Equation~\ref {eq:budget-ratio}}{figure.caption.15}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.2}Interpretation}{12}{subsection.10.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {11}Comparative Scope}{12}{section.11}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Scope-aligned qualitative comparison of PAPER and adjacent system families.}}{13}{table.caption.16}\protected@file@percent }
+\newlabel{tab:comparison}{{4}{13}{Scope-aligned qualitative comparison of PAPER and adjacent system families}{table.caption.16}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {12}Security Consequences of Externalizing Authority}{13}{section.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {13}Incremental Gateway Migration}{13}{section.13}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {14}Discussion: Protocol Scope and Consequence Governance}{14}{section.14}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Application breadth.}{14}{section*.17}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{State and operations.}{14}{section*.18}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Privacy.}{14}{section*.19}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Deployment and assurance profiles.}{14}{section*.20}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Formal analysis.}{14}{section*.21}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {15}Ethics and Surveillance Risk}{14}{section.15}\protected@file@percent }
 \bibstyle{abbrv}
 \bibdata{references}
 \bibcite{a2a2026}{1}
 \bibcite{rfc9180}{2}
-\@writefile{toc}{\contentsline {section}{\numberline {15}Ethics: Evidence Can Become Surveillance}{14}{section.15}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {16}Reproducibility}{14}{section.16}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {17}Conclusion}{14}{section.17}\protected@file@percent }
 \bibcite{rfc9943}{3}
 \bibcite{rfc8949}{4}
 \bibcite{debenedetti2024agentdojo}{5}
+\@writefile{toc}{\contentsline {section}{\numberline {16}Reproducibility}{15}{section.16}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {17}Conclusion}{15}{section.17}\protected@file@percent }
 \bibcite{fan2026granularity}{6}
 \bibcite{intoto}{7}
 \bibcite{rfc9000}{8}
-\bibcite{mcp2025}{9}
-\bibcite{rfc9846}{10}
-\bibcite{rfc9052}{11}
-\bibcite{slsa12}{12}
-\bibcite{spiffe}{13}
-\bibcite{rfc9942}{14}
-\bibcite{torresarias2019intoto}{15}
-\bibcite{wang2025mi9}{16}
-\@writefile{toc}{\contentsline {section}{\numberline {A}Research Invariant Coverage}{16}{appendix.A}\protected@file@percent }
-\newlabel{tab:invariants}{{5}{16}{Research Invariant Coverage}{table.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {A.1}Required Completion Experiments}{16}{subsection.A.1}\protected@file@percent }
-\gdef \@abspage@last{16}
+\bibcite{mlperf2025llm}{9}
+\bibcite{mcp2025}{10}
+\bibcite{rfc9846}{11}
+\bibcite{rfc9052}{12}
+\bibcite{slsa12}{13}
+\bibcite{spiffe}{14}
+\bibcite{rfc9942}{15}
+\bibcite{torresarias2019intoto}{16}
+\bibcite{wang2025mi9}{17}
+\@writefile{toc}{\contentsline {section}{\numberline {A}Assurance Matrix for Research Invariants}{17}{appendix.A}\protected@file@percent }
+\newlabel{tab:invariants}{{5}{17}{Assurance Matrix for Research Invariants}{table.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.1}Evidence Required for Stronger Claims}{17}{subsection.A.1}\protected@file@percent }
+\gdef \@abspage@last{17}

@@ -32,23 +32,11 @@ export default function Dashboard() {
 
   return (
     <div>
-            {/* Demo data seed */}
-      {stats.length === 0 || (data?.users === 0) ? (
-        <div className="card mb-6 border-l-4 border-l-blue-400">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-semibold">데모 데이터가 없습니다 · No Demo Data</h3>
-              <p className="text-xs text-gray-400 mt-1">모든 페이지에 표시할 샘플 데이터를 생성하려면 아래 버튼을 클릭하세요</p>
-            </div>
-            <button onClick={async () => {
-              try {
-                await fetch('/api/enterprise/features/seed', { method: 'POST', headers: authHeaders() })
-                await fetch('/api/tools/seed-defaults', { method: 'POST', headers: authHeaders() })
-                await fetch('/api/enterprise/demo-seed', { method: 'POST', headers: authHeaders() })
-                window.location.reload()
-              } catch { alert('시드 실패') }
-            }} className="btn-primary text-sm">📊 데모 데이터 생성</button>
-          </div>
+            {/* Empty state (no demo-data fabrication in enterprise) */}
+      {(data?.users === 0) ? (
+        <div className="card mb-6 border-l-4 border-l-gray-300">
+          <h3 className="text-sm font-semibold text-gray-500">데이터가 없습니다 · No Data Yet</h3>
+          <p className="text-xs text-gray-400 mt-1">데이터는 관리되는 세션이 실행되면 표시됩니다</p>
         </div>
       ) : null}
 
@@ -104,7 +92,7 @@ export default function Dashboard() {
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">미해결 발견</span>
-                <span className={`font-bold ${findingCount > 0 ? 'text-red-600' : 'text-green-600'}`}>{findingCount}</span>
+                <Link to="/security" className={`font-bold hover:underline ${findingCount > 0 ? 'text-red-600' : 'text-green-600'}`}>{findingCount}</Link>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">활성 하네스</span>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import EmptyState from '../components/EmptyState'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 
@@ -261,7 +262,7 @@ export default function Communications() {
                 </div>
               </div>
             ))}
-            {broadcasts.length === 0 && <p className="text-gray-400 text-center py-8">방송 내역이 없습니다</p>}
+            {broadcasts.length === 0 && <EmptyState icon="📢" title="방송 내역이 없습니다" message="방송을 보내면 여기에 표시됩니다" />}
           </div>
         </div>
       )}

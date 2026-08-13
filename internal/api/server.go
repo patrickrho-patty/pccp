@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"strconv"
 	"log"
 	"net/http"
 	"time"
@@ -47,6 +48,7 @@ type Server struct {
 	fleet      *fleet.Service
 	context    *context.Service
 	sandbox    *sandbox.Service
+	jwtSecret  string
 	router     *chi.Mux
 }
 
@@ -95,6 +97,7 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 		fleet:      fleetSvc,
 		context:    ctxSvc,
 		sandbox:    sandboxSvc,
+		jwtSecret:  jwtSecret,
 	}
 	s.setupRouter()
 	return s, nil
@@ -126,6 +129,9 @@ func (s *Server) setupRouter() {
 		r.Post("/bootstrap", s.handleBootstrap)
 	})
 
+	// Realtime SSE (no middleware — HandleSSE does its own JWT check via query param)
+	r.Get("/api/realtime/sse", s.ext().Realtime.HandleSSE(s.jwtSecret))
+
 	// Authenticated API routes
 	r.Route("/api", func(r chi.Router) {
 		r.Use(s.authMiddleware)
@@ -145,6 +151,15 @@ func (s *Server) setupRouter() {
 			r.Get("/{id}", s.handleGetUser)
 			r.Put("/{id}", s.handleUpdateUser)
 			r.Delete("/{id}", s.handleDeleteUser)
+			r.Get("/{id}/audit", s.handleListUserAudit)
+		})
+
+		// Business Units (Korean org hierarchy) — PRD §12.1
+		r.Route("/business-units", func(r chi.Router) {
+			r.Get("/", s.handleListBusinessUnits)
+			r.Post("/", s.handleCreateBusinessUnit)
+			r.Put("/{id}", s.handleUpdateBusinessUnit)
+			r.Delete("/{id}", s.handleDeleteBusinessUnit)
 		})
 
 		// Harnesses
@@ -155,6 +170,7 @@ func (s *Server) setupRouter() {
 			r.Post("/{id}/revoke", s.handleRevokeHarness)
 			r.Post("/{id}/quarantine", s.handleQuarantineHarness)
 			r.Post("/{id}/reactivate", s.handleReactivateHarness)
+			r.Get("/{id}/audit", s.handleListHarnessAudit)
 		})
 
 		// Projects
@@ -216,6 +232,9 @@ func (s *Server) setupRouter() {
 			r.Post("/epochs", s.handleCreateEpoch)
 			r.Get("/leases", s.handleListLeases)
 			r.Post("/leases", s.handleIssueLease)
+			r.Get("/rules", s.handleListPolicyRules)
+			r.Post("/rules", s.handleCreatePolicyRule)
+			r.Delete("/rules/{id}", s.handleDeletePolicyRule)
 		})
 
 		// Communications
@@ -576,11 +595,35 @@ func (s *Server) handleGetOrganization(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	var users []models.User
 	q := s.db.Model(&models.User{})
 	if orgID != "" {
 		q = q.Where("organization_id = ?", orgID)
 	}
+
+	// Server-side pagination (when ?page= is provided, returns {data,total})
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		page, _ := strconv.Atoi(pageStr)
+		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+		search := r.URL.Query().Get("search")
+		if size == 0 {
+			size = 25
+		}
+		if page == 0 {
+			page = 1
+		}
+		if search != "" {
+			q = q.Where("name LIKE ? OR email LIKE ? OR name_ko LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%")
+		}
+		var total int64
+		q.Count(&total)
+		var users []models.User
+		q.Offset((page - 1) * size).Limit(size).Find(&users)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"data": users, "total": total, "page": page, "size": size})
+		return
+	}
+
+	// Full list (backward compatible — used by cross-page lookups)
+	var users []models.User
 	q.Find(&users)
 	writeJSON(w, http.StatusOK, users)
 }
@@ -593,6 +636,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		NameKo         string `json:"name_ko"`
 		AuthMethod     string `json:"auth_method"`
 		Title          string `json:"title"`
+		BusinessUnitID string `json:"business_unit_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -611,15 +655,37 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "이미 등록된 이메일입니다 · Email already exists: "+req.Email)
 		return
 	}
+	// Enforce user seat limit (enterprise licensing, PRD §29.10).
+	var org models.Organization
+	if s.db.First(&org, "id = ?", orgID).Error == nil && org.MaxUserSeats > 0 {
+		var userCount int64
+		s.db.Model(&models.User{}).Where("organization_id = ? AND status != 'offboarded'", orgID).Count(&userCount)
+		if userCount >= int64(org.MaxUserSeats) {
+			writeError(w, http.StatusPaymentRequired, fmt.Sprintf("사용자 좌석 한도 초과 · User seat limit reached (%d/%d)", userCount, org.MaxUserSeats))
+			return
+		}
+	}
 	user, err := s.identity.CreateUser(orgID, req.Email, req.Name, req.NameKo, req.AuthMethod, "")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if req.Title != "" {
+	if req.Title != "" || req.BusinessUnitID != "" {
 		user.Title = req.Title
+		user.BusinessUnitID = req.BusinessUnitID
 		s.db.Save(user)
 	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.user.created",
+		ActorType:      "admin",
+		Action:         "create_user",
+		ResourceType:   "user",
+		ResourceID:     user.ID,
+		Details:        fmt.Sprintf(`{"email":"%s","name":"%s"}`, req.Email, req.Name),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusCreated, user)
 }
 
@@ -635,11 +701,27 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListHarnesses(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	var harnesses []models.Harness
 	q := s.db.Model(&models.Harness{})
 	if orgID != "" {
 		q = q.Where("organization_id = ?", orgID)
 	}
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		page, _ := strconv.Atoi(pageStr)
+		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+		search := r.URL.Query().Get("search")
+		if size == 0 { size = 25 }
+		if page == 0 { page = 1 }
+		if search != "" {
+			q = q.Where("harness_id LIKE ? OR binary_version LIKE ?", "%"+search+"%", "%"+search+"%")
+		}
+		var total int64
+		q.Count(&total)
+		var harnesses []models.Harness
+		q.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&harnesses)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"data": harnesses, "total": total, "page": page, "size": size})
+		return
+	}
+	var harnesses []models.Harness
 	q.Order("created_at DESC").Find(&harnesses)
 	writeJSON(w, http.StatusOK, harnesses)
 }
@@ -652,6 +734,19 @@ func (s *Server) handleEnrollHarness(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.EnrollmentMode == "" {
 		req.EnrollmentMode = "sso"
+	}
+	if req.OrganizationID == "" {
+		req.OrganizationID = getOrgID(r)
+	}
+	// Enforce harness seat limit (enterprise licensing, PRD §29.10).
+	var hOrg models.Organization
+	if s.db.First(&hOrg, "id = ?", req.OrganizationID).Error == nil && hOrg.MaxHarnessSeats > 0 {
+		var harnessCount int64
+		s.db.Model(&models.Harness{}).Where("organization_id = ? AND status NOT IN ('revoked')", req.OrganizationID).Count(&harnessCount)
+		if harnessCount >= int64(hOrg.MaxHarnessSeats) {
+			writeError(w, http.StatusPaymentRequired, fmt.Sprintf("하네스 좌석 한도 초과 · Harness seat limit reached (%d/%d)", harnessCount, hOrg.MaxHarnessSeats))
+			return
+		}
 	}
 	harness, cred, err := s.identity.EnrollHarness(req)
 	if err != nil {
@@ -696,11 +791,27 @@ func (s *Server) handleRevokeHarness(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	var projects []models.Project
 	q := s.db.Model(&models.Project{})
 	if orgID != "" {
 		q = q.Where("organization_id = ?", orgID)
 	}
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		page, _ := strconv.Atoi(pageStr)
+		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+		search := r.URL.Query().Get("search")
+		if size == 0 { size = 25 }
+		if page == 0 { page = 1 }
+		if search != "" {
+			q = q.Where("name LIKE ? OR name_ko LIKE ? OR slug LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%")
+		}
+		var total int64
+		q.Count(&total)
+		var projects []models.Project
+		q.Offset((page - 1) * size).Limit(size).Find(&projects)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"data": projects, "total": total, "page": page, "size": size})
+		return
+	}
+	var projects []models.Project
 	q.Find(&projects)
 	writeJSON(w, http.StatusOK, projects)
 }
@@ -712,6 +823,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		NameKo         string   `json:"name_ko"`
 		Slug           string   `json:"slug"`
 		AllowedModels  []string `json:"allowed_models"`
+		Description    string   `json:"description"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -725,6 +837,10 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if req.Description != "" {
+		proj.Description = req.Description
+		s.db.Save(proj)
 	}
 	writeJSON(w, http.StatusCreated, proj)
 }
@@ -741,11 +857,27 @@ func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	var repos []models.Repository
 	q := s.db.Model(&models.Repository{})
 	if orgID != "" {
 		q = q.Where("organization_id = ?", orgID)
 	}
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		page, _ := strconv.Atoi(pageStr)
+		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+		search := r.URL.Query().Get("search")
+		if size == 0 { size = 25 }
+		if page == 0 { page = 1 }
+		if search != "" {
+			q = q.Where("name LIKE ? OR clone_url LIKE ? OR scm_provider LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%")
+		}
+		var total int64
+		q.Count(&total)
+		var repos []models.Repository
+		q.Offset((page - 1) * size).Limit(size).Find(&repos)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"data": repos, "total": total, "page": page, "size": size})
+		return
+	}
+	var repos []models.Repository
 	q.Find(&repos)
 	writeJSON(w, http.StatusOK, repos)
 }
@@ -758,6 +890,8 @@ func (s *Server) handleRegisterRepository(w http.ResponseWriter, r *http.Request
 		FullName       string `json:"full_name"`
 		DefaultBranch  string `json:"default_branch"`
 		Sensitivity    string `json:"sensitivity"`
+		CloneURL       string `json:"clone_url"`
+		SCMProvider    string `json:"scm_provider"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -778,6 +912,22 @@ func (s *Server) handleRegisterRepository(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if req.CloneURL != "" || req.SCMProvider != "" {
+		repo.CloneURL = req.CloneURL
+		repo.SCMProvider = req.SCMProvider
+		s.db.Save(repo)
+	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.repository.registered",
+		ActorType:      "admin",
+		Action:         "register_repository",
+		ResourceType:   "repository",
+		ResourceID:     repo.ID,
+		Details:        fmt.Sprintf(`{"name":"%s","scm_provider":"%s"}`, req.Name, req.SCMProvider),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusCreated, repo)
 }
 
@@ -819,11 +969,27 @@ func (s *Server) handleCreateBaseline(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	var sessions []models.Session
 	q := s.db.Model(&models.Session{})
 	if orgID != "" {
 		q = q.Where("organization_id = ?", orgID)
 	}
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		page, _ := strconv.Atoi(pageStr)
+		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+		search := r.URL.Query().Get("search")
+		if size == 0 { size = 25 }
+		if page == 0 { page = 1 }
+		if search != "" {
+			q = q.Where("title LIKE ? OR session_id LIKE ?", "%"+search+"%", "%"+search+"%")
+		}
+		var total int64
+		q.Count(&total)
+		var sessions []models.Session
+		q.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&sessions)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"data": sessions, "total": total, "page": page, "size": size})
+		return
+	}
+	var sessions []models.Session
 	q.Order("created_at DESC").Find(&sessions)
 	writeJSON(w, http.StatusOK, sessions)
 }
@@ -849,12 +1015,36 @@ func (s *Server) handleOpenSession(w http.ResponseWriter, r *http.Request) {
 	if orgID == "" {
 		orgID = getOrgID(r)
 	}
+	// Change-freeze enforcement (PRD §33.13) — block AI sessions on frozen repos.
+	if req.RepositoryID != "" {
+		if frozen, freeze, _ := s.ext().Korean.IsChangeFrozen(orgID, req.RepositoryID); frozen && freeze != nil {
+			writeError(w, http.StatusForbidden, fmt.Sprintf("변경 중단 중 · Change freeze: %s", freeze.FreezeReasonKo))
+			return
+		}
+	}
 	sess, err := s.identity.OpenSession(orgID, req.HarnessID, req.UserID, req.ProjectID,
 		req.RepositoryID, req.Branch, req.BaselineID, req.Title, req.TaskPurpose, req.ModelClass)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Bind the active policy epoch so the session carries governance context (PRD §13.1).
+	if epoch, eerr := s.policy.GetActiveEpoch(orgID); eerr == nil && epoch != nil {
+		sess.PolicyEpochID = epoch.EpochID
+		s.db.Save(sess)
+	}
+	s.ext().Realtime.NotifySessionUpdate(orgID, sess.SessionID, "active")
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.session.opened",
+		ActorType:      "admin",
+		Action:         "open_session",
+		ResourceType:   "session",
+		ResourceID:     sess.ID,
+		Details:        fmt.Sprintf(`{"title":"%s","harness_id":"%s"}`, req.Title, req.HarnessID),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusCreated, sess)
 }
 
@@ -870,6 +1060,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
 	var sess models.Session
 	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
@@ -879,10 +1070,33 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.ext().Realtime.NotifySessionUpdate(orgID, sess.SessionID, "closed")
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.session.closed",
+		ActorType:      "admin",
+		Action:         "close_session",
+		ResourceType:   "session",
+		ResourceID:     sess.ID,
+		Details:        "session closed",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "closed"})
 }
 
 func (s *Server) handleCompatChatCompletions(w http.ResponseWriter, r *http.Request) {
+	// BLOCKED: OpenAI-compatible model invocation on the Control Plane is not
+	// permitted (PAPER-only, PRD §10.11, §38.1). The Harness must use the PAPER
+	// Relay for all model inference.
+	writeError(w, http.StatusGone, "OpenAI-compatible endpoint disabled — use PAPER Relay for model invocation (§10.11, §38.1)")
+	return
+}
+
+// handleCompatChatCompletionsLegacy contains the original OpenAI-compat proxy
+// logic, retained for reference. It is NOT registered as a route — the endpoint
+// is blocked per §10.11. Remove entirely once all callers have migrated to PAPER.
+func (s *Server) handleCompatChatCompletionsLegacy(w http.ResponseWriter, r *http.Request) {
 		// OpenAI-compatible chat completions adapter
 		// Proxies to PIA for inference
 		var req map[string]interface{}
@@ -1716,14 +1930,15 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var updates struct {
-		Name       *string `json:"name,omitempty"`
-		NameKo     *string `json:"name_ko,omitempty"`
-		Email      *string `json:"email,omitempty"`
-		Title      *string `json:"title,omitempty"`
-		Status     *string `json:"status,omitempty"`
-		AuthMethod *string `json:"auth_method,omitempty"`
-		Locale     *string `json:"locale,omitempty"`
-		Timezone   *string `json:"timezone,omitempty"`
+		Name           *string `json:"name,omitempty"`
+		NameKo         *string `json:"name_ko,omitempty"`
+		Email          *string `json:"email,omitempty"`
+		Title          *string `json:"title,omitempty"`
+		Status         *string `json:"status,omitempty"`
+		AuthMethod     *string `json:"auth_method,omitempty"`
+		Locale         *string `json:"locale,omitempty"`
+		Timezone       *string `json:"timezone,omitempty"`
+		BusinessUnitID *string `json:"business_unit_id,omitempty"`
 	}
 	if err := decodeJSON(r, &updates); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -1737,14 +1952,263 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if updates.AuthMethod != nil { user.AuthMethod = *updates.AuthMethod }
 	if updates.Locale != nil { user.Locale = *updates.Locale }
 	if updates.Timezone != nil { user.Timezone = *updates.Timezone }
+	if updates.BusinessUnitID != nil { user.BusinessUnitID = *updates.BusinessUnitID }
 	s.db.Save(&user)
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: getOrgID(r),
+		EventType:      "cp.user.updated",
+		ActorType:      "admin",
+		Action:         "update_user",
+		ResourceType:   "user",
+		ResourceID:     id,
+		Details:        "user fields updated",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusOK, user)
 }
 
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	s.db.Model(&models.User{}).Where("id = ?", id).Update("status", "offboarded")
+	orgID := getOrgID(r)
+
+	// 1. Mark user as offboarded + record date
+	s.db.Model(&models.User{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"status":           "offboarded",
+		"offboarding_date": time.Now().Format("2006-01-02"),
+	})
+
+	// 2. Cascade: terminate active sessions for this user
+	s.db.Model(&models.Session{}).
+		Where("user_id = ? AND status = 'active'", id).
+		Update("status", "terminated")
+
+	// 3. Cascade: revoke harnesses that include this user
+	var harnesses []models.Harness
+	s.db.Where("organization_id = ?", orgID).Find(&harnesses)
+	for _, h := range harnesses {
+		if h.AllowedUsers == "" {
+			continue
+		}
+		var allowed []string
+		json.Unmarshal([]byte(h.AllowedUsers), &allowed)
+		for _, uid := range allowed {
+			if uid == id {
+				s.db.Model(&h).Updates(map[string]interface{}{
+					"status":             "revoked",
+					"revocation_reason":  "user offboarded",
+				})
+				break
+			}
+		}
+	}
+
+	// 4. Audit
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.user.offboarded",
+		ActorType:      "admin",
+		Action:         "offboard_user",
+		ResourceType:   "user",
+		ResourceID:     id,
+		Details:        "offboarded with session termination + harness revocation",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "offboarded"})
+}
+
+// --- Business Units (Korean enterprise hierarchy, PRD §12.1) ---
+
+func (s *Server) handleListBusinessUnits(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var bus []models.BusinessUnit
+	q := s.db.Model(&models.BusinessUnit{})
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Order("level, name").Find(&bus)
+	writeJSON(w, http.StatusOK, bus)
+}
+
+func (s *Server) handleCreateBusinessUnit(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrganizationID string `json:"organization_id"`
+		ParentUnitID   string `json:"parent_unit_id"`
+		Name           string `json:"name"`
+		NameKo         string `json:"name_ko"`
+		Type           string `json:"type"`
+		Level          int    `json:"level"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Type == "" {
+		req.Type = "department"
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	orgID := req.OrganizationID
+	if orgID == "" {
+		orgID = getOrgID(r)
+	}
+	bu := &models.BusinessUnit{OrganizationID: orgID, ParentUnitID: req.ParentUnitID, Name: req.Name, NameKo: req.NameKo, Type: req.Type, Level: req.Level}
+	if err := s.db.Create(bu).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, bu)
+}
+
+func (s *Server) handleUpdateBusinessUnit(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var bu models.BusinessUnit
+	if err := s.db.First(&bu, "id = ?", id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var updates struct {
+		Name         *string `json:"name,omitempty"`
+		NameKo       *string `json:"name_ko,omitempty"`
+		Type         *string `json:"type,omitempty"`
+		ParentUnitID *string `json:"parent_unit_id,omitempty"`
+	}
+	decodeJSON(r, &updates)
+	if updates.Name != nil {
+		bu.Name = *updates.Name
+	}
+	if updates.NameKo != nil {
+		bu.NameKo = *updates.NameKo
+	}
+	if updates.Type != nil {
+		bu.Type = *updates.Type
+	}
+	if updates.ParentUnitID != nil {
+		bu.ParentUnitID = *updates.ParentUnitID
+	}
+	s.db.Save(&bu)
+	writeJSON(w, http.StatusOK, bu)
+}
+
+func (s *Server) handleDeleteBusinessUnit(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := s.db.Delete(&models.BusinessUnit{}, "id = ?", id).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) handleListUserAudit(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	var events []models.AuditEvent
+	s.db.Where("organization_id = ? AND (resource_id = ? OR actor_id = ?)", orgID, id, id).
+		Order("occurred_at DESC").Limit(50).Find(&events)
+	writeJSON(w, http.StatusOK, events)
+}
+
+func (s *Server) handleListHarnessAudit(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	var events []models.AuditEvent
+	s.db.Where("organization_id = ? AND resource_id = ?", orgID, id).
+		Order("occurred_at DESC").Limit(50).Find(&events)
+	writeJSON(w, http.StatusOK, events)
+}
+
+// --- Policy Rules (governance rules authored in the Policy console, PRD §13) ---
+
+func (s *Server) handleListPolicyRules(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var rules []models.PolicyRule
+	q := s.db.Model(&models.PolicyRule{})
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Order("domain, created_at DESC").Find(&rules)
+	writeJSON(w, http.StatusOK, rules)
+}
+
+func (s *Server) handleCreatePolicyRule(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID             string          `json:"id"`
+		OrganizationID string          `json:"organization_id"`
+		Domain         string          `json:"domain"`
+		TemplateID     string          `json:"template_id"`
+		Name           string          `json:"name"`
+		NameEn         string          `json:"nameEn"`
+		Description    string          `json:"desc"`
+		Scope          string          `json:"scope"`
+		ScopeName      string          `json:"scopeName"`
+		Enabled        bool            `json:"enabled"`
+		Config         json.RawMessage `json:"config"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	orgID := req.OrganizationID
+	if orgID == "" {
+		orgID = getOrgID(r)
+	}
+	if req.Domain == "" {
+		writeError(w, http.StatusBadRequest, "domain is required")
+		return
+	}
+	// Upsert: if an existing rule ID is provided, update it.
+	if req.ID != "" {
+		var existing models.PolicyRule
+		if s.db.First(&existing, "id = ? AND organization_id = ?", req.ID, orgID).Error == nil {
+			existing.Enabled = req.Enabled
+			if req.Scope != "" {
+				existing.Scope = req.Scope
+			}
+			if req.ScopeName != "" {
+				existing.ScopeName = req.ScopeName
+			}
+			if req.Name != "" {
+				existing.Name = req.Name
+			}
+			if req.NameEn != "" {
+				existing.NameEn = req.NameEn
+			}
+			if len(req.Config) > 0 {
+				existing.ConfigJSON = string(req.Config)
+			}
+			s.db.Save(&existing)
+			writeJSON(w, http.StatusOK, existing)
+			return
+		}
+	}
+	rule := &models.PolicyRule{
+		OrganizationID: orgID, Domain: req.Domain, TemplateID: req.TemplateID,
+		Name: req.Name, NameEn: req.NameEn, Description: req.Description,
+		Scope: req.Scope, ScopeName: req.ScopeName, Enabled: req.Enabled,
+		ConfigJSON: string(req.Config),
+	}
+	if rule.Scope == "" {
+		rule.Scope = "org"
+	}
+	if err := s.db.Create(rule).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, rule)
+}
+
+func (s *Server) handleDeletePolicyRule(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).Delete(&models.PolicyRule{}).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
@@ -1755,23 +2219,51 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var updates struct {
-		Name           *string `json:"name,omitempty"`
-		NameKo         *string `json:"name_ko,omitempty"`
-		Description    *string `json:"description,omitempty"`
-		Status         *string `json:"status,omitempty"`
+		Name           *string  `json:"name,omitempty"`
+		NameKo         *string  `json:"name_ko,omitempty"`
+		Description    *string  `json:"description,omitempty"`
+		Status         *string  `json:"status,omitempty"`
+		AllowedModels  []string `json:"allowed_models,omitempty"`
 	}
 	decodeJSON(r, &updates)
 	if updates.Name != nil { proj.Name = *updates.Name }
 	if updates.NameKo != nil { proj.NameKo = *updates.NameKo }
 	if updates.Description != nil { proj.Description = *updates.Description }
 	if updates.Status != nil { proj.Status = *updates.Status }
+	if len(updates.AllowedModels) > 0 {
+		b, _ := json.Marshal(updates.AllowedModels)
+		proj.AllowedModelClasses = string(b)
+	}
 	s.db.Save(&proj)
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: getOrgID(r),
+		EventType:      "cp.project.updated",
+		ActorType:      "admin",
+		Action:         "update_project",
+		ResourceType:   "project",
+		ResourceID:     proj.ID,
+		Details:        "project fields updated",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusOK, proj)
 }
 
 func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
 	s.db.Model(&models.Project{}).Where("id = ?", id).Update("status", "archived")
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.project.archived",
+		ActorType:      "admin",
+		Action:         "archive_project",
+		ResourceType:   "project",
+		ResourceID:     id,
+		Details:        "project archived",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "archived"})
 }
 
@@ -1854,6 +2346,17 @@ func (s *Server) handleQuarantineHarness(w http.ResponseWriter, r *http.Request)
 	// Terminate active sessions
 	s.db.Model(&models.Session{}).Where("harness_id = ? AND status = 'active'", harness.HarnessID).
 		Update("status", "terminated")
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: harness.OrganizationID,
+		EventType:      "cp.harness.quarantined",
+		ActorType:      "admin",
+		Action:         "quarantine_harness",
+		ResourceType:   "harness",
+		ResourceID:     harness.ID,
+		Details:        "harness quarantined; active sessions terminated",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "quarantined"})
 }
 
@@ -1867,6 +2370,17 @@ func (s *Server) handleReactivateHarness(w http.ResponseWriter, r *http.Request)
 	s.db.Model(&harness).Updates(map[string]interface{}{
 		"status":     "enrolled",
 		"risk_state": "normal",
+	})
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: harness.OrganizationID,
+		EventType:      "cp.harness.reactivated",
+		ActorType:      "admin",
+		Action:         "reactivate_harness",
+		ResourceType:   "harness",
+		ResourceID:     harness.ID,
+		Details:        "harness reactivated",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "enrolled"})
 }
@@ -1898,47 +2412,41 @@ func (s *Server) handleDrainEndpoint(w http.ResponseWriter, r *http.Request) {
 
 
 func (s *Server) handleGetSecurityPolicy(w http.ResponseWriter, r *http.Request) {
-	// Return current DLP rule configuration
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"rules": []map[string]interface{}{
-			{"rule_id": "pii-kr-rrn", "name": "Korean RRN", "name_ko": "주민등록번호", "type": "korean_pii", "severity": "critical", "enabled": true, "action": "block"},
-			{"rule_id": "pii-kr-business", "name": "Business Registration", "name_ko": "사업자등록번호", "type": "korean_pii", "severity": "high", "enabled": true, "action": "mask"},
-			{"rule_id": "pii-kr-phone", "name": "Korean Phone", "name_ko": "전화번호", "type": "korean_pii", "severity": "medium", "enabled": true, "action": "mask"},
-			{"rule_id": "pii-kr-account", "name": "Bank Account", "name_ko": "계좌번호", "type": "korean_pii", "severity": "high", "enabled": true, "action": "block"},
-			{"rule_id": "secret-aws", "name": "AWS Access Key", "name_ko": "AWS 접근키", "type": "secret", "severity": "critical", "enabled": true, "action": "block"},
-			{"rule_id": "secret-jwt", "name": "JWT Token", "name_ko": "JWT 토큰", "type": "secret", "severity": "high", "enabled": true, "action": "block"},
-			{"rule_id": "secret-private-key", "name": "Private Key", "name_ko": "개인키", "type": "secret", "severity": "critical", "enabled": true, "action": "block"},
-			{"rule_id": "secret-github", "name": "GitHub PAT", "name_ko": "GitHub 토큰", "type": "secret", "severity": "high", "enabled": true, "action": "block"},
-			{"rule_id": "injection-ignore", "name": "Instruction Override", "name_ko": "명령어 재정의", "type": "prompt_injection", "severity": "high", "enabled": true, "action": "block"},
-			{"rule_id": "injection-jailbreak", "name": "Jailbreak Attempt", "name_ko": "탈옥 시도", "type": "prompt_injection", "severity": "high", "enabled": true, "action": "block"},
-		},
-	})
+	orgID := getOrgID(r)
+	rules, _ := s.security.EnsureRulesSeeded(orgID)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"rules": rules})
 }
 
 func (s *Server) handleUpdateSecurityPolicy(w http.ResponseWriter, r *http.Request) {
 	var updates struct {
 		RuleID  string `json:"rule_id"`
 		Enabled *bool  `json:"enabled"`
+		Action  string `json:"action"`
 	}
 	if err := decodeJSON(r, &updates); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	// In production, this would persist to a PolicyPack record
-	// For now, record in audit
+	if updates.RuleID == "" {
+		writeError(w, http.StatusBadRequest, "rule_id is required")
+		return
+	}
 	orgID := getOrgID(r)
-	audit := &models.AuditEvent{
+	if err := s.security.SetRule(orgID, updates.RuleID, updates.Enabled, updates.Action); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.db.Create(&models.AuditEvent{
 		OrganizationID: orgID,
 		EventType:      "cp.security.rule_updated",
 		ActorType:      "admin",
 		Action:         "update_security_rule",
 		ResourceType:   "security_rule",
 		ResourceID:     updates.RuleID,
-		Details:        fmt.Sprintf(`{"rule_id":"%s","enabled":%v}`, updates.RuleID, updates.Enabled),
+		Details:        fmt.Sprintf(`{"rule_id":"%s","enabled":%v,"action":"%s"}`, updates.RuleID, updates.Enabled, updates.Action),
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
-	}
-	s.db.Create(audit)
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 

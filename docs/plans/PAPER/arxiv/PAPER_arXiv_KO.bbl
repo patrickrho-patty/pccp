@@ -50,6 +50,12 @@ J.~Iyengar and M.~Thomson.
 \newblock Technical Report RFC 9000, IETF, May 2021.
 \newblock \url{https://www.rfc-editor.org/info/rfc9000}.
 
+\bibitem{mlperf2025llm}
+{MLCommons}.
+\newblock {MLPerf Inference v5.0} advances language model capabilities for
+  {GenAI}, Apr. 2025.
+\newblock \url{https://mlcommons.org/2025/04/llm-inference-v5/}.
+
 \bibitem{mcp2025}
 {Model Context Protocol Project}.
 \newblock Model context protocol specification, 2025-06-18 revision, 2025.

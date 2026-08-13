@@ -11,9 +11,13 @@ import PortalLayout from './components/PortalLayout'
 // Pages
 import Dashboard from './pages/Dashboard'
 import Users from './pages/Users'
+import UserDetail from './pages/UserDetail'
 import Harnesses from './pages/Harnesses'
+import HarnessDetail from './pages/HarnessDetail'
 import Projects from './pages/Projects'
+import ProjectDetail from './pages/ProjectDetail'
 import Repositories from './pages/Repositories'
+import RepositoryDetail from './pages/RepositoryDetail'
 import Sessions from './pages/Sessions'
 import Policy from './pages/Policy'
 import Provenance from './pages/Provenance'
@@ -86,9 +90,13 @@ function AppContent() {
         {/* Customer Console routes */}
         {profile === 'customer' && (<>
           <Route path="/users" element={<Users />} />
+          <Route path="/users/:id" element={<UserDetail />} />
           <Route path="/harnesses" element={<Harnesses />} />
+          <Route path="/harnesses/:id" element={<HarnessDetail />} />
           <Route path="/projects" element={<Projects />} />
+          <Route path="/projects/:id" element={<ProjectDetail />} />
           <Route path="/repositories" element={<Repositories />} />
+          <Route path="/repositories/:id" element={<RepositoryDetail />} />
           <Route path="/live" element={<LiveView />} />
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/sessions/:id/provenance" element={<Provenance />} />

@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
+import ConfirmDialog from '../components/ConfirmDialog'
+import EmptyState from '../components/EmptyState'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['name', 'name_ko', 'slug'],
@@ -21,6 +23,7 @@ export default function Projects() {
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [archiveTarget, setArchiveTarget] = useState<string | null>(null)
   const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
   const [form, setForm] = useState({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard', description: '' })
 
@@ -118,7 +121,7 @@ export default function Projects() {
               {/* Header */}
               <div className="flex items-start justify-between mb-3">
                 <div>
-                  <h3 className="text-base font-semibold">{p.name_ko || p.name}</h3>
+                  <h3 className="text-base font-semibold"><Link to={`/projects/${p.id}`} className="text-blue-600 hover:underline">{p.name_ko || p.name}</Link></h3>
                   <p className="text-xs text-gray-400">{p.name} · {p.slug}</p>
                   {p.description && <p className="text-xs text-gray-500 mt-1">{p.description}</p>}
                 </div>
@@ -186,7 +189,7 @@ export default function Projects() {
                   {expandedId === p.id ? '접기' : '상세'}
                 </button>
                 <button onClick={() => handleEdit(p)} className="text-xs text-blue-600 hover:underline">편집</button>
-                <button onClick={() => handleArchive(p.id)} className="text-xs text-red-600 hover:underline">보관</button>
+                <button onClick={() => setArchiveTarget(p.id)} className="text-xs text-red-600 hover:underline">보관</button>
                 <Link to="/sessions" className="text-xs text-blue-600 hover:underline ml-auto">세션 보기 →</Link>
               </div>
 
@@ -220,10 +223,20 @@ export default function Projects() {
         })}
         {filtered.length === 0 && (
           <div className="col-span-2 card text-center py-12">
-            <p className="text-gray-400">프로젝트가 없습니다</p>
+            <EmptyState icon="📂" title="프로젝트가 없습니다" message="프로젝트 생성 버튼으로 시작하세요" />
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={!!archiveTarget}
+        title="프로젝트 보관 · Archive Project"
+        message="이 프로젝트를 보관 처리하시겠습니까?"
+        confirmLabel="보관 실행"
+        danger
+        onConfirm={async () => { if (archiveTarget) { try { await api.deleteProject(archiveTarget); load() } catch {} } setArchiveTarget(null) }}
+        onCancel={() => setArchiveTarget(null)}
+      />
     </div>
   )
 }

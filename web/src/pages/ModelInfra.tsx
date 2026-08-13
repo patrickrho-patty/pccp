@@ -1,4 +1,5 @@
 import { useState, useEffect, Fragment } from 'react'
+import EmptyState from '../components/EmptyState'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
@@ -108,7 +109,7 @@ function CatalogTab() {
       </div>
 
       {models.length === 0 ? (
-        <div className="card text-center py-12"><p className="text-gray-400">카탈로그 모델이 없습니다</p></div>
+        <div className="card"><EmptyState icon="📦" title="카탈로그 모델이 없습니다" message="카탈로그 시드 버튼으로 기본 모델을 등록하세요" /></div>
       ) : (
         <div className="grid grid-cols-3 gap-4">
           {models.map(m => (

@@ -136,7 +136,7 @@ export default function CustomerLayout({ children }: { children: ReactNode }) {
       </aside>
 
       <main className="flex-1 overflow-y-auto main-scroll">
-        <div className="p-6 max-w-[1600px] mx-auto">{children}</div>
+        <div className="p-6 max-w-[1600px] mx-auto animate-fadeIn">{children}</div>
       </main>
     </div>
   )

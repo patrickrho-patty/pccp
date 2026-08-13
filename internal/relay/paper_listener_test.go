@@ -38,3 +38,26 @@ func TestPaperListenerContext(t *testing.T) {
 		t.Fatal("context should be cancelled")
 	}
 }
+
+func TestBuildGovernRequest(t *testing.T) {
+	payload := []byte(`{"model":"patty-test","messages":[{"role":"user","content":"hi"}],"max_tokens":100}`)
+	greq, err := buildGovernRequest("hrn-1", "ses-1", payload)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if greq.HarnessID != "hrn-1" || greq.SessionID != "ses-1" || greq.Model != "patty-test" || greq.MaxTokens != 100 {
+		t.Fatalf("unexpected request: %+v", greq)
+	}
+	if len(greq.Messages) != 1 || greq.Messages[0]["role"] != "user" || greq.Messages[0]["content"] != "hi" {
+		t.Fatalf("unexpected messages: %+v", greq.Messages)
+	}
+
+	greq2, err := buildGovernRequest("hrn-1", "", []byte(`{"model":"m","messages":[]}`))
+	if err != nil || greq2.MaxTokens != 4096 {
+		t.Fatalf("expected default max_tokens 4096, got %+v err=%v", greq2, err)
+	}
+
+	if _, err := buildGovernRequest("h", "s", []byte("{bad")); err == nil {
+		t.Fatal("expected error on invalid JSON")
+	}
+}

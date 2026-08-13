@@ -5,7 +5,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -14,9 +13,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
-	"os"
 	"net"
-	"net/http"
 	"sync"
 	"time"
 
@@ -36,6 +33,7 @@ type PaperListener struct {
 	tlsConfig *tls.Config
 	mu        sync.Mutex
 	conns     map[string]*paper.TransportConn
+	sessions  map[string]string // connID → working sessionID (from SESSION_OPEN)
 }
 
 // NewPaperListener creates a native PAPER protocol listener.
@@ -54,6 +52,7 @@ func NewPaperListener(svc *Service, tlsConfig *tls.Config) *PaperListener {
 		svc:       svc,
 		tlsConfig: tlsConfig,
 		conns:     make(map[string]*paper.TransportConn),
+		sessions:  make(map[string]string),
 	}
 }
 
@@ -183,27 +182,34 @@ func (pl *PaperListener) handleConn(ctx context.Context, netConn net.Conn) {
 		log.Printf("relay: paper AUTH_PROOF from %s failed: %v", connID, err)
 		return
 	}
+	log.Printf("relay: paper AUTH_PROOF received from %s", connID)
 
-	log.Printf("relay: paper AUTH_PROOF received from %s, cred serial=%s", connID, proof.ChallengeID)
+	// Authorize the peer. The proof credential identifies the harness; reject
+	// unknown/revoked/quarantined harnesses so fleet actions take effect on the
+	// live path. (Full COSE-Sign1 signature verification is a follow-up — see
+	// Harness A; today the credential carries the harness peer ID.)
+	harnessID := string(proof.Credential)
+	if _, err := pl.svc.AuthorizePeer(harnessID); err != nil {
+		log.Printf("relay: paper rejecting peer %s: %v", connID, err)
+		errPayload, _ := json.Marshal(map[string]string{"error": "unauthorized: " + err.Error()})
+		conn.SendMessage(paper.MsgClose, nil, errPayload, 0, 1)
+		return
+	}
 
-	// In production: verify the COSE-Sign1 credential signature, check revocation,
-	// validate the auth proof over the HELLO/HELLO_ACK transcript.
-	// For Phase 0: accept any valid PPC format.
-
-	// Send AUTH_ACK to confirm authentication
 	if err := conn.SendControl(paper.MsgAuthAck, nil, []byte("authenticated")); err != nil {
 		log.Printf("relay: paper AUTH_ACK to %s failed: %v", connID, err)
 		return
 	}
-	log.Printf("relay: paper AUTH_ACK sent to %s, peer ready", connID)
+	log.Printf("relay: paper AUTH_ACK sent to %s, peer=%s ready (governed)", connID, harnessID)
 
-	// Phase 3: Application messages (READY state)
-	// The peer is now authenticated and can open governed exchanges.
-	pl.handleApplicationMessages(ctx, conn, connID, hello)
+	// Phase 3: Application messages (READY state) — every AI request is governed.
+	pl.handleApplicationMessages(ctx, conn, connID, hello, harnessID)
 }
 
 // handleApplicationMessages processes PAPER application records after authentication.
-func (pl *PaperListener) handleApplicationMessages(ctx context.Context, conn *paper.TransportConn, connID string, hello *paper.HelloMessage) {
+// Every AI request is governed (Service.GovernInference); there is no ungoverned
+// forward path.
+func (pl *PaperListener) handleApplicationMessages(ctx context.Context, conn *paper.TransportConn, connID string, hello *paper.HelloMessage, harnessID string) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -220,25 +226,27 @@ func (pl *PaperListener) handleApplicationMessages(ctx context.Context, conn *pa
 			return
 		}
 
-		// Route based on message type
 		msgType := paper.MessageType(record.MessageType)
 
 		switch {
 		case record.Kind == paper.KindControl && msgType == paper.MsgPing:
-			// Respond with PONG
 			conn.SendControl(paper.MsgPong, record.Header, []byte("pong"))
 
 		case record.Kind == paper.KindMessage && msgType == paper.MsgSessionOpen:
-			// Handle session open via the governance layer
-			log.Printf("relay: paper SESSION_OPEN from %s", connID)
+			var so struct {
+				SessionID string `json:"session_id"`
+			}
+			json.Unmarshal(record.Payload, &so)
+			if so.SessionID != "" {
+				pl.setSession(connID, so.SessionID)
+			}
+			log.Printf("relay: paper SESSION_OPEN from %s session=%s", connID, so.SessionID)
 
 		case record.Kind == paper.KindMessage && msgType == paper.MsgAIOpen:
-			// Forward AI inference request to PIA via PAPER
-			log.Printf("relay: paper AI_OPEN from %s, forwarding to PIA", connID)
-			pl.forwardAIToPIA(ctx, conn, record, connID)
+			log.Printf("relay: paper AI_OPEN from %s, governing", connID)
+			pl.governAIOpen(ctx, conn, record, connID, harnessID)
 
 		case record.Kind == paper.KindData:
-			// Handle data stream (token chunks, etc.)
 			log.Printf("relay: paper DATA from %s, lane=%d seq=%d", connID, record.LaneID, record.LaneSequence)
 
 		default:
@@ -247,154 +255,90 @@ func (pl *PaperListener) handleApplicationMessages(ctx context.Context, conn *pa
 	}
 }
 
-// forwardAIToPIA forwards an AI_OPEN from a harness to the PIA via PAPER
-// and streams the response back to the harness.
-func (pl *PaperListener) forwardAIToPIA(ctx context.Context, harnessConn *paper.TransportConn, reqRecord *paper.Record, connID string) {
-	// Get PAPER inference client (connects to PIA)
-	pic := getPaperInferenceClient()
-	if pic == nil {
-		// No PAPER path — try HTTP fallback to PIA
-		pl.forwardAIHTTP(ctx, harnessConn, reqRecord, connID)
-		return
-	}
-
-	// Parse the AI_OPEN request
-	var aiReq struct {
-		Model     string                   `json:"model"`
-		Messages  []map[string]interface{} `json:"messages"`
-		MaxTokens int                      `json:"max_tokens"`
-	}
-	json.Unmarshal(reqRecord.Payload, &aiReq)
-
-	// Forward to PIA via PAPER
-	result, err := pic.SendInference(ctx, aiReq.Model, aiReq.Messages, aiReq.MaxTokens)
-	if err != nil {
-		log.Printf("relay: paper PIA inference error from %s: %v", connID, err)
-		errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
-		harnessConn.SendMessage(paper.MsgClose, nil, errPayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
-		return
-	}
-
-	// Send response back to harness as AI_COMPLETE
-	completePayload, _ := json.Marshal(result)
-	harnessConn.SendMessage(paper.MsgAIComplete, nil, completePayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
-	log.Printf("relay: paper AI_COMPLETE sent to %s", connID)
-}
-
-// forwardAIHTTP forwards an AI request to PIA via HTTP (fallback).
-func (pl *PaperListener) forwardAIHTTP(ctx context.Context, harnessConn *paper.TransportConn, reqRecord *paper.Record, connID string) {
-	// Parse the request
-	var aiReq struct {
-		Model     string                   `json:"model"`
-		Messages  []map[string]interface{} `json:"messages"`
-		MaxTokens int                      `json:"max_tokens"`
-	}
-	json.Unmarshal(reqRecord.Payload, &aiReq)
-
-	// Use the HTTP inference client
-	piaURL := os.Getenv("PCCP_PIA_URL")
-	if piaURL == "" {
-		errPayload, _ := json.Marshal(map[string]string{"error": "PIA not configured"})
-		harnessConn.SendMessage(paper.MsgClose, nil, errPayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
-		return
-	}
-
-	// Build PIA request
-	type piaMsg struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-	var msgs []piaMsg
-	for _, m := range aiReq.Messages {
-		role, _ := m["role"].(string)
-		content, _ := m["content"].(string)
-		msgs = append(msgs, piaMsg{Role: role, Content: content})
-	}
-
-	vllmModel := os.Getenv("PCCP_VLLM_MODEL")
-	if vllmModel == "" {
-		vllmModel = aiReq.Model
-	}
-
-	promptParts := []string{}
-	for _, m := range msgs {
-		promptParts = append(promptParts, m.Role+": "+m.Content)
-	}
-	prompt := "You are a helpful coding assistant.\n\n"
-	for i, p := range promptParts {
-		if i > 0 {
-			prompt += "\n"
-		}
-		prompt += p
-	}
-	prompt += "\n\nAssistant:"
-
-	// Build chat messages for PIA's /v1/chat/completions
-	type chatMsg struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-	var chatMsgs []chatMsg
-	for _, m := range msgs {
-		chatMsgs = append(chatMsgs, chatMsg{Role: m.Role, Content: m.Content})
-	}
-
-	piaReq := map[string]interface{}{
-		"model":       vllmModel,
-		"messages":    chatMsgs,
-		"max_tokens":  aiReq.MaxTokens,
-		"temperature": 0.0,
-		"stream":      false,
-	}
-
-	piaBody, _ := json.Marshal(piaReq)
-	piaResp, err := http.Post(piaURL+"/v1/chat/completions", "application/json", bytes.NewReader(piaBody))
-	if err != nil {
-		errPayload, _ := json.Marshal(map[string]string{"error": "PIA unreachable: " + err.Error()})
-		harnessConn.SendMessage(paper.MsgClose, nil, errPayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
-		return
-	}
-	defer piaResp.Body.Close()
-
-	var piaResult map[string]interface{}
-	json.NewDecoder(piaResp.Body).Decode(&piaResult)
-
-	// Extract text and usage
-	text := ""
-	if choices, ok := piaResult["choices"].([]interface{}); ok && len(choices) > 0 {
-		if choice, ok := choices[0].(map[string]interface{}); ok {
-			// Chat completions format: choices[].message.content
-			if msg, ok := choice["message"].(map[string]interface{}); ok {
-				text, _ = msg["content"].(string)
-			}
-			// Fallback to completions format: choices[].text
-			if text == "" {
-				text, _ = choice["text"].(string)
-			}
-		}
-	}
-
-	var inputTokens, outputTokens float64
-	if usage, ok := piaResult["usage"].(map[string]interface{}); ok {
-		inputTokens, _ = usage["prompt_tokens"].(float64)
-		outputTokens, _ = usage["completion_tokens"].(float64)
-	}
-
-	// Build AI_COMPLETE response
-	completePayload, _ := json.Marshal(map[string]interface{}{
-		"content":      text,
-		"finish_reason": "stop",
-		"input_tokens":  int(inputTokens),
-		"output_tokens": int(outputTokens),
-		"total_tokens":  int(inputTokens + outputTokens),
-	})
-	harnessConn.SendMessage(paper.MsgAIComplete, nil, completePayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
-	log.Printf("relay: paper AI_COMPLETE sent to %s (via HTTP)", connID)
-}
-
 // ActiveConnections returns the number of active PAPER connections.
 func (pl *PaperListener) ActiveConnections() int {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
 	return len(pl.conns)
+}
+
+// sessionFor returns the working sessionID recorded for a connection.
+func (pl *PaperListener) sessionFor(connID string) string {
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
+	return pl.sessions[connID]
+}
+
+func (pl *PaperListener) setSession(connID, sessionID string) {
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
+	pl.sessions[connID] = sessionID
+}
+
+// governAIOpen runs an AI_OPEN through the governed flow and sends the
+// AI_COMPLETE (or MsgClose on denial/failure) back to the harness.
+func (pl *PaperListener) governAIOpen(ctx context.Context, conn *paper.TransportConn, reqRecord *paper.Record, connID, harnessID string) {
+	greq, err := buildGovernRequest(harnessID, pl.sessionFor(connID), reqRecord.Payload)
+	if err != nil {
+		log.Printf("relay: invalid AI_OPEN from %s: %v", connID, err)
+		errPayload, _ := json.Marshal(map[string]string{"error": "invalid AI_OPEN: " + err.Error()})
+		conn.SendMessage(paper.MsgClose, nil, errPayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
+		return
+	}
+
+	resp, _, err := pl.svc.GovernInference(ctx, greq)
+	if err != nil {
+		log.Printf("relay: governed inference denied/failed for %s: %v", connID, err)
+		errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
+		conn.SendMessage(paper.MsgClose, nil, errPayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
+		return
+	}
+
+	// Build the AI_COMPLETE payload in the shape the harness decodes.
+	content := ""
+	if len(resp.Choices) > 0 {
+		if msg, ok := resp.Choices[0]["message"].(map[string]interface{}); ok {
+			content, _ = msg["content"].(string)
+		}
+		if content == "" {
+			content, _ = resp.Choices[0]["text"].(string)
+		}
+	}
+	inTok := resp.Usage["prompt_tokens"]
+	outTok := resp.Usage["completion_tokens"]
+	completePayload, _ := json.Marshal(map[string]interface{}{
+		"content":       content,
+		"finish_reason": "stop",
+		"input_tokens":  inTok,
+		"output_tokens": outTok,
+		"total_tokens":  inTok + outTok,
+	})
+	conn.SendMessage(paper.MsgAIComplete, nil, completePayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
+	log.Printf("relay: governed AI_COMPLETE sent to %s", connID)
+}
+
+// buildGovernRequest parses an AI_OPEN payload into a GovernRequest. Pure helper
+// (unit-tested) so the governed dispatch is verifiable without a live PAPER conn.
+func buildGovernRequest(harnessID, sessionID string, payload []byte) (GovernRequest, error) {
+	var aiReq struct {
+		Model     string                   `json:"model"`
+		Messages  []map[string]interface{} `json:"messages"`
+		MaxTokens int                      `json:"max_tokens"`
+	}
+	if err := json.Unmarshal(payload, &aiReq); err != nil {
+		return GovernRequest{}, fmt.Errorf("decode: %w", err)
+	}
+	msgs := make([]map[string]string, 0, len(aiReq.Messages))
+	for _, m := range aiReq.Messages {
+		role, _ := m["role"].(string)
+		content, _ := m["content"].(string)
+		msgs = append(msgs, map[string]string{"role": role, "content": content})
+	}
+	if aiReq.MaxTokens <= 0 {
+		aiReq.MaxTokens = 4096
+	}
+	return GovernRequest{
+		HarnessID: harnessID, SessionID: sessionID, Model: aiReq.Model,
+		Messages: msgs, MaxTokens: aiReq.MaxTokens,
+	}, nil
 }

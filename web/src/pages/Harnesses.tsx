@@ -2,6 +2,7 @@ import { useState, useEffect, Fragment } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['harness_id', 'binary_version', 'device_id'],
@@ -22,6 +23,8 @@ export default function Harnesses() {
   const [users, setUsers] = useState<any[]>([])
   const [sessions, setSessions] = useState<any[]>([])
   const [projects, setProjects] = useState<any[]>([])
+  const [org, setOrg] = useState<any>(null)
+  const [revokeTarget, setRevokeTarget] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
@@ -34,6 +37,7 @@ export default function Harnesses() {
     api.listUsers().then(data => setUsers(Array.isArray(data) ? data : []))
     api.listSessions().then(data => setSessions(Array.isArray(data) ? data : []))
     api.listProjects().then(data => setProjects(Array.isArray(data) ? data : []))
+    api.listOrganizations().then(data => setOrg(Array.isArray(data) && data[0] ? data[0] : null))
   }
   useEffect(() => { load() }, [])
 
@@ -41,6 +45,12 @@ export default function Harnesses() {
   const paged = filtered.slice((page - 1) * pageSize, page * pageSize)
 
   const getUser = (userId: string) => users.find(u => u.id === userId)
+  const getHarnessUser = (h: any) => {
+    try {
+      const ids: string[] = JSON.parse(h.allowed_users || '[]')
+      return users.find(u => ids.includes(u.id))
+    } catch { return undefined }
+  }
   const getProject = (projId: string) => projects.find(p => p.id === projId)
   const getHarnessSessions = (hrnId: string) => sessions.filter(s => s.harness_id === hrnId)
   const getActiveSessions = (hrnId: string) => getHarnessSessions(hrnId).filter(s => s.status === 'active')
@@ -66,6 +76,7 @@ export default function Harnesses() {
     <div>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">하네스 <span className="text-gray-400 text-lg font-normal">Harnesses</span></h1>
+          {org && <span className="text-xs text-gray-400 ml-4">{harnesses.filter(h => h.status !== 'revoked').length}/{org.max_harness_seats || '∞'} 좌석</span>}
         <button onClick={() => setShowForm(!showForm)} className="btn-primary">{showForm ? '취소' : '+ 하네스 등록'}</button>
       </div>
 
@@ -97,18 +108,18 @@ export default function Harnesses() {
           </tr></thead>
           <tbody>
             {paged.map(h => {
-              const user = getUser(h.user_id || h.allowed_users)
+              const user = getHarnessUser(h)
               const activeSessions = getActiveSessions(h.harness_id)
               const allSessions = getHarnessSessions(h.harness_id)
               return (
                 <Fragment key={h.id || h.key || i}>
                   <tr key={h.id} className={`border-b border-gray-100 last:border-0 cursor-pointer ${expandedId === h.id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
                     onClick={() => setExpandedId(expandedId === h.id ? null : h.id)}>
-                    <td className="py-3 font-mono text-xs">{h.harness_id?.slice(0, 20)}</td>
+                    <td className="py-3 font-mono text-xs"><Link to={`/harnesses/${h.id}`} className="text-blue-600 hover:underline">{h.harness_id?.slice(0, 20)}</Link></td>
                     {/* USER COLUMN — clickable link to user detail */}
                     <td className="py-3">
                       {user ? (
-                        <Link to="/users" className="text-sm font-medium text-blue-600 hover:underline" onClick={e => e.stopPropagation()}>
+                        <Link to={`/users/${user.id}`} className="text-sm font-medium text-blue-600 hover:underline" onClick={e => e.stopPropagation()}>
                           {user.name_ko || user.name}
                         </Link>
                       ) : <span className="text-xs text-gray-400">-</span>}
@@ -127,7 +138,7 @@ export default function Harnesses() {
                     <td className="py-3" onClick={e => e.stopPropagation()}>
                       <div className="flex gap-1 flex-wrap">
                         {(h.status === 'active' || h.status === 'enrolled') && <button onClick={() => handleQuarantine(h.id)} className="text-xs text-yellow-600 hover:underline">격리</button>}
-                        {(h.status === 'active' || h.status === 'enrolled') && <button onClick={() => handleRevoke(h.id)} className="text-xs text-red-600 hover:underline">폐기</button>}
+                        {(h.status === 'active' || h.status === 'enrolled') && <button onClick={() => setRevokeTarget(h.id)} className="text-xs text-red-600 hover:underline">폐기</button>}
                         {h.status === 'quarantined' && <button onClick={() => handleReactivate(h.id)} className="text-xs text-green-600 hover:underline">재활성화</button>}
                         {(h.status === 'revoked' || h.status === 'quarantined') && <Link to="/fleet" className="text-xs text-blue-600 hover:underline">플릿 관리 →</Link>}
                       </div>
@@ -153,7 +164,7 @@ export default function Harnesses() {
                           <div className="text-xs font-semibold text-gray-600 mb-2">사용자</div>
                           {user ? (
                             <div className="space-y-1 text-xs">
-                              <div><Link to="/users" className="text-blue-600 hover:underline font-medium">{user.name_ko || user.name}</Link></div>
+                              <div><Link to={`/users/${user.id}`} className="text-blue-600 hover:underline font-medium">{user.name_ko || user.name}</Link></div>
                               <div className="text-gray-400">{user.email}</div>
                               {user.employee_id && <div className="text-gray-400">사번: {user.employee_id}</div>}
                               {user.business_unit_id && <div className="text-gray-400">부서: {user.business_unit_id}</div>}
@@ -198,6 +209,16 @@ export default function Harnesses() {
         </table>
         <Pagination total={filtered.length} page={page} pageSize={pageSize} onPageChange={setPage} />
       </div>
+
+      <ConfirmDialog
+        open={!!revokeTarget}
+        title="하네스 폐기 · Revoke Harness"
+        message="이 하네스를 폐기하시겠습니까? 모든 활성 세션이 종료됩니다."
+        confirmLabel="폐기 실행"
+        danger
+        onConfirm={async () => { if (revokeTarget) { try { await api.revokeHarness(revokeTarget, 'manual revoke'); load() } catch {} } setRevokeTarget(null) }}
+        onCancel={() => setRevokeTarget(null)}
+      />
     </div>
   )
 }

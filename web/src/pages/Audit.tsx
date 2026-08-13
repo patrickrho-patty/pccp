@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { Link } from 'react-router-dom'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
+import EmptyState from '../components/EmptyState'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['action', 'event_type', 'resource_type', 'resource_id', 'details', 'actor_id'],
@@ -48,6 +49,7 @@ export default function Audit() {
     search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string>,
   })
   const [page, setPage] = useState(1)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
   const pageSize = 50
 
   useEffect(() => {
@@ -141,7 +143,7 @@ export default function Audit() {
       <div className="card">
         {paged.length === 0 ? (
           <div className="text-center py-8">
-            <p className="text-gray-400">표시할 감사 이벤트가 없습니다.</p>
+            <EmptyState icon="☰" title="표시할 감사 이벤트가 없습니다" message="관리자 활동이 기록되면 표시됩니다" />
           </div>
         ) : (
           <table className="w-full">
@@ -157,14 +159,26 @@ export default function Audit() {
             </thead>
             <tbody>
               {paged.map(e => (
-                <tr key={e.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30">
+                <Fragment key={e.id}>
+                <tr className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer" onClick={() => setExpandedId(expandedId === e.id ? null : e.id)}>
                   <td className="py-2 text-xs text-gray-400 font-mono whitespace-nowrap">{e.occurred_at?.slice(0, 19)}</td>
                   <td className="py-2 text-sm font-medium font-mono">{e.event_type}</td>
                   <td className="py-2 text-sm">{e.actor_type}{e.actor_id ? ` (${e.actor_id.slice(0, 8)})` : ''}</td>
-                  <td className="py-2 text-sm">{e.resource_type}{e.resource_id ? `: ${e.resource_id.slice(0, 12)}` : ''}</td>
+                  <td className="py-2 text-sm">{e.resource_type}{e.resource_id ? ': ' : ''}{e.resource_id && (
+                    e.resource_type === 'user' ? <Link to={`/users/${e.resource_id}`} className="text-blue-600 hover:underline" onClick={ev => ev.stopPropagation()}>{e.resource_id.slice(0, 12)}</Link> :
+                    e.resource_type === 'harness' ? <Link to={`/harnesses/${e.resource_id}`} className="text-blue-600 hover:underline" onClick={ev => ev.stopPropagation()}>{e.resource_id.slice(0, 12)}</Link> :
+                    e.resource_type === 'project' ? <Link to={`/projects/${e.resource_id}`} className="text-blue-600 hover:underline" onClick={ev => ev.stopPropagation()}>{e.resource_id.slice(0, 12)}</Link> :
+                    e.resource_id.slice(0, 12)
+                  )}</td>
                   <td className="py-2 text-xs text-gray-500 max-w-xs truncate">{e.details?.slice(0, 80)}</td>
                   <td className="py-2"><span className={resultBadge(e.result)}>{e.result}</span></td>
                 </tr>
+                {expandedId === e.id && (
+                  <tr className="bg-gray-50"><td colSpan={6} className="p-4">
+                    <pre className="text-xs font-mono whitespace-pre-wrap break-all text-gray-600">{e.details || '(no details)'}</pre>
+                  </td></tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>

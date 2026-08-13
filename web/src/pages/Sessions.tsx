@@ -2,6 +2,7 @@ import { useState, useEffect, Fragment } from 'react'
 import { api } from '../api'
 import { Link } from 'react-router-dom'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
+import EmptyState from '../components/EmptyState'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['title', 'task_purpose', 'session_id', 'harness_id'],
@@ -173,7 +174,7 @@ export default function Sessions() {
                 </div>
               </div>
               <div className="text-xs text-gray-500 mb-2">
-                <Link to="/users" className="text-blue-600 hover:underline" onClick={e => e.stopPropagation()}>{getUserName(s.user_id)}</Link>
+                <Link to={`/users/${s.user_id}`} className="text-blue-600 hover:underline" onClick={e => e.stopPropagation()}>{getUserName(s.user_id)}</Link>
                 <span className="text-gray-400 ml-1">· {s.model_class}</span>
               </div>
               <div className="bg-gray-900 rounded p-3 font-mono text-[11px] text-gray-300 min-h-[50px]">
@@ -184,7 +185,7 @@ export default function Sessions() {
             </div>
           ))}
           {sessions.filter(s => s.status === 'active' || s.status === 'paused').length === 0 && (
-            <div className="col-span-3 card text-center py-12"><p className="text-gray-400">활성 세션이 없습니다</p></div>
+            <div className="col-span-3 card"><EmptyState icon="📡" title="활성 세션이 없습니다" message="세션을 시작하면 실시간으로 표시됩니다" /></div>
           )}
         </div>
       )}
@@ -193,7 +194,7 @@ export default function Sessions() {
 
       <div className="card">
         {paged.length === 0 ? (
-          <div className="text-center py-12"><p className="text-gray-400 mb-2">{filters.search ? '검색 결과가 없습니다' : '세션이 없습니다'}</p></div>
+          <div className="py-4"><EmptyState icon={filters.search ? '🔍' : '◐'} title={filters.search ? '검색 결과가 없습니다' : '세션이 없습니다'} message={filters.search ? '다른 검색어로 시도해보세요' : '세션 시작 버튼으로 새 세션을 열어보세요'} /></div>
         ) : (
           <table className="w-full">
             <thead>
@@ -208,10 +209,10 @@ export default function Sessions() {
             </thead>
             <tbody>
               {paged.map(s => (
-                <Fragment key={s.id || s.key || i}>
-                  <tr key={s.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer" onClick={() => toggleExpand(s)}>
+                <Fragment key={s.id}>
+                  <tr className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer" onClick={() => toggleExpand(s)}>
                     <td className="py-3"><div className="font-medium text-sm">{s.title || '제목 없음'}</div><div className="text-xs text-gray-400">{s.task_purpose}</div></td>
-                    <td className="py-3 text-sm">{getUserName(s.user_id)}</td>
+                    <td className="py-3 text-sm"><Link to={`/users/${s.user_id}`} className="text-blue-600 hover:underline">{getUserName(s.user_id)}</Link></td>
                     <td className="py-3 text-sm">{s.model_class}</td>
                     <td className="py-3 text-sm font-mono">{s.branch || '-'}</td>
                     <td className="py-3 text-xs text-gray-500">{formatDuration(s.opened_at, s.closed_at)}</td>
@@ -229,8 +230,8 @@ export default function Sessions() {
                     <tr className="bg-gray-50"><td colSpan={7} className="p-4">
                       <div className="grid grid-cols-3 gap-4 text-sm">
                         <div><span className="text-gray-500">세션 ID:</span> <span className="font-mono text-xs">{s.session_id?.slice(0, 30)}</span></div>
-                        <div><span className="text-gray-500">하네스:</span> <Link to="/harnesses" className="font-mono text-xs text-blue-600 hover:underline">{s.harness_id}</Link></div>
-                        <div><span className="text-gray-500">개발자:</span> <Link to="/users" className="text-blue-600 hover:underline">{getUserName(s.user_id)}</Link></div>
+                        <div><span className="text-gray-500">하네스:</span> <Link to={`/harnesses/${s.harness_id}`} className="font-mono text-xs text-blue-600 hover:underline">{s.harness_id}</Link></div>
+                        <div><span className="text-gray-500">개발자:</span> <Link to={`/users/${s.user_id}`} className="text-blue-600 hover:underline">{getUserName(s.user_id)}</Link></div>
                         <div><span className="text-gray-500">시작:</span> <span className="text-xs">{s.opened_at?.slice(0, 19)}</span></div>
                       </div>
                       {usageData[s.id] && (
@@ -274,7 +275,7 @@ export default function Sessions() {
               <div className="grid grid-cols-4 gap-3">
                 <div className="bg-gray-50 rounded p-3">
                   <div className="text-xs text-gray-500">개발자</div>
-                  <Link to="/users" className="text-sm font-medium text-blue-600 hover:underline">{getUserName(inspectorSession.user_id)}</Link>
+                  <Link to={`/users/${inspectorSession.user_id}`} className="text-sm font-medium text-blue-600 hover:underline">{getUserName(inspectorSession.user_id)}</Link>
                 </div>
                 <div className="bg-gray-50 rounded p-3">
                   <div className="text-xs text-gray-500">모델</div>
