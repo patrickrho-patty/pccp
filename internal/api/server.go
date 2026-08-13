@@ -152,6 +152,7 @@ func (s *Server) setupRouter() {
 			r.Put("/{id}", s.handleUpdateUser)
 			r.Delete("/{id}", s.handleDeleteUser)
 			r.Get("/{id}/audit", s.handleListUserAudit)
+			r.Post("/{id}/enrollment-code", s.handleIssueEnrollmentCode)
 		})
 
 		// Business Units (Korean org hierarchy) — PRD §12.1
@@ -2141,6 +2142,28 @@ func (s *Server) handleListHarnessAudit(w http.ResponseWriter, r *http.Request) 
 	s.db.Where("organization_id = ? AND resource_id = ?", orgID, id).
 		Order("occurred_at DESC").Limit(50).Find(&events)
 	writeJSON(w, http.StatusOK, events)
+}
+
+func (s *Server) handleIssueEnrollmentCode(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	code, err := s.identity.GenerateEnrollmentCode(orgID, userID, 24*time.Hour)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.user.enrollment_code",
+		ActorType:      "admin",
+		Action:         "issue_enrollment_code",
+		ResourceType:   "user",
+		ResourceID:     userID,
+		Details:        "enrollment code issued (24h validity)",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"code": code})
 }
 
 // --- Policy Rules (governance rules authored in the Policy console, PRD §13) ---

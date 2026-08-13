@@ -12,6 +12,7 @@ export default function UserDetail() {
   const [harnesses, setHarnesses] = useState<any[]>([])
   const [tab, setTab] = useState<'overview' | 'sessions' | 'harnesses' | 'audit'>('overview')
   const [auditEvents, setAuditEvents] = useState<any[]>([])
+  const [enrollmentCode, setEnrollmentCode] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -93,6 +94,14 @@ export default function UserDetail() {
                 navigate('/communications')
               } catch {}
             }} className="btn-sm btn-primary">💬 메시지 보내기</button>
+            <button onClick={async () => {
+              try {
+                const res = await fetch(`/api/users/${id}/enrollment-code`, { method: 'POST', headers: authHeaders() })
+                const data = await res.json()
+                setEnrollmentCode(data.code)
+              } catch {}
+            }} className="btn-sm btn-secondary ml-2">🔑 초대 코드</button>
+            {enrollmentCode && <span className="text-xs font-mono text-blue-600 ml-2 select-all">{enrollmentCode}</span>}
           </div>
         </div>
       )}

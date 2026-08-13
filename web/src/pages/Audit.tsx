@@ -2,6 +2,7 @@ import { useState, useEffect, Fragment } from 'react'
 import { Link } from 'react-router-dom'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
 import EmptyState from '../components/EmptyState'
+import { formatRelative } from '../utils/format'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['action', 'event_type', 'resource_type', 'resource_id', 'details', 'actor_id'],
@@ -161,7 +162,7 @@ export default function Audit() {
               {paged.map(e => (
                 <Fragment key={e.id}>
                 <tr className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer" onClick={() => setExpandedId(expandedId === e.id ? null : e.id)}>
-                  <td className="py-2 text-xs text-gray-400 font-mono whitespace-nowrap">{e.occurred_at?.slice(0, 19)}</td>
+                  <td className="py-2 text-xs text-gray-400 whitespace-nowrap" title={e.occurred_at?.slice(0, 19)}>{formatRelative(e.occurred_at)}</td>
                   <td className="py-2 text-sm font-medium font-mono">{e.event_type}</td>
                   <td className="py-2 text-sm">{e.actor_type}{e.actor_id ? ` (${e.actor_id.slice(0, 8)})` : ''}</td>
                   <td className="py-2 text-sm">{e.resource_type}{e.resource_id ? ': ' : ''}{e.resource_id && (

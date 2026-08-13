@@ -25,10 +25,10 @@
 \usepackage{cite}
 
 \hypersetup{
-  pdftitle={Who Authorized This Commit? PAPER and the Case for Governance-Native AI Communication},
+  pdftitle={DARI: Delegated Authorization and Receipts for Governed AI Inference},
   pdfauthor={Patrick Rho},
-  pdfsubject={An open, product-integrated protocol for governance-native AI communication},
-  pdfkeywords={AI governance, provenance, coding agents, open protocol, capability security, vLLM, SGLang}
+  pdfsubject={An open protocol for delegated authorization and evidence receipts in governed AI inference},
+  pdfkeywords={AI governance, delegated authorization, evidence receipts, inference protocols, capability security, provenance}
 }
 
 \linespread{1.04}
@@ -45,10 +45,9 @@
 \definecolor{paperamberlight}{HTML}{FFF1D6}
 \definecolor{papergray}{HTML}{EEF1F3}
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
-\newcommand{\papername}{PAPER}
-\newcommand{\system}{PCCP}
+\newcommand{\dariname}{DARI}
 
-\title{\textbf{Who Authorized This Commit?}\\\large PAPER and the Case for Governance-Native AI Communication}
+\title{DARI: Delegated Authorization and Receipts for Governed AI Inference}
 \author{Patrick Rho\\Patty Co., Ltd.}
 \date{August 2026}
 
@@ -58,9 +57,9 @@
 \begin{abstract}
 An AI coding agent can read a private repository, choose what leaves the machine, select a model, request tools, rewrite a file, and produce a commit. Yet after the commit exists, a basic accountability question remains difficult to answer: \emph{who was authorized to cause it?} Today's systems can usually recover pieces of the answer from API credentials, gateway decisions, tool logs, and Git history. They cannot reliably show that the same bounded authority governed the entire path from human intent to model invocation to executable side effect. This limitation motivates an authority-bearing exchange rather than independently correlated records.
 
-We present \papername{} (Patty AI Provenance \& Enforcement Relay), a stateful protocol that makes governance part of AI communication itself. Its core primitive, the \emph{Governed Exchange}, binds an enrolled peer and human identity to a short-lived Capability Lease, an immutable Policy Epoch, inline Relay Verdicts, a server-authoritative model package and endpoint, and a content-addressed Provenance Spine. The result is a live exchange in which a model may propose an action but cannot manufacture the authority to execute it, and in which evidence is produced along the causal path rather than reconstructed afterward.
+We present \dariname{}, Delegated Authorization and Receipts for Governed AI Inference. Its neutral kernel consists of four objects: a \emph{Credential} binds a peer to verification material; an \emph{Authorization Grant} expresses signed, bounded authority; a \emph{Governed Exchange} orders protected inference and effect transitions under that authority; and an \emph{Evidence Receipt} commits to the resulting evidence. An Inference Peer is selected through a Model Artifact Manifest rather than a caller-supplied endpoint. A model may propose an action but cannot manufacture the authority to execute it.
 
-PAPER is provided as an open specification and an implemented system spanning the protocol core, Relay, Control Plane, PIA, policy, model registry, leases, and provenance. The official Patty Code Harness uses PAPER for service inference, while reusable PIA interfaces support vLLM, SGLang, and custom engines. A common semantic layer represents chat, streaming, tools, structured output, multimodal input, caching, and compaction, enabling the same protocol to serve coding agents and other AI applications. On an Apple M4 Pro, a comparison bundle comprising a 1~KiB record round trip, evidence-chain update, object digest, and Ed25519 sign-and-verify totals 43.45~$\mu$s. This equals 0.0097\% of MLPerf Inference's 450~ms interactive LLM time-to-first-token criterion, a difference of more than four orders of magnitude~\cite{mlperf2025llm}. At 1~MiB, record encode/decode reaches 10.81~GB/s. These results show that governance state and cryptographic evidence can be incorporated into the communication protocol with a small measured primitive cost relative to an interactive inference latency budget.
+The evaluated implementation establishes deterministic framing, canonical CBOR, and TLS/TCP and QUIC transport bindings. Transcript-bound peer authentication, canonical signed authorization scope, delegated attenuation, and deterministic final receipts are specification obligations whose complete protocol-source implementations and tests remain required. Browser and cross-domain federation bindings are extension profiles. On an Apple M4 Pro, a comparison bundle comprising a 1~KiB record round trip, evidence-chain update, object digest, and Ed25519 sign-and-verify totals 43.45~$\mu$s. This equals 0.0097\% of MLPerf Inference's 450~ms interactive LLM time-to-first-token criterion, a difference of more than four orders of magnitude~\cite{mlperf2025llm}. At 1~MiB, record encode/decode reaches 10.81~GB/s. These primitive measurements do not measure delegation, browser transport, federation, network policy, or end-to-end inference.
 \end{abstract}
 
 \section{Introduction}
@@ -78,14 +77,14 @@ Consider a plausible incident. A developer asks an agent to repair a failing aut
 
 Each component may maintain a log, but those records describe different boundaries. API authentication identifies a caller; a gateway records routing or policy decisions; a sandbox records execution; and Git records the resulting artifact. Reconstructing a single causal and authorization account therefore requires correlating records produced under different identifiers, time sources, retention policies, and trust assumptions. Gaps or ambiguities may become visible only after the side effect has occurred.
 
-This fragmentation reflects a \emph{protocol-model gap}. Conventional AI interfaces transport prompts, tokens, tool calls, tasks, and artifacts without representing the bounded authority under which those objects may cause effects. Governance consequently remains external middleware rather than a condition on protocol state transitions. PAPER incorporates identity, authority, policy, and causal evidence into the inference and action lifecycle.
+This fragmentation reflects a \emph{protocol-model gap}. Conventional AI interfaces transport prompts, tokens, tool calls, tasks, and artifacts without representing the bounded authority under which those objects may cause effects. Governance consequently remains external middleware rather than a condition on protocol state transitions. DARI incorporates identity, authority, policy, and causal evidence into the inference and action lifecycle.
 
-\papername{} addresses this gap through an authority-bearing exchange. A protected exchange advances only when the relevant identity, purpose, lease, policy epoch, model resolution, and Relay decision agree; the existence of a TLS connection or model-generated tool call is insufficient. Figure~\ref{fig:overview} summarizes this protocol structure.
+\dariname{} addresses this gap through an authority-bearing exchange. A protected exchange advances only when the relevant Credential, Authorization Grant, authorization decision, and Model Artifact Manifest agree; the existence of a TLS connection or model-generated tool call is insufficient. Figure~\ref{fig:overview} summarizes this protocol structure.
 
 \begin{figure*}[t]
   \centering
   \includegraphics[width=0.96\textwidth]{figures/qwen-governed-exchange.png}
-  \caption{Comparison of retrospective governance and PAPER's governed exchange. PAPER represents bounded authority, enforcement, model identity, and causal evidence as conditions of the live path. The illustration is conceptual and contains no empirical data.}
+  \caption{Comparison of retrospective governance and DARI's governed exchange. DARI represents bounded authority, model identity, and causal evidence as conditions of the live path. The illustration is conceptual and contains no empirical data or implementation-coverage claim.}
   \label{fig:overview}
 \end{figure*}
 
@@ -94,13 +93,13 @@ This fragmentation reflects a \emph{protocol-model gap}. Conventional AI interfa
 The paper examines the thesis that \emph{an agentic AI protocol should carry messages and actions together with the authority and causal evidence that make those actions legitimate}. It makes four contributions:
 
 \begin{enumerate}
-  \item \textbf{Governed Exchange.} We define a protocol lifecycle in which human and peer identity, purpose-bound Capability Lease, immutable Policy Epoch, model authority, and inline Relay Verdict are prerequisites for protected actions. A model proposal is data; execution authority remains external to the model.
-  \item \textbf{Causal authority chain.} We connect user-facing model choice to a signed model package and leased endpoint, and connect intent, disclosure, inference, tool activity, edits, and artifacts through a content-addressed Provenance Spine and signed receipt. This construction provides a verifiable account of the authority under which an effect occurred.
-  \item \textbf{Product-integrated reference system.} We implement the complete product path across the official Patty Code Harness, PAPER Relay, Control Plane services, PIA, serving-engine adapters, runtime authority, and provenance. The official Harness registers PAPER as its service-inference provider and sends Catalog Model identity rather than arbitrary provider URLs or inference API keys.
-  \item \textbf{Open integration surface.} We publish an openly implementable specification, protocol library, PIA SDK, reusable vLLM and SGLang adapters, and a custom-engine boundary. Chat applications, copilots, automation systems, and other AI products can adopt the same governed exchange without inheriting Patty Code's application logic.
+  \item \textbf{Neutral protocol kernel.} We define Credential, Authorization Grant, Governed Exchange, and Evidence Receipt as the minimal authority and evidence objects for protected inference and effects.
+  \item \textbf{Delegated authority chain.} We define parent-bound, signed grants whose scopes attenuate monotonically, and separate a Model Artifact Manifest from the selected Inference Peer.
+  \item \textbf{Evidence-status boundary.} We distinguish the implemented framing and transport substrate from authentication, authorization, delegation, and receipt work that remains implementation-required.
+  \item \textbf{Open integration surface.} We separate the neutral kernel from application, browser, federation, and vendor-specific profiles so independent products can adopt compatible governed exchanges.
 \end{enumerate}
 
-The contribution is compositional. Secure transport, capabilities, provenance DAGs, signed receipts, and tool protocols already exist; PAPER integrates their authority semantics into one live state machine at the Harness--Relay--inference/runtime boundary. This integration makes governance enforceable before an effect and produces evidence as a protocol output.
+The contribution is compositional. Secure transport, capabilities, provenance DAGs, signed receipts, and tool protocols already exist; DARI integrates their authority semantics into one live state machine at the application--governance--inference/runtime boundary. The specification requires governance before an effect and evidence as a protocol output; the claim matrix states which parts of that construction are implemented.
 
 \section{The Governance Gap in Agentic AI Communication}
 
@@ -120,21 +119,21 @@ These mismatches suggest a missing layer between secure transport and applicatio
 \section{Adjacent Systems and Novelty Boundary}
 
 \paragraph{Model APIs and gateways.}
-HTTPS/JSON and streaming model APIs are effective request/response interfaces. Gateways can add authentication, quotas, policy, and logging. \papername{} differs primarily in the unit of state: authorization and evidence are bound to a long-lived governed session and exchange rather than reconstructed from independent middleware events.
+HTTPS/JSON and streaming model APIs are effective request/response interfaces. Gateways can add authentication, quotas, policy, and logging. \dariname{} differs primarily in the unit of state: authorization and evidence are bound to a governed exchange rather than reconstructed from independent middleware events.
 
 \paragraph{MCP and A2A.}
-The Model Context Protocol (MCP) standardizes interactions between AI applications and context/tool providers~\cite{mcp2025}. Agent2Agent (A2A) standardizes agent discovery, tasks, messages, and artifacts~\cite{a2a2026}. MCP can operate behind a governed tool broker, and A2A can operate at an agent-to-agent boundary. \papername{} targets the distinct boundary between a human-facing engineering Harness, inline policy enforcement, controlled inference/runtime infrastructure, and software provenance.
+The Model Context Protocol (MCP) standardizes interactions between AI applications and context/tool providers~\cite{mcp2025}. Agent2Agent (A2A) standardizes agent discovery, tasks, messages, and artifacts~\cite{a2a2026}. MCP can operate behind a governed tool broker, and A2A can operate at an agent-to-agent boundary. \dariname{} targets the distinct boundary between an AI application, inline governance, controlled inference/runtime infrastructure, and evidence verification.
 
 \paragraph{Runtime governance and agent security.}
-MI9 examines integrated runtime governance for agentic systems~\cite{wang2025mi9}; AgentDojo provides an environment for prompt-injection attacks and defenses~\cite{debenedetti2024agentdojo}; and argument-level provenance work highlights the mismatch between coarse authorization and tool arguments~\cite{fan2026granularity}. \papername{} is complementary: it defines protocol objects and state transitions through which identity, policy, tool authority, and evidence can be enforced and exported.
+MI9 examines integrated runtime governance for agentic systems~\cite{wang2025mi9}; AgentDojo provides an environment for prompt-injection attacks and defenses~\cite{debenedetti2024agentdojo}; and argument-level provenance work highlights the mismatch between coarse authorization and tool arguments~\cite{fan2026granularity}. \dariname{} is complementary: it defines protocol objects and state transitions through which identity, authorization, tool authority, and evidence can be enforced and exported.
 
 \paragraph{Supply-chain provenance.}
-in-toto records signed metadata about supply-chain steps~\cite{torresarias2019intoto,intoto}, while SLSA defines provenance expectations for build and source tracks~\cite{slsa12}. SCITT defines transparency services for registering signed statements about digital artifacts and issuing receipts~\cite{rfc9943}. \papername{} addresses an earlier interactive phase, before a build artifact necessarily exists: it governs whether context, inference, and side effects may occur. A \papername{} receipt may later become an in-toto/SLSA attestation input or a SCITT statement, but artifact transparency does not replace live exchange authority.
+in-toto records signed metadata about supply-chain steps~\cite{torresarias2019intoto,intoto}, while SLSA defines provenance expectations for build and source tracks~\cite{slsa12}. SCITT defines transparency services for registering signed statements about digital artifacts and issuing receipts~\cite{rfc9943}. \dariname{} addresses an earlier interactive phase, before a build artifact necessarily exists: it governs whether context, inference, and side effects may occur. A DARI receipt may later become an in-toto/SLSA attestation input or a SCITT statement, but artifact transparency does not replace live exchange authority.
 
 \paragraph{Identity and cryptographic building blocks.}
-SPIFFE provides workload-identity conventions~\cite{spiffe}. \papername{} reuses TLS~1.3~\cite{rfc9846}, QUIC~\cite{rfc9000}, deterministic CBOR~\cite{rfc8949}, COSE~\cite{rfc9052}, HPKE~\cite{rfc9180}, and COSE receipts~\cite{rfc9942}. These standards provide transport and object-security primitives; they do not define the application-level authority model proposed here.
+SPIFFE provides workload-identity conventions~\cite{spiffe}. \dariname{} reuses TLS~1.3~\cite{rfc9846}, QUIC~\cite{rfc9000}, deterministic CBOR~\cite{rfc8949}, COSE~\cite{rfc9052}, HPKE~\cite{rfc9180}, TLS channel bindings~\cite{rfc9266}, and COSE receipts~\cite{rfc9942}. These standards provide transport and object-security primitives; they do not define the application-level authority model proposed here. DARI's monotonic delegation follows the capability-attenuation principle exemplified by Macaroons~\cite{birgisson2014macaroons}.
 
-The novelty boundary follows from these roles: MCP describes tools, A2A describes inter-agent tasks, SPIFFE identifies workloads, gateways enforce policy, and in-toto attests supply-chain steps. PAPER binds these adjacent concerns through a governed state machine at the transition from proposed computation to an authorized, durable effect.
+The novelty boundary follows from these roles: MCP describes tools, A2A describes inter-agent tasks, SPIFFE identifies workloads, gateways enforce policy, and in-toto attests supply-chain steps. DARI binds these adjacent concerns through a governed state machine at the transition from proposed computation to an authorized, durable effect.
 
 \section{Requirements and Threat Model}
 
@@ -142,114 +141,123 @@ The novelty boundary follows from these roles: MCP describes tools, A2A describe
 
 The incident questions become six protocol requirements: (R1) bind every protected action to an enrolled peer and human identity; (R2) constrain authority with short-lived, purpose-bound grants; (R3) bind every enforcement decision to an immutable policy revision; (R4) identify the served model artifact and endpoint more strongly than a caller-supplied name; (R5) separate model proposal from runtime authorization and execution; and (R6) emit causal evidence that survives beyond ordinary application logs.
 
-The system must also operate with a temporarily unavailable control plane. Relays therefore consume signed or authenticated snapshots, revocation state, policy epochs, model catalogs, and leases. Availability under stale state is bounded by explicit expiration and deployment policy rather than implicit cache behavior.
+The system must also operate with a temporarily unavailable administrative authority. Governance relays therefore consume signed or authenticated snapshots, revocation state, authorization grants, and model manifests. Availability under stale state is bounded by explicit expiration and deployment policy rather than implicit cache behavior.
 
 \subsection{Adversaries and non-goals}
 
-We consider network attackers, unregistered clients, stolen or replayed credentials, compromised Harnesses, prompt-injected content, malicious tool output, model-name spoofing, cross-tenant mistakes, and evidence tampering. A Relay or administrator may also be malicious or compromised. The protocol aims to make such authority and evidence boundaries explicit; it cannot make a trusted plaintext Relay unable to inspect content, prove that a model behaved correctly, or prevent a fully compromised endpoint from acting outside the protocol. Hardware attestation and formal verification are optional assurance profiles, not assumptions required by the core protocol.
+We consider network attackers, unregistered clients, stolen or replayed credentials, compromised applications, prompt-injected content, malicious tool output, model-name spoofing, cross-tenant mistakes, and evidence tampering. A Governance Relay or administrator may also be malicious or compromised. The protocol aims to make such authority and evidence boundaries explicit; it cannot make a trusted plaintext relay unable to inspect content, prove that a model behaved correctly, or prevent a fully compromised endpoint from acting outside the protocol. Hardware attestation and formal verification are optional assurance profiles, not assumptions required by the core protocol.
 
 \section{The Governed Exchange}
 
-The Governed Exchange is PAPER's unit of accountable AI work. It is larger than an API request and smaller than an entire developer session. It begins when a Harness declares a protected purpose and ends with a receipt that commits to the resulting evidence. Within that boundary, inference, context disclosure, model selection, tool use, approval, and output are transitions of one authority-aware state machine.
+The Governed Exchange is DARI's unit of accountable AI work. It is larger than an API request and smaller than an entire application session. It begins when an application declares a protected purpose and ends with a receipt that commits to the resulting evidence. Within that boundary, inference, context disclosure, model selection, tool use, approval, and output are transitions of one authority-aware state machine.
 
 A useful mental model is a transaction whose commit condition is governance rather than database consistency. TLS answers whether bytes arrived through a protected channel. The Governed Exchange additionally asks whether the sender, purpose, policy, model, and proposed effect agree. Failure at a required gate prevents the protected transition; it is not merely recorded for later review.
 
 \subsection{Architecture and peers}
 
-The administrative Control Plane enrolls identities, issues policy and model state, manages revocation, and indexes evidence. It is authoritative but is not placed synchronously on every token. A Relay terminates Harness connections, validates cached signed state, performs inline policy decisions, routes approved inference, and appends evidence. A Patty Inference Agent (PIA) is a registered peer in front of a serving engine. The PIA translates PAPER's semantic request into a local engine interface; a raw model endpoint is never routing authority for the Harness. A runtime executes tools only after an independent authorization transition.
+An administrative authority enrolls identities, issues authorization and model state, manages revocation, and indexes evidence. It is authoritative but is not placed synchronously on every token. A Governance Relay validates cached signed state, performs inline authorization decisions, routes approved inference, and appends evidence. An Inference Peer presents an approved Model Artifact Manifest and translates DARI's semantic request into a local engine interface. A raw model endpoint is never routing authority for the application. An Effect Executor runs tools only after an independent authorization transition, and an Evidence Verifier checks the final receipt.
 
 \begin{table*}[t]
 \centering
-\caption{Core authority and identity objects. Objects visible to the Harness are intentionally separated from deployment identities.}
+\caption{Neutral DARI authority and identity objects. Objects visible to an application are intentionally separated from deployment identities.}
 \label{tab:objects}
 \small
 \begin{tabularx}{\textwidth}{@{}l l Y Y@{}}
 \toprule
 Object & Authority & Purpose & Important distinction \\
 \midrule
-Peer credential & enrollment authority & Binds key, peer profile, tenant, and validity & Identifies software instance, not merely user \\
-Capability Lease & policy authority & Grants bounded action/model/tool/context scope & Permission; not resource capacity \\
-Policy Epoch & policy authority & Immutable effective policy revision & Exchange binds to a digest, not ``latest'' \\
-Catalog Model & model catalog & Stable user-facing service identity & Contains no provider endpoint \\
-Model Descriptor & model catalog & Declares semantic capabilities and client minimums & Negotiation, not authorization by itself \\
-Model Package (PMP) & model authority & Signed artifact/template/quantization identity & Stronger than human-readable model name \\
-Endpoint Lease & serving authority & Binds active PIA endpoint to approved package & Short-lived deployment state \\
-Account Capacity Lease & capacity authority & Coordinates distributed workload slots & Capacity; distinct from action permission \\
+Credential & enrollment authority & Binds key, peer profile, domain, and validity & Identifies a protocol peer, not merely a user \\
+Authorization Grant & authorization authority & Grants bounded action/model/tool/context scope & Signed scope with explicit validity and audience \\
+Authorization Decision & governance authority & Records the decision and obligations for a transition & Evaluation result; not authority by itself \\
+Model Artifact Manifest & model authority & Identifies approved artifacts and serving configuration & Stronger than a human-readable model name \\
+Inference Peer & serving authority & Presents a Credential and approved manifest & Deployment role; not caller-selected infrastructure \\
+Governed Exchange & governance authority & Orders protected transitions under one grant chain & Unit of live authority and evidence \\
+Evidence Receipt & receipt signer & Commits to exchange outcome and final evidence root & Verifiable output; deterministic implementation required \\
 \bottomrule
 \end{tabularx}
 \end{table*}
 
 \subsection{Protocol enforcement and retrospective logging}
 
-A log schema can describe an allow decision but cannot require that the decision precede disclosure, model allocation, or tool execution. PAPER represents identity binding, lease presentation, epoch binding, verdict, dispatch, tool authorization, and closure as ordered protocol transitions. Peers must complete these transitions before protected work advances, distinguishing protocol enforcement from retrospective middleware records.
+A log schema can describe an allow decision but cannot require that the decision precede disclosure, model allocation, or tool execution. DARI represents credential binding, grant presentation, authorization decision, dispatch, tool authorization, and closure as ordered protocol transitions. Peers must complete these transitions before protected work advances, distinguishing protocol enforcement from retrospective middleware records.
 
-More precisely, let $a$ be a protected action attempted during exchange $x$ at time $t$. PAPER permits the corresponding state transition only when
+More precisely, let $a$ be a protected action attempted during exchange $x$ at time $t$. DARI permits the corresponding state transition only when
 
 \begin{equation}
-\operatorname{advance}(x,a,t) = P_x \land S_x \land L_x(a,t)
-  \land E_x \land V_x(a) \land R_x(a),
+\operatorname{advance}(x,a,t) = C_x \land G_x(a,t)
+  \land D_x(a) \land R_x(a),
 \label{eq:advance}
 \end{equation}
 
-where $P_x$ and $S_x$ denote valid peer and session bindings, $L_x(a,t)$ is an unexpired Capability Lease covering $a$, $E_x$ is a recognized immutable Policy Epoch, and $V_x(a)$ is an allowing Relay verdict. $R_x(a)$ collects action-specific authority: inference requires an approved model package and live endpoint lease, while a side effect requires independent tool authorization. Equation~\ref{eq:advance} is a protocol acceptance condition, not a formal security proof; failure of any conjunct blocks the protected transition.
+where $C_x$ denotes a valid Credential binding, $G_x(a,t)$ is an unexpired Authorization Grant whose audience and scope cover $a$, and $D_x(a)$ is an allowing Authorization Decision under the bound policy state. $R_x(a)$ collects action-specific authority: inference requires an approved Model Artifact Manifest and Inference Peer, while a side effect requires independent tool authorization. Equation~\ref{eq:advance} is a protocol acceptance condition, not a formal security proof; failure of any conjunct blocks the protected transition. The corresponding verification and negative-test path is implementation-required rather than inferred from the implemented framing layer.
 
 \subsection{Transport and representation}
 
-QUIC is the preferred binding because independent streams reduce head-of-line coupling; TLS~1.3 over TCP is the fallback. Both use the same application semantics and ALPN identity. Records contain a fixed prelude, canonical header, payload, logical lane identifier, and lane sequence. Deterministic CBOR provides reproducible object encoding. COSE signatures protect credentials, leases, epochs, model manifests, and receipts where object-level verification is required.
+QUIC is the preferred binding because independent streams reduce head-of-line coupling; TLS~1.3 over TCP is the fallback. Both use the same application semantics and ALPN identity. Records contain a fixed prelude, canonical header, payload, logical lane identifier, and lane sequence. Deterministic CBOR provides reproducible object encoding. COSE signatures protect credentials, authorization grants, model manifests, and receipts where object-level verification is required.
 
-Application authentication binds the peer credential, nonces, negotiated profile, and channel context so that a credential proof captured on one connection cannot be replayed on another. PAPER defines these messages, and the product path performs the handshake. Section~\ref{sec:implementation} distinguishes the local-development credential profile from the organization-issued, revocation-aware, transcript-bound verification profile used for stronger deployment assurance.
+Application authentication binds the Credential, nonces, negotiated profile, and channel context so that a credential proof captured on one connection cannot be replayed on another. DARI specifies this transcript-bound verification profile, but complete peer-authenticator implementation and negative tests remain required. The implemented evidence in this paper establishes the TLS/TCP and QUIC bindings, not the stronger authentication claim.
 
 \section{Authorization State Transitions}
 
-\subsection{Identity, sessions, and Capability Leases}
+\subsection{Credentials and Authorization Grants}
 
-User identity, Harness identity, and workload/session identity are separate because they answer different questions: who requested the work, which software installation carried it, and which bounded activity is now in progress. Enrollment gives a Harness a peer credential; it does not grant inference or tool authority. A Working Session binds user, Harness, organization/project, purpose, repository, and effective policy. A Capability Lease then grants a subset of actions for a short interval: permitted models, context paths, tool classes, token budget, and approval requirements. Revocation or expiration prevents new protected actions even if the underlying transport remains healthy.
+User identity, application identity, and workload/session identity are separate because they answer different questions: who requested the work, which software installation carried it, and which bounded activity is now in progress. Enrollment gives a peer a Credential; it does not grant inference or tool authority. An Authorization Grant binds issuer, subject, audience, confirmation key, scope, validity, and an optional parent-grant hash. It grants only a subset of actions for a bounded interval: permitted models, context paths, tool classes, token budget, and approval requirements. Revocation or expiration prevents new protected actions even if the underlying transport remains healthy.
 
-\subsection{Policy Epoch and Relay Verdict}
+For delegation step $i$, DARI requires the signed child grant
 
-A Policy Epoch freezes the meaning of ``allowed'' for an exchange. It is an immutable, digest-addressed snapshot rather than a pointer to whatever policy happens to be current when an auditor asks. If policy changes mid-session, active work follows an explicit continue, rebind, pause, or terminate rule; its historical meaning does not silently change. Before protected content reaches a PIA or runtime, the Relay emits a structured verdict such as allow, deny, transform, quarantine, or require approval. The verdict identifies the epoch and rule set that produced it.
+\begin{equation}
+G_i = \operatorname{Sign}_{K_i}(\mathrm{iss},\mathrm{sub},\mathrm{aud},\mathrm{cnf},\mathrm{scope}_i,t_{nbf},t_{exp},H(G_{i-1})),
+\qquad \mathrm{scope}_i \subseteq \mathrm{scope}_{i-1}.
+\label{eq:attenuation}
+\end{equation}
+
+The parent hash prevents detaching a child from its authority chain, while monotonic scope prevents delegation from amplifying authority. Canonical signed scope validation, parent-chain validation, and conformance tests for non-attenuating grants are implementation-required.
+
+\subsection{Authorization decisions and policy state}
+
+An Authorization Decision freezes the meaning of ``allowed'' for a transition by binding the grant, action, obligations, and a digest-addressed policy state rather than a pointer to whatever policy happens to be current when an auditor asks. If policy changes mid-session, active work follows an explicit continue, rebind, pause, or terminate rule; its historical meaning does not silently change. Before protected content reaches an Inference Peer or Effect Executor, the Governance Relay emits a structured decision such as allow, deny, transform, quarantine, or require approval.
 
 \subsection{Exchange lifecycle}
 
-A typical exchange progresses through \textsc{open}, \textsc{governance}, \textsc{route}, \textsc{stream}, optional \textsc{tool/approval}, and \textsc{close}. These states are not descriptive labels; they constrain which messages are legal. The Relay validates the peer/session binding, Capability Lease, Policy Epoch, catalog model, model package, endpoint lease, and capacity state before dispatch. Token or data records are multiplexed over lanes with sequence numbers. Side-effecting actions carry an idempotency class so reconnect/resumption cannot silently duplicate a completed operation.
+A typical exchange progresses through \textsc{open}, \textsc{authorize}, \textsc{route}, \textsc{stream}, \textsc{finalize}, and \textsc{close}, with an optional tool-proposal branch. These states are not descriptive labels; they constrain which messages are legal. The Governance Relay validates the Credential, Authorization Grant, Authorization Decision, Model Artifact Manifest, Inference Peer, and capacity state before dispatch. Token or data records are multiplexed over lanes with sequence numbers. Side-effecting actions carry an idempotency class so reconnect/resumption cannot silently duplicate a completed operation.
 
-Applied to the motivating incident, the context disclosure is allowed or denied under the lease and epoch before six files leave the Harness. ``Model A'' resolves to a signed package and leased PIA endpoint before inference. The shell string remains a proposal until a separately authorized runtime transition executes it. The final receipt binds these decisions to the evidence root later associated with the commit.
+Applied to the motivating incident, the context disclosure is allowed or denied under the grant and bound policy state before six files leave the application. ``Model A'' resolves to a signed Model Artifact Manifest and authorized Inference Peer before inference. The shell string remains a proposal until a separately authorized Effect Executor transition runs it. The final receipt binds these decisions to the evidence root later associated with the commit.
 
 Figure~\ref{fig:lifecycle} makes the ordering explicit. The optional branch is whether a tool is proposed; authorization of a proposed tool is never optional.
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=\textwidth]{figures/governed-exchange-lifecycle.png}
-  \caption{Protocol-design view of a Governed Exchange. Protected work advances through ordered authority gates; a model-generated tool proposal enters an optional branch but requires an independent authorization transition before execution. This figure specifies intended semantics, not measured implementation coverage.}
+  \caption{Conceptual protocol-design view of a Governed Exchange. Protected work advances through ordered authority gates; a model-generated tool proposal requires an independent authorization transition before execution. This figure specifies intended semantics, not measured implementation coverage.}
   \label{fig:lifecycle}
 \end{figure}
 
 \subsection{Server-authoritative model resolution}
 
-PAPER treats user-facing model names and security identities as distinct, and separates:
+DARI treats user-facing model names and security identities as distinct, and separates:
 
 \begin{equation*}
-\text{Catalog Model} \rightarrow \text{PMP} \rightarrow \text{PIA Endpoint}.
+\text{Service Model} \rightarrow \text{Model Artifact Manifest} \rightarrow \text{Inference Peer}.
 \end{equation*}
 
-After authentication, the Harness receives an effective model catalog scoped by entitlement, organization policy, deployment profile, geography, and client capability. A Model Descriptor advertises semantic features---for example multimodal input, structured output, parallel tools, caching, reasoning controls, and resumability---without exposing an endpoint. An inference-open message references the Catalog Model and Catalog Epoch. The Relay rejects stale or unauthorized selections, resolves a signed Patty Model Package (PMP), and selects a PIA endpoint with a valid lease. These are three deliberately different identities: the Catalog Model is the stable product visible to the user, the PMP identifies the approved artifact and serving configuration, and the Endpoint Lease identifies where that package may run now. A caller may express a preference; it cannot turn a string or base URL into trusted infrastructure.
+After authentication, the application receives an effective model catalog scoped by entitlement, organization policy, deployment profile, geography, and client capability. A Model Descriptor advertises semantic features---for example multimodal input, structured output, parallel tools, caching, reasoning controls, and resumability---without exposing an endpoint. An inference-open message references a stable Service Model and catalog revision. The Governance Relay rejects stale or unauthorized selections, resolves a signed Model Artifact Manifest, and selects an authorized Inference Peer. These are three deliberately different identities: the Service Model is visible to the user, the manifest identifies the approved artifact and serving configuration, and the peer identifies where that artifact may run now. A caller may express a preference; it cannot turn a string or base URL into trusted infrastructure.
 
 Figure~\ref{fig:model-identity} shows how that separation prevents a user-visible name from becoming routing authority.
 
 \begin{figure}[H]
   \centering
   \input{figures/model-identity-chain.tex}
-  \caption{Protocol-design view of server-authoritative model resolution. Product, artifact, and deployment identities remain distinct until the Relay resolves them to an enrolled PIA; the serving engine is a local implementation detail, not a Harness-selectable endpoint.}
+  \caption{Protocol-design view of server-authoritative model resolution. Product, artifact, and deployment identities remain distinct until the Governance Relay resolves them to an enrolled Inference Peer; the serving engine is a local implementation detail, not an application-selectable endpoint.}
   \label{fig:model-identity}
 \end{figure}
 
 \subsection{Tool authority and prompt injection}
 
-PAPER applies the following rule to prompt-injected output: \emph{model output is a proposal, never authority}. Tool descriptors specify execution placement, risk class, argument schema, approval policy, idempotency, and provenance requirements. Incrementally streamed arguments are not executable until complete and authorized. Repository text, chat, files, and tool output retain trust labels but cannot enlarge lease scope. Injected text must therefore cross an independently controlled authority boundary. PAPER records both the proposal and the decision that allowed, transformed, or denied execution.
+DARI applies the following rule to prompt-injected output: \emph{model output is a proposal, never authority}. Tool descriptors specify execution placement, risk class, argument schema, approval policy, idempotency, and provenance requirements. Incrementally streamed arguments are not executable until complete and authorized. Repository text, chat, files, and tool output retain trust labels but cannot enlarge grant scope. Injected text must therefore cross an independently controlled authority boundary. DARI records both the proposal and the decision that allowed, transformed, or denied execution.
 
 \section{Causal Provenance and Receipts}
 
-The audit objective is to establish how an artifact arose under a particular authority. The Provenance Spine represents causal edges among human intent, selected context, policy decisions, model invocation, output, tool proposal, approval, execution result, edits, tests, review, and source-control artifacts. Nodes are content-addressed and typed; edges describe causation, derivation, disclosure, transformation, or binding. The absence of a required transition leaves a verifiable gap in the causal account. Events performed entirely outside the governed path remain outside the receipt's observation boundary.
+The audit objective is to establish how an artifact arose under a particular authority. The Evidence Graph represents causal edges among human intent, selected context, authorization decisions, model invocation, output, tool proposal, approval, execution result, edits, tests, review, and source-control artifacts. Nodes are content-addressed and typed; edges describe causation, derivation, disclosure, transformation, or binding. The absence of a required transition leaves a verifiable gap in the causal account. Events performed entirely outside the governed path remain outside the receipt's observation boundary.
 
 For compact exchange integrity, let $r_0=H(\textsf{domain}\parallel\textsf{exchange-open})$ and
 
@@ -257,49 +265,45 @@ For compact exchange integrity, let $r_0=H(\textsf{domain}\parallel\textsf{excha
 r_i = H(\textsf{domain}\parallel r_{i-1}\parallel H(e_i)),
 \end{equation}
 
-where $e_i$ is the canonical representation of evidence event $i$. A signed Evidence Receipt binds the final root to the exchange, identities, policy epoch, model/package resolution, outcome, and retention/export profile. The receipt is deliberately compact: an auditor given the complete ordered event sequence can recompute the root and verify consistency with the closed exchange. Proving an arbitrary selectively disclosed subset requires an additional commitment or inclusion-proof construction; the current chain primitive alone does not provide it.
+where $e_i$ is the canonical representation of evidence event $i$. A signed Evidence Receipt binds the final root to the exchange, identities, grant and policy-state digests, Model Artifact Manifest, outcome, and retention/export profile. The receipt is deliberately compact: an auditor given the complete ordered event sequence can recompute the root and verify consistency with the closed exchange. Proving an arbitrary selectively disclosed subset requires an additional commitment or inclusion-proof construction; the current chain primitive alone does not provide it. The deterministic final-receipt serializer and verifier are implementation-required.
 
 The construction provides tamper evidence under explicit component trust assumptions. A compromised authorized component can emit false source data, and a coalition controlling every signer can manufacture a consistent account. Cross-component receipts and external transparency reduce unilateral trust but cannot establish the factual accuracy of source events. Cryptographic integrity and semantic truth are therefore treated as separate properties.
 
 Selective-export profiles may replace sensitive nodes with commitments or redacted summaries, but their verifiable linkage is a design requirement rather than a property established by the current chain benchmark. Source-code attribution after refactoring or merging is probabilistic and should carry confidence and transformation history rather than a binary ``AI-generated'' label.
 
-\section{From Open Specification to Integrated Product}
+\section{Evidence Status and Reference Profile}
 \label{sec:implementation}
 
-PAPER is published as an open specification and implemented as the communication substrate of the PCCP product system. The implementation includes a 32-byte record prelude, bounded headers and payloads, deterministic CBOR, COSE Sign1, Ed25519 object signatures, content-addressed digests, evidence chains, peer/session state machines, TLS/TCP and QUIC bindings, model/catalog schemas, policy and lease services, Relay and PIA services, provenance, registries, conformance surfaces, and deployment manifests. The benchmark snapshot is repository commit \texttt{0234034}; the product integration described below reflects the subsequent Patty Code and PCCP integration.
+DARI is published as an open specification whose evidence status is defined in the checked-in \texttt{implementation-claim-matrix.tsv}. The benchmark snapshot is repository commit \texttt{0234034}. That implementation establishes the record layer and transport bindings measured below; it does not by itself establish the stronger authentication, authorization, delegation, or receipt claims.
 
-\subsection{Integration with Patty Code}
-
-The official Patty Code Harness registers PAPER as its service-inference provider. It opens a PAPER connection, negotiates the Harness profile, receives the Relay challenge, sends the protocol authentication proof, and carries inference through \texttt{AI\_OPEN}, streaming token records, and \texttt{AI\_COMPLETE}. Official builds register no generic OpenAI-, Anthropic-, or Responses-style provider for Patty service inference. The Harness selects a server-issued Catalog Model; arbitrary base URLs and raw inference API keys do not constitute routing authority. These constraints are enforced by the current provider registration and protocol client.
-
-The Relay evaluates the governed request and forwards authorized inference to a PIA over the PAPER boundary. PIA translates the normalized semantic request to the local serving engine and returns normalized text, reasoning, tool-call, usage, and completion events. The Harness runtime also supplies repository access, approval modes, sandboxed tools, session recovery, MCP tools, skills, subagents, and editor integration. PAPER is therefore exercised within the operational lifecycle of the integrated coding-agent product.
-
-\subsection{Application-neutral integration}
-
-The protocol is application-neutral at the semantic boundary. Its AI layer represents multi-turn messages, streaming, tool definitions and calls, structured output, multimodal input, cache controls, and compaction. A chat application can use the message-and-stream subset; a copilot can add context and tool capabilities; an automation system can bind durable effects and evidence. None must import Patty Code's repository or user-interface logic.
-
-The open integration surface includes the protocol library, a PIA SDK and examples, reusable vLLM and SGLang adapters, and an \texttt{EngineAdapter} boundary for custom runtimes. PIA preserves a stable trust boundary while allowing serving engines to evolve independently: \texttt{Relay <-> PAPER <-> PIA <-> local engine}. This avoids requiring a permanent vLLM or SGLang fork and makes the protocol usable by commercial and open-source AI applications alike.
+\subsection{Authoritative implementation-claim matrix}
 
 \begin{table*}[t]
 \centering
-\caption{Implemented product surface and the evidence used in this paper. Product availability and empirical measurement scope are reported separately.}
+\caption{Authoritative DARI implementation status. ``Implementation-required'' denotes required protocol-source and test work, not implemented behavior.}
 \label{tab:claims}
 \small
-\begin{tabularx}{\textwidth}{@{}Y l Y Y@{}}
+\begin{tabularx}{\textwidth}{@{}l Y l Y@{}}
 \toprule
-Product surface & Availability & Integration evidence & Scope of claim \\
+ID & Claim & Status & Evidence \\
 \midrule
-Open PAPER core & Available & specification, protocol library, registries, transport and object tests & Implemented protocol and reusable library \\
-Official Patty Code Harness & Integrated & PAPER-only provider registration and Harness protocol client & Patty Code uses PAPER for service inference \\
-Relay and Control Plane & Integrated & identity, catalog, policy, lease, routing, audit, and provenance services & Product governance path exists; assurance depends on deployment profile \\
-PIA and serving engines & Available & PAPER PIA plus reusable vLLM and SGLang adapters & Governed engines can be integrated without Harness endpoint authority \\
-SDK and custom applications & Available & PIA SDK, examples, and custom \texttt{EngineAdapter} interface & Chat, copilots, automation, and custom AI products can adopt the protocol \\
-Evidence and provenance & Integrated & ChangeSet, span, chain, receipt, and audit services & Causal evidence is a product output under stated trust assumptions \\
-Measured core operations & Measured & five-run medians from the checked-in benchmark dataset & Primitive latency, throughput, allocation, and interactive-budget comparison \\
-Assurance profiles & Profile-specific & conformance audit and explicit assurance matrix & Deployment requirements and validation depth are explicit \\
+C1 & Deterministic framing and canonical CBOR & implemented & \texttt{internal/paper} tests \\
+C2 & TLS/TCP and QUIC bindings & implemented & \texttt{internal/paper} transport tests \\
+C3 & Transcript-bound peer authentication & implementation-required & \texttt{internal/relay/peer\_authenticator\_test.go} \\
+C4 & Canonical signed authorization scope & implementation-required & \texttt{internal/paper/authorization\_test.go} \\
+C5 & Delegated authorization attenuation & implementation-required & \texttt{internal/paper/delegation\_test.go} \\
+C6 & Deterministic final receipt & implementation-required & \texttt{internal/paper/receipt\_test.go} \\
+C7 & Browser binding & extension-profile & \texttt{dari.web/1} vectors \\
+C8 & Cross-domain federation & extension-profile & \texttt{dari.federation/1} vectors \\
 \bottomrule
 \end{tabularx}
 \end{table*}
+
+\subsection{Evaluated Patty compatibility profile}
+
+DARI evolved from Patty Co., Ltd.'s earlier internal protocol implementation. The evaluated compatibility profile preserves its deployed record and message semantics while the open specification generalizes authorization and receipt interfaces.
+
+In this named reference profile, the Patty Code Harness is the application, the existing Relay supplies the Governance Relay role, and the Patty Inference Agent (PIA) supplies the Inference Peer role. The Patty Model Package (PMP) is the profile-specific predecessor of the neutral Model Artifact Manifest. The profile includes reusable vLLM and SGLang adapters and a custom \texttt{EngineAdapter} boundary. These names describe compatibility and integration evidence; they are not DARI kernel objects, and profile integration does not upgrade C3--C6 to implemented status.
 
 \section{Evaluation Questions and Baselines}
 

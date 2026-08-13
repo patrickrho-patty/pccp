@@ -1,0 +1,9 @@
+claim_id	claim	status	evidence
+C1	Deterministic framing and canonical CBOR	implemented	internal/paper tests
+C2	TLS/TCP and QUIC bindings	implemented	internal/paper transport tests
+C3	Transcript-bound peer authentication	implementation-required	internal/relay/peer_authenticator_test.go
+C4	Canonical signed authorization scope	implementation-required	internal/paper/authorization_test.go
+C5	Delegated authorization attenuation	implementation-required	internal/paper/delegation_test.go
+C6	Deterministic final receipt	implementation-required	internal/paper/receipt_test.go
+C7	Browser binding	extension-profile	dari.web/1 vectors
+C8	Cross-domain federation	extension-profile	dari.federation/1 vectors

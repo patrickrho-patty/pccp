@@ -10,20 +10,20 @@
   local/.style={-{Latex[length=2.2mm]}, thick, dashed, draw=paperblueedge},
   kind/.style={font=\scriptsize, text=paperblueedge, align=center}
 ]
-  \node[identity] (catalog) {Catalog Model};
-  \node[identity, right=0.52cm of catalog] (pmp) {Signed PMP};
-  \node[identity, right=0.52cm of pmp] (lease) {Endpoint Lease};
-  \node[runtime, right=0.52cm of lease] (pia) {Enrolled PIA};
-  \node[runtime, right=0.52cm of pia] (engine) {Serving Engine};
+  \node[identity] (catalog) {Service Model};
+  \node[identity, right=0.52cm of catalog] (manifest) {Model Artifact\\Manifest};
+  \node[identity, right=0.52cm of manifest] (grant) {Authorization\\Grant};
+  \node[runtime, right=0.52cm of grant] (peer) {Inference Peer};
+  \node[runtime, right=0.52cm of peer] (engine) {Serving Engine};
 
   \node[kind, below=0.16cm of catalog] {product identity\\visible to user};
-  \node[kind, below=0.16cm of pmp] {artifact identity\\signed configuration};
-  \node[kind, below=0.16cm of lease] {deployment identity\\time bounded};
-  \node[kind, below=0.16cm of pia] {PAPER peer\\routing target};
-  \node[kind, below=0.16cm of engine] {local adapter\\not Harness visible};
+  \node[kind, below=0.16cm of manifest] {artifact identity\\signed configuration};
+  \node[kind, below=0.16cm of grant] {bounded authority\\audience and scope};
+  \node[kind, below=0.16cm of peer] {deployment identity\\routing target};
+  \node[kind, below=0.16cm of engine] {local adapter\\not application visible};
 
-  \draw[resolve] (catalog) -- (pmp);
-  \draw[resolve] (pmp) -- (lease);
-  \draw[resolve] (lease) -- (pia);
-  \draw[local] (pia) -- (engine);
+  \draw[resolve] (catalog) -- (manifest);
+  \draw[resolve] (manifest) -- (grant);
+  \draw[resolve] (grant) -- (peer);
+  \draw[local] (peer) -- (engine);
 \end{tikzpicture}
