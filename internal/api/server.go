@@ -1470,6 +1470,17 @@ func (s *Server) handleEnrollEndpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.endpoint.enrolled",
+		ActorType:      "admin",
+		Action:         "enroll_endpoint",
+		ResourceType:   "endpoint",
+		ResourceID:     endpoint.EndpointID,
+		Details:        fmt.Sprintf("PIA: %s, model: %s, assurance: %s", req.PIAPeerID, req.ModelPackageID, req.AssuranceLevel),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusCreated, endpoint)
 }
 
