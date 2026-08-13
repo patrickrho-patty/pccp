@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import ConfirmDialog from '../components/ConfirmDialog'
 import EmptyState from '../components/EmptyState'
 import { formatRelative } from '../utils/format'
+import { exportCSV } from '../utils/csv'
 
 const FLEET_ACTIONS = [
   { id: 'request_reauthentication', label: '재인증 요청', labelEn: 'Re-auth', severity: 'normal', icon: '🔑' },
@@ -116,6 +117,7 @@ export default function Fleet() {
         <h1 className="text-2xl font-bold">플릿 관리 <span className="text-gray-400 text-lg font-normal">Fleet Management</span></h1>
         <div className="flex gap-3 items-center">
           <span className="text-sm text-gray-500">{inventory.filter(h => h.is_active).length} 활성 / {inventory.length} 전체</span>
+          <button onClick={() => exportCSV(`fleet_${new Date().toISOString().slice(0,10)}.csv`, ['하네스 ID', '사용자', '상태', '위험도', '세션수'], inventory.map(h => [h.harness?.harness_id, h.user?.name_ko || h.user?.name, h.harness?.status, h.harness?.risk_state, String(h.sessions?.length || 0)]))} className="btn-sm btn-secondary">📥 CSV</button>
           <button onClick={() => setShowLockdownConfirm(true)} className="btn-danger text-sm">🔴 비상 잠금</button>
         </div>
       </div>
