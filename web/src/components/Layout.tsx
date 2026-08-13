@@ -183,7 +183,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen bg-gray-50">
       {/* Enterprise Sidebar */}
-      <aside className="w-56 bg-gray-900 text-gray-300 flex flex-col overflow-hidden border-r border-gray-800">
+      <aside className="enterprise-sidebar w-56 bg-gray-900 text-gray-300 flex flex-col overflow-hidden border-r border-gray-800">
         {/* Logo */}
         <div className="px-4 py-4 border-b border-gray-800 flex-shrink-0">
           <div className="flex items-center gap-2">
@@ -233,7 +233,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-y-auto main-scroll">
+      <main className="main-content flex-1 overflow-y-auto main-scroll">
         {/* Global Search Bar */}
         <div className="bg-white border-b border-gray-200 px-6 py-2 sticky top-0 z-20">
           <GlobalSearch />

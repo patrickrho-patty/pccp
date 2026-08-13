@@ -189,3 +189,22 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Responsive layouts (00-cross-cutting A14) */
+.table-responsive {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Hide sidebar on narrow screens; content takes full width */
+@media (max-width: 768px) {
+  .enterprise-sidebar { display: none; }
+  .main-content { margin-left: 0 !important; }
+  .grid-responsive { grid-template-columns: 1fr !important; }
+}
+
+/* Stack stat cards on narrow screens */
+@media (max-width: 640px) {
+  .stat-grid { grid-template-columns: 1fr !important; }
+  .grid-responsive-2 { grid-template-columns: 1fr !important; }
+}

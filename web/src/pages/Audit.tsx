@@ -147,7 +147,7 @@ export default function Audit() {
             <EmptyState icon="☰" title="표시할 감사 이벤트가 없습니다" message="관리자 활동이 기록되면 표시됩니다" />
           </div>
         ) : (
-          <table className="w-full">
+          <table className="w-full overflow-x-auto block">
             <thead>
               <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
                 <th className="pb-2">시간 · Time</th>

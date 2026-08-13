@@ -325,7 +325,7 @@ export default function Security() {
                   <h4 className="text-sm font-semibold">{catInfo.ko} <span className="text-gray-400 font-normal">{catInfo.en}</span></h4>
                   <span className="text-xs text-gray-400 ml-auto">{catInfo.desc}</span>
                 </div>
-                <table className="w-full">
+                <table className="w-full overflow-x-auto block">
                   <thead>
                     <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
                       <th className="pb-2">규칙 이름</th>
@@ -392,7 +392,7 @@ export default function Security() {
           {filteredFindings.length === 0 ? (
             <div className="text-center py-12"><div className="text-4xl mb-3">✅</div><p className="text-gray-500">활성 보안 발견이 없습니다.</p></div>
           ) : (
-            <table className="w-full">
+            <table className="w-full overflow-x-auto block">
               <thead><tr className="border-b border-gray-200 text-left text-sm text-gray-500">
                 <th className="pb-3">유형</th><th className="pb-3">심각도</th><th className="pb-3">제목</th><th className="pb-3">상태</th><th className="pb-3">시간</th>
               </tr></thead>

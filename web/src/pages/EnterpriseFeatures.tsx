@@ -180,7 +180,7 @@ export default function EnterpriseFeatures() {
           {violations.length === 0 ? (
             <p className="text-gray-400 text-center py-8">위반 사항이 없습니다 ✅</p>
           ) : (
-            <table className="w-full">
+            <table className="w-full overflow-x-auto block">
               <thead><tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
                 <th className="pb-3">기능</th><th className="pb-3">심각도</th><th className="pb-3">설명</th>
                 <th className="pb-3">하네스</th><th className="pb-3">시간</th><th className="pb-3"></th>

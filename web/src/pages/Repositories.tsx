@@ -147,7 +147,7 @@ export default function Repositories() {
       <FilterBar config={FILTER_CONFIG} onChange={setFilters} />
 
       <div className="card">
-        <table className="w-full">
+        <table className="w-full overflow-x-auto block">
           <thead><tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
             <th className="pb-3">저장소</th>
             <th className="pb-3">프로젝트</th>

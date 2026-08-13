@@ -111,7 +111,7 @@ export default function UserDetail() {
           {sessions.length === 0 ? (
             <p className="text-gray-400 text-center py-8">세션 이력이 없습니다</p>
           ) : (
-            <table className="w-full">
+            <table className="w-full overflow-x-auto block">
               <thead><tr className="border-b text-left text-xs text-gray-500 uppercase">
                 <th className="pb-3">제목</th><th className="pb-3">모델</th><th className="pb-3">상태</th><th className="pb-3">시작일</th>
               </tr></thead>
@@ -153,7 +153,7 @@ export default function UserDetail() {
           {auditEvents.length === 0 ? (
             <p className="text-gray-400 text-center py-8">감사 이력이 없습니다</p>
           ) : (
-            <table className="w-full">
+            <table className="w-full overflow-x-auto block">
               <thead><tr className="border-b text-left text-xs text-gray-500 uppercase"><th className="pb-3">시간</th><th className="pb-3">이벤트</th><th className="pb-3">결과</th></tr></thead>
               <tbody>
                 {auditEvents.map((e, i) => (

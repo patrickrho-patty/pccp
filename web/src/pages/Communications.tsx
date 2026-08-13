@@ -302,7 +302,7 @@ export default function Communications() {
 
           <div className="card">
             {files.length === 0 ? <p className="text-gray-400 text-center py-8">파일 전송 내역이 없습니다</p> : (
-              <table className="w-full">
+              <table className="w-full overflow-x-auto block">
                 <thead><tr className="border-b text-left text-xs text-gray-500">
                   <th className="pb-2">파일</th><th className="pb-2">보낸 사람</th><th className="pb-2">받는 사람</th>
                   <th className="pb-2">분류</th><th className="pb-2">상태</th><th className="pb-2">시간</th>

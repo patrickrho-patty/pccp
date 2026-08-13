@@ -154,7 +154,7 @@ export default function SREConsole() {
               <p className="text-sm text-gray-400 mt-1">Public Cloud 계정은 /api/public/accounts API로 생성할 수 있습니다.</p>
             </div>
           ) : (
-            <table className="w-full">
+            <table className="w-full overflow-x-auto block">
               <thead>
                 <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
                   <th className="pb-2">계정 · Account</th>
@@ -206,7 +206,7 @@ export default function SREConsole() {
 
           <div className="card">
             <h3 className="text-sm font-semibold mb-3">슬롯 정책 · Slot Policy per Plan</h3>
-            <table className="w-full">
+            <table className="w-full overflow-x-auto block">
               <thead>
                 <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
                   <th className="pb-2">플랜 · Plan</th>

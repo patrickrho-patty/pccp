@@ -200,7 +200,7 @@ function PackagesTab() {
       <FilterBar config={MODEL_FILTER} onChange={setFilters} />
 
       <div className="card">
-        <table className="w-full">
+        <table className="w-full overflow-x-auto block">
           <thead><tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
             <th className="pb-3">패키지</th><th className="pb-3">상태</th><th className="pb-3">엔드포인트</th><th className="pb-3">작업</th>
           </tr></thead>
@@ -250,7 +250,7 @@ function EndpointsTab() {
       <FilterBar config={EP_FILTER} onChange={setFilters} />
 
       <div className="card">
-        <table className="w-full">
+        <table className="w-full overflow-x-auto block">
           <thead><tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
             <th className="pb-3">엔드포인트 (PIA)</th><th className="pb-3">상태</th><th className="pb-3">보증</th><th className="pb-3">활성 요청</th><th className="pb-3">TTFT</th>
           </tr></thead>

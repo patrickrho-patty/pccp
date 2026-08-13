@@ -335,7 +335,7 @@ export default function Policy() {
           {epochs.length === 0 ? (
             <p className="text-gray-400 text-center py-8">에포크 이력이 없습니다</p>
           ) : (
-            <table className="w-full">
+            <table className="w-full overflow-x-auto block">
               <thead><tr className="border-b border-gray-200 text-left text-xs text-gray-500">
                 <th className="pb-3">에포크 ID</th><th className="pb-3">전환 모드</th><th className="pb-3">허용 모델</th><th className="pb-3">생성일</th>
               </tr></thead>

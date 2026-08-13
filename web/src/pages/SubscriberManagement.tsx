@@ -115,7 +115,7 @@ export default function SubscriberManagement() {
         {/* Account List */}
         <div className={selectedId ? 'col-span-7' : 'col-span-12'}>
           <div className="card">
-            <table className="w-full">
+            <table className="w-full overflow-x-auto block">
               <thead><tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
                 <th className="pb-3">구독자</th>
                 <th className="pb-3">플랜</th>

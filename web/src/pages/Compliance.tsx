@@ -91,7 +91,7 @@ export default function Compliance() {
           {/* Control results */}
           <div className="card mb-6">
             <h3 className="text-sm font-semibold mb-3">통제 평가 결과 · Control Results</h3>
-            <table className="w-full">
+            <table className="w-full overflow-x-auto block">
               <thead>
                 <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
                   <th className="pb-3">통제 ID</th>

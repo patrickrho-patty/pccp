@@ -214,7 +214,7 @@ export default function Sessions() {
         {paged.length === 0 ? (
           <div className="py-4"><EmptyState icon={filters.search ? '🔍' : '◐'} title={filters.search ? '검색 결과가 없습니다' : '세션이 없습니다'} message={filters.search ? '다른 검색어로 시도해보세요' : '세션 시작 버튼으로 새 세션을 열어보세요'} /></div>
         ) : (
-          <table className="w-full">
+          <table className="w-full overflow-x-auto block">
             <thead>
               <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
                 <th className="pb-3 w-8"><input type="checkbox" onChange={(e) => { if (e.target.checked) setSelectedSessions(new Set(paged.map(s => s.id))); else setSelectedSessions(new Set()) }} /></th>

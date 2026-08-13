@@ -115,7 +115,7 @@ export default function ServiceCommandCenter() {
           {filteredAccounts.length === 0 ? (
             <EmptyState icon="🔍" title="해당 상태의 계정이 없습니다" />
           ) : (
-            <table className="w-full">
+            <table className="w-full overflow-x-auto block">
               <thead>
                 <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
                   <th className="pb-2">이메일</th>

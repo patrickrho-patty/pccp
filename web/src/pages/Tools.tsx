@@ -209,7 +209,7 @@ export default function Tools() {
         {filtered.length === 0 ? (
           <p className="text-gray-400 text-center py-8">등록된 도구가 없습니다</p>
         ) : (
-          <table className="w-full">
+          <table className="w-full overflow-x-auto block">
             <thead>
               <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
                 <th className="pb-3">도구명</th>

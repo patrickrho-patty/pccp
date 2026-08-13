@@ -261,7 +261,7 @@ export default function CodeExplorer() {
                   {spans.length === 0 ? (
                     <div className="card text-center py-12"><p className="text-gray-400 text-sm">라인 수준 출처 데이터가 없습니다</p></div>
                   ) : (
-                    <table className="w-full">
+                    <table className="w-full overflow-x-auto block">
                       <thead><tr className="border-b text-left text-xs text-gray-500">
                         <th className="pb-2">파일</th><th className="pb-2">라인</th><th className="pb-2">출처</th>
                         <th className="pb-2">신뢰도</th><th className="pb-2">모델</th>
