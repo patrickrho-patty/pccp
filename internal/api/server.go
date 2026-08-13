@@ -297,6 +297,7 @@ func (s *Server) setupRouter() {
 			r.Get("/repos/{repoId}/changesets", s.handleGetRepoChangeSets)
 			r.Get("/repos/{repoId}/spans", s.handleGetRepoSpans)
 			r.Get("/repos/{repoId}/stats", s.handleGetRepoProvenanceStats)
+			r.Get("/repos/{repoId}/code-span", s.handleCodeSpanLookup)
 		})
 
 		// Impact Analysis
@@ -3113,6 +3114,23 @@ func (s *Server) handleShadowAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, findings)
+}
+
+func (s *Server) handleCodeSpanLookup(w http.ResponseWriter, r *http.Request) {
+	repoID := chi.URLParam(r, "repoId")
+	orgID := getOrgID(r)
+	filePath := r.URL.Query().Get("file")
+	startLine, _ := strconv.Atoi(r.URL.Query().Get("start"))
+	endLine, _ := strconv.Atoi(r.URL.Query().Get("end"))
+	if endLine == 0 {
+		endLine = startLine
+	}
+	result, err := s.provenance.LookupCodeSpan(orgID, repoID, filePath, startLine, endLine)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handleListEnterpriseFeatures(w http.ResponseWriter, r *http.Request) {
