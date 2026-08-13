@@ -754,6 +754,17 @@ func (s *Server) handleEnrollHarness(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: req.OrganizationID,
+		EventType:      "cp.harness.enrolled",
+		ActorType:      "admin",
+		Action:         "enroll_harness",
+		ResourceType:   "harness",
+		ResourceID:     harness.ID,
+		Details:        fmt.Sprintf("harness_id: %s, user_id: %s", req.HarnessID, req.UserID),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"harness":    harness,
 		"credential": cred,
@@ -1383,6 +1394,17 @@ func (s *Server) handlePublishModel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: getOrgID(r),
+		EventType:      "cp.model.published",
+		ActorType:      "admin",
+		Action:         "publish_model",
+		ResourceType:   "model_package",
+		ResourceID:     id,
+		Details:        "model package published",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "published"})
 }
 
@@ -1397,6 +1419,17 @@ func (s *Server) handleRecallModel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: getOrgID(r),
+		EventType:      "cp.model.recalled",
+		ActorType:      "admin",
+		Action:         "recall_model",
+		ResourceType:   "model_package",
+		ResourceID:     id,
+		Details:        "model package recalled",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "recalled"})
 }
 
