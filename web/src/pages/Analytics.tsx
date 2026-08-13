@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import EmptyState from '../components/EmptyState'
 import { Link } from 'react-router-dom'
+import { showToast } from '../components/Toast'
+import { exportCSV } from '../utils/csv'
 
 export default function Analytics() {
   const [usage, setUsage] = useState<any>(null)
@@ -17,14 +19,14 @@ export default function Analytics() {
 
   const fmt = (n: number) => n?.toLocaleString() || '0'
 
-  const exportCSV = () => {
-    const rows = ['metric,value']
+  const doExport = () => {
+    const rows: (string|number)[][] = []
     if (usage) {
-      rows.push('total_tokens_in,' + (usage.total_tokens_in || 0))
-      rows.push('total_tokens_out,' + (usage.total_tokens_out || 0))
+      rows.push(['total_tokens_in', usage.total_tokens_in || 0])
+      rows.push(['total_tokens_out', usage.total_tokens_out || 0])
     }
-    const blob = new Blob([rows.join('\n')], { type: 'text/csv' })
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'analytics.csv'; a.click()
+    exportCSV(`analytics_${new Date().toISOString().slice(0,10)}.csv`, ['metric', 'value'], rows)
+    showToast('분석 데이터 내보내기 완료', 'success')
   }
 
   // Simple bar chart component using CSS
@@ -61,7 +63,7 @@ export default function Analytics() {
 
   return (
     <div>
-      <div className="flex justify-end mb-4"><button onClick={exportCSV} className="btn-secondary text-sm">CSV Export</button></div>
+      <div className="flex justify-end mb-4"><button onClick={doExport} className="btn-secondary text-sm">CSV Export</button></div>
       <h1 className="text-2xl font-bold mb-6">분석 <span className="text-gray-400 text-lg font-normal">Analytics & Work Intelligence</span></h1>
 
       {/* Executive Summary */}
