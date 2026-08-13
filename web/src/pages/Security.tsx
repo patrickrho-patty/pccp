@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { formatRelative } from '../utils/format'
+import { showToast } from '../components/Toast'
 
 // Pattern presets — plain-language options, no regex visible to user
 const PATTERN_PRESETS = {
@@ -266,7 +267,7 @@ export default function Security() {
             <h3 className="text-sm font-semibold mb-3">인시던트 대응</h3>
             <button className="btn-danger w-full text-sm" onClick={async () => {
               if (!confirm('전체 조직을 잠금하시겠습니까? 모든 AI 세션이 중지됩니다.')) return
-              try { await fetch('/api/security/lockdown', { method: 'POST', headers: authHeaders() }); alert('긴급 잠금 활성화') } catch { alert('실패') }
+              try { await fetch('/api/security/lockdown', { method: 'POST', headers: authHeaders() }); showToast('긴급 잠금 활성화', 'success') } catch { showToast('실패', 'error') }
             }}>⚠ 긴급 조직 잠금 · Emergency Lockdown</button>
           </div>
         </div>
@@ -454,7 +455,7 @@ function RuleBuilder({ rule, onSave, onCancel }: { rule: Rule | null; onSave: (r
   }
 
   const handleSave = () => {
-    if (!presetId || !name) { alert('패턴과 이름을 선택하세요'); return }
+    if (!presetId || !name) { showToast('패턴과 이름을 선택하세요', 'error'); return }
     const p = presets.find(x => x.id === presetId)
     onSave({
       id: rule?.id || `${category}-${Date.now()}`,

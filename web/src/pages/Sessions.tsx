@@ -52,6 +52,7 @@ export default function Sessions() {
   const [page, setPage] = useState(1)
   const pageSize = 25
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
+  const [catalogModels, setCatalogModels] = useState<any[]>([])
   const [form, setForm] = useState({ user_id: '', project_id: '', repository_id: '', branch: '', title: '', task_purpose: '', model_class: 'patty-code-standard' })
 
   const load = () => {
@@ -60,6 +61,7 @@ export default function Sessions() {
     api.listProjects().then(data => setProjects(Array.isArray(data) ? data : []))
     api.listRepositories().then(data => setRepos(Array.isArray(data) ? data : []))
     api.listHarnesses().then(data => setHarnesses(Array.isArray(data) ? data : []))
+    api.catalogModels().then(data => setCatalogModels(Array.isArray(data) ? data : [])).catch(() => {})
   }
   useEffect(() => {
     load()
@@ -153,7 +155,7 @@ export default function Sessions() {
             <div><label className="label">저장소 · Repository</label><select className="input" value={form.repository_id} onChange={e => setForm({ ...form, repository_id: e.target.value })}><option value="">선택 안함</option>{repos.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></div>
             <div><label className="label">브랜치 · Branch</label><input className="input" value={form.branch} onChange={e => setForm({ ...form, branch: e.target.value })} placeholder="feature/refund" /></div>
             <div><label className="label">세션 제목 · Title</label><input className="input" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="환불 로직 구현" required /></div>
-            <div><label className="label">모델 · Model</label><select className="input" value={form.model_class} onChange={e => setForm({ ...form, model_class: e.target.value })}><option value="patty-code-standard">Patty Code Standard</option><option value="patty-code-pro">Patty Code Pro</option></select></div>
+            <div><label className="label">모델 · Model</label><select className="input" value={form.model_class} onChange={e => setForm({ ...form, model_class: e.target.value })}>{catalogModels.length > 0 ? catalogModels.map(m => <option key={m.catalog_model_id} value={m.catalog_model_id}>{m.display_name_ko || m.display_name || m.catalog_model_id}</option>) : <><option value="patty-code-standard">Patty Code Standard</option><option value="patty-code-pro">Patty Code Pro</option></>}</select></div>
             <div className="col-span-2"><label className="label">작업 목적 · Task Purpose</label><input className="input" value={form.task_purpose} onChange={e => setForm({ ...form, task_purpose: e.target.value })} placeholder="payment refund processing" /></div>
           </div>
           <button type="submit" className="btn-primary mt-4">세션 시작 · Start Session</button>
