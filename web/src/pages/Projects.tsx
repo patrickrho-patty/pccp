@@ -28,12 +28,14 @@ export default function Projects() {
   const [archiveTarget, setArchiveTarget] = useState<string | null>(null)
   const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
   const [form, setForm] = useState({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard', description: '' })
+  const [catalogModels, setCatalogModels] = useState<any[]>([])
 
   const load = () => {
     api.listProjects().then(data => setProjects(Array.isArray(data) ? data : []))
     api.listRepositories().then(data => setRepos(Array.isArray(data) ? data : []))
     api.listSessions().then(data => setSessions(Array.isArray(data) ? data : []))
     api.listUsers().then(data => setUsers(Array.isArray(data) ? data : []))
+    api.catalogModels().then(data => setCatalogModels(Array.isArray(data) ? data : [])).catch(() => {})
   }
   useEffect(() => { load() }, [])
 
@@ -104,7 +106,22 @@ export default function Projects() {
             <div><label className="label">프로젝트명 · Name</label><input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="my-project" required /></div>
             <div><label className="label">한글명 · Korean Name</label><input className="input" value={form.name_ko} onChange={e => setForm({ ...form, name_ko: e.target.value })} placeholder="마이 프로젝트" /></div>
             <div><label className="label">슬러그 · Slug</label><input className="input" value={form.slug} onChange={e => setForm({ ...form, slug: e.target.value })} placeholder="my-project" disabled={!!editingId} /></div>
-            <div><label className="label">허용 모델 · Allowed Models</label><input className="input" value={form.allowed_models} onChange={e => setForm({ ...form, allowed_models: e.target.value })} placeholder="patty-code-standard, patty-code-fast" /></div>
+            <div><label className="label">허용 모델 · Allowed Models</label>{catalogModels.length > 0 ? (
+              <div className="flex flex-wrap gap-2 border border-gray-200 rounded-md p-3">
+                {catalogModels.map(m => (
+                  <label key={m.catalog_model_id} className="flex items-center gap-1 text-sm cursor-pointer">
+                    <input type="checkbox" checked={form.allowed_models.split(',').map(s => s.trim()).includes(m.catalog_model_id)} onChange={e => {
+                      const current = form.allowed_models.split(',').map(s => s.trim()).filter(Boolean)
+                      if (e.target.checked) current.push(m.catalog_model_id)
+                      setForm({ ...form, allowed_models: current.join(',') })
+                    }} />
+                    <span>{m.display_name_ko || m.display_name || m.catalog_model_id}</span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <input className="input" value={form.allowed_models} onChange={e => setForm({ ...form, allowed_models: e.target.value })} placeholder="patty-code-standard, patty-code-fast" />
+            )}</div>
             <div className="col-span-2"><label className="label">설명 · Description</label><input className="input" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="프로젝트 설명" /></div>
           </div>
           <button type="submit" className="btn-primary">{editingId ? '수정 저장' : '생성'}</button>
