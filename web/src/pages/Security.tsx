@@ -115,6 +115,24 @@ type Finding = {
 export default function Security() {
   const [tab, setTab] = useState<'dashboard' | 'rules' | 'findings' | 'scanner'>('dashboard')
   const [rules, setRules] = useState<Rule[]>(buildDefaultRules())
+
+  // Merge persisted DLP rules from API into the catalog
+  useEffect(() => {
+    api.securityRules().then((persisted: any[]) => {
+      if (!persisted || persisted.length === 0) return
+      setRules(prev => {
+        const map = new Map(prev.map(r => [r.id, r]))
+        for (const p of persisted) {
+          const key = p.rule_id || p.id
+          if (map.has(key)) {
+            const ex = map.get(key)!
+            map.set(key, { ...ex, enabled: p.enabled ?? ex.enabled, action: p.action || ex.action })
+          }
+        }
+        return Array.from(map.values())
+      })
+    }).catch(() => {})
+  }, [])
   const [scanText, setScanText] = useState('')
   const [scanResult, setScanResult] = useState<any>(null)
   const [findings, setFindings] = useState<Finding[]>([])

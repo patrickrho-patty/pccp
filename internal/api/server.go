@@ -270,6 +270,7 @@ func (s *Server) setupRouter() {
 		r.Get("/security/findings", s.handleSecurityFindings)
 			r.Get("/security/findings/{id}", s.handleSecurityFindingDetail)
 			r.Put("/security/findings/{id}", s.handleUpdateFinding)
+		r.Get("/security/rules", s.handleSecurityRules)
 		r.Post("/security/lockdown", s.handleSecurityLockdown)
 
 		// Fleet Operations
@@ -2652,6 +2653,16 @@ func (s *Server) handleUpdateSecurityPolicy(w http.ResponseWriter, r *http.Reque
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) handleSecurityRules(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	rules, err := s.security.ListRules(orgID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, rules)
 }
 
 func (s *Server) handleSecurityFindings(w http.ResponseWriter, r *http.Request) {

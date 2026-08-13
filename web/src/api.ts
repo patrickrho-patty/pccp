@@ -141,6 +141,7 @@ export const api = {
   // Security
   securityCheck: (text: string) =>
     request<any>('/api/security/check', { method: 'POST', body: JSON.stringify({ text }) }),
+  securityRules: () => request<any[]>('/api/security/rules'),
 
   // Fleet
   fleetInventory: () => request<any[]>('/api/fleet/inventory'),
