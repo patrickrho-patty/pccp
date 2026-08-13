@@ -1541,11 +1541,35 @@ func (s *Server) handleIssueLease(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	var events []models.AuditEvent
 	q := s.db.Model(&models.AuditEvent{})
 	if orgID != "" {
 		q = q.Where("organization_id = ?", orgID)
 	}
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		page, _ := strconv.Atoi(pageStr)
+		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+		search := r.URL.Query().Get("search")
+		eventType := r.URL.Query().Get("type")
+		result := r.URL.Query().Get("result")
+		if size == 0 { size = 50 }
+		if page == 0 { page = 1 }
+		if search != "" {
+			q = q.Where("action LIKE ? OR event_type LIKE ? OR resource_id LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%")
+		}
+		if eventType != "" {
+			q = q.Where("event_type = ?", eventType)
+		}
+		if result != "" {
+			q = q.Where("result = ?", result)
+		}
+		var total int64
+		q.Count(&total)
+		var events []models.AuditEvent
+		q.Order("occurred_at DESC").Offset((page - 1) * size).Limit(size).Find(&events)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"data": events, "total": total, "page": page, "size": size})
+		return
+	}
+	var events []models.AuditEvent
 	q.Order("occurred_at DESC").Limit(200).Find(&events)
 	writeJSON(w, http.StatusOK, events)
 }
