@@ -361,7 +361,6 @@ func (s *Service) CloseExchange(ctx context.Context, exchangeID string) (*models
 		return nil, fmt.Errorf("relay: exchange not found")
 	}
 
-	// Issue evidence receipt
 	receipt, err := s.provenance.IssueEvidenceReceipt(provenance.IssueReceiptRequest{
 		OrganizationID: exchange.OrganizationID,
 		ExchangeID:     exchange.ID,
@@ -378,35 +377,7 @@ func (s *Service) CloseExchange(ctx context.Context, exchangeID string) (*models
 		log.Printf("relay: warning: issue receipt failed: %v", err)
 	}
 
-	// Record a ChangeSet with provenance lineage (§19) — the exchange produced
-	// an attributable AI exchange even without file-level detail from the harness.
-	cs, csErr := s.provenance.CreateChangeSet(provenance.CreateChangeSetRequest{
-		OrganizationID:  exchange.OrganizationID,
-		SessionID:       exchange.SessionID,
-		ExchangeID:      exchange.ID,
-		UserID:          exchange.UserID,
-		HarnessID:       exchange.HarnessID,
-		ModelPackageID:  exchange.ModelPackageID,
-		EndpointID:      exchange.EndpointID,
-		AttributionState: "AI_GENERATED",
-		Confidence:      1.0,
-	})
-	if csErr != nil {
-		log.Printf("relay: warning: create changeset failed: %v", csErr)
-	} else {
-		// Map the full exchange to a provenance span (§19 Appendix B.1).
-		s.provenance.CreateProvenanceSpan(provenance.CreateSpanRequest{
-			OrganizationID:  exchange.OrganizationID,
-			ChangeSetID:     cs.ID,
-			SessionID:       exchange.SessionID,
-			UserID:          exchange.UserID,
-			HarnessID:       exchange.HarnessID,
-			ModelPackageID:  exchange.ModelPackageID,
-			EndpointID:      exchange.EndpointID,
-			AttributionState: "AI_GENERATED",
-			Confidence:      1.0,
-		})
-	}
+	s.recordExchangeProvenance(exchange)
 
 	s.mu.Lock()
 	exchange.State = paper.ExchangeCompleted
@@ -414,6 +385,39 @@ func (s *Service) CloseExchange(ctx context.Context, exchangeID string) (*models
 	s.mu.Unlock()
 
 	return receipt, nil
+}
+
+// recordExchangeProvenance records a ChangeSet + ProvenanceSpan for an exchange,
+// establishing AI_GENERATED attribution lineage (§19).
+func (s *Service) recordExchangeProvenance(ex *Exchange) {
+	cs, csErr := s.provenance.CreateChangeSet(provenance.CreateChangeSetRequest{
+		OrganizationID:  ex.OrganizationID,
+		SessionID:       ex.SessionID,
+		ExchangeID:      ex.ID,
+		UserID:          ex.UserID,
+		HarnessID:       ex.HarnessID,
+		ModelPackageID:  ex.ModelPackageID,
+		EndpointID:      ex.EndpointID,
+		AttributionState: "AI_GENERATED",
+		Confidence:      1.0,
+	})
+	if csErr != nil {
+		log.Printf("relay: warning: create changeset failed: %v", csErr)
+		return
+	}
+	if _, spanErr := s.provenance.CreateProvenanceSpan(provenance.CreateSpanRequest{
+		OrganizationID:  ex.OrganizationID,
+		ChangeSetID:     cs.ID,
+		SessionID:       ex.SessionID,
+		UserID:          ex.UserID,
+		HarnessID:       ex.HarnessID,
+		ModelPackageID:  ex.ModelPackageID,
+		EndpointID:      ex.EndpointID,
+		AttributionState: "AI_GENERATED",
+		Confidence:      1.0,
+	}); spanErr != nil {
+		log.Printf("relay: warning: create provenance span failed: %v", spanErr)
+	}
 }
 
 // GovernRequest is a live-path inference request resolved from the authenticated peer.
