@@ -68,15 +68,22 @@ export default function Repositories() {
     try { await api.deleteRepository(id); load() } catch {}
   }
 
-  const handleBranchProtection = async (repo: any) => {
-    const level = prompt('브랜치 보호 수준을 선택하세요:\n1. 표준 (standard)\n2. 보호됨 (protected)\n3. 릴리스 (release)\n4. 프로덕션 (production)\n5. 잠금 (locked)', 'standard')
-    if (!level) return
+  const [bpRepo, setBpRepo] = useState<any>(null)
+  const [bpLevel, setBpLevel] = useState('standard')
+
+  const handleBranchProtection = (repo: any) => {
+    setBpRepo(repo)
+    setBpLevel('standard')
+  }
+
+  const submitBranchProtection = async () => {
+    if (!bpRepo) return
     try {
       await fetch('/api/scm/branch-protection', {
         method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repository_id: repo.id, branch: repo.default_branch || 'main', level, requires_approval: level === 'release' || level === 'production' }),
+        body: JSON.stringify({ repository_id: bpRepo.id, branch: bpRepo.default_branch || 'main', level: bpLevel, requires_approval: bpLevel === 'release' || bpLevel === 'production' }),
       })
-      alert(`브랜치 보호 설정: ${level}`)
+      setBpRepo(null)
       load()
     } catch {}
   }
@@ -215,6 +222,38 @@ export default function Repositories() {
         {paged.length === 0 && <div className="py-4"><EmptyState icon="📦" title="저장소가 없습니다" message="저장소 추가 버튼으로 연결하세요" /></div>}
         <Pagination total={filtered.length} page={page} pageSize={pageSize} onPageChange={setPage} />
       </div>
+
+      {bpRepo && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 animate-fadeIn" onClick={() => setBpRepo(null)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 animate-scaleIn" onClick={e => e.stopPropagation()}>
+            <div className="p-5">
+              <h3 className="text-sm font-semibold">🌿 브랜치 보호 설정 · Branch Protection</h3>
+              <p className="text-xs text-gray-500 mt-1">{bpRepo.name} · {bpRepo.default_branch || 'main'}</p>
+              <div className="mt-4 space-y-2">
+                {[
+                  { value: 'standard', label: '표준 · Standard', desc: '기본 보호 규칙' },
+                  { value: 'protected', label: '보호됨 · Protected', desc: '직접 푸시 금지, PR 필수' },
+                  { value: 'release', label: '릴리스 · Release', desc: '승인 필수, 변경 제한' },
+                  { value: 'production', label: '프로덕션 · Production', desc: '최고 수준 보호 + 승인' },
+                  { value: 'locked', label: '잠금 · Locked', desc: '모든 변경 금지' },
+                ].map(opt => (
+                  <label key={opt.value} className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer border ${bpLevel === opt.value ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                    <input type="radio" name="bpLevel" value={opt.value} checked={bpLevel === opt.value} onChange={e => setBpLevel(e.target.value)} />
+                    <div>
+                      <div className="text-sm font-medium">{opt.label}</div>
+                      <div className="text-xs text-gray-400">{opt.desc}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-2 p-4 border-t border-gray-100 justify-end">
+              <button onClick={() => setBpRepo(null)} className="btn-sm btn-secondary">취소</button>
+              <button onClick={submitBranchProtection} className="btn-sm btn-primary">설정</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
