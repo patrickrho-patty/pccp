@@ -5,6 +5,7 @@ import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../compone
 import ConfirmDialog from '../components/ConfirmDialog'
 import EmptyState from '../components/EmptyState'
 import { exportCSV } from '../utils/csv'
+import { showToast } from '../components/Toast'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['name', 'name_ko', 'email', 'auth_method', 'title'],
@@ -80,7 +81,7 @@ export default function Users() {
       setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local' })
       setShowForm(false)
       load()
-    } catch (err: any) { alert('생성 실패: ' + err.message) }
+    } catch (err: any) { showToast('생성 실패: ' + err.message) }
   }
 
   const handleEdit = (user: any) => {
@@ -102,12 +103,12 @@ export default function Users() {
       setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local' })
       setShowForm(false)
       load()
-    } catch (err: any) { alert('수정 실패: ' + err.message) }
+    } catch (err: any) { showToast('수정 실패: ' + err.message) }
   }
 
   const handleStatusChange = async (user: any, newStatus: string) => {
     try { await api.updateUser(user.id, { status: newStatus }); load() }
-    catch (err: any) { alert('상태 변경 실패: ' + err.message) }
+    catch (err: any) { showToast('상태 변경 실패: ' + err.message) }
   }
 
   const toggleSelect = (id: string) => {
@@ -140,7 +141,7 @@ export default function Users() {
   const handleDelete = async (user: any) => {
     if (!confirm(`${user.name_ko || user.name}을(를) 퇴사 처리하시겠습니까?`)) return
     try { await api.deleteUser(user.id); load() }
-    catch (err: any) { alert('삭제 실패: ' + err.message) }
+    catch (err: any) { showToast('삭제 실패: ' + err.message) }
   }
 
   const getUserSessions = (userId: string) => sessions.filter(s => s.user_id === userId)

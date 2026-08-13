@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth, AuthProvider } from './hooks/useAuth'
+import { ToastContainer } from './components/Toast'
 import Login from './pages/Login'
 import Bootstrap from './pages/Bootstrap'
 
@@ -70,6 +71,7 @@ function AppContent() {
   const Layout = profile === 'patty_ops' ? OpsLayout : profile === 'portal' ? PortalLayout : CustomerLayout
 
   return (
+    <>
     <Layout>
       <Routes>
         {/* Shared routes */}
@@ -122,5 +124,7 @@ function AppContent() {
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Layout>
+    <ToastContainer />
+    </>
   )
 }

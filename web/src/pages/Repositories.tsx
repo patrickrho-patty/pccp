@@ -4,6 +4,7 @@ import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
 import EmptyState from '../components/EmptyState'
 import { exportCSV } from '../utils/csv'
+import { showToast } from '../components/Toast'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['name', 'slug', 'clone_url', 'scm_provider'],
@@ -43,7 +44,7 @@ export default function Repositories() {
       setForm({ name: '', slug: '', project_id: '', scm_provider: 'github', clone_url: '', default_branch: 'main' })
       setShowForm(false)
       load()
-    } catch (err: any) { alert('생성 실패: ' + err.message) }
+    } catch (err: any) { showToast('생성 실패: ' + err.message) }
   }
 
   const handleEdit = (r: any) => {
@@ -60,7 +61,7 @@ export default function Repositories() {
       setEditingId(null)
       setShowForm(false)
       load()
-    } catch { alert('수정 실패') }
+    } catch { showToast('수정 실패') }
   }
 
   const handleDelete = async (id: string) => {

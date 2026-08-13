@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import ConfirmDialog from '../components/ConfirmDialog'
+import { showToast } from '../components/Toast'
 
 export default function Sandboxes() {
   const [sandboxes, setSandboxes] = useState<any[]>([])
@@ -34,7 +35,7 @@ export default function Sandboxes() {
   const snapshot = async (id: string) => {
     try {
       const res = await fetch(`/api/sandboxes/${id}/snapshot`, { method: 'POST', headers: authHeaders() })
-      if (res.ok) alert('포렌식 스냅샷 생성됨 · Forensic snapshot captured')
+      if (res.ok) showToast('포렌식 스냅샷 생성됨 · Forensic snapshot captured')
     } catch {}
   }
 

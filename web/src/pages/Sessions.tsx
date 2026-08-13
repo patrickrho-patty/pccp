@@ -5,6 +5,7 @@ import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../compone
 import EmptyState from '../components/EmptyState'
 import { formatRelative } from '../utils/format'
 import { exportCSV } from '../utils/csv'
+import { showToast } from '../components/Toast'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['title', 'task_purpose', 'session_id', 'harness_id'],
@@ -79,7 +80,7 @@ export default function Sessions() {
       setShowForm(false)
       setForm({ user_id: '', project_id: '', repository_id: '', branch: '', title: '', task_purpose: '', model_class: 'patty-code-standard' })
       load()
-    } catch (err: any) { alert('세션 생성 실패: ' + err.message) }
+    } catch (err: any) { showToast('세션 생성 실패: ' + err.message) }
   }
 
   const handleClose = async (id: string) => { if (confirm('종료하시겠습니까?')) { try { await api.closeSession(id); load() } catch {} } }

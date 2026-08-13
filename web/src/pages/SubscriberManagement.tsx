@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
+import { showToast } from '../components/Toast'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['email', 'display_name', 'display_name_ko', 'oauth_provider'],
@@ -232,8 +233,8 @@ export default function SubscriberManagement() {
             <div className="card">
               <h3 className="text-sm font-semibold mb-3">관리 작업 · Actions</h3>
               <div className="flex flex-wrap gap-2">
-                <button className="btn-sm btn-secondary" onClick={() => alert('이메일 발송 기능은 마케팅 도구 연동 필요')}>📧 이메일</button>
-                <button className="btn-sm btn-secondary" onClick={() => alert('플랜 변경')}>플랜 변경</button>
+                <button className="btn-sm btn-secondary" onClick={() => showToast('이메일 발송 기능은 마케팅 도구 연동 필요')}>📧 이메일</button>
+                <button className="btn-sm btn-secondary" onClick={() => showToast('플랜 변경')}>플랜 변경</button>
                 <button className="btn-sm btn-secondary" onClick={() => { if (confirm('재인증 요청?')) {} }}>재인증 요청</button>
                 <button className="btn-sm btn-danger" onClick={() => { if (confirm('계정 정지?')) {} }}>계정 정지</button>
               </div>

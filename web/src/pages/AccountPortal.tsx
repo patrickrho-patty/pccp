@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import { showToast } from '../components/Toast'
 
 export default function AccountPortal() {
   const [accounts, setAccounts] = useState<any[]>([])
@@ -25,7 +26,7 @@ export default function AccountPortal() {
       setForm({ email: '', display_name: '', display_name_ko: '', plan: 'developer' })
       load()
     } catch (err: any) {
-      alert('계정 생성 실패: ' + err.message)
+      showToast('계정 생성 실패: ' + err.message)
     }
   }
 
@@ -34,16 +35,16 @@ export default function AccountPortal() {
       await api.publicCreateSub(id, plan)
       load()
     } catch (err: any) {
-      alert('구독 생성 실패: ' + err.message)
+      showToast('구독 생성 실패: ' + err.message)
     }
   }
 
   const handleLease = async (id: string) => {
     try {
       const lease = await api.publicLease(id)
-      alert(`용량 리스 발급됨\n슬롯: ${lease.active_agent_slots}개\n헤비: ${lease.heavy_slots}개\n유효: ${lease.valid_until}`)
+      showToast(`용량 리스 발급됨\n슬롯: ${lease.active_agent_slots}개\n헤비: ${lease.heavy_slots}개\n유효: ${lease.valid_until}`)
     } catch (err: any) {
-      alert('리스 발급 실패: ' + err.message)
+      showToast('리스 발급 실패: ' + err.message)
     }
   }
 

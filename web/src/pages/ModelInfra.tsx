@@ -3,6 +3,7 @@ import EmptyState from '../components/EmptyState'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
+import { showToast } from '../components/Toast'
 
 const MODEL_FILTER: FilterConfig = {
   searchFields: ['name', 'name_ko', 'package_id', 'model_id'],
@@ -99,7 +100,7 @@ function CatalogTab() {
           {epoch.min_validity_secs && <span className="text-xs text-gray-400">유효 {epoch.min_validity_secs}초</span>}
           <button onClick={async () => {
             const res = await fetch('/api/catalog/epoch', { headers: authHeaders() })
-            if (res.ok) { const e = await res.json(); setEpoch(e); alert('에포크 갱신됨') }
+            if (res.ok) { const e = await res.json(); setEpoch(e); showToast('에포크 갱신됨') }
           }} className="btn-secondary text-xs ml-auto">에포크 갱신</button>
         </div>
       )}
@@ -163,7 +164,7 @@ function PackagesTab() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
-    try { await fetch('/api/models', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, state: 'draft' }) }); setShowForm(false); load() } catch { alert('실패') }
+    try { await fetch('/api/models', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, state: 'draft' }) }); setShowForm(false); load() } catch { showToast('실패') }
   }
   const handlePublish = async (id: string) => { try { await fetch(`/api/models/${id}/publish`, { method: 'POST', headers: authHeaders() }); load() } catch {} }
   const handleRecall = async (id: string) => { if (confirm('리콜하시겠습니까?')) { await fetch(`/api/models/${id}/recall`, { method: 'POST', headers: authHeaders() }); load() } }

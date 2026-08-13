@@ -5,6 +5,7 @@ import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../compone
 import ConfirmDialog from '../components/ConfirmDialog'
 import { formatRelative } from '../utils/format'
 import { exportCSV } from '../utils/csv'
+import { showToast } from '../components/Toast'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['harness_id', 'binary_version', 'device_id'],
@@ -64,7 +65,7 @@ export default function Harnesses() {
     try {
       await api.enrollHarness({ ...form, organization_id: orgId, enrollment_mode: 'sso', device_hostname: 'dev-machine', device_os: 'darwin', device_arch: 'arm64' })
       setShowForm(false); setForm({ user_id: '', harness_id: '', public_key_hex: '', binary_version: '1.0.0' }); load()
-    } catch (err: any) { alert('등록 실패: ' + err.message) }
+    } catch (err: any) { showToast('등록 실패: ' + err.message) }
   }
   const handleRevoke = async (id: string) => { if (confirm('폐기하시겠습니까?')) { try { await api.revokeHarness(id, 'manual revoke'); load() } catch {} } }
   const handleQuarantine = async (id: string) => { if (confirm('격리하시겠습니까? 모든 활성 세션이 종료됩니다.')) { try { await api.quarantineHarness(id); load() } catch {} } }

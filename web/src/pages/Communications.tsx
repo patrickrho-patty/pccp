@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import EmptyState from '../components/EmptyState'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import { showToast } from '../components/Toast'
 
 export default function Communications() {
   const [tab, setTab] = useState<'chat' | 'broadcast' | 'files' | 'presence'>('chat')
@@ -70,7 +71,7 @@ export default function Communications() {
 
   const createConversation = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!convForm.title || convForm.participantIds.length === 0) { alert('제목과 참여자를 입력하세요'); return }
+    if (!convForm.title || convForm.participantIds.length === 0) { showToast('제목과 참여자를 입력하세요'); return }
     try {
       const res = await fetch('/api/communications/conversations', {
         method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },

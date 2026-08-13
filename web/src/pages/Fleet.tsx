@@ -4,6 +4,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import EmptyState from '../components/EmptyState'
 import { formatRelative } from '../utils/format'
 import { exportCSV } from '../utils/csv'
+import { showToast } from '../components/Toast'
 
 const FLEET_ACTIONS = [
   { id: 'request_reauthentication', label: '재인증 요청', labelEn: 'Re-auth', severity: 'normal', icon: '🔑' },
@@ -71,15 +72,15 @@ export default function Fleet() {
         })
       })
       if (res.ok) {
-        alert(`✓ ${action} 실행됨`)
+        showToast(`✓ ${action} 실행됨`)
         setActionPanel(null)
         setActionReason('')
         load()
       } else {
-        alert('실행 실패: ' + await res.text())
+        showToast('실행 실패: ' + await res.text())
       }
     } catch (e) {
-      alert('오류: ' + e)
+      showToast('오류: ' + e)
     }
   }
 

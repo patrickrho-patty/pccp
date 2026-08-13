@@ -6,6 +6,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import EmptyState from '../components/EmptyState'
 import { formatRelative } from '../utils/format'
 import { exportCSV } from '../utils/csv'
+import { showToast } from '../components/Toast'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['name', 'name_ko', 'slug'],
@@ -51,7 +52,7 @@ export default function Projects() {
       setForm({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard', description: '' })
       setShowForm(false)
       load()
-    } catch (err: any) { alert('생성 실패: ' + err.message) }
+    } catch (err: any) { showToast('생성 실패: ' + err.message) }
   }
 
   const handleEdit = (proj: any) => {
@@ -73,7 +74,7 @@ export default function Projects() {
       setForm({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard', description: '' })
       setShowForm(false)
       load()
-    } catch (err: any) { alert('수정 실패: ' + err.message) }
+    } catch (err: any) { showToast('수정 실패: ' + err.message) }
   }
 
   const handleArchive = async (id: string) => {

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { FilterBar, useFilteredData, FilterConfig } from '../components/FilterBar'
+import { showToast } from '../components/Toast'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['name', 'name_ko', 'tool_class'],
@@ -57,7 +58,7 @@ export default function Tools() {
   }
 
   const createOrUpdate = async () => {
-    if (!form.name || !form.tool_class) { alert('도구명과 클래스는 필수입니다'); return }
+    if (!form.name || !form.tool_class) { showToast('도구명과 클래스는 필수입니다'); return }
     try {
       if (editingId) {
         await fetch(`/api/tools/${editingId}`, {
@@ -76,7 +77,7 @@ export default function Tools() {
       setEditingId(null)
       setForm({ name: '', name_ko: '', category: 'read', tool_class: '', danger_level: 'low', requires_approval: false })
       load()
-    } catch (e) { alert('오류: ' + e) }
+    } catch (e) { showToast('오류: ' + e) }
   }
 
   const startEdit = (t: any) => {
