@@ -4061,3 +4061,160 @@ PAPER is successful if an enterprise or government organization can make the fol
 > **Every Patty Code Harness that participates in our AI engineering environment is explicitly enrolled; every protected AI action carries bounded authority; every model request passes through our governed Relay to an approved inference identity; every material policy decision is attributable; every resulting tool action and code change can be traced through a cryptographically linked provenance spine; and the same secure communication fabric provides the collaboration and operational messaging developers need without creating an ungoverned side channel.**
 
 That—not custom encryption or different endpoint names—is the product PAPER is intended to deliver.
+
+---
+
+# 75. Phase 2 DARI Normative Acceptance Addendum
+
+## 75.1 Status and product boundary
+
+This addendum freezes the implementation acceptance contract for **DARI — Delegated Authorization and Receipts for Inference**. It is consumed by Phase 2 implementation Tasks 5–13. Normative schemas and algorithms are in Appendix F of `PAPER_Protocol_Specification_v1.0.md`; profile and migration behavior is in `DARI_COMPATIBILITY_AND_PROFILE_MAP.md`. Those two documents control if older PAPER requirements conflict with this addendum for a DARI profile.
+
+This is a design and acceptance baseline. It MUST NOT be cited as evidence that a runtime feature is implemented, conformant, deployed, secure in production, or measured. The implementation claim matrix remains authoritative: framing/canonical-CBOR and supported transports are implementation claims; transcript authentication, complete signed authorization, attenuation, and deterministic receipts are implementation-required; web and federation are extension-profile claims only.
+
+Phase 2 adds the neutral protocol kernel without performing the Phase 3 product-wide rename. Core implementation APIs and new wire objects MUST use neutral names. Existing product names MAY remain in legacy files, adapters, user-facing product material, and the clearly named Patty reference/legacy profile.
+
+## 75.2 Required neutral model
+
+The DARI kernel MUST expose these objects:
+
+| Required object | Product requirement | Normative source |
+|---|---|---|
+| Peer Credential | Issuer-signed peer identity with subject-key thumbprint and transcript proof of possession | Appendix F.3 |
+| Authorization Grant | Fully signed subject, audience, organization, user, session, epoch, scope, budgets, validity, sequence, and parent/depth fields | Appendix F.4 |
+| Governed Exchange | Immutable binding among session, initiator, grant, policy checkpoint, requested profiles, and action digest | Appendix F.5 |
+| Authorization Decision | Signed `ALLOW`, `DENY`, or `ALLOW_WITH_OBLIGATIONS`, with deterministic deny-overrides aggregation | Appendix F.6 |
+| Evidence Receipt | Canonical final state, real committed roots, authorization/state/effect digests, and scoped multi-party attestations | Appendix F.8 |
+
+The DARI kernel MUST expose these roles: Governance Relay, Inference Peer, Effect Executor, and Evidence Verifier. Combining roles in one process MUST NOT combine their authority or expand what each may attest.
+
+The following supporting contracts are also required:
+
+| Supporting contract | Product requirement | Normative source |
+|---|---|---|
+| Attenuation | Every child grant is no broader in identity, audience, time, scope, budgets, approvals, or depth | Appendix F.4 |
+| Signed State Checkpoint | Signed sequence/freshness/predecessor state with durable rollback high-water marks | Appendix F.7 |
+| Receipt Attestation | Each signer covers only its role and observations; missing required signer is evidence failure | Appendix F.8 |
+| Selective disclosure | Linear order plus segmented Merkle/MMR inclusion proofs and explicit omission manifests | Appendix F.9 |
+| Effect Prepare / authorization / result | Durable `PREPARED -> AUTHORIZED -> EXECUTING -> COMMITTED|ABORTED` lifecycle | Appendix F.10 |
+
+## 75.3 Deterministic security requirements
+
+For `dari/1`, every signed object MUST use deterministic CBOR, an attached untagged RFC 9052 COSE Sign1 array, protected `alg` and `kid`, empty unprotected headers, the object-specific external AAD, and exact decoded-body-to-payload equality. The verifier MUST reject non-canonical input, duplicate keys, unknown critical fields, detached payloads, unprotected algorithm selection, signature/model mismatch, or an unnegotiated algorithm.
+
+Object and signed-envelope digests MUST use the domain-separated inputs and object-type registry in Appendix F.2 and F.12. Implementers MUST preserve legacy `paper/1` byte quirks only inside its explicit compatibility path. They MUST NOT silently apply a legacy digest, map-form COSE encoding, or decoder fallback to `dari/1`.
+
+Every protected transition MUST use the validation order in Appendix F.11. A failure at any earlier step MUST prevent later forwarding, inference allocation, external effect, or success state. Evidence append or finalization failure MUST produce `EVIDENCE_FAILURE`, never `COMPLETED`.
+
+## 75.4 Authorization and attenuation acceptance
+
+Authorization Grant implementation is accepted only when:
+
+1. Mutation of any identity, subject key, audience, organization, user, session, policy epoch, scope, budget, approval, time, sequence, parent digest, or delegation-depth field invalidates its signature or validation.
+2. The live governance entry point receives the presented Authorization Grant; it MUST NOT select an arbitrary active legacy lease by peer identity.
+3. Parent lookup uses the complete parent signed-object digest, chains are bounded and cycle-free, every issuer/subject-key link verifies, and revocation of any ancestor invalidates descendants.
+4. Added models/tools/actions/data classes, wider context paths, new network destinations, increased budgets, later validity, weaker protection, removed approval, changed audience or binding, bad parent digest, and skipped/exceeded depth are rejected.
+5. Empty child scope means no authority. Budget consumption is charged through the chain. A downstream peer cannot reuse the parent's grant as its own.
+6. A valid narrower child with exact organization/user/session/epoch/audience, covered scope, no-higher budgets, no-later expiry, additional-or-equal approvals, correct parent digest, and decremented depth is accepted.
+
+A legacy Capability Lease MAY enter the new governance pipeline only through the explicit compatibility adapter. The adapter MUST create a non-delegable, no-broader view and MUST revalidate every property not cryptographically covered by the legacy bytes against authoritative state.
+
+## 75.5 Decisions, obligations, and signed state acceptance
+
+Authorization Decision implementation is accepted only when it uses exactly `ALLOW`, `DENY`, and `ALLOW_WITH_OBLIGATIONS`; any valid deny overrides any allow; missing/invalid/expired required decisions deny; and conflicting encodings for one obligation ID deny.
+
+An obligation MUST include ID, kind, parameter digest, phase, state, responsible peer, and optional deadline/evidence reference. Only `PENDING -> SATISFIED` and `PENDING -> FAILED` are valid. Required pre-action obligations block execution; required post-action obligations block completion; a failed obligation denies or fails the exchange. A transform or approval condition MUST NOT become an unqualified allow.
+
+Signed State Checkpoint implementation is accepted only when revocation, issuer-key, policy-epoch, model-manifest, and endpoint-authorization state is signer-authorized, audience-bound, monotonically sequenced, predecessor-linked, and fresh. A durable high-water mark MUST reject lower sequences and forks; an equal sequence is idempotent only for the identical digest. Missing, stale, expired, rolled-back, or unavailable integrity state fails closed. Degraded low-risk read-only state is permitted only under the narrow rule in Appendix F.7 and MUST be evidenced.
+
+## 75.6 Receipt and proof acceptance
+
+Receipt finalization MUST perform this order: enter `FINALIZING`; append the final canonical event; compute the linear and segmented roots from committed events; construct the canonical Evidence Receipt body; obtain and validate every required scoped attestation; durably persist the receipt; then and only then enter `COMPLETED`.
+
+The receipt MUST bind exchange and session, final state, sequence bounds/count, the computed linear root, the segmented MMR root, grant/decision/checkpoint/effect digests, model and endpoint bindings when used, omission-manifest digest when used, issue time, and required signer roles. The producer MUST NOT substitute a configured, requested, random, placeholder, or log-only value for committed evidence.
+
+Receipt Attestations MUST be independent signed objects over the receipt-body digest. A Governance Relay, Inference Peer, and Effect Executor may attest only the observations permitted by Appendix F.8. Missing roles, role overclaim, altered receipt body, invalid signer state, or an uncommitted claimed object invalidates the attestation. A legacy single-party receipt MUST remain labeled legacy and MUST NOT be upgraded by assertion.
+
+Selective disclosure MUST retain the linear chain for order and use the exact segment leaves, deterministic padding, MMR carry/bagging, peak order, and proof checks in Appendix F.9. Removing or modifying a disclosed event, changing its sequence/position, changing a segment count, adding/removing a peak, altering padding, or changing the omission manifest MUST fail verification. An omission manifest is a policy explanation for withheld committed ranges; it MUST NOT inflate what any party observed or prove the truth of undisclosed content.
+
+## 75.7 Transactional effect acceptance
+
+The exact new message constants are:
+
+| Message | Value |
+|---|---:|
+| `EFFECT_PREPARE` | `0x0610` |
+| `EFFECT_AUTHORIZE` | `0x0611` |
+| `EFFECT_COMMIT` | `0x0612` |
+| `EFFECT_ABORT` | `0x0613` |
+| `EFFECT_STATUS` | `0x0614` |
+
+Existing IDs MUST NOT be renumbered. Values `0x0604` through `0x0606` MUST remain unavailable because the legacy specification already claims them.
+
+The Effect Executor MUST durably bind operation ID, nonce, grant digest, input digest, executor, retry owner, prepare digest, authorization digest, state, and terminal result. It MUST persist and acknowledge state transitions in the order `PREPARED -> AUTHORIZED -> EXECUTING -> COMMITTED|ABORTED`. Only the retry owner may reconcile incomplete work.
+
+The same operation ID and identical bindings MUST return stored state/result without executing again. The same operation ID with any changed binding MUST return `REPLAY_CONFLICT`. A reconnect MUST query `EFFECT_STATUS` and MUST NOT cause automatic re-execution. A crash-stranded `EXECUTING` operation remains non-terminal until reconciled against an atomic or idempotent external system. The product MUST NOT claim exactly-once completion where that proof is unavailable.
+
+## 75.8 Profile acceptance
+
+The exact profile boundary is:
+
+```text
+paper/1 record and message encoding -> DARI legacy compatibility profile
+dari/1 kernel -> active protocol
+dari.ai/1 -> provider-neutral inference
+dari.tools/1 -> effects and tool bridges
+dari.model-supply/1 -> model artifact and endpoint authorization
+dari.web/1 -> schema only until runtime conformance exists
+dari.federation/1 -> schema only until runtime conformance exists
+```
+
+Negotiation MUST return `EXACT`, `DEGRADED`, or `UNSUPPORTED` per the compatibility map. Critical unsupported offers fail negotiation. Degradation MUST enumerate only omitted optional capabilities and MUST NOT weaken kernel security semantics.
+
+`dari.web/1` and `dari.federation/1` MUST report runtime `UNSUPPORTED` until a later release supplies both runtime behavior and conformance tests. Schema publication, generated types, documentation, or experimental code MUST NOT be reported as runtime conformance.
+
+## 75.9 Phase 2 task gates
+
+| Task | Required delivery gate |
+|---|---|
+| Task 5 — compatibility harness | Byte-exact `paper/1` framing, signing, digest, receipt, and allocation vectors plus explicit legacy-variant behavior |
+| Task 6 — peer authentication | Signed payload equals presented Peer Credential; issuer/time/revocation/profile checks; transcript/challenge/nonces/channel/credential digest and subject proof of possession are bound |
+| Task 7 — Authorization Grant | Every field is signed; live governance validates presented grant and explicit legacy adapter |
+| Task 8 — attenuation | Full parent algorithm and every broadening negative case pass |
+| Task 9 — decisions/state | Fixed outcomes, deny-overrides, obligation lifecycle, freshness, predecessor, and rollback tests pass |
+| Task 10 — receipts | Real roots, finalization order, scoped multi-party signatures, MMR proofs, omission rules, and evidence-failure behavior pass |
+| Task 11 — effects | Exact message IDs, durable state machine, reconnect/status, conflict, retry-owner, and single-execution tests pass |
+| Task 12 — profiles | Neutral registries and `EXACT|DEGRADED|UNSUPPORTED`; web/federation remain runtime unsupported |
+| Task 13 — end-to-end conformance | Negative matrix and positive byte vectors cover the complete validation pipeline without placeholder assertions |
+
+Each task MUST add executable tests before its runtime claim changes. A passing unit test for a serializer alone MUST NOT upgrade an implementation-required or extension-profile claim to implemented.
+
+## 75.10 Required black-box release matrix
+
+Before a runtime may claim `dari/1`, independent black-box tests MUST verify:
+
+- deterministic CBOR and COSE golden bytes, including payload/model mismatch rejection;
+- transcript-bound Peer Credential proof and revoked/expired/wrong-profile rejection;
+- every Authorization Grant field and every attenuation dimension;
+- deny-overrides, decision expiry, conflicting and pending/failed obligations;
+- Signed State Checkpoint staleness, lower-sequence replay, equal-sequence fork, missing predecessor, and wrong audience;
+- receipt truthfulness, finalization ordering, scoped signers, missing attestation, and explicit evidence failure;
+- selective-disclosure event mutation/removal, padding/path/peak/root mismatch, and omission-manifest mutation;
+- effect duplicate/reconnect/conflict/retry-owner/crash-boundary behavior;
+- legacy/DARI parser isolation and frozen `paper/1` bytes;
+- critical unsupported-profile failure and mandatory `UNSUPPORTED` for web/federation.
+
+The test harness MUST assert that every rejected case performs no protected forwarding, inference allocation, or external effect and never returns a successful receipt.
+
+## 75.11 Phase 2 non-goals
+
+Phase 2 MUST NOT:
+
+- rewrite the complete historical PAPER specification or product vocabulary merely to rename it;
+- claim deployed web, browser, federation, cross-domain, or exactly-once behavior without its runtime and conformance evidence;
+- silently normalize conflicting legacy client constants or encoders;
+- replace standard cryptographic primitives with a new primitive;
+- broaden authorization to preserve a permissive legacy behavior;
+- treat documentation, schemas, fixtures, or generated code as a runtime measurement.
+
+Phase 3 may perform the broader repository and product-language rename after the Phase 2 contract and conformance surface are stable.
