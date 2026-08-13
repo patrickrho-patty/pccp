@@ -4,6 +4,7 @@ import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { formatRelative } from '../utils/format'
+import { exportCSV } from '../utils/csv'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['harness_id', 'binary_version', 'device_id'],
@@ -79,18 +80,7 @@ export default function Harnesses() {
         <h1 className="text-2xl font-bold">하네스 <span className="text-gray-400 text-lg font-normal">Harnesses</span></h1>
           {org && <span className="text-xs text-gray-400 ml-4">{harnesses.filter(h => h.status !== 'revoked').length}/{org.max_harness_seats || '∞'} 좌석</span>}
         <button onClick={() => setShowForm(!showForm)} className="btn-primary">{showForm ? '취소' : '+ 하네스 등록'}</button>
-        <button onClick={() => {
-          const headers = ['하네스 ID', '버전', '상태', '위험도', '사용자', '등록일']
-          const rows = harnesses.map(h => [h.harness_id || '', h.binary_version || '', h.status || '', h.risk_state || '', (users.find(u => { try { return JSON.parse(h.allowed_users || '[]').includes(u.id) } catch { return false } })?.name_ko) || '', h.enrolled_at?.slice(0,10) || ''])
-          const csv = [headers, ...rows].map(r => r.map(c => `"${c || ''}"`).join(',')).join('\n')
-          const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
-          const url = URL.createObjectURL(blob)
-          const a = document.createElement('a')
-          a.href = url
-          a.download = `harnesses_${new Date().toISOString().slice(0,10)}.csv`
-          a.click()
-          URL.revokeObjectURL(url)
-        }} className="btn-sm btn-secondary ml-2">📥 CSV</button>
+        <button onClick={() => exportCSV(`harnesses_${new Date().toISOString().slice(0,10)}.csv`, ['하네스 ID', '버전', '상태', '위험도', '사용자', '등록일'], harnesses.map(h => [h.harness_id, h.binary_version, h.status, h.risk_state, (users.find(u => { try { return JSON.parse(h.allowed_users || '[]').includes(u.id) } catch { return false } })?.name_ko) || '', h.enrolled_at?.slice(0,10)]))} className="btn-sm btn-secondary ml-2">📥 CSV</button>
       </div>
 
       {showForm && (

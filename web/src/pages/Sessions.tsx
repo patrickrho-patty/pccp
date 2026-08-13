@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
 import EmptyState from '../components/EmptyState'
 import { formatRelative } from '../utils/format'
+import { exportCSV } from '../utils/csv'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['title', 'task_purpose', 'session_id', 'harness_id'],
@@ -138,18 +139,7 @@ export default function Sessions() {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">AI 세션 <span className="text-gray-400 text-lg font-normal">AI Sessions</span></h1>
         <button onClick={() => setShowForm(!showForm)} className="btn-primary">{showForm ? '취소' : '+ 세션 시작'}</button>
-        <button onClick={() => {
-          const headers = ['제목', '개발자', '모델', '브랜치', '상태', '시작일']
-          const rows = sessions.map(s => [s.title || '', s.user_id || '', s.model_class || '', s.branch || '', s.status || '', s.opened_at?.slice(0,10) || ''])
-          const csv = [headers, ...rows].map(r => r.map(c => `"${c || ''}"`).join(',')).join('\n')
-          const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
-          const url = URL.createObjectURL(blob)
-          const a = document.createElement('a')
-          a.href = url
-          a.download = `sessions_${new Date().toISOString().slice(0,10)}.csv`
-          a.click()
-          URL.revokeObjectURL(url)
-        }} className="btn-sm btn-secondary ml-2">📥 CSV</button>
+        <button onClick={() => exportCSV(`sessions_${new Date().toISOString().slice(0,10)}.csv`, ['제목', '개발자', '모델', '브랜치', '상태', '시작일'], sessions.map(s => [s.title, s.user_id, s.model_class, s.branch, s.status, s.opened_at?.slice(0,10)]))} className="btn-sm btn-secondary ml-2">📥 CSV</button>
       </div>
 
       {showForm && (

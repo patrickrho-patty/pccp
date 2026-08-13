@@ -5,6 +5,7 @@ import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../compone
 import ConfirmDialog from '../components/ConfirmDialog'
 import EmptyState from '../components/EmptyState'
 import { formatRelative } from '../utils/format'
+import { exportCSV } from '../utils/csv'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['name', 'name_ko', 'slug'],
@@ -93,17 +94,7 @@ export default function Projects() {
         <button onClick={() => { if (editingId) { setEditingId(null); setForm({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard', description: '' }) } setShowForm(!showForm) }} className="btn-primary">
           {showForm ? '취소' : '+ 프로젝트 생성'}
         </button>
-        <button onClick={() => {
-          const headers = ['프로젝트명', '한글명', '슬러그', '상태', '생성일']
-          const rows = filtered.map(p => [p.name || '', p.name_ko || '', p.slug || '', p.status || '', p.created_at?.slice(0,10) || ''])
-          const csv = [headers, ...rows].map(r => r.map(c => `"${c || ''}"`).join(',')).join('\n')
-          const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
-          const a = document.createElement('a')
-          a.href = URL.createObjectURL(blob)
-          a.download = `projects_${new Date().toISOString().slice(0,10)}.csv`
-          a.click()
-          URL.revokeObjectURL(a.href)
-        }} className="btn-sm btn-secondary ml-2">📥 CSV</button>
+        <button onClick={() => exportCSV(`projects_${new Date().toISOString().slice(0,10)}.csv`, ['프로젝트명', '한글명', '슬러그', '상태', '생성일'], filtered.map(p => [p.name, p.name_ko, p.slug, p.status, p.created_at?.slice(0,10)]))} className="btn-sm btn-secondary ml-2">📥 CSV</button>
       </div>
 
       {showForm && (
