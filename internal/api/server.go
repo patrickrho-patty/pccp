@@ -266,6 +266,14 @@ func (s *Server) setupRouter() {
 			r.Post("/branch-protection", s.handleSetBranchProtection)
 		})
 
+		// Provenance / Code Explorer
+		r.Route("/provenance", func(r chi.Router) {
+			r.Get("/repos/{repoId}", s.handleGetRepoProvenance)
+			r.Get("/repos/{repoId}/changesets", s.handleGetRepoChangeSets)
+			r.Get("/repos/{repoId}/spans", s.handleGetRepoSpans)
+			r.Get("/repos/{repoId}/stats", s.handleGetRepoProvenanceStats)
+		})
+
 		// Impact Analysis
 		r.Route("/impact", func(r chi.Router) {
 			r.Post("/analyze", s.handleAnalyzeChange)
@@ -2253,6 +2261,100 @@ func (s *Server) handleSeedDemoData(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "seeded", "results": results})
 }
+
+func (s *Server) handleGetRepoProvenance(w http.ResponseWriter, r *http.Request) {
+		repoId := chi.URLParam(r, "repoId")
+		orgID := getOrgID(r)
+
+		// Get changesets for this repo
+		var changeSets []models.ChangeSet
+		s.db.Where("organization_id = ? AND repository_id = ?", orgID, repoId).
+			Order("created_at DESC").Limit(50).Find(&changeSets)
+
+		// Get provenance spans for this repo
+		var spans []models.ProvenanceSpan
+		s.db.Where("organization_id = ? AND repository_id = ?", orgID, repoId).
+			Order("created_at DESC").Limit(100).Find(&spans)
+
+		// Get sessions that touched this repo
+		sessionIds := make(map[string]bool)
+		for _, cs := range changeSets {
+			if cs.SessionID != "" {
+				sessionIds[cs.SessionID] = true
+			}
+		}
+		var sessions []models.Session
+		for sid := range sessionIds {
+			var sess models.Session
+			if s.db.Where("session_id = ?", sid).First(&sess).Error == nil {
+				sessions = append(sessions, sess)
+			}
+		}
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"change_sets": changeSets,
+			"spans":       spans,
+			"sessions":    sessions,
+		})
+	}
+
+	func (s *Server) handleGetRepoChangeSets(w http.ResponseWriter, r *http.Request) {
+		repoId := chi.URLParam(r, "repoId")
+		orgID := getOrgID(r)
+		var changeSets []models.ChangeSet
+		s.db.Where("organization_id = ? AND repository_id = ?", orgID, repoId).
+			Order("created_at DESC").Limit(50).Find(&changeSets)
+		writeJSON(w, http.StatusOK, changeSets)
+	}
+
+	func (s *Server) handleGetRepoSpans(w http.ResponseWriter, r *http.Request) {
+		repoId := chi.URLParam(r, "repoId")
+		orgID := getOrgID(r)
+		var spans []models.ProvenanceSpan
+		s.db.Where("organization_id = ? AND repository_id = ?", orgID, repoId).
+			Order("created_at DESC").Limit(100).Find(&spans)
+		writeJSON(w, http.StatusOK, spans)
+	}
+
+	func (s *Server) handleGetRepoProvenanceStats(w http.ResponseWriter, r *http.Request) {
+		repoId := chi.URLParam(r, "repoId")
+		orgID := getOrgID(r)
+
+		var totalChangeSets int64
+		s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ?", orgID, repoId).Count(&totalChangeSets)
+
+		var aiGenerated int64
+		s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ? AND attribution_state = ?", orgID, repoId, "AI_GENERATED").Count(&aiGenerated)
+
+		var humanEdited int64
+		s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ? AND attribution_state = ?", orgID, repoId, "AI_THEN_HUMAN_EDITED").Count(&humanEdited)
+
+		var humanWritten int64
+		s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ? AND attribution_state = ?", orgID, repoId, "HUMAN_WRITTEN").Count(&humanWritten)
+
+		var totalSpans int64
+		s.db.Model(&models.ProvenanceSpan{}).Where("organization_id = ? AND repository_id = ?", orgID, repoId).Count(&totalSpans)
+
+		var linesAdded int64
+		var linesRemoved int64
+		type lineResult struct{ Sum int64 }
+		var lr lineResult
+		s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ?", orgID, repoId).Select("COALESCE(SUM(lines_added), 0) as sum").Scan(&lr)
+		linesAdded = lr.Sum
+		s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ?", orgID, repoId).Select("COALESCE(SUM(lines_removed), 0) as sum").Scan(&lr)
+		linesRemoved = lr.Sum
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"total_changesets":    totalChangeSets,
+			"ai_generated":        aiGenerated,
+			"ai_then_human":       humanEdited,
+			"human_written":       humanWritten,
+			"total_spans":         totalSpans,
+			"lines_added":         linesAdded,
+			"lines_removed":       linesRemoved,
+			"ai_percentage":       fmt.Sprintf("%.0f%%", func() float64 { if totalChangeSets > 0 { return float64(aiGenerated) / float64(totalChangeSets) * 100 } else { return 0 } }()),
+		})
+	}
 
 func min(a, b int) int {
 	if a < b {
