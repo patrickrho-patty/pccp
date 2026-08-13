@@ -94,6 +94,18 @@ export default function Repositories() {
         <button onClick={() => { setEditingId(null); setForm({ name: '', slug: '', project_id: '', scm_provider: 'github', clone_url: '', default_branch: 'main' }); setShowForm(!showForm) }} className="btn-primary">
           {showForm ? '취소' : '+ 저장소 추가'}
         </button>
+        <button onClick={() => {
+          const headers = ['저장소명', 'SCM', 'Clone URL', '기본 브랜치', '민감도', '상태']
+          const rows = repos.map(r => [r.name || '', r.scm_provider || '', r.clone_url || '', r.default_branch || '', r.sensitivity || '', r.status || ''])
+          const csv = [headers, ...rows].map(row => row.map(c => `"${c || ''}"`).join(',')).join('\n')
+          const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = `repos_${new Date().toISOString().slice(0,10)}.csv`
+          a.click()
+          URL.revokeObjectURL(url)
+        }} className="btn-sm btn-secondary ml-2">📥 CSV</button>
       </div>
 
       {showForm && (
