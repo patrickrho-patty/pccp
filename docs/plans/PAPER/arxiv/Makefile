@@ -1,21 +1,29 @@
 LATEXMK := latexmk
-TARGET := PAPER_arXiv
+EN_TARGET := PAPER_arXiv
+KO_TARGET := PAPER_arXiv_KO
+ARCHIVE := PAPER-arXiv-source.tar.gz
+COMMON_DEPS := references.bib $(wildcard figures/*) benchmark-data/core-primitives.tsv
 
-.PHONY: all clean check archive
+.PHONY: all verify check clean archive
 
-all: $(TARGET).pdf
+all: $(EN_TARGET).pdf $(KO_TARGET).pdf
 
-$(TARGET).pdf: main.tex references.bib figures/qwen-governed-exchange.png \
-	figures/governed-exchange-lifecycle.png figures/model-identity-chain.tex \
-	figures/primitive-latency-plot.tex benchmark-data/core-primitives.tsv
-	$(LATEXMK) -pdf -interaction=nonstopmode -halt-on-error -file-line-error -jobname=$(TARGET) main.tex
+$(EN_TARGET).pdf: main.tex $(COMMON_DEPS)
+	$(LATEXMK) -pdf -interaction=nonstopmode -halt-on-error -file-line-error -jobname=$(EN_TARGET) main.tex
 
-check: $(TARGET).pdf
-	@test -s $(TARGET).pdf
-	@! grep -E 'Citation .* undefined|Reference .* undefined|There were undefined references|Overfull \\hbox' $(TARGET).log
+$(KO_TARGET).pdf: main_ko.tex $(COMMON_DEPS)
+	$(LATEXMK) -xelatex -interaction=nonstopmode -halt-on-error -file-line-error -jobname=$(KO_TARGET) main_ko.tex
+
+verify: all
+	@test -s $(EN_TARGET).pdf
+	@test -s $(KO_TARGET).pdf
+	@! grep -E 'Undefined control sequence|Citation .* undefined|Reference .* undefined|There were undefined references|Overfull \\hbox' $(EN_TARGET).log $(KO_TARGET).log
+
+check: verify
 
 clean:
-	$(LATEXMK) -C -jobname=$(TARGET) main.tex
+	$(LATEXMK) -C -jobname=$(EN_TARGET) main.tex
+	$(LATEXMK) -C -xelatex -jobname=$(KO_TARGET) main_ko.tex
 
-archive: check
-	tar -czf PAPER-arXiv-source.tar.gz main.tex references.bib Makefile README.md figures benchmark-data
+archive: verify
+	COPYFILE_DISABLE=1 tar -czf $(ARCHIVE) --options gzip:!timestamp main.tex main_ko.tex references.bib Makefile README.md implementation-claim-matrix.tsv figures benchmark-data
