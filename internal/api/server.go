@@ -4,31 +4,32 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
-	"strings"
-	"strconv"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	"github.com/patrickrho-patty/pccp/internal/identity"
+	"github.com/patrickrho-patty/pccp/internal/audit"
 	"github.com/patrickrho-patty/pccp/internal/communications"
 	"github.com/patrickrho-patty/pccp/internal/context"
 	"github.com/patrickrho-patty/pccp/internal/events"
 	"github.com/patrickrho-patty/pccp/internal/fleet"
 	"github.com/patrickrho-patty/pccp/internal/gitscm"
+	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/impact"
 	"github.com/patrickrho-patty/pccp/internal/korean"
-	"github.com/patrickrho-patty/pccp/internal/sandbox"
-	"github.com/patrickrho-patty/pccp/internal/security"
-	"github.com/patrickrho-patty/pccp/internal/workintel"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/policy"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
 	"github.com/patrickrho-patty/pccp/internal/registry"
+	"github.com/patrickrho-patty/pccp/internal/sandbox"
+	"github.com/patrickrho-patty/pccp/internal/security"
+	"github.com/patrickrho-patty/pccp/internal/workintel"
 	"gorm.io/gorm"
 )
 
@@ -272,8 +273,8 @@ func (s *Server) setupRouter() {
 		r.Get("/security/policy", s.handleGetSecurityPolicy)
 		r.Put("/security/policy", s.handleUpdateSecurityPolicy)
 		r.Get("/security/findings", s.handleSecurityFindings)
-			r.Get("/security/findings/{id}", s.handleSecurityFindingDetail)
-			r.Put("/security/findings/{id}", s.handleUpdateFinding)
+		r.Get("/security/findings/{id}", s.handleSecurityFindingDetail)
+		r.Put("/security/findings/{id}", s.handleUpdateFinding)
 		r.Get("/security/rules", s.handleSecurityRules)
 		r.Post("/security/lockdown", s.handleSecurityLockdown)
 
@@ -333,12 +334,13 @@ func (s *Server) setupRouter() {
 			r.Get("/violations", s.handleListEnterpriseViolations)
 			r.Put("/violations/{id}", s.handleResolveViolation)
 			r.Post("/features/seed", s.handleSeedEnterpriseFeatures)
-		r.Post("/demo-seed", s.handleSeedDemoData)
+			r.Post("/demo-seed", s.handleSeedDemoData)
 		})
 
 		// Audit
 		r.Route("/audit", func(r chi.Router) {
 			r.Get("/", s.handleListAuditEvents)
+			r.Get("/verify", s.handleVerifyAuditChain)
 		})
 
 		// Additional service routes
@@ -353,7 +355,6 @@ func (s *Server) setupRouter() {
 
 	s.router = r
 }
-
 
 // spaHandler serves static files from the given directory with SPA fallback.
 // For paths that don't match a real file (like /login, /dashboard),
@@ -463,11 +464,11 @@ func getRole(r *http.Request) string {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":     "ok",
-		"timestamp":  time.Now().Format(time.RFC3339),
-		"service":    "pccp-control-plane",
-		"version":    "0.1.0",
-		"ca_pubkey":  s.identity.CAPublicKeyHex(),
+		"status":    "ok",
+		"timestamp": time.Now().Format(time.RFC3339),
+		"service":   "pccp-control-plane",
+		"version":   "0.1.0",
+		"ca_pubkey": s.identity.CAPublicKeyHex(),
 	})
 }
 
@@ -522,43 +523,43 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 
 // Generic CRUD handlers
 func (s *Server) handleGetSeatUsage(w http.ResponseWriter, r *http.Request) {
-		orgID := getOrgID(r)
+	orgID := getOrgID(r)
 
-		var org models.Organization
-		if err := s.db.Where("id = ?", orgID).First(&org).Error; err != nil {
-			writeError(w, http.StatusNotFound, "organization not found")
-			return
-		}
-
-		var userCount int64
-		s.db.Model(&models.User{}).Where("organization_id = ? AND status != ?", orgID, "offboarded").Count(&userCount)
-
-		var harnessCount int64
-		s.db.Model(&models.Harness{}).Where("organization_id = ? AND status NOT IN ?", orgID, []string{"revoked"}).Count(&harnessCount)
-
-		var activeSessions int64
-		s.db.Model(&models.Session{}).Where("organization_id = ? AND status = ?", orgID, "active").Count(&activeSessions)
-
-		result := map[string]interface{}{
-			"organization_id":   org.ID,
-			"plan_tier":         org.PlanTier,
-			"user_seats": map[string]interface{}{
-				"used":     userCount,
-				"max":      org.MaxUserSeats,
-				"available": org.MaxUserSeats - int(userCount),
-				"utilization": fmt.Sprintf("%.0f%%", float64(userCount)/float64(org.MaxUserSeats)*100),
-			},
-			"harness_seats": map[string]interface{}{
-				"used":     harnessCount,
-				"max":      org.MaxHarnessSeats,
-				"available": org.MaxHarnessSeats - int(harnessCount),
-				"utilization": fmt.Sprintf("%.0f%%", float64(harnessCount)/float64(org.MaxHarnessSeats)*100),
-			},
-			"active_sessions": activeSessions,
-			"plan_renewal_date": org.PlanRenewalDate,
-		}
-		writeJSON(w, http.StatusOK, result)
+	var org models.Organization
+	if err := s.db.Where("id = ?", orgID).First(&org).Error; err != nil {
+		writeError(w, http.StatusNotFound, "organization not found")
+		return
 	}
+
+	var userCount int64
+	s.db.Model(&models.User{}).Where("organization_id = ? AND status != ?", orgID, "offboarded").Count(&userCount)
+
+	var harnessCount int64
+	s.db.Model(&models.Harness{}).Where("organization_id = ? AND status NOT IN ?", orgID, []string{"revoked"}).Count(&harnessCount)
+
+	var activeSessions int64
+	s.db.Model(&models.Session{}).Where("organization_id = ? AND status = ?", orgID, "active").Count(&activeSessions)
+
+	result := map[string]interface{}{
+		"organization_id": org.ID,
+		"plan_tier":       org.PlanTier,
+		"user_seats": map[string]interface{}{
+			"used":        userCount,
+			"max":         org.MaxUserSeats,
+			"available":   org.MaxUserSeats - int(userCount),
+			"utilization": fmt.Sprintf("%.0f%%", float64(userCount)/float64(org.MaxUserSeats)*100),
+		},
+		"harness_seats": map[string]interface{}{
+			"used":        harnessCount,
+			"max":         org.MaxHarnessSeats,
+			"available":   org.MaxHarnessSeats - int(harnessCount),
+			"utilization": fmt.Sprintf("%.0f%%", float64(harnessCount)/float64(org.MaxHarnessSeats)*100),
+		},
+		"active_sessions":   activeSessions,
+		"plan_renewal_date": org.PlanRenewalDate,
+	}
+	writeJSON(w, http.StatusOK, result)
+}
 
 func (s *Server) handleListOrganizations(w http.ResponseWriter, r *http.Request) {
 	var orgs []models.Organization
@@ -718,8 +719,12 @@ func (s *Server) handleListHarnesses(w http.ResponseWriter, r *http.Request) {
 		page, _ := strconv.Atoi(pageStr)
 		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
 		search := r.URL.Query().Get("search")
-		if size == 0 { size = 25 }
-		if page == 0 { page = 1 }
+		if size == 0 {
+			size = 25
+		}
+		if page == 0 {
+			page = 1
+		}
 		if search != "" {
 			q = q.Where("harness_id LIKE ? OR binary_version LIKE ?", "%"+search+"%", "%"+search+"%")
 		}
@@ -819,8 +824,12 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 		page, _ := strconv.Atoi(pageStr)
 		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
 		search := r.URL.Query().Get("search")
-		if size == 0 { size = 25 }
-		if page == 0 { page = 1 }
+		if size == 0 {
+			size = 25
+		}
+		if page == 0 {
+			page = 1
+		}
 		if search != "" {
 			q = q.Where("name LIKE ? OR name_ko LIKE ? OR slug LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%")
 		}
@@ -885,8 +894,12 @@ func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) 
 		page, _ := strconv.Atoi(pageStr)
 		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
 		search := r.URL.Query().Get("search")
-		if size == 0 { size = 25 }
-		if page == 0 { page = 1 }
+		if size == 0 {
+			size = 25
+		}
+		if page == 0 {
+			page = 1
+		}
 		if search != "" {
 			q = q.Where("name LIKE ? OR clone_url LIKE ? OR scm_provider LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%")
 		}
@@ -964,15 +977,15 @@ func (s *Server) handleGetRepository(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCreateBaseline(w http.ResponseWriter, r *http.Request) {
 	repoID := chi.URLParam(r, "id")
 	var req struct {
-		Branch       string `json:"branch"`
-		CommitSHA    string `json:"commit_sha"`
+		Branch        string `json:"branch"`
+		CommitSHA     string `json:"commit_sha"`
 		CommitMessage string `json:"commit_message"`
-		AuthorName   string `json:"author_name"`
-		AuthorEmail  string `json:"author_email"`
-		CommittedAt  string `json:"committed_at"`
-		TreeDigest   string `json:"tree_digest"`
-		SessionID    string `json:"session_id"`
-		OrgID        string `json:"org_id"`
+		AuthorName    string `json:"author_name"`
+		AuthorEmail   string `json:"author_email"`
+		CommittedAt   string `json:"committed_at"`
+		TreeDigest    string `json:"tree_digest"`
+		SessionID     string `json:"session_id"`
+		OrgID         string `json:"org_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -997,8 +1010,12 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		page, _ := strconv.Atoi(pageStr)
 		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
 		search := r.URL.Query().Get("search")
-		if size == 0 { size = 25 }
-		if page == 0 { page = 1 }
+		if size == 0 {
+			size = 25
+		}
+		if page == 0 {
+			page = 1
+		}
 		if search != "" {
 			q = q.Where("title LIKE ? OR session_id LIKE ?", "%"+search+"%", "%"+search+"%")
 		}
@@ -1117,206 +1134,206 @@ func (s *Server) handleCompatChatCompletions(w http.ResponseWriter, r *http.Requ
 // logic, retained for reference. It is NOT registered as a route — the endpoint
 // is blocked per §10.11. Remove entirely once all callers have migrated to DARI.
 func (s *Server) handleCompatChatCompletionsLegacy(w http.ResponseWriter, r *http.Request) {
-		// OpenAI-compatible chat completions adapter
-		// Proxies to PIA for inference
-		var req map[string]interface{}
-		if err := decodeJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
-			return
+	// OpenAI-compatible chat completions adapter
+	// Proxies to PIA for inference
+	var req map[string]interface{}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Get model from request
+	modelName, _ := req["model"].(string)
+	if modelName == "" {
+		modelName = "default"
+	}
+
+	messages, _ := req["messages"].([]interface{})
+
+	// Build a simple prompt from messages
+	var promptParts []string
+	for _, msg := range messages {
+		m, ok := msg.(map[string]interface{})
+		if !ok {
+			continue
 		}
+		role, _ := m["role"].(string)
+		content, _ := m["content"].(string)
+		promptParts = append(promptParts, role+": "+content)
+	}
+	prompt := "You are a helpful coding assistant.\n\n" + strings.Join(promptParts, "\n") + "\n\nAssistant:"
 
-		// Get model from request
-		modelName, _ := req["model"].(string)
-		if modelName == "" {
-			modelName = "default"
-		}
-
-		messages, _ := req["messages"].([]interface{})
-
-		// Build a simple prompt from messages
-		var promptParts []string
-		for _, msg := range messages {
-			m, ok := msg.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			role, _ := m["role"].(string)
-			content, _ := m["content"].(string)
-			promptParts = append(promptParts, role+": "+content)
-		}
-		prompt := "You are a helpful coding assistant.\n\n" + strings.Join(promptParts, "\n") + "\n\nAssistant:"
-
-		// Check if PIA URL is configured
-		piaURL := os.Getenv("PCCP_PIA_URL")
-		if piaURL == "" {
-			// Return a mock response for dev/testing
-			resp := map[string]interface{}{
-				"id":      "chatcmpl-" + time.Now().Format("20060102150405"),
-				"object":  "chat.completion",
-				"created": time.Now().Unix(),
-				"model":   modelName,
-				"choices": []map[string]interface{}{
-					{
-						"index": 0,
-						"message": map[string]interface{}{
-							"role":    "assistant",
-							"content": "[PCCP] Inference adapter ready. Configure PCCP_PIA_URL for model serving. Prompt received: " + prompt[:min(len(prompt), 100)],
-						},
-						"finish_reason": "stop",
-					},
-				},
-				"usage": map[string]interface{}{
-					"prompt_tokens":     len(prompt) / 4,
-					"completion_tokens": 20,
-					"total_tokens":      len(prompt)/4 + 20,
-				},
-			}
-			writeJSON(w, http.StatusOK, resp)
-			return
-		}
-
-		// Proxy to PIA
-		maxTokens := 4096
-		if mt, ok := req["max_tokens"].(float64); ok {
-			maxTokens = int(mt)
-		}
-
-		 piaReq := map[string]interface{}{
-			"model":       os.Getenv("PCCP_VLLM_MODEL"),
-			"prompt":      prompt,
-			"max_tokens":  maxTokens,
-			"temperature": 0.0,
-			"stream":      false,
-		}
-
-		 piaBody, _ := json.Marshal(piaReq)
-		piaResp, err := http.Post(piaURL+"/v1/completions", "application/json", bytes.NewReader(piaBody))
-		if err != nil {
-			writeError(w, http.StatusBadGateway, "PIA unreachable: "+err.Error())
-			return
-		}
-		defer piaResp.Body.Close()
-
-		var piaResult map[string]interface{}
-		json.NewDecoder(piaResp.Body).Decode(&piaResult)
-
-		// Convert to OpenAI format
-		choices, _ := piaResult["choices"].([]interface{})
-		var respChoices []map[string]interface{}
-		if len(choices) > 0 {
-			if choice, ok := choices[0].(map[string]interface{}); ok {
-				if text, ok := choice["text"].(string); ok {
-					respChoices = append(respChoices, map[string]interface{}{
-						"index": 0,
-						"message": map[string]interface{}{
-							"role":    "assistant",
-							"content": text,
-						},
-						"finish_reason": "stop",
-					})
-				}
-			}
-		}
-
+	// Check if PIA URL is configured
+	piaURL := os.Getenv("PCCP_PIA_URL")
+	if piaURL == "" {
+		// Return a mock response for dev/testing
 		resp := map[string]interface{}{
 			"id":      "chatcmpl-" + time.Now().Format("20060102150405"),
 			"object":  "chat.completion",
 			"created": time.Now().Unix(),
 			"model":   modelName,
-			"choices": respChoices,
+			"choices": []map[string]interface{}{
+				{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": "[PCCP] Inference adapter ready. Configure PCCP_PIA_URL for model serving. Prompt received: " + prompt[:min(len(prompt), 100)],
+					},
+					"finish_reason": "stop",
+				},
+			},
+			"usage": map[string]interface{}{
+				"prompt_tokens":     len(prompt) / 4,
+				"completion_tokens": 20,
+				"total_tokens":      len(prompt)/4 + 20,
+			},
 		}
-		if usage, ok := piaResult["usage"].(map[string]interface{}); ok {
-			resp["usage"] = usage
-		}
-
 		writeJSON(w, http.StatusOK, resp)
+		return
 	}
+
+	// Proxy to PIA
+	maxTokens := 4096
+	if mt, ok := req["max_tokens"].(float64); ok {
+		maxTokens = int(mt)
+	}
+
+	piaReq := map[string]interface{}{
+		"model":       os.Getenv("PCCP_VLLM_MODEL"),
+		"prompt":      prompt,
+		"max_tokens":  maxTokens,
+		"temperature": 0.0,
+		"stream":      false,
+	}
+
+	piaBody, _ := json.Marshal(piaReq)
+	piaResp, err := http.Post(piaURL+"/v1/completions", "application/json", bytes.NewReader(piaBody))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "PIA unreachable: "+err.Error())
+		return
+	}
+	defer piaResp.Body.Close()
+
+	var piaResult map[string]interface{}
+	json.NewDecoder(piaResp.Body).Decode(&piaResult)
+
+	// Convert to OpenAI format
+	choices, _ := piaResult["choices"].([]interface{})
+	var respChoices []map[string]interface{}
+	if len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]interface{}); ok {
+			if text, ok := choice["text"].(string); ok {
+				respChoices = append(respChoices, map[string]interface{}{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": text,
+					},
+					"finish_reason": "stop",
+				})
+			}
+		}
+	}
+
+	resp := map[string]interface{}{
+		"id":      "chatcmpl-" + time.Now().Format("20060102150405"),
+		"object":  "chat.completion",
+		"created": time.Now().Unix(),
+		"model":   modelName,
+		"choices": respChoices,
+	}
+	if usage, ok := piaResult["usage"].(map[string]interface{}); ok {
+		resp["usage"] = usage
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
 
 func (s *Server) handleGetSessionExchanges(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
-		var sess models.Session
-		if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
-			writeError(w, http.StatusNotFound, "not found")
-			return
-		}
-		var exchanges []models.PromptExchange
-		s.db.Where("session_id = ?", sess.SessionID).Order("created_at ASC").Find(&exchanges)
-		writeJSON(w, http.StatusOK, exchanges)
+	id := chi.URLParam(r, "id")
+	var sess models.Session
+	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
 	}
+	var exchanges []models.PromptExchange
+	s.db.Where("session_id = ?", sess.SessionID).Order("created_at ASC").Find(&exchanges)
+	writeJSON(w, http.StatusOK, exchanges)
+}
 
 func (s *Server) handleGetSessionTimeline(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
-		var sess models.Session
-		if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
-			writeError(w, http.StatusNotFound, "not found")
-			return
-		}
-
-		// Load actions (tool calls, commands, model requests)
-		var actions []models.ActionEnvelope
-		s.db.Where("session_id = ?", sess.SessionID).Order("occurred_at DESC").Limit(100).Find(&actions)
-
-		// Load change sets (code changes)
-		var changeSets []models.ChangeSet
-		s.db.Where("session_id = ?", sess.SessionID).Order("created_at DESC").Find(&changeSets)
-
-		// Load security findings
-		var findings []models.SecurityFinding
-		s.db.Where("session_id = ?", sess.SessionID).Order("occurred_at DESC").Find(&findings)
-
-		// Load approvals
-		var approvals []models.Approval
-		s.db.Where("session_id = ?", sess.SessionID).Order("created_at DESC").Find(&approvals)
-
-		// Load usage records
-		var usageRecords []models.UsageRecord
-		s.db.Where("session_id = ?", sess.SessionID).Order("occurred_at DESC").Limit(50).Find(&usageRecords)
-
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"session":        sess,
-			"actions":        actions,
-			"change_sets":    changeSets,
-			"findings":       findings,
-			"approvals":      approvals,
-			"usage_records":  usageRecords,
-		})
+	id := chi.URLParam(r, "id")
+	var sess models.Session
+	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
 	}
+
+	// Load actions (tool calls, commands, model requests)
+	var actions []models.ActionEnvelope
+	s.db.Where("session_id = ?", sess.SessionID).Order("occurred_at DESC").Limit(100).Find(&actions)
+
+	// Load change sets (code changes)
+	var changeSets []models.ChangeSet
+	s.db.Where("session_id = ?", sess.SessionID).Order("created_at DESC").Find(&changeSets)
+
+	// Load security findings
+	var findings []models.SecurityFinding
+	s.db.Where("session_id = ?", sess.SessionID).Order("occurred_at DESC").Find(&findings)
+
+	// Load approvals
+	var approvals []models.Approval
+	s.db.Where("session_id = ?", sess.SessionID).Order("created_at DESC").Find(&approvals)
+
+	// Load usage records
+	var usageRecords []models.UsageRecord
+	s.db.Where("session_id = ?", sess.SessionID).Order("occurred_at DESC").Limit(50).Find(&usageRecords)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"session":       sess,
+		"actions":       actions,
+		"change_sets":   changeSets,
+		"findings":      findings,
+		"approvals":     approvals,
+		"usage_records": usageRecords,
+	})
+}
 
 func (s *Server) handleGetSessionUsage(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
-		var sess models.Session
-		if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
-			writeError(w, http.StatusNotFound, "not found")
-			return
-		}
-		var records []models.UsageRecord
-		s.db.Where("session_id = ?", sess.SessionID).Find(&records)
-
-		summary := map[string]interface{}{
-			"total_records":    len(records),
-			"input_tokens":     0,
-			"output_tokens":    0,
-			"total_tokens":     0,
-			"by_metric":        map[string]int64{},
-			"by_model":         map[string]int64{},
-		}
-		totalIn, totalOut := 0, 0
-		for _, rec := range records {
-			if rec.MetricType == "tokens_in" {
-				totalIn += int(rec.Quantity)
-			}
-			if rec.MetricType == "tokens_out" {
-				totalOut += int(rec.Quantity)
-			}
-			summary["by_metric"].(map[string]int64)[rec.MetricType] += rec.Quantity
-			summary["by_model"].(map[string]int64)[rec.ModelPackageID] += rec.Quantity
-		}
-		summary["input_tokens"] = totalIn
-		summary["output_tokens"] = totalOut
-		summary["total_tokens"] = totalIn + totalOut
-
-		writeJSON(w, http.StatusOK, summary)
+	id := chi.URLParam(r, "id")
+	var sess models.Session
+	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
 	}
+	var records []models.UsageRecord
+	s.db.Where("session_id = ?", sess.SessionID).Find(&records)
+
+	summary := map[string]interface{}{
+		"total_records": len(records),
+		"input_tokens":  0,
+		"output_tokens": 0,
+		"total_tokens":  0,
+		"by_metric":     map[string]int64{},
+		"by_model":      map[string]int64{},
+	}
+	totalIn, totalOut := 0, 0
+	for _, rec := range records {
+		if rec.MetricType == "tokens_in" {
+			totalIn += int(rec.Quantity)
+		}
+		if rec.MetricType == "tokens_out" {
+			totalOut += int(rec.Quantity)
+		}
+		summary["by_metric"].(map[string]int64)[rec.MetricType] += rec.Quantity
+		summary["by_model"].(map[string]int64)[rec.ModelPackageID] += rec.Quantity
+	}
+	summary["input_tokens"] = totalIn
+	summary["output_tokens"] = totalOut
+	summary["total_tokens"] = totalIn + totalOut
+
+	writeJSON(w, http.StatusOK, summary)
+}
 
 func (s *Server) handleGetProvenance(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
@@ -1353,26 +1370,64 @@ func (s *Server) handleRegisterModelPackage(w http.ResponseWriter, r *http.Reque
 		_ = field
 		_ = jsonKey
 	}
-	if v, ok := raw["package_id"]; ok { json.Unmarshal(v, &pkg.PackageID) }
-	if v, ok := raw["model_id"]; ok { json.Unmarshal(v, &pkg.ModelID) }
-	if v, ok := raw["name"]; ok { json.Unmarshal(v, &pkg.Name) }
-	if v, ok := raw["name_ko"]; ok { json.Unmarshal(v, &pkg.NameKo) }
-	if v, ok := raw["family"]; ok { json.Unmarshal(v, &pkg.Family) }
-	if v, ok := raw["version"]; ok { json.Unmarshal(v, &pkg.Version) }
-	if v, ok := raw["release"]; ok { json.Unmarshal(v, &pkg.Release) }
-	if v, ok := raw["weights_merkle_root"]; ok { json.Unmarshal(v, &pkg.WeightsMerkleRoot) }
-	if v, ok := raw["tokenizer_digest"]; ok { json.Unmarshal(v, &pkg.TokenizerDigest) }
-	if v, ok := raw["config_digest"]; ok { json.Unmarshal(v, &pkg.ConfigDigest) }
-	if v, ok := raw["entitlement_class"]; ok { json.Unmarshal(v, &pkg.EntitlementClass) }
-	if v, ok := raw["minimum_endpoint_assurance"]; ok { json.Unmarshal(v, &pkg.MinAssuranceLevel) }
-	if v, ok := raw["state"]; ok { json.Unmarshal(v, &pkg.State) }
-	if v, ok := raw["context_window"]; ok { json.Unmarshal(v, &pkg.ContextWindow) }
+	if v, ok := raw["package_id"]; ok {
+		json.Unmarshal(v, &pkg.PackageID)
+	}
+	if v, ok := raw["model_id"]; ok {
+		json.Unmarshal(v, &pkg.ModelID)
+	}
+	if v, ok := raw["name"]; ok {
+		json.Unmarshal(v, &pkg.Name)
+	}
+	if v, ok := raw["name_ko"]; ok {
+		json.Unmarshal(v, &pkg.NameKo)
+	}
+	if v, ok := raw["family"]; ok {
+		json.Unmarshal(v, &pkg.Family)
+	}
+	if v, ok := raw["version"]; ok {
+		json.Unmarshal(v, &pkg.Version)
+	}
+	if v, ok := raw["release"]; ok {
+		json.Unmarshal(v, &pkg.Release)
+	}
+	if v, ok := raw["weights_merkle_root"]; ok {
+		json.Unmarshal(v, &pkg.WeightsMerkleRoot)
+	}
+	if v, ok := raw["tokenizer_digest"]; ok {
+		json.Unmarshal(v, &pkg.TokenizerDigest)
+	}
+	if v, ok := raw["config_digest"]; ok {
+		json.Unmarshal(v, &pkg.ConfigDigest)
+	}
+	if v, ok := raw["entitlement_class"]; ok {
+		json.Unmarshal(v, &pkg.EntitlementClass)
+	}
+	if v, ok := raw["minimum_endpoint_assurance"]; ok {
+		json.Unmarshal(v, &pkg.MinAssuranceLevel)
+	}
+	if v, ok := raw["state"]; ok {
+		json.Unmarshal(v, &pkg.State)
+	}
+	if v, ok := raw["context_window"]; ok {
+		json.Unmarshal(v, &pkg.ContextWindow)
+	}
 	// Array fields → store as JSON string
-	if v, ok := raw["capabilities"]; ok { pkg.CapabilitiesJSON = string(v) }
-	if v, ok := raw["weights_shards"]; ok { pkg.WeightsShardsJSON = string(v) }
-	if v, ok := raw["adapters"]; ok { pkg.AdaptersJSON = string(v) }
-	if v, ok := raw["serving_engines"]; ok { pkg.ServingEnginesJSON = string(v) }
-	if v, ok := raw["allowed_data_classes"]; ok { pkg.AllowedDataClasses = string(v) }
+	if v, ok := raw["capabilities"]; ok {
+		pkg.CapabilitiesJSON = string(v)
+	}
+	if v, ok := raw["weights_shards"]; ok {
+		pkg.WeightsShardsJSON = string(v)
+	}
+	if v, ok := raw["adapters"]; ok {
+		pkg.AdaptersJSON = string(v)
+	}
+	if v, ok := raw["serving_engines"]; ok {
+		pkg.ServingEnginesJSON = string(v)
+	}
+	if v, ok := raw["allowed_data_classes"]; ok {
+		pkg.AllowedDataClasses = string(v)
+	}
 
 	if err := s.registry.RegisterModelPackage(&pkg); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -1591,6 +1646,21 @@ func (s *Server) handleIssueLease(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, lease)
 }
 
+// handleVerifyAuditChain verifies the org's audit-event hash chain and
+// reports the first break (web/17 B — tamper-evidence for the trail).
+func (s *Server) handleVerifyAuditChain(w http.ResponseWriter, r *http.Request) {
+	orgID := r.URL.Query().Get("org")
+	if orgID == "" {
+		orgID = "default"
+	}
+	report, err := audit.VerifyChain(s.db, orgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "verification failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
 func (s *Server) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
 	q := s.db.Model(&models.AuditEvent{})
@@ -1603,8 +1673,12 @@ func (s *Server) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
 		search := r.URL.Query().Get("search")
 		eventType := r.URL.Query().Get("type")
 		result := r.URL.Query().Get("result")
-		if size == 0 { size = 50 }
-		if page == 0 { page = 1 }
+		if size == 0 {
+			size = 50
+		}
+		if page == 0 {
+			page = 1
+		}
 		if search != "" {
 			q = q.Where("action LIKE ? OR event_type LIKE ? OR resource_id LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%")
 		}
@@ -1634,8 +1708,12 @@ func (s *Server) handleListConversations(w http.ResponseWriter, r *http.Request)
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 		page, _ := strconv.Atoi(pageStr)
 		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
-		if size == 0 { size = 25 }
-		if page == 0 { page = 1 }
+		if size == 0 {
+			size = 25
+		}
+		if page == 0 {
+			page = 1
+		}
 		var total int64
 		q.Count(&total)
 		var convs []models.Conversation
@@ -1723,9 +1801,9 @@ func (s *Server) handleGetPresence(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpdatePresence(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UserID   string `json:"user_id"`
-		Status   string `json:"status"`
-		Activity string `json:"activity"`
+		UserID    string `json:"user_id"`
+		Status    string `json:"status"`
+		Activity  string `json:"activity"`
 		HarnessID string `json:"harness_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
@@ -1837,7 +1915,6 @@ func (s *Server) handleExportMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(data)
 }
-
 
 // --- Fleet Handlers ---
 
@@ -2063,7 +2140,6 @@ func (s *Server) handleEmitEvent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, envelope)
 }
 
-
 // --- Generic CRUD Handlers ---
 
 func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
@@ -2088,15 +2164,33 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if updates.Name != nil { user.Name = *updates.Name }
-	if updates.NameKo != nil { user.NameKo = *updates.NameKo }
-	if updates.Email != nil { user.Email = *updates.Email }
-	if updates.Title != nil { user.Title = *updates.Title }
-	if updates.Status != nil { user.Status = *updates.Status }
-	if updates.AuthMethod != nil { user.AuthMethod = *updates.AuthMethod }
-	if updates.Locale != nil { user.Locale = *updates.Locale }
-	if updates.Timezone != nil { user.Timezone = *updates.Timezone }
-	if updates.BusinessUnitID != nil { user.BusinessUnitID = *updates.BusinessUnitID }
+	if updates.Name != nil {
+		user.Name = *updates.Name
+	}
+	if updates.NameKo != nil {
+		user.NameKo = *updates.NameKo
+	}
+	if updates.Email != nil {
+		user.Email = *updates.Email
+	}
+	if updates.Title != nil {
+		user.Title = *updates.Title
+	}
+	if updates.Status != nil {
+		user.Status = *updates.Status
+	}
+	if updates.AuthMethod != nil {
+		user.AuthMethod = *updates.AuthMethod
+	}
+	if updates.Locale != nil {
+		user.Locale = *updates.Locale
+	}
+	if updates.Timezone != nil {
+		user.Timezone = *updates.Timezone
+	}
+	if updates.BusinessUnitID != nil {
+		user.BusinessUnitID = *updates.BusinessUnitID
+	}
 	s.db.Save(&user)
 	s.db.Create(&models.AuditEvent{
 		OrganizationID: getOrgID(r),
@@ -2139,8 +2233,8 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		for _, uid := range allowed {
 			if uid == id {
 				s.db.Model(&h).Updates(map[string]interface{}{
-					"status":             "revoked",
-					"revocation_reason":  "user offboarded",
+					"status":            "revoked",
+					"revocation_reason": "user offboarded",
 				})
 				break
 			}
@@ -2407,17 +2501,25 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var updates struct {
-		Name           *string  `json:"name,omitempty"`
-		NameKo         *string  `json:"name_ko,omitempty"`
-		Description    *string  `json:"description,omitempty"`
-		Status         *string  `json:"status,omitempty"`
-		AllowedModels  []string `json:"allowed_models,omitempty"`
+		Name          *string  `json:"name,omitempty"`
+		NameKo        *string  `json:"name_ko,omitempty"`
+		Description   *string  `json:"description,omitempty"`
+		Status        *string  `json:"status,omitempty"`
+		AllowedModels []string `json:"allowed_models,omitempty"`
 	}
 	decodeJSON(r, &updates)
-	if updates.Name != nil { proj.Name = *updates.Name }
-	if updates.NameKo != nil { proj.NameKo = *updates.NameKo }
-	if updates.Description != nil { proj.Description = *updates.Description }
-	if updates.Status != nil { proj.Status = *updates.Status }
+	if updates.Name != nil {
+		proj.Name = *updates.Name
+	}
+	if updates.NameKo != nil {
+		proj.NameKo = *updates.NameKo
+	}
+	if updates.Description != nil {
+		proj.Description = *updates.Description
+	}
+	if updates.Status != nil {
+		proj.Status = *updates.Status
+	}
 	if len(updates.AllowedModels) > 0 {
 		b, _ := json.Marshal(updates.AllowedModels)
 		proj.AllowedModelClasses = string(b)
@@ -2467,8 +2569,12 @@ func (s *Server) handleUpdateRepository(w http.ResponseWriter, r *http.Request) 
 		Status      *string `json:"status,omitempty"`
 	}
 	decodeJSON(r, &updates)
-	if updates.Sensitivity != nil { repo.Sensitivity = *updates.Sensitivity }
-	if updates.Status != nil { repo.Status = *updates.Status }
+	if updates.Sensitivity != nil {
+		repo.Sensitivity = *updates.Sensitivity
+	}
+	if updates.Status != nil {
+		repo.Status = *updates.Status
+	}
 	s.db.Save(&repo)
 	writeJSON(w, http.StatusOK, repo)
 }
@@ -2538,8 +2644,12 @@ func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		Description *string `json:"description,omitempty"`
 	}
 	decodeJSON(r, &updates)
-	if updates.Name != nil { pkg.Name = *updates.Name }
-	if updates.NameKo != nil { pkg.NameKo = *updates.NameKo }
+	if updates.Name != nil {
+		pkg.Name = *updates.Name
+	}
+	if updates.NameKo != nil {
+		pkg.NameKo = *updates.NameKo
+	}
 	s.db.Save(&pkg)
 	writeJSON(w, http.StatusOK, pkg)
 }
@@ -2609,8 +2719,12 @@ func (s *Server) handleUpdateEndpoint(w http.ResponseWriter, r *http.Request) {
 		Status         *string `json:"status,omitempty"`
 	}
 	decodeJSON(r, &updates)
-	if updates.AssuranceLevel != nil { ep.AssuranceLevel = *updates.AssuranceLevel }
-	if updates.Status != nil { ep.Status = *updates.Status }
+	if updates.AssuranceLevel != nil {
+		ep.AssuranceLevel = *updates.AssuranceLevel
+	}
+	if updates.Status != nil {
+		ep.Status = *updates.Status
+	}
 	s.db.Save(&ep)
 	writeJSON(w, http.StatusOK, ep)
 }
@@ -2621,7 +2735,6 @@ func (s *Server) handleDrainEndpoint(w http.ResponseWriter, r *http.Request) {
 		Update("status", "draining")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "draining"})
 }
-
 
 func (s *Server) handleGetSecurityPolicy(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
@@ -2678,8 +2791,12 @@ func (s *Server) handleSecurityFindings(w http.ResponseWriter, r *http.Request) 
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 		page, _ := strconv.Atoi(pageStr)
 		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
-		if size == 0 { size = 25 }
-		if page == 0 { page = 1 }
+		if size == 0 {
+			size = 25
+		}
+		if page == 0 {
+			page = 1
+		}
 		var total int64
 		q.Count(&total)
 		var findings []models.SecurityFinding
@@ -2775,7 +2892,6 @@ func (s *Server) handleSecurityLockdown(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "lockdown_activated"})
 }
 
-
 func (s *Server) handleSecurityCheck(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Text string `json:"text"`
@@ -2788,7 +2904,6 @@ func (s *Server) handleSecurityCheck(w http.ResponseWriter, r *http.Request) {
 	result := s.security.CheckContext(orgID, req.Text)
 	writeJSON(w, http.StatusOK, result)
 }
-
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
@@ -2845,43 +2960,41 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dash)
 }
 
-
 func (s *Server) handleListBroadcasts(w http.ResponseWriter, r *http.Request) {
-		orgID := getOrgID(r)
-		var broadcasts []models.Broadcast
-		s.db.Where("organization_id = ?", orgID).Order("created_at DESC").Limit(50).Find(&broadcasts)
-		writeJSON(w, http.StatusOK, broadcasts)
-	}
+	orgID := getOrgID(r)
+	var broadcasts []models.Broadcast
+	s.db.Where("organization_id = ?", orgID).Order("created_at DESC").Limit(50).Find(&broadcasts)
+	writeJSON(w, http.StatusOK, broadcasts)
+}
 
-	func (s *Server) handleCreateFileTransfer(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			SenderID     string `json:"sender_id"`
-			RecipientID  string `json:"recipient_id"`
-			FileName     string `json:"file_name"`
-			FileSize     int64  `json:"file_size"`
-			FileType     string `json:"file_type"`
-			Classification string `json:"classification"`
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
-		orgID := getOrgID(r)
-		ft, err := s.comms.CreateFileTransfer(orgID, req.SenderID, req.RecipientID, req.FileName, req.FileSize, req.FileType, req.Classification)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusCreated, ft)
+func (s *Server) handleCreateFileTransfer(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SenderID       string `json:"sender_id"`
+		RecipientID    string `json:"recipient_id"`
+		FileName       string `json:"file_name"`
+		FileSize       int64  `json:"file_size"`
+		FileType       string `json:"file_type"`
+		Classification string `json:"classification"`
 	}
-
-	func (s *Server) handleListFileTransfers(w http.ResponseWriter, r *http.Request) {
-		orgID := getOrgID(r)
-		var transfers []models.FileTransfer
-		s.db.Where("organization_id = ?", orgID).Order("created_at DESC").Limit(50).Find(&transfers)
-		writeJSON(w, http.StatusOK, transfers)
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
 	}
+	orgID := getOrgID(r)
+	ft, err := s.comms.CreateFileTransfer(orgID, req.SenderID, req.RecipientID, req.FileName, req.FileSize, req.FileType, req.Classification)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, ft)
+}
 
+func (s *Server) handleListFileTransfers(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var transfers []models.FileTransfer
+	s.db.Where("organization_id = ?", orgID).Order("created_at DESC").Limit(50).Find(&transfers)
+	writeJSON(w, http.StatusOK, transfers)
+}
 
 func (s *Server) handleSeedDemoData(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
@@ -2901,7 +3014,9 @@ func (s *Server) handleSeedDemoData(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		usr, err := s.identity.CreateUser(orgID, u.Email, u.Name, u.NameKo, "local", "")
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		usr.Title = u.Title
 		usr.BusinessUnitID = u.Dept
 		s.db.Save(usr)
@@ -2915,10 +3030,12 @@ func (s *Server) handleSeedDemoData(w http.ResponseWriter, r *http.Request) {
 		{"infra", "인프라", "infra"},
 	} {
 		existing := &models.Project{}
-		if s.db.Where("slug = ?", p.Slug).First(existing).Error == nil { continue }
+		if s.db.Where("slug = ?", p.Slug).First(existing).Error == nil {
+			continue
+		}
 		s.db.Create(&models.Project{
 			AuditBase: models.AuditBase{OrganizationID: orgID, Classification: "internal"},
-			Name: p.Name, NameKo: p.NameKo, Slug: p.Slug, Status: "active",
+			Name:      p.Name, NameKo: p.NameKo, Slug: p.Slug, Status: "active",
 		})
 		results["projects"]++
 	}
@@ -2928,21 +3045,27 @@ func (s *Server) handleSeedDemoData(w http.ResponseWriter, r *http.Request) {
 		{"frontend-app", "github", "https://github.com/patty/frontend-app.git"},
 	} {
 		existing := &models.Repository{}
-		if s.db.Where("name = ?", repo.Name).First(existing).Error == nil { continue }
+		if s.db.Where("name = ?", repo.Name).First(existing).Error == nil {
+			continue
+		}
 		var proj models.Project
 		s.db.Where("slug = ?", repo.Name).First(&proj)
 		s.db.Create(&models.Repository{
 			AuditBase: models.AuditBase{OrganizationID: orgID, Classification: "internal"},
-			Name: repo.Name, FullName: repo.Name, ProjectID: proj.ID,
+			Name:      repo.Name, FullName: repo.Name, ProjectID: proj.ID,
 			SCMProvider: repo.Provider, CloneURL: repo.URL, DefaultBranch: "main",
 		})
 		results["repos"]++
 	}
 
-	for email, hid := range map[string]string{"kim@patty.dev":"hrn_kim_001","lee@patty.dev":"hrn_lee_002","park@patty.dev":"hrn_park_003","choi@patty.dev":"hrn_choi_004"} {
-		if _, ok := userIDs[email]; !ok { continue }
+	for email, hid := range map[string]string{"kim@patty.dev": "hrn_kim_001", "lee@patty.dev": "hrn_lee_002", "park@patty.dev": "hrn_park_003", "choi@patty.dev": "hrn_choi_004"} {
+		if _, ok := userIDs[email]; !ok {
+			continue
+		}
 		existing := &models.Harness{}
-		if s.db.Where("harness_id = ?", hid).First(existing).Error == nil { continue }
+		if s.db.Where("harness_id = ?", hid).First(existing).Error == nil {
+			continue
+		}
 		s.db.Create(&models.Harness{
 			Base: models.Base{}, OrganizationID: orgID,
 			HarnessID: hid, Status: "active", BinaryVersion: "1.2.0",
@@ -2970,7 +3093,7 @@ func (s *Server) handleSeedDemoData(w http.ResponseWriter, r *http.Request) {
 		sm := &models.Session{
 			AuditBase: models.AuditBase{OrganizationID: orgID, Classification: "internal"},
 			SessionID: fmt.Sprintf("sess_demo_%03d", i+1),
-			UserID: ds.UserID, HarnessID: ds.HID, ProjectID: ds.PID,
+			UserID:    ds.UserID, HarnessID: ds.HID, ProjectID: ds.PID,
 			Title: ds.Title, Status: ds.Status, ModelClass: "patty-code-standard",
 			OpenedAt: time.Now().Add(-time.Duration(i) * time.Hour).Format(time.RFC3339),
 		}
@@ -3006,98 +3129,104 @@ func (s *Server) handleSeedDemoData(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetRepoProvenance(w http.ResponseWriter, r *http.Request) {
-		repoId := chi.URLParam(r, "repoId")
-		orgID := getOrgID(r)
+	repoId := chi.URLParam(r, "repoId")
+	orgID := getOrgID(r)
 
-		// Get changesets for this repo
-		var changeSets []models.ChangeSet
-		s.db.Where("organization_id = ? AND repository_id = ?", orgID, repoId).
-			Order("created_at DESC").Limit(50).Find(&changeSets)
+	// Get changesets for this repo
+	var changeSets []models.ChangeSet
+	s.db.Where("organization_id = ? AND repository_id = ?", orgID, repoId).
+		Order("created_at DESC").Limit(50).Find(&changeSets)
 
-		// Get provenance spans for this repo
-		var spans []models.ProvenanceSpan
-		s.db.Where("organization_id = ? AND repository_id = ?", orgID, repoId).
-			Order("created_at DESC").Limit(100).Find(&spans)
+	// Get provenance spans for this repo
+	var spans []models.ProvenanceSpan
+	s.db.Where("organization_id = ? AND repository_id = ?", orgID, repoId).
+		Order("created_at DESC").Limit(100).Find(&spans)
 
-		// Get sessions that touched this repo
-		sessionIds := make(map[string]bool)
-		for _, cs := range changeSets {
-			if cs.SessionID != "" {
-				sessionIds[cs.SessionID] = true
-			}
+	// Get sessions that touched this repo
+	sessionIds := make(map[string]bool)
+	for _, cs := range changeSets {
+		if cs.SessionID != "" {
+			sessionIds[cs.SessionID] = true
 		}
-		var sessions []models.Session
-		for sid := range sessionIds {
-			var sess models.Session
-			if s.db.Where("session_id = ?", sid).First(&sess).Error == nil {
-				sessions = append(sessions, sess)
-			}
+	}
+	var sessions []models.Session
+	for sid := range sessionIds {
+		var sess models.Session
+		if s.db.Where("session_id = ?", sid).First(&sess).Error == nil {
+			sessions = append(sessions, sess)
 		}
-
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"change_sets": changeSets,
-			"spans":       spans,
-			"sessions":    sessions,
-		})
 	}
 
-	func (s *Server) handleGetRepoChangeSets(w http.ResponseWriter, r *http.Request) {
-		repoId := chi.URLParam(r, "repoId")
-		orgID := getOrgID(r)
-		var changeSets []models.ChangeSet
-		s.db.Where("organization_id = ? AND repository_id = ?", orgID, repoId).
-			Order("created_at DESC").Limit(50).Find(&changeSets)
-		writeJSON(w, http.StatusOK, changeSets)
-	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"change_sets": changeSets,
+		"spans":       spans,
+		"sessions":    sessions,
+	})
+}
 
-	func (s *Server) handleGetRepoSpans(w http.ResponseWriter, r *http.Request) {
-		repoId := chi.URLParam(r, "repoId")
-		orgID := getOrgID(r)
-		var spans []models.ProvenanceSpan
-		s.db.Where("organization_id = ? AND repository_id = ?", orgID, repoId).
-			Order("created_at DESC").Limit(100).Find(&spans)
-		writeJSON(w, http.StatusOK, spans)
-	}
+func (s *Server) handleGetRepoChangeSets(w http.ResponseWriter, r *http.Request) {
+	repoId := chi.URLParam(r, "repoId")
+	orgID := getOrgID(r)
+	var changeSets []models.ChangeSet
+	s.db.Where("organization_id = ? AND repository_id = ?", orgID, repoId).
+		Order("created_at DESC").Limit(50).Find(&changeSets)
+	writeJSON(w, http.StatusOK, changeSets)
+}
 
-	func (s *Server) handleGetRepoProvenanceStats(w http.ResponseWriter, r *http.Request) {
-		repoId := chi.URLParam(r, "repoId")
-		orgID := getOrgID(r)
+func (s *Server) handleGetRepoSpans(w http.ResponseWriter, r *http.Request) {
+	repoId := chi.URLParam(r, "repoId")
+	orgID := getOrgID(r)
+	var spans []models.ProvenanceSpan
+	s.db.Where("organization_id = ? AND repository_id = ?", orgID, repoId).
+		Order("created_at DESC").Limit(100).Find(&spans)
+	writeJSON(w, http.StatusOK, spans)
+}
 
-		var totalChangeSets int64
-		s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ?", orgID, repoId).Count(&totalChangeSets)
+func (s *Server) handleGetRepoProvenanceStats(w http.ResponseWriter, r *http.Request) {
+	repoId := chi.URLParam(r, "repoId")
+	orgID := getOrgID(r)
 
-		var aiGenerated int64
-		s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ? AND attribution_state = ?", orgID, repoId, "AI_GENERATED").Count(&aiGenerated)
+	var totalChangeSets int64
+	s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ?", orgID, repoId).Count(&totalChangeSets)
 
-		var humanEdited int64
-		s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ? AND attribution_state = ?", orgID, repoId, "AI_THEN_HUMAN_EDITED").Count(&humanEdited)
+	var aiGenerated int64
+	s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ? AND attribution_state = ?", orgID, repoId, "AI_GENERATED").Count(&aiGenerated)
 
-		var humanWritten int64
-		s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ? AND attribution_state = ?", orgID, repoId, "HUMAN_WRITTEN").Count(&humanWritten)
+	var humanEdited int64
+	s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ? AND attribution_state = ?", orgID, repoId, "AI_THEN_HUMAN_EDITED").Count(&humanEdited)
 
-		var totalSpans int64
-		s.db.Model(&models.ProvenanceSpan{}).Where("organization_id = ? AND repository_id = ?", orgID, repoId).Count(&totalSpans)
+	var humanWritten int64
+	s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ? AND attribution_state = ?", orgID, repoId, "HUMAN_WRITTEN").Count(&humanWritten)
 
-		var linesAdded int64
-		var linesRemoved int64
-		type lineResult struct{ Sum int64 }
-		var lr lineResult
-		s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ?", orgID, repoId).Select("COALESCE(SUM(lines_added), 0) as sum").Scan(&lr)
-		linesAdded = lr.Sum
-		s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ?", orgID, repoId).Select("COALESCE(SUM(lines_removed), 0) as sum").Scan(&lr)
-		linesRemoved = lr.Sum
+	var totalSpans int64
+	s.db.Model(&models.ProvenanceSpan{}).Where("organization_id = ? AND repository_id = ?", orgID, repoId).Count(&totalSpans)
 
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"total_changesets":    totalChangeSets,
-			"ai_generated":        aiGenerated,
-			"ai_then_human":       humanEdited,
-			"human_written":       humanWritten,
-			"total_spans":         totalSpans,
-			"lines_added":         linesAdded,
-			"lines_removed":       linesRemoved,
-			"ai_percentage":       fmt.Sprintf("%.0f%%", func() float64 { if totalChangeSets > 0 { return float64(aiGenerated) / float64(totalChangeSets) * 100 } else { return 0 } }()),
-		})
-	}
+	var linesAdded int64
+	var linesRemoved int64
+	type lineResult struct{ Sum int64 }
+	var lr lineResult
+	s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ?", orgID, repoId).Select("COALESCE(SUM(lines_added), 0) as sum").Scan(&lr)
+	linesAdded = lr.Sum
+	s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ?", orgID, repoId).Select("COALESCE(SUM(lines_removed), 0) as sum").Scan(&lr)
+	linesRemoved = lr.Sum
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"total_changesets": totalChangeSets,
+		"ai_generated":     aiGenerated,
+		"ai_then_human":    humanEdited,
+		"human_written":    humanWritten,
+		"total_spans":      totalSpans,
+		"lines_added":      linesAdded,
+		"lines_removed":    linesRemoved,
+		"ai_percentage": fmt.Sprintf("%.0f%%", func() float64 {
+			if totalChangeSets > 0 {
+				return float64(aiGenerated) / float64(totalChangeSets) * 100
+			} else {
+				return 0
+			}
+		}()),
+	})
+}
 
 func min(a, b int) int {
 	if a < b {
@@ -3180,17 +3309,17 @@ func (s *Server) handlePostChangeSet(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePostProvenanceSpan(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
 	var req struct {
-		RepositoryID     string   `json:"repository_id"`
-		ChangeSetID      string   `json:"change_set_id"`
-		FilePath         string   `json:"file_path"`
-		CommitSHA        string   `json:"commit_sha"`
-		SymbolLang       string   `json:"symbol_lang"`
-		SymbolName       string   `json:"symbol_name"`
-		StartLine        int      `json:"start_line"`
-		EndLine          int      `json:"end_line"`
-		AttributionState string   `json:"attribution_state"`
-		Confidence       float64  `json:"confidence"`
-		SessionID        string   `json:"session_id"`
+		RepositoryID     string  `json:"repository_id"`
+		ChangeSetID      string  `json:"change_set_id"`
+		FilePath         string  `json:"file_path"`
+		CommitSHA        string  `json:"commit_sha"`
+		SymbolLang       string  `json:"symbol_lang"`
+		SymbolName       string  `json:"symbol_name"`
+		StartLine        int     `json:"start_line"`
+		EndLine          int     `json:"end_line"`
+		AttributionState string  `json:"attribution_state"`
+		Confidence       float64 `json:"confidence"`
+		SessionID        string  `json:"session_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -3250,8 +3379,8 @@ func (s *Server) handleListEnterpriseFeatures(w http.ResponseWriter, r *http.Req
 func (s *Server) handleUpdateEnterpriseFeature(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var req struct {
-		Enabled  bool `json:"enabled"`
-		Enforced bool `json:"enforced"`
+		Enabled  bool   `json:"enabled"`
+		Enforced bool   `json:"enforced"`
 		Config   string `json:"config"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
@@ -3282,7 +3411,7 @@ func (s *Server) handleSeedEnterpriseFeatures(w http.ResponseWriter, r *http.Req
 	orgID := getOrgID(r)
 	defaults := []struct {
 		Key, Name, NameKo, Category, PRD string
-		Enforced bool
+		Enforced                         bool
 	}{
 		{"code_review", "Policy-Enforced Code Review", "정책 기반 코드 리뷰", "governance", "§33.4", true},
 		{"code_signing", "Mandatory Code Signing", "의무 코드 서명", "security", "§18.6", true},
@@ -3312,15 +3441,15 @@ func (s *Server) handleSeedEnterpriseFeatures(w http.ResponseWriter, r *http.Req
 	// network grants, provenance, evidence receipts). Everything else
 	// seeds as planned — the tracker reports reality, not aspiration.
 	liveFeatures := map[string]bool{
-		"change_freeze":    true, // workflow gate (governed)
-		"model_recall":     true, // workflow gate (governed)
-		"mandatory_ack":    true, // workflow gate (governed)
-		"sandbox_execution": true, // sandbox policy (governed E4)
-		"command_auth":     true, // tool registry gate (governed C3)
-		"network_egress":   true, // network grants (governed C4)
-		"mcp_allowlist":    true, // tool registry covers MCP (C3)
-		"ai_attribution":   true, // provenance emission + ingestion (B1/B2)
-		"audit_export":     true, // evidence receipts + ack loop (B3)
+		"change_freeze":       true, // workflow gate (governed)
+		"model_recall":        true, // workflow gate (governed)
+		"mandatory_ack":       true, // workflow gate (governed)
+		"sandbox_execution":   true, // sandbox policy (governed E4)
+		"command_auth":        true, // tool registry gate (governed C3)
+		"network_egress":      true, // network grants (governed C4)
+		"mcp_allowlist":       true, // tool registry covers MCP (C3)
+		"ai_attribution":      true, // provenance emission + ingestion (B1/B2)
+		"audit_export":        true, // evidence receipts + ack loop (B3)
 		"data_classification": true, // DLP finding classification on live path
 	}
 
@@ -3333,7 +3462,7 @@ func (s *Server) handleSeedEnterpriseFeatures(w http.ResponseWriter, r *http.Req
 		}
 		live := liveFeatures[d.Key]
 		feature := &models.EnterpriseHarnessFeature{
-			Base: models.Base{},
+			Base:           models.Base{},
 			OrganizationID: orgID,
 			FeatureKey:     d.Key,
 			FeatureName:    d.Name,

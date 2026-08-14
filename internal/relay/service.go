@@ -565,6 +565,30 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 		return nil, nil, fmt.Errorf("relay: harness %s is %s", req.HarnessID, harness.Status)
 	}
 
+	// Live-path heartbeat (web/03 B2): every governed exchange is proof
+	// of liveness; stamp it so the fleet view reflects reality instead
+	// of a dead enrollment-time value.
+	s.db.Model(&models.Harness{}).Where("harness_id = ?", req.HarnessID).
+		Update("last_heartbeat", time.Now().Format(time.RFC3339))
+
+	// Session-status enforcement (web/02 B3): a session the control
+	// plane closed/paused/terminated must not keep exchanging, even
+	// on an otherwise healthy connection with a live lease.
+	if req.SessionID != "" {
+		var session models.Session
+		if err := s.db.Where("session_id = ?", req.SessionID).First(&session).Error; err == nil {
+			switch session.Status {
+			case "closed", "terminated":
+				return nil, nil, fmt.Errorf("relay: session %s is %s — inference refused", req.SessionID, session.Status)
+			case "paused", "idle":
+				return nil, nil, fmt.Errorf("relay: session %s is %s — resume the session before inference", req.SessionID, session.Status)
+			}
+		}
+		// An unknown session row is not an error here: the DARI
+		// session-governance handshake (lease + epoch binding) is the
+		// authoritative gate; the Session row is the CP-side view.
+	}
+
 	// 2. Resolve the active capability lease for this harness (fail-closed).
 	var lease models.CapabilityLease
 	if err := s.db.Where("subject_peer_id = ? AND status = 'active'", req.HarnessID).

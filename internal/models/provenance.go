@@ -1,5 +1,14 @@
 package models
 
+import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"time"
+
+	"gorm.io/gorm"
+)
+
 // ActionEnvelope is a signed record of a governed action (PRD §37.2, Appendix H item 3).
 type ActionEnvelope struct {
 	Base
@@ -121,7 +130,66 @@ type AuditEvent struct {
 	Result         string `gorm:"type:varchar(32);default:'success'" json:"result"` // success, failure, denied
 	LegalHold      bool   `gorm:"default:false" json:"legal_hold"`
 	EventDigest    string `gorm:"type:varchar(128)" json:"event_digest"`
+	// PrevEventDigest links the event into a per-org hash chain: it is
+	// the EventDigest of the org's previous audit event (empty for the
+	// first). VerifyAuditChain recomputes both.
+	PrevEventDigest string `gorm:"type:varchar(128)" json:"prev_event_digest,omitempty"`
+	// ChainSeq is the per-org monotonic insertion sequence. UUID IDs
+	// are not chronological, so chain order and linkage use this.
+	ChainSeq int64 `gorm:"index:idx_audit_org_seq" json:"chain_seq"`
 	OccurredAt     string `gorm:"type:timestamp" json:"occurred_at"`
+}
+
+// AuditDigestDomain separates audit-chain digests from other hashes.
+const AuditDigestDomain = "DARI-AUDIT-EVENT-v1\x00"
+
+// ComputeAuditDigest derives the content digest of one audit event —
+// SHA-256 over the domain and the event's canonical fields. The same
+// computation runs at write time (BeforeCreate) and at verification.
+func (e *AuditEvent) ComputeAuditDigest() string {
+	h := sha256.New()
+	h.Write([]byte(AuditDigestDomain))
+	for _, v := range []string{e.OrganizationID, e.EventType, e.ActorID, e.ActorType, e.Action, e.ResourceType, e.ResourceID, e.Details, e.Result, e.OccurredAt} {
+		var l [4]byte
+		binary.BigEndian.PutUint32(l[:], uint32(len(v)))
+		h.Write(l[:])
+		h.Write([]byte(v))
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil))
+}
+
+// BeforeCreate computes the event digest and links the per-org chain.
+// Running as a GORM hook means EVERY creation path — API handlers,
+// services, seeds — produces chained, verifiable events.
+func (e *AuditEvent) BeforeCreate(tx *gorm.DB) error {
+	// Chain after the embedded Base hook (ID generation) — defining
+	// this method shadows it for GORM.
+	if err := e.Base.BeforeCreate(tx); err != nil {
+		return err
+	}
+	if e.OccurredAt == "" {
+		e.OccurredAt = time.Now().Format(time.RFC3339)
+	}
+	// Per-org insertion sequence.
+	var last AuditEvent
+	if err := tx.Where("organization_id = ?", e.OrganizationID).Order("chain_seq DESC").First(&last).Error; err == nil {
+		e.ChainSeq = last.ChainSeq + 1
+	} else {
+		e.ChainSeq = 1
+	}
+	// Column defaults must be applied BEFORE digesting so the stored
+	// row matches the digested content exactly.
+	if e.Result == "" {
+		e.Result = "success"
+	}
+	var prev AuditEvent
+	if err := tx.Where("organization_id = ? AND chain_seq = ?", e.OrganizationID, e.ChainSeq-1).First(&prev).Error; err == nil && e.ChainSeq > 1 {
+		e.PrevEventDigest = prev.EventDigest
+	}
+	if e.EventDigest == "" {
+		e.EventDigest = e.ComputeAuditDigest()
+	}
+	return nil
 }
 
 // EvidenceReceipt is a COSE-signed proof of an exchange (DARI §34).

@@ -53,6 +53,18 @@ export default function Audit() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const pageSize = 50
 
+  const [chainReport, setChainReport] = useState<{verified: boolean; events: number; reason?: string; first_break_id?: string} | null>(null)
+  const [verifying, setVerifying] = useState(false)
+
+  const verifyChain = () => {
+    setVerifying(true)
+    fetch('/api/audit/verify', { headers: authHeaders() })
+      .then(r => r.json())
+      .then(setChainReport)
+      .catch(() => setChainReport({ verified: false, events: 0, reason: '확인 실패' }))
+      .finally(() => setVerifying(false))
+  }
+
   useEffect(() => {
     fetch('/api/audit', { headers: authHeaders() })
       .then(r => r.json())
@@ -76,6 +88,29 @@ export default function Audit() {
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">감사 로그 <span className="text-gray-400 text-lg font-normal">Audit Trail</span></h1>
+
+      {/* Chain verification (tamper evidence) */}
+      <div className="card p-4 mb-4 flex items-center justify-between">
+        <div>
+          <div className="text-sm font-medium">해시 체인 검증 · Hash-Chain Verification</div>
+          <div className="text-xs text-gray-500 mt-0.5">
+            {chainReport === null
+              ? '감사 이벤트의 무결성을 해시 체인으로 검증합니다'
+              : chainReport.verified
+                ? `체인 무결 · ${chainReport.events}개 이벤트 검증 완료 — 위변조 없음`
+                : `체인 손상 감지 — ${chainReport.reason ?? '알 수 없는 이유'}${chainReport.first_break_id ? ` (이벤트 ${chainReport.first_break_id.slice(0, 8)}…)` : ''}`}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {chainReport && (
+            <span className={chainReport.verified ? 'badge-green' : 'badge-red'}>
+              {chainReport.verified ? '무결' : '손상'}
+            </span>
+          )}
+          <button onClick={verifyChain} disabled={verifying}
+            className="btn btn-secondary text-xs">{verifying ? '검증 중…' : '체인 검증'}</button>
+        </div>
+      </div>
 
       {/* Stats */}
       <div className="grid grid-cols-4 gap-3 mb-4">
@@ -196,7 +231,7 @@ export default function Audit() {
   )
 }
 
-function authHeaders() {
+function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('pccp_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
