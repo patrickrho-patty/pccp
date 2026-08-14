@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/identity"
+	"github.com/patrickrho-patty/pccp/internal/models"
 )
 
 // Server is the Relay HTTP API server.
@@ -32,8 +33,32 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/exchanges", s.handleOpenExchange)
 	mux.HandleFunc("/v1/exchanges/", s.handleExchangeAction)
 	mux.HandleFunc("/v1/inference", s.handleInference)
+	mux.HandleFunc("/v1/provenance/changesets", s.handleListChangeSets)
 
 	return mux
+}
+
+// handleListChangeSets surfaces the connector-ingested changesets for
+// operational verification of the provenance pipeline (B1).
+func (s *Server) handleListChangeSets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var rows []models.ChangeSet
+	s.svc.db.Limit(100).Order("created_at DESC").Find(&rows)
+	out := make([]map[string]any, 0, len(rows))
+	for _, cs := range rows {
+		out = append(out, map[string]any{
+			"id":              cs.ID,
+			"organization_id": cs.OrganizationID,
+			"session_id":      cs.SessionID,
+			"repository_id":   cs.RepositoryID,
+			"files_changed":   cs.FilesChanged,
+			"created_at":      cs.CreatedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"changesets": out})
 }
 
 // handleEnrollHarness is the harness enrollment entry point (A1): a
