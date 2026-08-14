@@ -303,7 +303,41 @@ func (s *Service) RouteInference(ctx context.Context, req InferenceRequest) (*In
 
 	// Forward to PIA via the injectable forwarder — PAPER transport when
 	// PCCP_PIA_PAPER_ADDR is set, HTTP fallback otherwise (dev/legacy).
-	inferenceResp, err := s.forwarder(ctx, req, exchange.EndpointLeaseID)
+	return s.routeViaForwarder(ctx, exchange, req, func(ictx context.Context, ireq InferenceRequest) (*InferenceResponse, error) {
+		return s.forwarder(ictx, ireq, exchange.EndpointLeaseID)
+	})
+}
+
+// RouteInferenceStream is RouteInference with token streaming: every
+// PIA delta is handed to onDelta (F1). The exchange bookkeeping,
+// metering, and action recording are identical.
+func (s *Service) RouteInferenceStream(ctx context.Context, req InferenceRequest, onDelta DeltaSender) (*InferenceResponse, error) {
+	s.mu.RLock()
+	exchange, ok := s.exchanges[req.ExchangeID]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("relay: exchange %s not found", req.ExchangeID)
+	}
+	if exchange.State != paper.ExchangeAuthorized && exchange.State != paper.ExchangeActive {
+		return nil, fmt.Errorf("relay: exchange state is %s, not authorized", exchange.State)
+	}
+
+	s.mu.Lock()
+	exchange.State = paper.ExchangeActive
+	s.mu.Unlock()
+	if exchange.EndpointID == "" {
+		return nil, fmt.Errorf("relay: exchange %s has no resolved endpoint", req.ExchangeID)
+	}
+
+	return s.routeViaForwarder(ctx, exchange, req, func(ictx context.Context, ireq InferenceRequest) (*InferenceResponse, error) {
+		return s.streamForwarder(ictx, ireq, exchange.EndpointLeaseID, onDelta)
+	})
+}
+
+// routeViaForwarder runs the post-forward bookkeeping (meter, action
+// record, completion) shared by the streaming and buffered paths.
+func (s *Service) routeViaForwarder(ctx context.Context, exchange *Exchange, req InferenceRequest, fwd func(context.Context, InferenceRequest) (*InferenceResponse, error)) (*InferenceResponse, error) {
+	inferenceResp, err := fwd(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("relay: inference forward failed: %w", err)
 	}
@@ -513,7 +547,11 @@ type GovernRequest struct {
 // package) from the control-plane DB, then runs the full governed flow
 // (authorize → forward → meter → evidence). It fails closed if any required
 // governance artifact is missing or invalid. (MISSING_ITEMS Domain 1–2 P0 / Harness A)
-func (s *Service) GovernInference(ctx context.Context, req GovernRequest) (*InferenceResponse, *models.EvidenceReceipt, error) {
+func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream ...DeltaSender) (*InferenceResponse, *models.EvidenceReceipt, error) {
+	var onDelta DeltaSender
+	if len(stream) > 0 {
+		onDelta = stream[0]
+	}
 	// 1. Resolve org from the enrolled harness.
 	var harness models.Harness
 	if err := s.db.Where("harness_id = ?", req.HarnessID).First(&harness).Error; err != nil {
@@ -578,7 +616,7 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest) (*Infe
 		}
 	}
 
-	resp, err := s.RouteInference(ctx, InferenceRequest{
+	infReq := InferenceRequest{
 		ExchangeID:     ex.ID,
 		OrganizationID: orgID,
 		SessionID:      req.SessionID,
@@ -586,7 +624,13 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest) (*Infe
 		Model:          req.Model,
 		Messages:       req.Messages,
 		MaxTokens:      req.MaxTokens,
-	})
+	}
+	var resp *InferenceResponse
+	if onDelta != nil {
+		resp, err = s.RouteInferenceStream(ctx, infReq, onDelta)
+	} else {
+		resp, err = s.RouteInference(ctx, infReq)
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("relay: governed inference failed: %w", err)
 	}

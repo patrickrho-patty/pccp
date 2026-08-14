@@ -418,28 +418,28 @@ func (pl *PaperListener) governAIOpen(ctx context.Context, conn *paper.Transport
 		return
 	}
 
-	resp, receipt, err := pl.svc.GovernInference(ctx, greq)
+	// F1: governed token streaming — every PIA delta is relayed to the
+	// harness as an AI_TOKEN_CHUNK before the final AI_COMPLETE.
+	delta := func(text string) {
+		chunkPayload, _ := json.Marshal(map[string]string{"text": text})
+		if err := conn.SendMessage(paper.MsgAITokenChunk, nil, chunkPayload, reqRecord.LaneID, reqRecord.LaneSequence+1); err != nil {
+			log.Printf("relay: token chunk to %s failed: %v", connID, err)
+		}
+	}
+	resp, receipt, err := pl.svc.GovernInference(ctx, greq, delta)
 	if err != nil {
 		log.Printf("relay: governed inference denied/failed for %s: %v", connID, err)
 		errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
 		conn.SendMessage(paper.MsgClose, nil, errPayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
 		return
 	}
-
-	// Build the AI_COMPLETE payload in the shape the harness decodes.
-	content := ""
-	if len(resp.Choices) > 0 {
-		if msg, ok := resp.Choices[0]["message"].(map[string]interface{}); ok {
-			content, _ = msg["content"].(string)
-		}
-		if content == "" {
-			content, _ = resp.Choices[0]["text"].(string)
-		}
-	}
+	// The streamed text already reached the harness as AI_TOKEN_CHUNK
+	// records; the AI_COMPLETE carries usage + finish only (a non-empty
+	// content would duplicate tokens client-side).
 	inTok := resp.Usage["prompt_tokens"]
 	outTok := resp.Usage["completion_tokens"]
 	completePayload, _ := json.Marshal(map[string]interface{}{
-		"content":       content,
+		"content":       "",
 		"finish_reason": "stop",
 		"input_tokens":  inTok,
 		"output_tokens": outTok,
