@@ -81,7 +81,7 @@ func LoadRelayFromEnv() RelayConfig {
 
 // PIAConfig holds PIA (Patty Inference Agent) configuration.
 type PIAConfig struct {
-	// PAPER peer
+	// DARI peer
  	PeerID string `json:"peer_i_d"`
 	// Relay endpoint
  	RelayAddr string `json:"relay_addr"`

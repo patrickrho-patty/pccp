@@ -15,7 +15,7 @@
 | CBOR | fxamacker/cbor | Deterministic encoding, RFC 8949 compliant |
 | COSE signing | veraison/go-cose | RFC 8152 compliant COSE-Sign1 |
 | QUIC | quic-go/quic-go | De facto Go QUIC implementation |
-| Crypto | Ed25519, SHA-256 | Per PAPER cryptographic profile |
+| Crypto | Ed25519, SHA-256 | Per DARI cryptographic profile |
 | CSS framework | Tailwind CSS | Utility-first, rapid Korean-first UI |
 
 ## Component Architecture
@@ -26,10 +26,10 @@ pccp/
 ├── Makefile
 ├── cmd/
 │   ├── pccp-server/     # Control Plane API server (HTTP, admin)
-│   ├── pccp-relay/      # PAPER Relay (QUIC/TCP data plane)
+│   ├── pccp-relay/      # DARI Relay (QUIC/TCP data plane)
 │   └── pccp-pia/        # Patty Inference Agent
 ├── internal/
-│   ├── paper/           # PAPER protocol library
+│   ├── paper/           # DARI protocol library
 │   │   ├── framing.go   # 32-byte record framing
 │   │   ├── cbor.go      # Deterministic CBOR encoding
 │   │   ├── cose.go      # COSE-Sign1 envelope
@@ -81,7 +81,7 @@ pccp/
 - Policy epochs
 - Capability leases (signed authorization objects)
 
-### Slice 6: PAPER protocol core
+### Slice 6: DARI protocol core
 - Connection state machine (HELLO → AUTH → READY)
 - Peer credential verification
 - Working sessions, governed exchanges

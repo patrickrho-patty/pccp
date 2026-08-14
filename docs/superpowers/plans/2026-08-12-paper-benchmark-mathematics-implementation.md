@@ -13,7 +13,7 @@
 - Work directly on the current branch; do not create a worktree or branch.
 - Do not change benchmark observations in `benchmark-data/core-primitives.tsv`.
 - Do not infer variance, confidence intervals, or significance from retained medians.
-- Keep changes confined to the PAPER arXiv package and this plan.
+- Keep changes confined to the DARI arXiv package and this plan.
 
 ---
 
@@ -48,8 +48,8 @@
 ### Task 3: Rebuild and validate publication artifacts
 
 **Files:**
-- Regenerate: `docs/plans/PAPER/arxiv/PAPER_arXiv.pdf`
-- Regenerate: `docs/plans/PAPER/arxiv/PAPER-arXiv-source.tar.gz`
+- Regenerate: `docs/plans/PAPER/arxiv/DARI_arXiv.pdf`
+- Regenerate: `docs/plans/PAPER/arxiv/DARI-arXiv-source.tar.gz`
 
 **Interfaces:**
 - Consumes: the revised LaTeX source, plot, figures, bibliography, and dataset

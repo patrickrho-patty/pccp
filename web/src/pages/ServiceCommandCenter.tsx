@@ -207,7 +207,7 @@ export default function ServiceCommandCenter() {
           <div className="space-y-2">
             {[
               { name: 'Control Plane', status: health.cp?.status || 'unknown' },
-              { name: 'PAPER Relay', status: health.rt?.relay_status || 'unknown' },
+              { name: 'DARI Relay', status: health.rt?.relay_status || 'unknown' },
               { name: 'Event Spine', status: health.rt?.event_spine || 'unknown' },
               { name: 'Metering', status: health.rt?.metering || 'unknown' },
               { name: 'Model Catalog', status: health.rt?.catalog || 'unknown' },

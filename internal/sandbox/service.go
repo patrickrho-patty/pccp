@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/gorm"
 )
 
@@ -81,7 +81,7 @@ func (s *Service) CreateSandbox(req CreateRequest) (*Sandbox, error) {
 	resourceJSON, _ := json.Marshal(req.ResourceLimits)
 
 	sandbox := &Sandbox{
-		ID:             paper.GenerateID("sandbox"),
+		ID:             dari.GenerateID("sandbox"),
 		OrganizationID: req.OrganizationID,
 		SessionID:      req.SessionID,
 		UserID:         req.UserID,
@@ -116,7 +116,7 @@ func (s *Service) DestroySandbox(sandboxID string) (*Sandbox, error) {
 	// Generate destruction evidence (key discard proof)
 	sandbox.Status = "destroyed"
 	sandbox.DestroyedAt = time.Now().Format(time.RFC3339)
-	sandbox.DestroyEvidence = paper.GenerateID("destruct")
+	sandbox.DestroyEvidence = dari.GenerateID("destruct")
 
 	s.updateSandboxStatus(sandboxID, "destroyed", sandbox.DestroyedAt)
 
@@ -143,7 +143,7 @@ func (s *Service) ForensicSnapshot(sandboxID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	snapshotID := paper.GenerateID("snapshot")
+	snapshotID := dari.GenerateID("snapshot")
 	sandbox.HasSnapshot = true
 
 	// Record the snapshot

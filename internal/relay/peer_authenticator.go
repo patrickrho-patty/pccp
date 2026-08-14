@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 )
 
 // TrustBundle is the relay's local authentication trust and revocation view.
@@ -17,7 +17,7 @@ import (
 type TrustBundle struct {
 	Issuers         map[string]ed25519.PublicKey
 	ProtocolVersion uint8
-	AllowedProfiles map[paper.PeerProfile]bool
+	AllowedProfiles map[dari.PeerProfile]bool
 	RevocationEpoch uint64
 	RevokedSerials  map[string]uint64
 	Now             func() time.Time
@@ -45,7 +45,7 @@ func NewPeerAuthenticator(trust TrustBundle) *PeerAuthenticator {
 
 // VerifyPeerProof verifies the issuer-signed credential and the subject's
 // proof of possession over the supplied transport transcript and challenge.
-func (a *PeerAuthenticator) VerifyPeerProof(ctx context.Context, transcript []byte, proof *paper.AuthProofMessage) (*paper.PeerCredential, error) {
+func (a *PeerAuthenticator) VerifyPeerProof(ctx context.Context, transcript []byte, proof *dari.AuthProofMessage) (*dari.PeerCredential, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -55,19 +55,19 @@ func (a *PeerAuthenticator) VerifyPeerProof(ctx context.Context, transcript []by
 	if len(transcript) == 0 || len(proof.ChallengeID) == 0 {
 		return nil, errors.New("relay: incomplete peer authentication transcript")
 	}
-	if proof.KeyAlgorithm != paper.COSEAlgEdDSA {
+	if proof.KeyAlgorithm != dari.COSEAlgEdDSA {
 		return nil, fmt.Errorf("relay: unsupported peer proof algorithm %d", proof.KeyAlgorithm)
 	}
-	proofEpoch, err := paper.DecodeRevocationEpoch(proof.RevocationEvidence)
+	proofEpoch, err := dari.DecodeRevocationEpoch(proof.RevocationEvidence)
 	if err != nil {
 		return nil, fmt.Errorf("relay: decode peer revocation evidence: %w", err)
 	}
 
-	sign1, err := paper.DecodeCOSESign1(proof.Credential)
+	sign1, err := dari.DecodeCOSESign1(proof.Credential)
 	if err != nil {
 		return nil, fmt.Errorf("relay: decode peer credential: %w", err)
 	}
-	cred, err := paper.DecodePeerCredential(sign1.Payload)
+	cred, err := dari.DecodePeerCredential(sign1.Payload)
 	if err != nil {
 		return nil, err
 	}
@@ -109,8 +109,8 @@ func (a *PeerAuthenticator) VerifyPeerProof(ctx context.Context, transcript []by
 		return nil, fmt.Errorf("relay: peer credential serial %s is revoked", cred.Serial)
 	}
 
-	signingBytes := paper.PeerProofSigningBytes(transcript, proof.ChallengeID, proofEpoch)
-	if !paper.VerifyEd25519(ed25519.PublicKey(cred.PublicKey), signingBytes, proof.Signature) {
+	signingBytes := dari.PeerProofSigningBytes(transcript, proof.ChallengeID, proofEpoch)
+	if !dari.VerifyEd25519(ed25519.PublicKey(cred.PublicKey), signingBytes, proof.Signature) {
 		return nil, errors.New("relay: peer proof-of-possession verification failed")
 	}
 	cred.SignedCredential = append([]byte(nil), proof.Credential...)
@@ -156,9 +156,9 @@ func containsProtocolVersion(versions []uint8, wanted uint8) bool {
 	return false
 }
 
-func knownPeerProfile(profile paper.PeerProfile) bool {
+func knownPeerProfile(profile dari.PeerProfile) bool {
 	switch profile {
-	case paper.ProfileHarness, paper.ProfileInference, paper.ProfileRelay, paper.ProfileControl:
+	case dari.ProfileHarness, dari.ProfileInference, dari.ProfileRelay, dari.ProfileControl:
 		return true
 	default:
 		return false
@@ -173,8 +173,8 @@ func cloneIssuerKeys(src map[string]ed25519.PublicKey) map[string]ed25519.Public
 	return dst
 }
 
-func cloneProfiles(src map[paper.PeerProfile]bool) map[paper.PeerProfile]bool {
-	dst := make(map[paper.PeerProfile]bool, len(src))
+func cloneProfiles(src map[dari.PeerProfile]bool) map[dari.PeerProfile]bool {
+	dst := make(map[dari.PeerProfile]bool, len(src))
 	for profile, allowed := range src {
 		dst[profile] = allowed
 	}

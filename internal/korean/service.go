@@ -69,7 +69,7 @@ type ChangeFreeze struct {
 	IsActive       bool     `json:"is_active"`
 }
 
-// EmergencyModelRecall implements emergency model recall (PRD §33.9, PAPER §65).
+// EmergencyModelRecall implements emergency model recall (PRD §33.9, DARI §65).
 type ModelRecall struct {
 	ModelPackageID string `json:"model_package_id"`
 	Reason         string `json:"reason"`

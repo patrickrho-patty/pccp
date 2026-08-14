@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/gorm"
 )
 
@@ -93,7 +93,7 @@ type MCPConnectionDecision struct {
 // RegisterServer registers a new MCP server in the managed registry.
 func (s *Service) RegisterServer(server MCPServer) (*MCPServer, error) {
 	if server.ID == "" {
-		server.ID = paper.GenerateID("mcp")
+		server.ID = dari.GenerateID("mcp")
 	}
 	if server.Status == "" {
 		server.Status = "pending"
@@ -125,7 +125,7 @@ func (s *Service) RegisterServer(server MCPServer) (*MCPServer, error) {
 func (s *Service) SetPolicy(orgID string, policy MCPPolicy) error {
 	policyJSON, _ := json.Marshal(policy)
 	pack := &models.PolicyPack{
-		Base:            models.Base{ID: paper.GenerateID("mcp_policy")},
+		Base:            models.Base{ID: dari.GenerateID("mcp_policy")},
 		OrganizationID:  orgID,
 		Name:            "MCP Governance Policy",
 		Version:         "1.0",

@@ -1,15 +1,15 @@
-// Package piapi provides a SDK for building PAPER Inference Agents (PIAs).
+// Package piapi provides a SDK for building DARI Inference Agents (PIAs).
 //
-// A PIA is the component that bridges the PAPER protocol to a local
+// A PIA is the component that bridges the DARI protocol to a local
 // serving engine (vLLM, SGLang, TGI, etc.). It:
-//   - Accepts PAPER connections from Relays
+//   - Accepts DARI connections from Relays
 //   - Authenticates as an INFERENCE peer
 //   - Receives AI_OPEN requests
 //   - Translates them to the local serving engine API
 //   - Returns AI_COMPLETE responses
 //
-// Per PAPER §40.1: "PIA authenticates to Relay exactly as a first-class
-// PAPER peer."
+// Per DARI §40.1: "PIA authenticates to Relay exactly as a first-class
+// DARI peer."
 //
 // Usage:
 //
@@ -48,7 +48,7 @@ import (
 )
 
 // EngineAdapter is implemented by serving engine adapters (vLLM, SGLang, etc.).
-// The PIA SDK calls Complete() for each inference request received over PAPER.
+// The PIA SDK calls Complete() for each inference request received over DARI.
 type EngineAdapter interface {
 	// Complete processes an inference request and returns the response.
 	Complete(ctx context.Context, req *Request) (*Response, error)
@@ -58,7 +58,7 @@ type EngineAdapter interface {
 	ModelID() string
 }
 
-// Request is a PAPER-normalized inference request.
+// Request is a DARI-normalized inference request.
 type Request struct {
 	Model       string
 	Messages    []Message
@@ -72,7 +72,7 @@ type Message struct {
 	Content string
 }
 
-// Response is a PAPER-normalized inference response.
+// Response is a DARI-normalized inference response.
 type Response struct {
 	Content      string
 	FinishReason string // COMPLETED, MAX_OUTPUT, STOP_SEQUENCE, etc.
@@ -86,7 +86,7 @@ type Usage struct {
 	TotalTokens  int
 }
 
-// PIA is a Patty Inference Agent that speaks PAPER.
+// PIA is a Patty Inference Agent that speaks DARI.
 type PIA struct {
 	peerID  string
 	adapter EngineAdapter
@@ -99,7 +99,7 @@ func New(peerID string, adapter EngineAdapter) *PIA {
 	return &PIA{peerID: peerID, adapter: adapter}
 }
 
-// Listen starts a PAPER TLS/TCP listener on the given address.
+// Listen starts a DARI TLS/TCP listener on the given address.
 func (p *PIA) Listen(addr string) error {
 	cert, err := generateSelfSignedCert()
 	if err != nil {
@@ -109,7 +109,7 @@ func (p *PIA) Listen(addr string) error {
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS13,
-		NextProtos:   []string{"paper/1"},
+		NextProtos:   []string{"dari/1"},
 	}
 
 	listener, err := tls.Listen("tcp", addr, tlsConfig)
@@ -118,7 +118,7 @@ func (p *PIA) Listen(addr string) error {
 	}
 	defer listener.Close()
 
-	log.Printf("PIA %s listening on %s (PAPER protocol)", p.peerID, addr)
+	log.Printf("PIA %s listening on %s (DARI protocol)", p.peerID, addr)
 
 	for {
 		conn, err := listener.Accept()
@@ -129,7 +129,7 @@ func (p *PIA) Listen(addr string) error {
 	}
 }
 
-// handleConn processes a PAPER connection.
+// handleConn processes a DARI connection.
 func (p *PIA) handleConn(conn net.Conn) {
 	defer conn.Close()
 
@@ -145,14 +145,14 @@ func (p *PIA) handleConn(conn net.Conn) {
 	log.Printf("PIA: connection from %s", conn.RemoteAddr())
 
 	// In a full implementation, this would:
-	// 1. Read and validate PAPER preface
+	// 1. Read and validate DARI preface
 	// 2. Perform HELLO/HELLO_ACK exchange
 	// 3. Handle AUTH_CHALLENGE/AUTH_PROOF
 	// 4. Process application records (AI_OPEN, PING, etc.)
 	// 5. Send AI_COMPLETE responses
 	//
 	// For the SDK, we use a simplified JSON-over-TLS protocol
-	// that carries the same semantics. Full PAPER framing can be
+	// that carries the same semantics. Full DARI framing can be
 	// layered on top.
 
 	dec := json.NewDecoder(conn)
@@ -203,7 +203,7 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{Organization: []string{"PAPER PIA"}},
+		Subject:      pkix.Name{Organization: []string{"DARI PIA"}},
 		NotBefore:    time.Now(),
 		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

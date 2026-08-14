@@ -1,7 +1,7 @@
 // Package vllmadapter provides a reusable adapter for connecting vLLM
-// inference engines to the PAPER protocol via a PIA (Patty Inference Agent).
+// inference engines to the DARI protocol via a PIA (Patty Inference Agent).
 //
-// This is the reference implementation per PAPER Protocol Specification
+// This is the reference implementation per DARI Protocol Specification
 // Appendix C: "PIA adapter examples for vLLM and SGLang."
 //
 // Usage:
@@ -11,7 +11,7 @@
 //	pia.Start(ctx)
 //
 // The adapter handles:
-//   - PAPER peer authentication (HELLO → AUTH)
+//   - DARI peer authentication (HELLO → AUTH)
 //   - AI_OPEN → vLLM /v1/chat/completions translation
 //   - AI_COMPLETE response generation
 //   - Token usage normalization
@@ -29,7 +29,7 @@ import (
 )
 
 // VLLMClient connects to a vLLM serving engine via its OpenAI-compatible API.
-// Per PAPER §38.6: "A PIA adapter MAY call local serving-engine
+// Per DARI §38.6: "A PIA adapter MAY call local serving-engine
 // OpenAI-compatible APIs... behind PIA, on loopback/private endpoint."
 type VLLMClient struct {
 	baseURL    string

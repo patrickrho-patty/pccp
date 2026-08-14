@@ -193,7 +193,7 @@ func (s *Service) PerformAction(req ActionRequest) error {
 		ActionIsolateSandbox, ActionInvalidatePriv, ActionForensicSnapshot,
 		ActionSendAdminMsg, ActionCreateIncident:
 		// These actions are recorded as audit events.
-		// The actual push to the harness happens over PAPER.
+		// The actual push to the harness happens over DARI.
 
 	default:
 		return fmt.Errorf("fleet: unknown action %s", req.Action)

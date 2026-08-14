@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/gorm"
 )
 
@@ -92,7 +92,7 @@ func (s *Service) CreateSubscription(accountID, plan string) (*models.Subscripti
 		MaxActiveHarnesses:  planConfig.MaxActiveHarnesses,
 		NormalWorkSlots:     planConfig.NormalSlots,
 		HeavyWorkSlots:      planConfig.HeavySlots,
-		Revision:            paper.GenerateID("sub_rev"),
+		Revision:            dari.GenerateID("sub_rev"),
 	}
 	if err := s.db.Create(sub).Error; err != nil {
 		return nil, fmt.Errorf("publiccloud: create subscription: %w", err)

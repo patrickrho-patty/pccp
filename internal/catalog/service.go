@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/gorm"
 )
 
@@ -101,7 +101,7 @@ func (s *Service) GenerateCatalogEpoch(accountID, orgID, entitlementRevision str
 	}
 
 	epoch := &models.CatalogEpoch{
-		EpochID:             paper.GenerateID("catalog_epoch"),
+		EpochID:             dari.GenerateID("catalog_epoch"),
 		EpochNumber:         nextNum,
 		GeneratedAt:         time.Now().Format(time.RFC3339),
 		ScopeDigest:         scopeDigest,
@@ -213,7 +213,7 @@ func (s *Service) SeedDefaultCatalog() error {
 			EntitlementClass: "unlimited-developer",
 			EntitlementLabel: "Included",
 			EntitlementLabelKo: "포함됨",
-			MinPaperAIVersion: 2,
+			MinDARIProtocolVersion: 2,
 			ProductionPackageID: "pmp_qwen3_moe_v1",
 		},
 		{
@@ -232,7 +232,7 @@ func (s *Service) SeedDefaultCatalog() error {
 			EntitlementClass: "pro",
 			EntitlementLabel: "Pro Plan",
 			EntitlementLabelKo: "프로 플랜",
-			MinPaperAIVersion: 2,
+			MinDARIProtocolVersion: 2,
 			ProductionPackageID: "pmp_kocoder_v1",
 		},
 	}
@@ -283,7 +283,7 @@ func (s *Service) toDescriptor(cm models.CatalogModel) models.ModelDescriptor {
 		},
 		ClientReqs: models.ModelClientReqs{
 			MinHarnessVersion:  cm.MinHarnessVersion,
-			MinPaperAIVersion:  cm.MinPaperAIVersion,
+			MinDARIProtocolVersion:  cm.MinDARIProtocolVersion,
 			RequiredExtensions: extensions,
 		},
 		Lifecycle: models.ModelLifecycle{

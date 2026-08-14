@@ -10,7 +10,7 @@ import (
 
 	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -18,12 +18,12 @@ import (
 const testRevocationEpoch uint64 = 7
 
 type signedProofTestFixture struct {
-	proof *paper.AuthProofMessage
+	proof *dari.AuthProofMessage
 	trust TrustBundle
-	cred  *paper.PeerCredential
+	cred  *dari.PeerCredential
 }
 
-func signedProofFixture(t *testing.T, transcript []byte) (*paper.AuthProofMessage, TrustBundle) {
+func signedProofFixture(t *testing.T, transcript []byte) (*dari.AuthProofMessage, TrustBundle) {
 	t.Helper()
 	fixture := newSignedProofTestFixture(t, transcript, time.Hour)
 	return fixture.proof, fixture.trust
@@ -32,18 +32,18 @@ func signedProofFixture(t *testing.T, transcript []byte) (*paper.AuthProofMessag
 func newSignedProofTestFixture(t *testing.T, transcript []byte, validity time.Duration) signedProofTestFixture {
 	t.Helper()
 
-	issuer, err := paper.NewPeerCredentialIssuer("test-ca")
+	issuer, err := dari.NewPeerCredentialIssuer("test-ca")
 	if err != nil {
 		t.Fatalf("create issuer: %v", err)
 	}
-	subjectPublic, subjectPrivate, err := paper.GenerateKeyPair()
+	subjectPublic, subjectPrivate, err := dari.GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("create subject key: %v", err)
 	}
-	cred, err := issuer.Issue(paper.IssueRequest{
+	cred, err := issuer.Issue(dari.IssueRequest{
 		SubjectPeerID:           "hrn-auth-test",
 		Organization:            "org-auth-test",
-		Profile:                 paper.ProfileHarness,
+		Profile:                 dari.ProfileHarness,
 		PublicKey:               subjectPublic,
 		Validity:                validity,
 		RevocationAuthority:     "test-ca",
@@ -66,13 +66,13 @@ func newSignedProofTestFixture(t *testing.T, transcript []byte, validity time.Du
 		t.Fatalf("decode signed credential: %v", err)
 	}
 	challengeID := []byte("challenge-auth-test")
-	proof := &paper.AuthProofMessage{
+	proof := &dari.AuthProofMessage{
 		Credential:         credential,
-		KeyAlgorithm:       paper.COSEAlgEdDSA,
+		KeyAlgorithm:       dari.COSEAlgEdDSA,
 		ChallengeID:        challengeID,
-		RevocationEvidence: paper.EncodeRevocationEpoch(testRevocationEpoch),
+		RevocationEvidence: dari.EncodeRevocationEpoch(testRevocationEpoch),
 	}
-	proof.Signature = ed25519.Sign(subjectPrivate, paper.PeerProofSigningBytes(
+	proof.Signature = ed25519.Sign(subjectPrivate, dari.PeerProofSigningBytes(
 		transcript,
 		proof.ChallengeID,
 		testRevocationEpoch,
@@ -91,18 +91,18 @@ func newSignedProofTestFixture(t *testing.T, transcript []byte, validity time.Du
 }
 
 func TestPeerCredentialVerifySignatureRejectsDifferentSignedPayload(t *testing.T) {
-	issuer, err := paper.NewPeerCredentialIssuer("test-ca")
+	issuer, err := dari.NewPeerCredentialIssuer("test-ca")
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub, _, err := paper.GenerateKeyPair()
+	pub, _, err := dari.GenerateKeyPair()
 	if err != nil {
 		t.Fatal(err)
 	}
-	issued, err := issuer.Issue(paper.IssueRequest{
+	issued, err := issuer.Issue(dari.IssueRequest{
 		SubjectPeerID:           "hrn-signed",
 		Organization:            "org-test",
-		Profile:                 paper.ProfileHarness,
+		Profile:                 dari.ProfileHarness,
 		PublicKey:               pub,
 		Validity:                time.Hour,
 		RevocationAuthority:     "test-ca",
@@ -185,8 +185,8 @@ func TestPeerAuthenticatorRejectsStaleRevocationEpoch(t *testing.T) {
 }
 
 func TestValidatePeerProfileRejectsNegotiatedProfileMismatch(t *testing.T) {
-	credential := &paper.PeerCredential{PeerProfile: paper.ProfileInference}
-	if err := validatePeerProfile(paper.ProfileHarness, credential); err == nil {
+	credential := &dari.PeerCredential{PeerProfile: dari.ProfileInference}
+	if err := validatePeerProfile(dari.ProfileHarness, credential); err == nil {
 		t.Fatal("credential profile different from negotiated HELLO profile accepted")
 	}
 }
@@ -204,8 +204,8 @@ func (c *recordingCredentialConn) Close() error {
 	return nil
 }
 
-func TestPaperListenerTerminatesConnectionForRevokedSerial(t *testing.T) {
-	listener := NewPaperListener(nil, nil, TrustBundle{RevocationEpoch: testRevocationEpoch})
+func TestDARIListenerTerminatesConnectionForRevokedSerial(t *testing.T) {
+	listener := NewDARIListener(nil, nil, TrustBundle{RevocationEpoch: testRevocationEpoch})
 	conn := &recordingCredentialConn{closed: make(chan struct{})}
 	listener.trackAuthenticatedConnection("conn-1", "serial-1", conn)
 
@@ -221,8 +221,8 @@ func TestPaperListenerTerminatesConnectionForRevokedSerial(t *testing.T) {
 	}
 }
 
-func TestPaperListenerRejectsConnectionRevokedBeforeRegistration(t *testing.T) {
-	listener := NewPaperListener(nil, nil, TrustBundle{RevocationEpoch: testRevocationEpoch})
+func TestDARIListenerRejectsConnectionRevokedBeforeRegistration(t *testing.T) {
+	listener := NewDARIListener(nil, nil, TrustBundle{RevocationEpoch: testRevocationEpoch})
 	listener.RevokeCredential("serial-before-track", testRevocationEpoch+1)
 	conn := &recordingCredentialConn{closed: make(chan struct{})}
 
@@ -245,18 +245,18 @@ func TestIdentityRevocationRecordsSerialAndTerminatesSessions(t *testing.T) {
 		t.Fatalf("migrate database: %v", err)
 	}
 
-	issuer, err := paper.NewPeerCredentialIssuer("test-ca")
+	issuer, err := dari.NewPeerCredentialIssuer("test-ca")
 	if err != nil {
 		t.Fatal(err)
 	}
-	subjectPublic, _, err := paper.GenerateKeyPair()
+	subjectPublic, _, err := dari.GenerateKeyPair()
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential, err := issuer.Issue(paper.IssueRequest{
+	credential, err := issuer.Issue(dari.IssueRequest{
 		SubjectPeerID:           "hrn-revoke",
 		Organization:            "org-revoke",
-		Profile:                 paper.ProfileHarness,
+		Profile:                 dari.ProfileHarness,
 		PublicKey:               subjectPublic,
 		Validity:                time.Hour,
 		RevocationAuthority:     "test-ca",

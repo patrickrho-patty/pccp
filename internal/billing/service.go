@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/gorm"
 )
 
@@ -65,7 +65,7 @@ func New(db *gorm.DB) (*Service, error) {
 // SetEntitlement sets an organization's entitlement.
 func (s *Service) SetEntitlement(ent Entitlement) (*Entitlement, error) {
 	if ent.ID == "" {
-		ent.ID = paper.GenerateID("ent")
+		ent.ID = dari.GenerateID("ent")
 	}
 	if ent.Status == "" {
 		ent.Status = "active"

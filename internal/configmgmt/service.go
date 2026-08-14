@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/gorm"
 )
 
@@ -83,7 +83,7 @@ type ConfigChange struct {
 // CreateChange proposes a new configuration change.
 func (s *Service) CreateChange(change ConfigChange) (*ConfigChange, error) {
 	if change.ID == "" {
-		change.ID = paper.GenerateID("cfg")
+		change.ID = dari.GenerateID("cfg")
 	}
 	if change.State == "" {
 		change.State = "draft"

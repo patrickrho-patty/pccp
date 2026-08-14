@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 )
 
 // Service implements the MCP Registry and Marketplace (PRD §6 Phase 6, §17.2).
@@ -86,7 +86,7 @@ type MCPReview struct {
 // PublishListing publishes a new MCP server to the marketplace.
 func (s *Service) PublishListing(listing MCPListing) (*MCPListing, error) {
 	if listing.ID == "" {
-		listing.ID = paper.GenerateID("mcp_market")
+		listing.ID = dari.GenerateID("mcp_market")
 	}
 	if listing.Status == "" {
 		listing.Status = "listed"

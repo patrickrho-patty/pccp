@@ -11,13 +11,14 @@ import (
 	"syscall"
 
 	"github.com/patrickrho-patty/pccp/internal/config"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/db"
 	"github.com/patrickrho-patty/pccp/internal/relay"
 )
 
 func main() {
 	addr := flag.String("addr", "", "Relay HTTP admin listen address")
-	paperAddr := flag.String("paper-addr", "", "PAPER native protocol listen address (TLS/TCP)")
+	paperAddr := flag.String("dari-addr", "", "DARI native protocol listen address (TLS/TCP)")
 	flag.Parse()
 
 	cfg := config.LoadRelayFromEnv()
@@ -28,15 +29,19 @@ func main() {
 			httpAddr = ":8090"
 		}
 	}
-	if *paperAddr == "" {
-		*paperAddr = os.Getenv("PCCP_RELAY_PAPER_ADDR")
-		if *paperAddr == "" {
-			*paperAddr = ":8444"
+	dariAddr := *paperAddr
+	if dariAddr == "" {
+		dariAddr = os.Getenv("PCCP_RELAY_DARI_ADDR")
+		if dariAddr == "" {
+			dariAddr = os.Getenv(dari.LegacyPaper1RelayAddrEnv)
+		}
+		if dariAddr == "" {
+			dariAddr = ":8444"
 		}
 	}
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.Println("PAPER Relay — starting up")
+	log.Println("DARI Relay — starting up")
 
 	database, err := db.FromEnv()
 	if err != nil {
@@ -51,7 +56,7 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Build the PAPER trust bundle from the identity CA. The relay's
+	// Build the DARI trust bundle from the identity CA. The relay's
 	// PeerAuthenticator verifies every AUTH_PROOF against this issuer
 	// set and the live revocation snapshot — the A1 e2e wiring. A
 	// harness without a CA-issued, unrevoked PPC cannot authenticate.
@@ -69,7 +74,7 @@ func main() {
 		RevokedSerials:  revokedSerials,
 	}
 
-	// Start PAPER native protocol listener (TLS/TCP with CBOR framing)
+	// Start DARI native protocol listener (TLS/TCP with CBOR framing)
 	// Per README guardrail: "No HTTP/REST/WebSocket for protocol traffic."
 	// A nil config makes the listener generate a self-signed dev cert;
 	// when real certs are configured they take precedence.
@@ -78,19 +83,19 @@ func main() {
 		key := os.Getenv("PCCP_RELAY_TLS_KEY")
 		loaded, lerr := tls.LoadX509KeyPair(cert, key)
 		if lerr != nil {
-			log.Fatalf("failed to load PAPER TLS cert/key: %v", lerr)
+			log.Fatalf("failed to load DARI TLS cert/key: %v", lerr)
 		}
 		paperTLS = &tls.Config{
 			MinVersion:   tls.VersionTLS13,
-			NextProtos:   []string{relay.PaperALPN},
+			NextProtos:   []string{relay.DARIALPN},
 			Certificates: []tls.Certificate{loaded},
 		}
 	}
-	paperListener := relay.NewPaperListener(svc, paperTLS, trust)
+	paperListener := relay.NewDARIListener(svc, paperTLS, trust)
 	go func() {
-		log.Printf("Starting PAPER native listener on %s (issuer=%s, revoked=%d)", *paperAddr, svc.Identity().CAIssuerID(), len(revokedSerials))
-		if err := paperListener.ListenTCP(ctx, *paperAddr); err != nil && ctx.Err() == nil {
-			log.Printf("PAPER listener error: %v", err)
+		log.Printf("Starting DARI native listener on %s (issuer=%s, revoked=%d)", dariAddr, svc.Identity().CAIssuerID(), len(revokedSerials))
+		if err := paperListener.ListenTCP(ctx, dariAddr); err != nil && ctx.Err() == nil {
+			log.Printf("DARI listener error: %v", err)
 		}
 	}()
 
@@ -104,7 +109,7 @@ func main() {
 		os.Exit(0)
 	}()
 
-	log.Printf("Relay admin API on %s (PAPER native on %s)", httpAddr, *paperAddr)
+	log.Printf("Relay admin API on %s (DARI native on %s)", httpAddr, dariAddr)
 
 	// HTTP admin API (for control-plane operations, NOT for protocol traffic)
 	server := relay.NewServer(svc)

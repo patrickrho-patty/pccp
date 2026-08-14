@@ -1107,15 +1107,15 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCompatChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// BLOCKED: OpenAI-compatible model invocation on the Control Plane is not
-	// permitted (PAPER-only, PRD §10.11, §38.1). The Harness must use the PAPER
+	// permitted (DARI-only, PRD §10.11, §38.1). The Harness must use the DARI
 	// Relay for all model inference.
-	writeError(w, http.StatusGone, "OpenAI-compatible endpoint disabled — use PAPER Relay for model invocation (§10.11, §38.1)")
+	writeError(w, http.StatusGone, "OpenAI-compatible endpoint disabled — use DARI Relay for model invocation (§10.11, §38.1)")
 	return
 }
 
 // handleCompatChatCompletionsLegacy contains the original OpenAI-compat proxy
 // logic, retained for reference. It is NOT registered as a route — the endpoint
-// is blocked per §10.11. Remove entirely once all callers have migrated to PAPER.
+// is blocked per §10.11. Remove entirely once all callers have migrated to DARI.
 func (s *Server) handleCompatChatCompletionsLegacy(w http.ResponseWriter, r *http.Request) {
 		// OpenAI-compatible chat completions adapter
 		// Proxies to PIA for inference

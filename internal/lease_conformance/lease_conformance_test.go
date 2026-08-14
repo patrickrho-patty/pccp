@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/policy"
 )
 
@@ -16,7 +16,7 @@ import (
 // (harness feature plan A3, e2e).
 //
 // The relay signs via `policy.CanonicalLeaseSigningBytes`. The
-// connector (`patty-code-pccp/internal/paperproto/lease.go::
+// connector (`patty-code-pccp/internal/dariproto/lease.go::
 // Lease.SigningBytes`) recomputes the SAME bytes from the wire lease
 // and verifies the COSE-Sign1 signature. The two repos cannot import
 // each other, so this suite re-derives the connector's layout
@@ -128,7 +128,7 @@ func u64(dst []byte, v uint64) []byte {
 // actual canonical helper with the relay's actual COSE envelope).
 func relaySignedBody(t *testing.T, key ed25519.PrivateKey, in policy.LeaseSigningInput) []byte {
 	t.Helper()
-	sign1, err := paper.CreateCOSESign1(policy.CanonicalLeaseSigningBytes(in), key, []byte("pccp-policy"))
+	sign1, err := dari.CreateCOSESign1(policy.CanonicalLeaseSigningBytes(in), key, []byte("pccp-policy"))
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
@@ -218,11 +218,11 @@ func TestRelaySignatureVerifiesUnderConnectorLayout(t *testing.T) {
 		t.Fatal("signed payload is not the connector-computable body")
 	}
 
-	sign1, err := paper.CreateCOSESign1(payload, priv, []byte("pccp-policy"))
+	sign1, err := dari.CreateCOSESign1(payload, priv, []byte("pccp-policy"))
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
-	encoded, err := paper.EncodeCOSESign1(sign1)
+	encoded, err := dari.EncodeCOSESign1(sign1)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestRelaySignatureVerifiesUnderConnectorLayout(t *testing.T) {
 	// The connector's verification path: decode envelope, compare
 	// payload to recomputed body, verify the COSE Sig_structure under
 	// the issuer key.
-	if err := paper.VerifyCOSESign1(sign1, pub); err != nil {
+	if err := dari.VerifyCOSESign1(sign1, pub); err != nil {
 		t.Fatalf("lease signature does not verify under issuer public key: %v", err)
 	}
 }
@@ -258,11 +258,11 @@ func TestRogueIssuerRejected(t *testing.T) {
 		NotBeforeUnixMs: now.UnixMilli(), NotAfterUnixMs: now.Add(time.Hour).UnixMilli(),
 		LeaseSequence: 1, IssuedAtUnixMs: now.UnixMilli(),
 	}
-	sign1, err := paper.CreateCOSESign1(policy.CanonicalLeaseSigningBytes(in), rogue, []byte("pccp-policy"))
+	sign1, err := dari.CreateCOSESign1(policy.CanonicalLeaseSigningBytes(in), rogue, []byte("pccp-policy"))
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
-	if err := paper.VerifyCOSESign1(sign1, pub); err == nil {
+	if err := dari.VerifyCOSESign1(sign1, pub); err == nil {
 		t.Fatal("rogue issuer signature must not verify")
 	}
 }

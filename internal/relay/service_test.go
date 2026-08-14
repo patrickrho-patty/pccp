@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -84,7 +84,7 @@ func TestGovernedExchange_AuthorizesMetersAndEvidences(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenExchange: %v", err)
 	}
-	if verdict != paper.VerdictAllow {
+	if verdict != dari.VerdictAllow {
 		t.Fatalf("expected allow verdict, got %s", verdict)
 	}
 
@@ -131,7 +131,7 @@ func TestGovernedExchange_AuthorizesMetersAndEvidences(t *testing.T) {
 // given only an authenticated harness ID + a model, the relay resolves org,
 // active lease, active policy epoch, and model package from the DB, then runs
 // the full governed flow (authorize → forward → meter → evidence). This is
-// what the PAPER AI_OPEN path will call (P3).
+// what the DARI AI_OPEN path will call (P3).
 func TestGovernInference_ResolvesFromHarnessID(t *testing.T) {
 	db := setupGovernedTestDB(t)
 	const (

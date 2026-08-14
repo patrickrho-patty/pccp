@@ -11,7 +11,7 @@
 ## The gaps (no client-side data-loss / injection governance)
 
 ### C1. No client-side DLP / Korean-PII / secret redaction before send
-- 0 harness files for DLP/PII/injection. Outgoing context (prompts, file contents, tool I/O) is **not** scanned before PAPER dispatch. Relying on the Relay alone is too late/coarse. *Fix:* harness runs the PCCP rule pack (synced via policy epoch — Harness A4) client-side pre-send; block/redact/mask per policy (§16.3/§16.5). Korean PII lexicon (RRN/사업자/계좌/카드) must be versioned + org-overridable.
+- 0 harness files for DLP/PII/injection. Outgoing context (prompts, file contents, tool I/O) is **not** scanned before DARI dispatch. Relying on the Relay alone is too late/coarse. *Fix:* harness runs the PCCP rule pack (synced via policy epoch — Harness A4) client-side pre-send; block/redact/mask per policy (§16.3/§16.5). Korean PII lexicon (RRN/사업자/계좌/카드) must be versioned + org-overridable.
 
 ### C2. No prompt-injection defense at the harness boundary
 - Repo content, tool output, and MCP results are untrusted inputs; the harness doesn't treat them as data or detect override/jailbreak/indirect-injection patterns. *Fix:* extend `guardian` to treat external content as untrusted, detect injection, refuse to act on injected instructions (§16.4, §35.8).

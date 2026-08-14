@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Service implements the Context Firewall (PRD §16, PAPER §41).
+// Service implements the Context Firewall (PRD §16, DARI §41).
 // Context is a governed resource — every item entering model context
 // is classified, inspected, and decisioned.
 type Service struct {
@@ -25,7 +25,7 @@ func New(db *gorm.DB, secSvc *security.Service) *Service {
 	return &Service{db: db, secSvc: secSvc}
 }
 
-// TrustLabel classifies the trust level of a context item (PAPER §41.3).
+// TrustLabel classifies the trust level of a context item (DARI §41.3).
 type TrustLabel string
 
 const (
@@ -55,14 +55,14 @@ type ContextItem struct {
 	ProvenanceDigest string  `json:"provenance_digest,omitempty"`
 }
 
-// ContextManifest is a manifest of context items before disclosure (PAPER §41.2).
+// ContextManifest is a manifest of context items before disclosure (DARI §41.2).
 type ContextManifest struct {
 	Items    []ContextItem `json:"items"`
 	TotalTokens int        `json:"total_tokens"`
 	Classification string   `json:"highest_classification"`
 }
 
-// ContextDecision is the relay's per-item decision (PAPER §41.4).
+// ContextDecision is the relay's per-item decision (DARI §41.4).
 type ContextDecision struct {
 	ItemID    string         `json:"item_id"`
 	Decision  string         `json:"decision"` // allow, metadata_only, allow_transformed, require_approval, deny

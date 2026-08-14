@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/gorm"
 )
 
@@ -129,7 +129,7 @@ func (s *Service) EvaluateConnection(req ConnectionRequest) (*ConnectionDecision
 // Grant creates a new network access grant.
 func (s *Service) Grant(grant NetworkGrant) (*NetworkGrant, error) {
 	if grant.ID == "" {
-		grant.ID = paper.GenerateID("net")
+		grant.ID = dari.GenerateID("net")
 	}
 	if grant.Status == "" {
 		grant.Status = "active"

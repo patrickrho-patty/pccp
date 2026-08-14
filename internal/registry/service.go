@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/gorm"
 )
 
@@ -44,7 +44,7 @@ func New(db *gorm.DB) (*Service, error) {
 // RegisterModelPackage creates and signs a Patty Model Package.
 func (s *Service) RegisterModelPackage(pkg *models.ModelPackage) error {
 	if pkg.PackageID == "" {
-		pkg.PackageID = paper.GenerateID("pmp")
+		pkg.PackageID = dari.GenerateID("pmp")
 	}
 	if pkg.State == "" {
 		pkg.State = "draft"
@@ -98,7 +98,7 @@ func (s *Service) RecallModelPackage(packageID, reason string) error {
 func (s *Service) EnrollEndpoint(orgID, piaPeerID, modelPackageID, servingEngine, servingEngineVer, publicKeyHex, nodeIdentity string, assuranceLevel string) (*models.InferenceEndpoint, error) {
 	endpoint := &models.InferenceEndpoint{
 		OrganizationID:  orgID,
-		EndpointID:      paper.GenerateID("ep"),
+		EndpointID:      dari.GenerateID("ep"),
 		PIAPeerID:       piaPeerID,
 		ModelPackageID:  modelPackageID,
 		ServingEngine:   servingEngine,
@@ -171,7 +171,7 @@ func (s *Service) VerifyAttestation(att *models.EndpointAttestation) error {
 	return nil
 }
 
-// IssueEndpointLease creates a short-lived lease for an endpoint (PRD A.5, PAPER §40.4).
+// IssueEndpointLease creates a short-lived lease for an endpoint (PRD A.5, DARI §40.4).
 func (s *Service) IssueEndpointLease(orgID, endpointID string, validity time.Duration) (*models.EndpointLease, error) {
 	var endpoint models.InferenceEndpoint
 	if err := s.db.Where("endpoint_id = ? AND organization_id = ?", endpointID, orgID).First(&endpoint).Error; err != nil {
@@ -195,7 +195,7 @@ func (s *Service) IssueEndpointLease(orgID, endpointID string, validity time.Dur
 		EndpointID:     endpointID,
 		OrganizationID: orgID,
 		ModelPackageID: endpoint.ModelPackageID,
-		LeaseID:        paper.GenerateID("epl"),
+		LeaseID:        dari.GenerateID("epl"),
 		PIAPeerID:      endpoint.PIAPeerID,
 		PIAPublicKey:   endpoint.PublicKey,
 		NotBefore:      now.Format(time.RFC3339),

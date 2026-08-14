@@ -30,7 +30,7 @@ type CatalogModel struct {
 	EntitlementLabelKo string `gorm:"type:varchar(128)" json:"entitlement_label_ko"`
 	// Client requirements
 	MinHarnessVersion  string `gorm:"type:varchar(64)" json:"min_harness_version,omitempty"`
-	MinPaperAIVersion  int    `gorm:"default:2" json:"min_paper_ai_version"`
+	MinDARIProtocolVersion  int    `gorm:"default:2" json:"min_paper_ai_version"`
 	RequiredExtensions string `gorm:"type:text" json:"required_extensions,omitempty"` // JSON array
 	// Lifecycle
 	AnnouncedAt  string `gorm:"type:timestamp" json:"announced_at,omitempty"`
@@ -145,7 +145,7 @@ type ModelEntitlement struct {
 
 type ModelClientReqs struct {
 	MinHarnessVersion  string   `json:"min_harness_version,omitempty"`
-	MinPaperAIVersion  int      `json:"min_paper_ai_version"`
+	MinDARIProtocolVersion  int      `json:"min_paper_ai_version"`
 	RequiredExtensions []string `json:"required_extensions,omitempty"`
 }
 

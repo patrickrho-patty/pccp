@@ -14,7 +14,7 @@
 
 ## Gaps — grounded
 **A. PMP signature stored but never verified.** `ModelPackage.Signature`/`ManifestDigest` are captured, but PIA never verifies the package at load (MISSING_ITEMS P.1) and nothing validates the digest chain on publish. *Fix:* verify signature+digests at publish and at PIA load; reject on mismatch (§9.4).
-**B. Catalog epoch isn't pushed to harnesses** (§10A) — displayed here, but no code sends `paper.models/1` snapshots to connected harnesses. *Fix:* push epoch+catalog to harnesses on change/connect.
+**B. Catalog epoch isn't pushed to harnesses** (§10A) — displayed here, but no code sends `dari.models/1` snapshots to connected harnesses. *Fix:* push epoch+catalog to harnesses on change/connect.
 **C. No model-recall impact analysis** (§33.9) — recall flips state but doesn't enumerate affected sessions/commits/endpoints.
 **D. No canary/ring assignment** (§33.10), no routing-policy editor (§10.6/§30.4), no data-residency router config (§30.5), no KV/cache utilization per endpoint (§10.10) — gpuops has metrics but not surfaced/wired here.
 **E. No detail pages** for package/endpoint; TTFT/active-requests not sortable; no filter by family/state/assurance.

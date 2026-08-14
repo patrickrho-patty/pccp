@@ -14,7 +14,7 @@
 
 - Work directly on the current branch; do not create a branch or worktree.
 - Do not modify environment or secret files.
-- Preserve the PAPER method; improve presentation and evidence discipline.
+- Preserve the DARI method; improve presentation and evidence discipline.
 - Use the Qwen Image 2 PNG as the lead conceptual figure.
 - Generate empirical plots only from measured data.
 - Do not describe PRD requirements or scaffolding as implemented results.
@@ -106,14 +106,14 @@
 ### Task 6: PDF Build and Visual QA
 
 **Files:**
-- Produce: `docs/plans/PAPER/arxiv/PAPER_arXiv.pdf`
+- Produce: `docs/plans/PAPER/arxiv/DARI_arXiv.pdf`
 
 **Interfaces:**
 - Consumes: final LaTeX, bibliography, and figures.
 - Produces: the requested polished PDF.
 
 - [x] Run `make clean && make`.
-- [x] Run `pdfinfo PAPER_arXiv.pdf` and record page count and page size.
+- [x] Run `pdfinfo DARI_arXiv.pdf` and record page count and page size.
 - [x] Render every PDF page to PNG with `pdftoppm`.
 - [x] Inspect every page for clipping, blank regions, table overflow, orphan headings, and unreadable figures.
 - [x] Correct all visual defects and rebuild.
@@ -122,7 +122,7 @@
 
 **Files:**
 - Modify: `docs/plans/PAPER/arxiv/README.md`
-- Produce: `docs/plans/PAPER/arxiv/PAPER-arXiv-source.tar.gz`
+- Produce: `docs/plans/PAPER/arxiv/DARI-arXiv-source.tar.gz`
 
 **Interfaces:**
 - Consumes: verified publication directory.

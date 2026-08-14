@@ -36,7 +36,7 @@ Rewrite the PDF metadata, abstract, contributions, threat-model scope, implement
 
 - [ ] **Step 2: Add product and open-adoption evidence**
 
-Add explicit text covering the official Patty Code Harness integration, PAPER-only service inference, open specification, Go protocol implementation, PIA SDK, vLLM/SGLang adapters, custom engines, and coding/chat/automation application classes.
+Add explicit text covering the official Patty Code Harness integration, DARI-only service inference, open specification, Go protocol implementation, PIA SDK, vLLM/SGLang adapters, custom engines, and coding/chat/automation application classes.
 
 - [ ] **Step 3: Replace the evidence-boundary table**
 
@@ -65,7 +65,7 @@ Render the English product position in native Korean academic language. Preserve
 
 - [ ] **Step 2: Mirror product/adoption evidence**
 
-Include the open specification, official Patty Code integration, PAPER-only path, PIA SDK, vLLM/SGLang adapters, custom engines, and chat/general-AI application classes with the same evidentiary strength as English.
+Include the open specification, official Patty Code integration, DARI-only path, PIA SDK, vLLM/SGLang adapters, custom engines, and chat/general-AI application classes with the same evidentiary strength as English.
 
 - [ ] **Step 3: Mirror the product-surface and assurance tables**
 
@@ -78,8 +78,8 @@ Compare section/subsection, figure/table, equation, citation, and label counts a
 ### Task 3: Build and review both publication PDFs
 
 **Files:**
-- Generate: `docs/plans/PAPER/arxiv/PAPER_arXiv.pdf`
-- Generate: `docs/plans/PAPER/arxiv/PAPER_arXiv_KO.pdf`
+- Generate: `docs/plans/PAPER/arxiv/DARI_arXiv.pdf`
+- Generate: `docs/plans/PAPER/arxiv/DARI_arXiv_KO.pdf`
 
 **Interfaces:**
 - Consumes: revised English and Korean LaTeX manuscripts

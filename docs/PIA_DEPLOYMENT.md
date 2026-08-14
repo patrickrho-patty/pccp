@@ -66,9 +66,9 @@ curl -X POST http://localhost:9090/v1/chat/completions \
 
 ```
 Harness (developer machine)
-    ↓ PAPER
+    ↓ DARI
 Relay (Control Plane)
-    ↓ PAPER / HTTP
+    ↓ DARI / HTTP
 PIA (patricks-mint, this machine)
     ↓ localhost
 vLLM (GPU0 + GPU1)

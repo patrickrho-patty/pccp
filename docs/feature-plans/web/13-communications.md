@@ -18,7 +18,7 @@ The **Engineering Communications Hub** (§21–23) — conversations/chat, prese
 
 ### A. Real-time & delivery (the core miss)
 **A1. Polling, not real-time.** 5s `setInterval` reload — no WebSocket/SSE. *Fix:* SSE/WS fan-out for instant delivery.
-**A2. Not delivered to the harness.** Comms is CP-side only; the developer's harness never receives chat/presence/broadcast over PAPER (§21.2). *Fix:* a PAPER comms channel to enrolled harnesses; admin commands too (§22.4).
+**A2. Not delivered to the harness.** Comms is CP-side only; the developer's harness never receives chat/presence/broadcast over DARI (§21.2). *Fix:* a DARI comms channel to enrolled harnesses; admin commands too (§22.4).
 **A3. File transfer is metadata-only.** `CreateFileTransfer` records a row; **no upload/download/storage** (`StoragePath` empty), **no scan** (`ScanStatus` stuck `pending`), **no expiry enforcement**. *Fix:* real object storage + DLP/malware scan → `clean`/`blocked` + download flow + expiry job.
 
 ### B. Modeled-but-unwired (rich fields the UI ignores)
@@ -51,5 +51,5 @@ The **Engineering Communications Hub** (§21–23) — conversations/chat, prese
 
 ## Sequencing
 Phase 1 (usability): C1 (1:1 from user), B1/B2 (threading/reactions/mentions), real-time SSE (A1).
-Phase 2 (real comms): A2 (deliver to harness over PAPER), A3 (real file transfer+scan), B3 (E2E), B5 (ack dashboard).
+Phase 2 (real comms): A2 (deliver to harness over DARI), A3 (real file transfer+scan), B3 (E2E), B5 (ack dashboard).
 Phase 3 (enterprise): C2 (privacy gating), C3/C4/C5 (admin commands, handoff, retention).

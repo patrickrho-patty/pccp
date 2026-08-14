@@ -1,6 +1,6 @@
 # 21 — 실시간 뷰 · LiveView (`web/src/pages/LiveView.tsx`)
 
-> Vertical read: component → `EventSource('/api/realtime/sse')` + polling `/api/sessions|users|harnesses` → **`/api/realtime/sse` is not mounted** → `internal/realtime` (HandleSSE/Broadcast/NotifySessionUpdate exist but unwired). Cross-checked PAPER streaming (Sessions F1).
+> Vertical read: component → `EventSource('/api/realtime/sse')` + polling `/api/sessions|users|harnesses` → **`/api/realtime/sse` is not mounted** → `internal/realtime` (HandleSSE/Broadcast/NotifySessionUpdate exist but unwired). Cross-checked DARI streaming (Sessions F1).
 
 ## What this page actually is
 The **live harness/session wall** (§14.1) — a grid of live terminal cards showing real-time model output per active session, clickable to a live inspector. The SOC/SRE "watch what's happening now" surface.
@@ -11,13 +11,13 @@ The **live harness/session wall** (§14.1) — a grid of live terminal cards sho
 | Component | grid of session cards; opens `EventSource('/api/realtime/sse')` for `session.update`; polling fallback; `connected` indicator; expand → session inspector |
 | `/api/realtime/sse` | **route NOT registered** (only `/realtime/status` is mounted) → SSE 404s → `connected=false` → falls back to polling session metadata |
 | `realtime` hub | **exists & real** (`HandleSSE`, `HandleWebSocket`, `Broadcast`, `NotifySessionUpdate`, `NotifySecurityFinding`, …) but (a) not mounted at `/sse`, (b) **nothing on the live path calls `NotifySessionUpdate`** → even if mounted, it'd be silent |
-| Live token output | absent — requires PAPER `AI_TOKEN_CHUNK` streaming (Sessions F1 / MISSING_ITEMS X.1) which doesn't exist |
+| Live token output | absent — requires DARI `AI_TOKEN_CHUNK` streaming (Sessions F1 / MISSING_ITEMS X.1) which doesn't exist |
 
 ➡️ The page shows **static session cards from the DB**, not live output. The "live" claim is unsupported.
 
 ## Gaps — grounded
 **A. SSE route not mounted + no emitter.** *Fix:* mount `HandleSSE` at `/api/realtime/sse` (and/or WS); have the relay emit `NotifySessionUpdate` (and token chunks) on real session activity.
-**B. No live token stream.** Even with SSE connected, there's no real per-token output feed (needs PAPER streaming, §10B.20). *Fix:* relay streams `AI_TOKEN_CHUNK` → SSE → terminal cards.
+**B. No live token stream.** Even with SSE connected, there's no real per-token output feed (needs DARI streaming, §10B.20). *Fix:* relay streams `AI_TOKEN_CHUNK` → SSE → terminal cards.
 **C. No live risk/throughput overlay; no surveillance-boundary indicator (§14.4 — show what's visible vs not); no density/layout control; no filter by user/project/model/risk; no pause/follow; no deep-link to a live session.**
 
 ## UX improvements (grounded)
@@ -45,5 +45,5 @@ The **live harness/session wall** (§14.1) — a grid of live terminal cards sho
 
 ## Sequencing
 Phase 1 (make it live): A (mount SSE + emit session events from relay) — minimal viable "live".
-Phase 2 (real output): B (PAPER token streaming → SSE → terminals) — the actual live wall.
+Phase 2 (real output): B (DARI token streaming → SSE → terminals) — the actual live wall.
 Phase 3 (ops): risk/throughput overlay, surveillance boundary, filters/layout, pause/follow, deep-links.

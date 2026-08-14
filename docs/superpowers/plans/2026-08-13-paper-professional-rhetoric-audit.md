@@ -48,8 +48,8 @@
 ### Task 3: Regenerate and validate both publication artifacts
 
 **Files:**
-- Rebuild: `docs/plans/PAPER/arxiv/PAPER_arXiv.pdf`
-- Rebuild: `docs/plans/PAPER/arxiv/PAPER_arXiv_KO.pdf`
+- Rebuild: `docs/plans/PAPER/arxiv/DARI_arXiv.pdf`
+- Rebuild: `docs/plans/PAPER/arxiv/DARI_arXiv_KO.pdf`
 
 **Interfaces:**
 - Consumes: revised LaTeX manuscripts

@@ -96,11 +96,11 @@ func main() {
 		piaAddr = ":9090"
 	}
 	// Start PAPER listener for Relay connections (v2 §9.2)
-	paperAddr := os.Getenv("PCCP_PIA_PAPER_ADDR")
+	paperAddr := os.Getenv("PCCP_PIA_DARI_ADDR")
 	if paperAddr == "" {
 		paperAddr = ":9444"
 	}
-	paperListener := pia.NewPaperListener(svc)
+	paperListener := pia.NewDARIListener(svc)
 	go func() {
 		log.Printf("Starting PAPER listener on %s", paperAddr)
 		if err := paperListener.ListenTCP(ctx, paperAddr); err != nil && ctx.Err() == nil {

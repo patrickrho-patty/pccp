@@ -216,7 +216,7 @@ func (s *Service) HasValidLease() bool {
 	return false
 }
 
-// InferenceRequest is the PAPER inference request payload.
+// InferenceRequest is the DARI inference request payload.
 type InferenceRequest struct {
 	Model       string            `json:"model"`
 	Messages    []Message         `json:"messages"`

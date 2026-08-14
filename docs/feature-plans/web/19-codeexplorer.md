@@ -15,7 +15,7 @@ The **code-provenance explorer** (§19) — browse changesets and line-level spa
 ➡️ The page is correctly built but starved: nothing in the system creates provenance. The harness emits no evidence to PCCP (HARNESS B), and the relay records only `ActionEnvelope`s (via `RecordAction`), not changesets/spans.
 
 ## Gaps — grounded
-**A. No provenance is ever produced.** *Fix:* the harness must emit `ChangeSet`+`ProvenanceSpan` (line-level, content-addressed) over PAPER as it edits files; the relay records them. Without this, §19 doesn't exist (ties to HARNESS B + Domain 1–2).
+**A. No provenance is ever produced.** *Fix:* the harness must emit `ChangeSet`+`ProvenanceSpan` (line-level, content-addressed) over DARI as it edits files; the relay records them. Without this, §19 doesn't exist (ties to HARNESS B + Domain 1–2).
 **B. Attribution-state / AST-fingerprint logic unimplemented.** `AttributionState`/`ASTFingerprint` are stored but nothing computes them (§19.3/§19.4). *Fix:* compute attribution (AI_GENERATED vs AI_THEN_HUMAN_EDITED…) from edit provenance; AST-anchor spans so they survive rename/move (§19.2/§19.5).
 **C. No real file browser** — repos are metadata (Repositories C2); can't browse files/branches, so "click code → provenance" has no code to click.
 **D. No change-impact intelligence** (§20) — blast radius of a span; no click-span→harness-replay (§19.1).

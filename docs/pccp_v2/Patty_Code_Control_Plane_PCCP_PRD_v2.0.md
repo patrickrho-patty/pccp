@@ -4,11 +4,11 @@
 **Document status:** Migration and Expansion PRD — v2.0  
 **Supersedes:** `Patty_Code_Control_Plane_PRD_v1.md` where requirements conflict  
 **Working product name:** **Patty Code Control Plane (PCCP)**  
-**Protocol baseline:** **PAPER — Patty AI Provenance & Enforcement Relay**  
+**Protocol baseline:** **DARI — Patty AI Provenance & Enforcement Relay**  
 **Primary market:** Republic of Korea; global use supported  
 **Profiles:** Patty Public Cloud, Enterprise, Government / Sovereign  
 **Prepared:** 2026-08-12  
-**Architecture principle:** **One PCCP kernel, one PAPER protocol family, profile-specific modules and policy — no separate product forks**  
+**Architecture principle:** **One PCCP kernel, one DARI protocol family, profile-specific modules and policy — no separate product forks**  
 **Migration context:** PCCP already exists from v1 implementation. This document specifies required modifications, additive modules, compatibility constraints, and migration gates.
 
 ---
@@ -21,8 +21,8 @@ PCCP v2 keeps that foundation but makes four material changes:
 
 1. **Patty Public Cloud becomes a first-class PCCP deployment profile**, not a lightweight account/session service.
 2. **PCCP becomes the sole authority for model discovery and model capability announcement.** The official Harness contains no authoritative local model list and no supported arbitrary OpenAI/Anthropic-compatible provider configuration.
-3. **PAPER becomes the only supported Patty Code Harness service protocol.** Admin/web/integration APIs may still use ordinary HTTP/gRPC, but Harness model traffic does not silently downgrade to generic provider APIs.
-4. **PAPER's AI semantic layer must be expanded to cover the modern agentic capabilities required by coding Harnesses**, including rich tool calling, structured output, multimodality, cache accounting, context management, model capability negotiation, and resumable/streaming lifecycle semantics.
+3. **DARI becomes the only supported Patty Code Harness service protocol.** Admin/web/integration APIs may still use ordinary HTTP/gRPC, but Harness model traffic does not silently downgrade to generic provider APIs.
+4. **DARI's AI semantic layer must be expanded to cover the modern agentic capabilities required by coding Harnesses**, including rich tool calling, structured output, multimodality, cache accounting, context management, model capability negotiation, and resumable/streaming lifecycle semantics.
 
 The rest of v1 remains authoritative unless amended below.
 
@@ -43,7 +43,7 @@ The rest of v1 remains authoritative unless amended below.
 - [9. Trusted Model and Endpoint Architecture — Critical Requirement](#9-trusted-model-and-endpoint-architecture-critical-requirement)
 - [10. Gateway, Relay, Routing, and Hot-Path Requirements](#10-gateway-relay-routing-and-hot-path-requirements)
 - [10A. Server-Authoritative Model Catalog and Model Announcements](#10a-server-authoritative-model-catalog-and-model-announcements)
-- [10B. PAPER AI Semantic Contract — Required Capability Expansion](#10b-paper-ai-semantic-contract-required-capability-expansion)
+- [10B. DARI AI Semantic Contract — Required Capability Expansion](#10b-paper-ai-semantic-contract-required-capability-expansion)
 - [10C. Patty Public Cloud: Subscription, Fair Use, Abuse, Capacity, and SRE](#10c-patty-public-cloud-subscription-fair-use-abuse-capacity-and-sre)
 - [11. Model Registry, Catalog, Package, and Lifecycle](#11-model-registry-catalog-package-and-lifecycle)
 - [12. Organization, Tenancy and Korean Enterprise Hierarchy](#12-organization-tenancy-and-korean-enterprise-hierarchy)
@@ -89,7 +89,7 @@ The rest of v1 remains authoritative unless amended below.
 - [52. Explicit Non-Goals for Initial v2 Releases](#52-explicit-non-goals-for-initial-v2-releases)
 - [53. Open Product and Tuning Decisions](#53-open-product-and-tuning-decisions)
 - [54. Definition of Done](#54-definition-of-done)
-- [Appendix A. PAPER Model Routing and Endpoint Trust — Reference Design](#appendix-a-paper-model-routing-and-endpoint-trust-reference-design)
+- [Appendix A. DARI Model Routing and Endpoint Trust — Reference Design](#appendix-a-paper-model-routing-and-endpoint-trust-reference-design)
 - [Appendix B. Provenance Data Model — Reference](#appendix-b-provenance-data-model-reference)
 - [Appendix C. Work Intelligence Example Scorecard](#appendix-c-work-intelligence-example-scorecard)
 - [Appendix D. Administrative Permission Matrix — Example](#appendix-d-administrative-permission-matrix-example)
@@ -116,11 +116,11 @@ Harness Identity
         ↓
 Subscription / Entitlement
         ↓
-PAPER Working Session
+DARI Working Session
         ↓
 Model Catalog + Capability Lease
         ↓
-PAPER Relay / Admission / Governance
+DARI Relay / Admission / Governance
         ↓
 PIA / Trusted Endpoint
         ↓
@@ -157,7 +157,7 @@ Both share the same kernel primitives:
 - `UsageRecord`
 - `SecurityFinding`
 - `AuditEvent`
-- `PAPER` protocol contracts
+- `DARI` protocol contracts
 
 ## 0.1 Model discovery becomes server authoritative
 
@@ -176,31 +176,31 @@ The official Harness must not include user-configurable:
 - raw vLLM/SGLang endpoints,
 - local aliases that can redirect a Patty logical model to a different service.
 
-After PAPER authentication, PCCP supplies an entitlement- and policy-filtered **Model Catalog Snapshot**. It may later push **Model Catalog Delta/Announcement** events when a model is added, removed, degraded, recalled, becomes unavailable to the user's plan, or changes capabilities.
+After DARI authentication, PCCP supplies an entitlement- and policy-filtered **Model Catalog Snapshot**. It may later push **Model Catalog Delta/Announcement** events when a model is added, removed, degraded, recalled, becomes unavailable to the user's plan, or changes capabilities.
 
 The Harness selects a PCCP-issued `catalog_model_id`, not an arbitrary provider/model string.
 
 For Enterprise/Government, a customer may eventually run a Patty-certified third-party base model, but it must still become an enrolled `ModelPackage` behind PIA and appear through PCCP's model catalog. The Harness never receives a generic provider endpoint.
 
-## 0.2 PAPER is the sole Harness service protocol
+## 0.2 DARI is the sole Harness service protocol
 
-The v1 PRD predated completion of the PAPER design and still contained HTTP/JSON/WebSocket-style Harness gateway language. PCCP v2 supersedes that design:
+The v1 PRD predated completion of the DARI design and still contained HTTP/JSON/WebSocket-style Harness gateway language. PCCP v2 supersedes that design:
 
-> **All supported Harness↔PCCP service communication uses PAPER. There is no native OpenAI, Anthropic, REST, SSE, WebSocket, or generic LLM-protocol fallback from the official Harness.**
+> **All supported Harness↔PCCP service communication uses DARI. There is no native OpenAI, Anthropic, REST, SSE, WebSocket, or generic LLM-protocol fallback from the official Harness.**
 
-PCCP administrative and integration APIs may remain HTTP/JSON/gRPC where appropriate. PIA may translate PAPER internally into a local vLLM/SGLang API. Neither fact creates a supported alternative Harness inference route.
+PCCP administrative and integration APIs may remain HTTP/JSON/gRPC where appropriate. PIA may translate DARI internally into a local vLLM/SGLang API. Neither fact creates a supported alternative Harness inference route.
 
 Because the Harness and PCCP are open source, a person with source code can create a modified client that speaks other protocols. PCCP does not claim the impossible property that open-source software cannot be modified. Instead, the official trust model is:
 
-- the official Harness contains only PAPER for Patty service inference;
-- PCCP accepts only enrolled PAPER peer identities for Harness sessions;
+- the official Harness contains only DARI for Patty service inference;
+- PCCP accepts only enrolled DARI peer identities for Harness sessions;
 - generic API clients cannot consume a Patty subscription merely by possessing an OAuth token;
 - Patty Public subscriptions are bound to users, registered Harness identities, session entitlements, and short-lived capacity authorization;
 - enterprise network controls may additionally prevent external AI egress where the customer requires that stronger guarantee.
 
-## 0.3 PAPER AI semantics must be a functional superset, not a lowest-common-denominator API
+## 0.3 DARI AI semantics must be a functional superset, not a lowest-common-denominator API
 
-PAPER must not lose capabilities merely because Patty rejects OpenAI/Anthropic wire compatibility.
+DARI must not lose capabilities merely because Patty rejects OpenAI/Anthropic wire compatibility.
 
 PCCP v2 therefore requires a provider-neutral AI semantic contract that can represent the important capabilities exposed by modern model protocols and cross-provider SDKs, including:
 
@@ -231,7 +231,7 @@ PCCP v2 therefore requires a provider-neutral AI semantic contract that can repr
 - cancellation and resumability;
 - provider/model-specific capability extensions where no stable common semantic exists.
 
-PAPER is intentionally **not** a field-for-field copy of OpenAI Responses or Anthropic Messages. It defines stable semantic primitives with capability negotiation. PCCP/PIA adapters translate those primitives to whatever serving engine or model implementation is used.
+DARI is intentionally **not** a field-for-field copy of OpenAI Responses or Anthropic Messages. It defines stable semantic primitives with capability negotiation. PCCP/PIA adapters translate those primitives to whatever serving engine or model implementation is used.
 
 ## 0.4 Public Cloud is not lightweight
 
@@ -249,7 +249,7 @@ Patty Public Cloud is expected to become one of the most operationally demanding
 - service abuse and exploit detection;
 - dynamic fair use;
 - hot-path admission without database round trips;
-- regional PAPER Relay fleets;
+- regional DARI Relay fleets;
 - GPU saturation and queue management;
 - model rollout/recall;
 - 24×7 SRE and Trust & Safety operations.
@@ -282,7 +282,7 @@ The initial recommended Public defaults are configurable, not protocol constants
 - heavy/long-context slots: **1–2**
 - bounded burst capacity for short subagent fan-out
 
-PCCP must rate-limit **work**, not raw TCP/QUIC connection count. PAPER multiplexes many logical activities over one connection, so connection count is not an appropriate economic control.
+PCCP must rate-limit **work**, not raw TCP/QUIC connection count. DARI multiplexes many logical activities over one connection, so connection count is not an appropriate economic control.
 
 ## 0.6 Fair use is capacity allocation, not punishment for power users
 
@@ -323,10 +323,10 @@ PCCP's web/API control services must not forward every token.
                      signed hot state
                            │
                            ▼
-                     PAPER DATA PLANE
+                     DARI DATA PLANE
               ┌───────────┼───────────┐
               ▼           ▼           ▼
-         PAPER Relay  PAPER Relay  PAPER Relay
+         DARI Relay  DARI Relay  DARI Relay
               │           │           │
               └────── Model Scheduler ┘
                            │
@@ -339,7 +339,7 @@ Relays perform the hot path using locally cached signed/versioned state. Durable
 
 ## 0.8 Definition of PCCP v2 in one sentence
 
-> **PCCP v2 is the shared identity, entitlement, model-discovery, PAPER communication, governance, scheduling, security, provenance, metering, and operational control kernel that safely connects Patty Code users and organizations to approved Patty AI infrastructure across public cloud, enterprise, and sovereign environments.**
+> **PCCP v2 is the shared identity, entitlement, model-discovery, DARI communication, governance, scheduling, security, provenance, metering, and operational control kernel that safely connects Patty Code users and organizations to approved Patty AI infrastructure across public cloud, enterprise, and sovereign environments.**
 
 ---
 
@@ -350,13 +350,13 @@ This document is an update to an already implemented PCCP derived from PRD v1. T
 | Gap in v1/current implementation | Why it matters | v2 directive |
 |---|---|---|
 | Public profile described as lightweight | Public may be highest-scale PCCP deployment | Promote Public Cloud to first-class production profile |
-| Harness model selection not fully server-authoritative | Stale/hard-coded lists allow inconsistency and invite provider abstraction | Add `paper.models/1`; PCCP is sole model catalog authority |
-| v1 Harness path still referenced `/v1/gateway/responses`, WebSocket/gRPC concepts | Contradicts PAPER decision | Official Harness service traffic becomes PAPER-only |
-| PAPER v1 AI surface is narrower than current mature model protocols | Tools/multimodal/structured output/caching can become ad hoc | Add provider-neutral PAPER AI Semantic Contract |
+| Harness model selection not fully server-authoritative | Stale/hard-coded lists allow inconsistency and invite provider abstraction | Add `dari.models/1`; PCCP is sole model catalog authority |
+| v1 Harness path still referenced `/v1/gateway/responses`, WebSocket/gRPC concepts | Contradicts DARI decision | Official Harness service traffic becomes DARI-only |
+| DARI v1 AI surface is narrower than current mature model protocols | Tools/multimodal/structured output/caching can become ad hoc | Add provider-neutral DARI AI Semantic Contract |
 | Model package identity and user-visible model identity conflated | Prevents transparent package rollout/canary | Separate Catalog Model / PMP / Endpoint IDs |
-| Gateway and CP could be interpreted as one traffic process | Public scale would overload administrative control services | Separate PAPER Relay data plane from CP authority |
+| Gateway and CP could be interpreted as one traffic process | Public scale would overload administrative control services | Separate DARI Relay data plane from CP authority |
 | Rate limits focus on requests/tokens/concurrency | Coding agents multiplex subagents and long context | Introduce work slots + Compute Load Units + hierarchical limits |
-| Network connection count could be mistaken for agent concurrency | PAPER multiplexes many operations on one connection | Rate-limit semantic workloads, not sockets |
+| Network connection count could be mistaken for agent concurrency | DARI multiplexes many operations on one connection | Rate-limit semantic workloads, not sockets |
 | Public subscription OAuth not first-class | Public users need login, renewal, recovery and plan state | Add OAuth/OIDC + subscription module + Account Portal |
 | Harness registry mostly enterprise-oriented | Public sharing/credential abuse requires per-install identity | Make Harness enrollment mandatory for Public |
 | Account sharing/compromise not modeled separately | IP/location heuristics are noisy | Add Account Integrity state machine and graduated response |
@@ -365,7 +365,7 @@ This document is an update to an already implemented PCCP derived from PRD v1. T
 | Public provenance default could inherit enterprise depth | Consumer privacy/retention risk | Add `operational` trace profile with minimal content retention |
 | No dynamic Harness-facing model announcement | Model rollout/recall requires client refresh | Catalog epochs, snapshot/delta/announce/withdraw |
 | No capability compatibility negotiation per model | New model features can break old Harnesses | ModelDescriptor declares capabilities and minimum client semantics |
-| No explicit compatibility test against modern Responses/Messages features | PAPER may regress functionality users expect | Maintain protocol capability coverage matrix and conformance fixtures |
+| No explicit compatibility test against modern Responses/Messages features | DARI may regress functionality users expect | Maintain protocol capability coverage matrix and conformance fixtures |
 | Generic local model config may still exist in existing Harness | Violates Patty-only service design | Remove/disable provider/base URL/model-list config in official Harness |
 | Existing v1 roadmap is greenfield | PCCP already exists | Replace with phased migration roadmap and coexistence plan |
 
@@ -415,7 +415,7 @@ A profile changes:
 - licensing;
 - operational integrations.
 
-It does **not** change fundamental identities, PAPER message semantics, model-package identity, event schemas, or provenance identifiers.
+It does **not** change fundamental identities, DARI message semantics, model-package identity, event schemas, or provenance identifiers.
 
 ## 1.2 PCCP Kernel
 
@@ -429,7 +429,7 @@ The kernel is the minimum coherent system required in every profile:
 - session binding;
 - revocation.
 
-### PAPER Kernel
+### DARI Kernel
 - peer authentication;
 - Working Sessions;
 - extension negotiation;
@@ -688,7 +688,7 @@ PCCP shall become the **shared operating kernel for every Patty Code deployment*
 - Enterprise Private / On-Prem;
 - Government / Sovereign / Air-Gapped.
 
-The product must solve different operational problems in each profile without changing its fundamental identity model, model trust model, PAPER protocol, event spine, policy runtime, or inference control path.
+The product must solve different operational problems in each profile without changing its fundamental identity model, model trust model, DARI protocol, event spine, policy runtime, or inference control path.
 
 The common vision is:
 
@@ -722,7 +722,7 @@ PCCP should be understood as the shared system for:
 1. identity and Harness fleet management;
 2. subscription and entitlement authority;
 3. authoritative model discovery and capability announcement;
-4. PAPER session and exchange control;
+4. DARI session and exchange control;
 5. governed inference routing;
 6. GPU/model admission and capacity control;
 7. public-service fair use and account integrity;
@@ -749,7 +749,7 @@ PCCP announces models/capabilities
       ↓
 User selects a permitted model or accepts default
       ↓
-PAPER session
+DARI session
       ↓
 Patty model infrastructure
 ```
@@ -777,7 +777,7 @@ Enterprise administrators may additionally govern:
 
 ## 2.5 Government / Sovereign promise
 
-> **The same Patty Code and PCCP architecture can operate with no mandatory public-cloud dependency, using local identity, local PAPER Relays, approved local PIA/model endpoints, customer-controlled keys, and offline update/entitlement processes.**
+> **The same Patty Code and PCCP architecture can operate with no mandatory public-cloud dependency, using local identity, local DARI Relays, approved local PIA/model endpoints, customer-controlled keys, and offline update/entitlement processes.**
 
 Government is a deployment and security profile of the same architecture, not a separate product lineage.
 
@@ -822,18 +822,18 @@ A single sentence should remain true in every profile:
 
 # 3. Foundational Product Principles
 
-1. **One kernel, multiple profiles.** Public, Enterprise, and Sovereign share core identities, PAPER contracts, model registry, scheduler primitives, event schemas, and trust model.
+1. **One kernel, multiple profiles.** Public, Enterprise, and Sovereign share core identities, DARI contracts, model registry, scheduler primitives, event schemas, and trust model.
 2. **The Harness has no provider configuration.** Official Patty Code does not accept arbitrary inference URLs, base URLs, provider API keys, or provider compatibility adapters.
 3. **PCCP is the model-catalog authority.** Every displayable/selectable model is announced by PCCP after authentication and filtered through entitlement and policy.
 4. **A model name is presentation, not identity.** Model authorization uses catalog IDs, PMP identity, package digests, endpoint leases, and policy—not strings.
-5. **PAPER is the only supported Harness service protocol.** No transparent fallback to HTTP/OpenAI/Anthropic/generic LLM APIs.
-6. **PAPER must preserve modern model capabilities.** Security-driven protocol independence cannot justify a lower-quality agent experience.
+5. **DARI is the only supported Harness service protocol.** No transparent fallback to HTTP/OpenAI/Anthropic/generic LLM APIs.
+6. **DARI must preserve modern model capabilities.** Security-driven protocol independence cannot justify a lower-quality agent experience.
 7. **Capabilities are negotiated, not guessed.** Model, Harness, Relay, PIA, and tool capabilities are machine-readable and versioned.
 8. **Gateway is subordinate to service control.** Routing is infrastructure beneath identity, entitlement, governance, model trust, and operations.
 9. **Control plane is not token data plane.** Relays scale independently and consume signed/cached state.
 10. **The Public commercial principal is the user.** Subscription benefits attach to an individual identity, then to enrolled Harnesses and Working Sessions—not transferable API keys.
 11. **Harness identity is independent from user identity.** A valid login does not by itself authorize any arbitrary process to consume the subscription.
-12. **Connection count is not concurrency.** PAPER multiplexes; PCCP controls active work slots and resource consumption.
+12. **Connection count is not concurrency.** DARI multiplexes; PCCP controls active work slots and resource consumption.
 13. **Unlimited means generous interactive service subject to physical capacity and anti-abuse controls.** Internal fairness must be resource-aware.
 14. **High usage is not automatically abuse.** Capacity, account integrity, Trust & Safety, and platform security are separate states.
 15. **IP is evidence, not identity.** Location/IP/ASN changes contribute to risk but do not automatically prove account sharing.
@@ -842,10 +842,10 @@ A single sentence should remain true in every profile:
 18. **No trust by generic endpoint compatibility.** Raw vLLM/SGLang/OpenAI-compatible servers are never direct Harness targets.
 19. **PIA remains the serving boundary.** Generic serving engines stay behind the enrolled inference identity.
 20. **Tools are authority-bearing operations.** Tool calls, shell actions, patch/edit operations, MCP, network and files pass through explicit capability and policy controls.
-21. **Server-side and client-side tool semantics are explicit.** PAPER distinguishes where a tool executes and who authorizes it.
+21. **Server-side and client-side tool semantics are explicit.** DARI distinguishes where a tool executes and who authorizes it.
 22. **Structured output is first-class.** JSON-schema output and strict tool schema behavior are part of the model capability contract.
 23. **Multimodal content is typed.** Text, image, audio, file/document, tool calls/results, sources, and generated artifacts are not flattened into one string.
-24. **Reasoning controls do not imply chain-of-thought exposure.** PAPER may carry effort configuration, reasoning-token usage, opaque state, or safe summaries; hidden chain-of-thought is not a product requirement.
+24. **Reasoning controls do not imply chain-of-thought exposure.** DARI may carry effort configuration, reasoning-token usage, opaque state, or safe summaries; hidden chain-of-thought is not a product requirement.
 25. **Caching is an observable resource.** Cache read/write usage and policy are metered independently from uncached input.
 26. **Provenance is profile-dependent.** Enterprise may collect line-level code provenance; Public defaults to operational/security evidence with minimized raw content.
 27. **Every protected action is correlated.** User, Harness, session, model, endpoint, policy, tool, and usage identifiers join across the event spine.
@@ -854,11 +854,11 @@ A single sentence should remain true in every profile:
 30. **Fair scheduling is user-aware.** One power user's subagents must not monopolize the entire public GPU fleet.
 31. **Model fallback is policy-preserving.** No fallback changes model class, residency, assurance, or entitlement without an allowed catalog rule.
 32. **Public model changes are pushable.** Model release, degradation, recall, or plan eligibility can be announced without shipping a new Harness binary.
-33. **Old Harnesses fail explicitly.** If a model requires an unsupported PAPER capability, PCCP marks it incompatible or requires upgrade rather than silently degrading.
-34. **Administrative APIs are not inference APIs.** HTTP/JSON may remain for Control UI and integrations while Harness inference remains PAPER-only.
-35. **Security does not rely on source secrecy.** PCCP, PAPER and Harness can be open source.
-36. **Open-source modification limits claims.** A modified Harness can add arbitrary protocols; official Patty service access still requires enrolled PAPER identity and entitlement.
-37. **Enterprise external-AI prohibition requires network controls for a malicious local administrator/user.** PAPER eliminates the official client pathway but cannot control every program on the device.
+33. **Old Harnesses fail explicitly.** If a model requires an unsupported DARI capability, PCCP marks it incompatible or requires upgrade rather than silently degrading.
+34. **Administrative APIs are not inference APIs.** HTTP/JSON may remain for Control UI and integrations while Harness inference remains DARI-only.
+35. **Security does not rely on source secrecy.** PCCP, DARI and Harness can be open source.
+36. **Open-source modification limits claims.** A modified Harness can add arbitrary protocols; official Patty service access still requires enrolled DARI identity and entitlement.
+37. **Enterprise external-AI prohibition requires network controls for a malicious local administrator/user.** DARI eliminates the official client pathway but cannot control every program on the device.
 38. **Git remains first-class for enterprise provenance.**
 39. **Models remain exact artifacts for trusted serving.**
 40. **Korean-first operation remains a product requirement across Public, Enterprise, and Sovereign profiles.**
@@ -875,11 +875,11 @@ Run the same conceptual PCCP kernel for a single Public subscriber, a 50-person 
 ### G2 — Server-authoritative model discovery
 A Harness must only see/select models delivered by PCCP for its current user, entitlement, policy, Harness capability, region, deployment, and service state.
 
-### G3 — PAPER-only official Harness inference
-Eliminate provider endpoint configuration from the official Harness and make PAPER the only supported Patty service inference protocol.
+### G3 — DARI-only official Harness inference
+Eliminate provider endpoint configuration from the official Harness and make DARI the only supported Patty service inference protocol.
 
 ### G4 — Preserve full agent capability
-PAPER/PCCP must support a modern coding-agent experience comparable in semantic richness to leading model APIs without copying their wire protocols.
+DARI/PCCP must support a modern coding-agent experience comparable in semantic richness to leading model APIs without copying their wire protocols.
 
 ### G5 — Scale Public service predictably
 Support hundreds of thousands of accounts and very large concurrent Harness/session populations by scaling Relay, scheduler, cache, event, and PIA data planes independently.
@@ -932,7 +932,7 @@ Adding Public Cloud must not dilute deep organization governance, security, prov
 
 ## 4.4 Protocol goals
 
-PCCP requires PAPER to support:
+PCCP requires DARI to support:
 
 - capability-negotiated model discovery;
 - typed multimodal input/output;
@@ -955,7 +955,7 @@ PCCP requires PAPER to support:
 ## 4.5 Security goals
 
 - A generic OpenAI/Anthropic client cannot directly consume a Patty Public subscription.
-- A valid user login from an unregistered Harness cannot begin a protected PAPER AI session.
+- A valid user login from an unregistered Harness cannot begin a protected DARI AI session.
 - A registered Harness cannot select a model absent from its current PCCP catalog.
 - A user cannot supply a provider URL as model identity.
 - A normal vLLM endpoint cannot become trusted by claiming a Patty model name.
@@ -1016,7 +1016,7 @@ Needs:
 - global/regional live traffic;
 - active accounts/Harnesses/work slots;
 - authentication health;
-- PAPER handshake errors;
+- DARI handshake errors;
 - queue depth;
 - TTFT and decode latency;
 - cache efficiency;
@@ -1047,7 +1047,7 @@ Trust & Safety is not identical to platform security.
 ## 5.4 Patty Platform Security
 
 Needs:
-- attacks against PCCP/PAPER/Relay/PIA;
+- attacks against PCCP/DARI/Relay/PIA;
 - malformed protocol activity;
 - credential replay;
 - scanning;
@@ -1155,7 +1155,7 @@ Live Traffic
   ├─ Working Sessions
   ├─ Agent Work Slots
   ├─ Queues
-  └─ PAPER Exchanges
+  └─ DARI Exchanges
 Accounts
   ├─ Subscribers
   ├─ Authentication
@@ -1248,7 +1248,7 @@ Both consoles should use the same object identifiers wherever applicable:
 - `Account`
 - `Organization`
 - `Harness`
-- `PAPERPeerCredential`
+- `DARIPeerCredential`
 - `WorkingSession`
 - `CapabilityLease`
 - `AccountCapacityLease`
@@ -1256,7 +1256,7 @@ Both consoles should use the same object identifiers wherever applicable:
 - `CatalogModel`
 - `ModelPackage`
 - `InferenceEndpoint`
-- `PAPERExchange`
+- `DARIExchange`
 - `PolicyDecision`
 - `UsageRecord`
 - `SecurityFinding`
@@ -1370,7 +1370,7 @@ Required top-level metrics:
 
 ### Performance
 - auth latency;
-- PAPER handshake latency;
+- DARI handshake latency;
 - dispatch latency;
 - queue wait p50/p95/p99;
 - TTFT p50/p95/p99;
@@ -1414,7 +1414,7 @@ Required top-level metrics:
 - OAuth/OIDC;
 - subscription/entitlement;
 - Harness Registry;
-- PAPER ingress;
+- DARI ingress;
 - Relay fleet;
 - capacity authority;
 - model catalog;
@@ -1523,7 +1523,7 @@ A performance regression should be correlatable to a model package, PIA build, R
 
 # 8. Core Identity, Account, Authentication, and Harness Model
 
-PCCP v2 separates **human account identity**, **commercial entitlement**, **Harness identity**, **PAPER peer identity**, and **Working Session authority**.
+PCCP v2 separates **human account identity**, **commercial entitlement**, **Harness identity**, **DARI peer identity**, and **Working Session authority**.
 
 ## 8.1 Shared entities
 
@@ -1536,7 +1536,7 @@ Core:
 - `Entitlement`
 - `Harness`
 - `HarnessEnrollment`
-- `PAPERPeerCredential`
+- `DARIPeerCredential`
 - `WorkingSession`
 - `CapabilityLease`
 - `AccountCapacityLease`
@@ -1582,9 +1582,9 @@ Harness generates/loads local peer key
         ↓
 Harness enrollment
         ↓
-PCCP issues PAPER Peer Credential
+PCCP issues DARI Peer Credential
         ↓
-PAPER authentication
+DARI authentication
         ↓
 User binding
         ↓
@@ -1606,7 +1606,7 @@ Baseline Public enrollment:
 4. Harness sends enrollment metadata and public key.
 5. PCCP checks Harness-count and version policy.
 6. PCCP creates Harness identity.
-7. PCCP issues PAPER peer credential.
+7. PCCP issues DARI peer credential.
 8. User sees the Harness in the account portal.
 
 Enterprise enrollment may additionally require:
@@ -1653,7 +1653,7 @@ Entitlement
   ↓
 Harness
   ↓
-PAPER Working Session
+DARI Working Session
 ```
 
 Do not issue a general-purpose API key that converts an individual unlimited coding subscription into a transferable inference API.
@@ -1758,18 +1758,18 @@ The trust target is:
 
 > **an enrolled PIA inference workload associated with an approved Patty Model Package and a current Endpoint Lease under the active deployment profile.**
 
-## 9.2 PAPER-only data path
+## 9.2 DARI-only data path
 
 Updated v2 path:
 
 ```text
 Patty Code Harness
         │
-        │ PAPER
+        │ DARI
         ▼
-PAPER Relay
+DARI Relay
         │
-        │ PAPER
+        │ DARI
         ▼
 Patty Inference Agent (PIA)
         │
@@ -1783,12 +1783,12 @@ Patty Model Package
 
 The old v1 conceptual Harness↔Gateway HTTP/gRPC path is superseded.
 
-PCCP admin/integration APIs may use HTTP/gRPC, but the official Harness AI/service channel uses PAPER.
+PCCP admin/integration APIs may use HTTP/gRPC, but the official Harness AI/service channel uses DARI.
 
 ## 9.3 Raw engine isolation
 
 - Serving engine is not a Harness-reachable endpoint.
-- PIA owns the PAPER `INFERENCE` peer credential.
+- PIA owns the DARI `INFERENCE` peer credential.
 - PIA binds the current local model artifact to a signed PMP identity.
 - Relays route only with a current Endpoint Lease.
 - Raw OpenAI-compatible routes on vLLM/SGLang, if enabled internally, are loopback/private adapter implementation details.
@@ -1862,7 +1862,7 @@ Recall invalidates:
 - Endpoint Leases;
 - new Capability Leases referencing the recalled model.
 
-PAPER sends model catalog withdrawal/status announcements to connected Harnesses.
+DARI sends model catalog withdrawal/status announcements to connected Harnesses.
 
 A currently selected model that is recalled must become visibly unavailable; Harness must not keep using a stale local model list.
 
@@ -1872,7 +1872,7 @@ A currently selected model that is recalled must become visibly unavailable; Har
 
 ## 10.1 Revised architecture
 
-In PCCP v2 the term **Gateway** refers to a logical function, while the high-volume inline traffic implementation is the horizontally scalable **PAPER Relay data plane**.
+In PCCP v2 the term **Gateway** refers to a logical function, while the high-volume inline traffic implementation is the horizontally scalable **DARI Relay data plane**.
 
 The administrative Control Plane does not need to copy every token.
 
@@ -1883,7 +1883,7 @@ The administrative Control Plane does not need to copy every token.
                   signed/cached state
                          │
                          ▼
-                    PAPER RELAYS
+                    DARI RELAYS
  Auth → Entitlement → Policy → Capacity → Routing → Stream control
                          │
                          ▼
@@ -2078,7 +2078,7 @@ The relational DB is not queried synchronously for every token or tool delta.
 
 ## 10.9 Streaming
 
-PAPER Relay shall:
+DARI Relay shall:
 - preserve ordered stream semantics;
 - enforce cancellation;
 - meter input/output/cache usage;
@@ -2086,7 +2086,7 @@ PAPER Relay shall:
 - handle flow control/backpressure;
 - prioritize interactive output;
 - preserve final usage and completion reason;
-- support session/exchange resumption according to PAPER.
+- support session/exchange resumption according to DARI.
 
 Heavy stream processing should not run expensive analytics synchronously per token.
 
@@ -2121,13 +2121,13 @@ PCCP may continue exposing HTTP/JSON or gRPC for:
 
 Those are not model invocation alternatives for Patty Code Harness.
 
-The Harness AI/control/collaboration service path is PAPER.
+The Harness AI/control/collaboration service path is DARI.
 
 ---
 
 # 10A. Server-Authoritative Model Catalog and Model Announcements
 
-This is a new mandatory PCCP/PAPER subsystem.
+This is a new mandatory PCCP/DARI subsystem.
 
 ## 10A.1 Core requirement
 
@@ -2147,7 +2147,7 @@ PCCP is the authority.
 ## 10A.2 Catalog lifecycle
 
 ```text
-Harness authenticates over PAPER
+Harness authenticates over DARI
         ↓
 PCCP resolves Account/User/Harness
         ↓
@@ -2184,7 +2184,7 @@ Two users connected at the same moment may legitimately receive different catalo
 
 Therefore PCCP exposes the **effective model catalog** for the authenticated context, not a global static array.
 
-## 10A.4 Proposed PAPER extension: `paper.models/1`
+## 10A.4 Proposed DARI extension: `dari.models/1`
 
 Required message types:
 
@@ -2199,7 +2199,7 @@ Required message types:
 - `MODEL_UPGRADE_REQUIRED`
 - `CATALOG_ACK`
 
-PAPER Specification must be amended separately; this PRD defines the product requirement.
+DARI Specification must be amended separately; this PRD defines the product requirement.
 
 ## 10A.5 Catalog Epoch
 
@@ -2211,7 +2211,7 @@ Every snapshot has:
 - policy epoch;
 - minimum validity;
 - descriptors;
-- signature/authenticated transport binding as specified by PAPER.
+- signature/authenticated transport binding as specified by DARI.
 
 `AI_OPEN` references `catalog_epoch`.
 
@@ -2283,8 +2283,8 @@ client:
   min_harness_version: ...
   min_paper_ai_version: 2
   required_extensions:
-    - paper.ai/2
-    - paper.tools/2
+    - dari.ai/2
+    - dari.tools/2
 
 lifecycle:
   announced_at: ...
@@ -2369,27 +2369,27 @@ If preferred model is no longer announced, Harness falls back only according to 
 
 ---
 
-# 10B. PAPER AI Semantic Contract — Required Capability Expansion
+# 10B. DARI AI Semantic Contract — Required Capability Expansion
 
-PAPER must not copy OpenAI Responses or Anthropic Messages wire formats. However, replacing those protocols is only viable if PAPER can represent the important capabilities expected from a modern agentic model interface.
+DARI must not copy OpenAI Responses or Anthropic Messages wire formats. However, replacing those protocols is only viable if DARI can represent the important capabilities expected from a modern agentic model interface.
 
-This section defines the **coverage requirement** for a PAPER AI-layer revision.
+This section defines the **coverage requirement** for a DARI AI-layer revision.
 
 ## 10B.1 Design principle
 
-Create a provider-neutral **PAPER AI Semantic IR**.
+Create a provider-neutral **DARI AI Semantic IR**.
 
 PIA adapters translate:
 
 ```text
-PAPER AI Semantic IR
+DARI AI Semantic IR
       ↕
 model-specific serving template / vLLM / SGLang / future runtime
 ```
 
 The Harness never speaks the internal serving protocol.
 
-The IR should be informed by mature public API semantics and cross-provider libraries, but the object model and wire encoding remain PAPER-native.
+The IR should be informed by mature public API semantics and cross-provider libraries, but the object model and wire encoding remain DARI-native.
 
 ## 10B.2 Input item model
 
@@ -2463,7 +2463,7 @@ Execution placement enum:
 
 ## 10B.5 Tool choice
 
-PAPER must represent at least:
+DARI must represent at least:
 - automatic;
 - none;
 - required / one-or-more;
@@ -2489,7 +2489,7 @@ A tool call cannot execute merely because the model emitted it. PCCP policy rema
 
 Models may stream tool arguments incrementally.
 
-PAPER needs events equivalent in semantics to:
+DARI needs events equivalent in semantics to:
 - tool call created;
 - argument delta;
 - arguments complete;
@@ -2502,7 +2502,7 @@ The Harness must be able to render a tool being constructed without executing in
 
 ## 10B.8 Client tools and server tools
 
-PAPER shall support both:
+DARI shall support both:
 
 ### Client/runtime-executed
 Model proposes; Harness/Runtime executes after authorization.
@@ -2526,20 +2526,20 @@ Server tools still generate visible tool-use/result/provenance events.
 
 ## 10B.9 MCP integration
 
-PAPER remains the authoritative Harness protocol even when a tool is backed by MCP.
+DARI remains the authoritative Harness protocol even when a tool is backed by MCP.
 
 Flow:
 
 ```text
 Model
   ↓ tool proposal
-PAPER
+DARI
   ↓ policy/approval
 PCCP Tool Broker
   ↓
 MCP server
   ↓
-PAPER normalized ToolResult
+DARI normalized ToolResult
 ```
 
 For approved local MCP:
@@ -2559,7 +2559,7 @@ Required semantics:
 
 ## 10B.10 Built-in coding tool classes
 
-Define PAPER-native semantic classes for common coding actions:
+Define DARI-native semantic classes for common coding actions:
 
 - `shell`
 - `apply_patch` / structured file edit
@@ -2628,14 +2628,14 @@ All context transformations should produce provenance/diagnostic metadata suffic
 
 ## 10B.15 Prompt/prefix caching
 
-PAPER usage model must distinguish:
+DARI usage model must distinguish:
 - uncached input tokens;
 - cache-write/creation tokens;
 - cache-read tokens;
 - output tokens;
 - optional reasoning/model-specific billed units.
 
-PAPER must carry:
+DARI must carry:
 - cache eligibility/directive;
 - cache scope;
 - cache TTL class;
@@ -2656,7 +2656,7 @@ The semantic layer should be extensible for:
 
 A ModelDescriptor announces accepted input and output content classes.
 
-Large binaries should use PAPER file/content references instead of bloating control frames.
+Large binaries should use DARI file/content references instead of bloating control frames.
 
 ## 10B.17 Citations and sources
 
@@ -2706,7 +2706,7 @@ Provider-specific usage fields may exist under an extension namespace but cannot
 
 ## 10B.20 Streaming state machine
 
-PAPER AI must expose deterministic lifecycle events such as:
+DARI AI must expose deterministic lifecycle events such as:
 
 ```text
 AI_ACCEPTED
@@ -2722,7 +2722,7 @@ USAGE_UPDATE*
 AI_COMPLETED
 ```
 
-Unknown non-critical future event types should be ignorable/forward-compatible per PAPER extension rules.
+Unknown non-critical future event types should be ignorable/forward-compatible per DARI extension rules.
 
 ## 10B.21 Background/long-running operations
 
@@ -2739,9 +2739,9 @@ Background capability must remain bounded by subscription/organization policy an
 
 ## 10B.22 Capability coverage matrix
 
-For every production PAPER release, maintain a tested matrix against capability classes found in contemporary mature APIs/libraries:
+For every production DARI release, maintain a tested matrix against capability classes found in contemporary mature APIs/libraries:
 
-| Capability | PAPER requirement |
+| Capability | DARI requirement |
 |---|---|
 | text streaming | mandatory |
 | multimodal input | optional announced |
@@ -2766,7 +2766,7 @@ For every production PAPER release, maintain a tested matrix against capability 
 
 OpenAI Responses, Anthropic Messages/Models, and cross-provider libraries are **coverage references**, not wire-format templates.
 
-PAPER should copy neither:
+DARI should copy neither:
 - HTTP endpoint shapes;
 - provider object names;
 - provider IDs;
@@ -2788,7 +2788,7 @@ Primary principal:
 Account
  + active Subscription/Entitlement
  + enrolled Harness
- + PAPER peer credential
+ + DARI peer credential
  + user binding
  + Working Session
 ```
@@ -2816,7 +2816,7 @@ Relays consume short-lived signed/cached entitlement state.
 
 The semantic concurrency unit is an **Agent Work Slot**, not network connection.
 
-A single PAPER connection may carry many lanes/subagents.
+A single DARI connection may carry many lanes/subagents.
 
 Work slots are allocated per:
 - account;
@@ -2990,7 +2990,7 @@ Platform security and ToS abuse should focus on attacks against Patty, credentia
 ## 10C.12 Prompt injection and service abuse
 
 Public PCCP should detect:
-- attempts to induce model/tool bypass of PAPER controls;
+- attempts to induce model/tool bypass of DARI controls;
 - attempts to expose hidden service credentials/system policy;
 - prompt-injection artifacts from repository/context;
 - repeated tool authorization bypass;
@@ -3027,7 +3027,7 @@ Do not inherit Enterprise full Git/source provenance by default.
 
 ### SEV-1
 - OAuth unavailable broadly;
-- PAPER ingress unavailable;
+- DARI ingress unavailable;
 - production model unavailable across regions;
 - entitlement system unusable beyond cached grace;
 - metering integrity/durable accounting failure;
@@ -3092,7 +3092,7 @@ Support should not have routine raw prompt/repository visibility.
 - Concurrent Harnesses cannot overspend account work slots through different Relays.
 - Heavy user gets fairness queueing rather than accidental ban.
 - Network-location anomaly alone cannot permanently ban.
-- Revoked Harness loses ability to establish new PAPER Working Session.
+- Revoked Harness loses ability to establish new DARI Working Session.
 - Suspended subscription cannot receive new entitlement lease.
 - Public user can manage registered Harnesses self-service.
 - SRE can locate TTFT regression by model/PIA/region/Harness version.
@@ -3188,7 +3188,7 @@ A Catalog Model may remain `Available` while its underlying production package c
 Descriptor capability values must be generated from:
 - model evaluation;
 - runtime adapter capability;
-- PCCP/PAPER semantic support;
+- PCCP/DARI semantic support;
 - deployment policy.
 
 Do not advertise a feature merely because the base model vendor claims it.
@@ -3200,7 +3200,7 @@ model supports image input
 +
 PIA adapter supports image
 +
-PAPER negotiated image content
+DARI negotiated image content
 +
 subscription/project allows image
 =
@@ -3216,13 +3216,13 @@ Global Catalog
    ∩ Deployment Profile
    ∩ Account/Organization Entitlement
    ∩ User/Project Policy
-   ∩ Harness/PAPER Capability
+   ∩ Harness/DARI Capability
    ∩ Region/Residency
    ∩ Current Model/Endpoint State
    = Effective Catalog
 ```
 
-The result is sent over `paper.models`.
+The result is sent over `dari.models`.
 
 ## 11.7 Stable Catalog Model IDs
 
@@ -3254,7 +3254,7 @@ Harness may show product aliases but does not resolve them itself. A default cha
 Before cataloging a model for a Harness:
 - `min_harness_version`;
 - `min_paper_core`;
-- required PAPER extensions;
+- required DARI extensions;
 - required tool/runtime version;
 - content capabilities;
 - structured output support;
@@ -4906,7 +4906,7 @@ Always preserve:
 - organization/project when applicable;
 - Harness;
 - Working Session;
-- PAPER Exchange;
+- DARI Exchange;
 - Catalog Model;
 - exact PMP/endpoint internally;
 - input tokens;
@@ -4959,7 +4959,7 @@ Fields:
 - support tier;
 - expiry/grace.
 
-PAPER Capability Leases derive from the current entitlement.
+DARI Capability Leases derive from the current entitlement.
 
 ## 29.4 Subscription login enforcement
 
@@ -5572,7 +5572,7 @@ This supports model selection based on **final engineering outcome**, not a benc
 
 ```text
                          PCCP KERNEL
-          Identity | PAPER | Catalog | Entitlement
+          Identity | DARI | Catalog | Entitlement
         Policy | Relay | Scheduler | PIA | Metering
                Event Spine | Modules | Audit
                    /          |          \
@@ -5589,7 +5589,7 @@ Required:
 - multi-region/public OAuth;
 - subscription/payment integration;
 - public Harness registry;
-- PAPER ingress/Relay fleet;
+- DARI ingress/Relay fleet;
 - authoritative model catalog;
 - Patty-operated PIA/model GPU;
 - Account Capacity Authority;
@@ -5644,15 +5644,15 @@ Required:
 
 ```text
 USER/HARNESS
-   │ PAPER
+   │ DARI
    ▼
-PAPER DATA PLANE
+DARI DATA PLANE
    Relay / ingress / stream controls
    │
    ├────────► Control authority services
    │          identity, policy, catalog, capacity
    │
-   ▼ PAPER
+   ▼ DARI
 PIA / MODEL PLANE
    │ local adapter
    ▼
@@ -5668,7 +5668,7 @@ ADMIN WEB
 
 Public should support:
 - global DNS/load balancer;
-- region-local PAPER ingress;
+- region-local DARI ingress;
 - stateless or softly stateful Relay nodes;
 - account-sharded capacity authority;
 - regional model schedulers;
@@ -5713,7 +5713,7 @@ Profiles must be validated at boot and emitted as configuration evidence.
 
 Feature flags can stage:
 - new catalog service;
-- new PAPER semantic version;
+- new DARI semantic version;
 - new scheduler;
 - new abuse model;
 - new model.
@@ -5749,7 +5749,7 @@ Exact region of inference is recorded internally and, where required, surfaced t
 
 # 35. Security Architecture and Threat Model
 
-PCCP v2 expands the v1 threat model to include Internet-scale consumer abuse and PAPER/model-catalog integrity.
+PCCP v2 expands the v1 threat model to include Internet-scale consumer abuse and DARI/model-catalog integrity.
 
 ## 35.1 Shared threats
 
@@ -5776,7 +5776,7 @@ Retain:
 | account sharing | one subscription used by several people | Harness registry, concurrency signals, step-up auth, graduated enforcement |
 | credential theft | stolen OAuth/session/Harness key | token/key rotation, revocation, anomaly detection |
 | Harness cloning | copied Harness credential | peer challenge, concurrent clone detection, revocation |
-| generic client resale | subscription used as backend model API | PAPER-only, Harness identity, work-slot/fair-use policy |
+| generic client resale | subscription used as backend model API | DARI-only, Harness identity, work-slot/fair-use policy |
 | model catalog spoof | local user injects model/base URL | server-authoritative catalog, no generic provider config |
 | stale catalog | withdrawn model remains selectable | catalog epoch + Relay validation + push withdrawal |
 | protocol abuse | malformed frames/DoS | parser limits, auth-before-expensive-work, rate limiting |
@@ -5785,7 +5785,7 @@ Retain:
 | abuse false positive | traveler/VPN looks shared | multi-signal evidence + step-up/review |
 | payment entitlement fraud | plan state manipulated client-side | server-side entitlement authority |
 | endpoint bypass | raw vLLM called | network isolation + PIA-only route |
-| Paper downgrade | client falls back to generic API | no generic fallback, protocol version binding |
+| DARI downgrade | client falls back to generic API | no generic fallback, protocol version binding |
 
 ## 35.3 Explicit security claims
 
@@ -5798,7 +5798,7 @@ PCCP can claim:
 
 PCCP must not claim:
 - an open-source Harness running on a fully attacker-controlled machine is mathematically impossible to modify;
-- PAPER prevents a user from independently writing another HTTPS program;
+- DARI prevents a user from independently writing another HTTPS program;
 - IP/location perfectly identifies account sharing;
 - software-only PIA can defeat malicious root on the inference host without stronger attestation.
 
@@ -5810,7 +5810,7 @@ Official Harness build:
 - no Anthropic-compatible endpoint config;
 - no custom API-key path for subscription;
 - no raw `model` string outside catalog;
-- no HTTP fallback from PAPER.
+- no HTTP fallback from DARI.
 
 PCCP:
 - validates catalog epoch;
@@ -5842,7 +5842,7 @@ A single event may influence multiple states but actions are reason-coded.
 
 - separate user/Harness/Relay/PIA/model identity;
 - short-lived leases;
-- transport-bound PAPER auth;
+- transport-bound DARI auth;
 - no implicit network trust;
 - signed Policy/Catalog/Endpoint state;
 - service-to-service credentials;
@@ -5894,7 +5894,7 @@ Add:
 - concurrent account slot race across Relays;
 - OAuth replay;
 - capacity lease overspend;
-- malformed PAPER tool stream;
+- malformed DARI tool stream;
 - unknown capability downgrade.
 
 ---
@@ -5954,7 +5954,7 @@ PCCP v2 preserves v1 shared data domains and adds Public-scale account/catalog/c
 | Control | orgs, projects, sessions, policies | relational |
 | Capacity | leases, counters, queue ownership | distributed in-memory + durable journal |
 | Model | PMP, PIA endpoints, endpoint leases | registry/relational |
-| Events | PAPER exchanges, policy, usage, lifecycle | durable event bus |
+| Events | DARI exchanges, policy, usage, lifecycle | durable event bus |
 | Analytics | token/load/SRE/risk aggregates | OLAP |
 | Risk | account integrity/T&S/platform security cases | relational + analytics |
 | Search | operational/audit indices | search |
@@ -6011,7 +6011,7 @@ Model catalog snapshots:
 - content-digested;
 - small enough for memory;
 - distributed to Relays;
-- sent to Harness over PAPER after effective filtering.
+- sent to Harness over DARI after effective filtering.
 
 PCCP stores current plus recent epochs sufficient for in-flight validation/audit.
 
@@ -6055,7 +6055,7 @@ Schema migration should be additive:
 - migrate old direct model references to CatalogModel mappings;
 - create CapacityLease;
 - add explicit risk-state classes;
-- map old Gateway request IDs to PAPER Exchange IDs where dual operation exists.
+- map old Gateway request IDs to DARI Exchange IDs where dual operation exists.
 
 Historical v1 records remain readable.
 
@@ -6067,7 +6067,7 @@ This section materially supersedes PCCP v1.
 
 ## 38.1 Hard boundary
 
-**Official Patty Code Harness service communication uses PAPER.**
+**Official Patty Code Harness service communication uses DARI.**
 
 This includes:
 - peer auth;
@@ -6084,20 +6084,20 @@ This includes:
 
 The Harness must not use a public OpenAI/Anthropic compatibility endpoint as its model path.
 
-## 38.2 PAPER endpoint families
+## 38.2 DARI endpoint families
 
-PAPER is not URL-oriented. Capability families include:
-- `paper.core`
-- `paper.models`
-- `paper.ai`
-- `paper.context`
-- `paper.tools`
-- `paper.provenance`
-- `paper.chat`
-- `paper.voice`
-- `paper.file`
-- `paper.broadcast`
-- `paper.telemetry`
+DARI is not URL-oriented. Capability families include:
+- `dari.core`
+- `dari.models`
+- `dari.ai`
+- `dari.context`
+- `dari.tools`
+- `dari.provenance`
+- `dari.chat`
+- `dari.voice`
+- `dari.file`
+- `dari.broadcast`
+- `dari.telemetry`
 
 ## 38.3 Web/admin APIs
 
@@ -6120,7 +6120,7 @@ Internal PCCP services may use:
 - Protobuf/gRPC;
 - event bus;
 - database contracts;
-- PAPER where the peer is a protocol participant.
+- DARI where the peer is a protocol participant.
 
 Implementation protocol is not customer-visible unless documented.
 
@@ -6130,7 +6130,7 @@ If current PCCP has `/v1/gateway/responses` or equivalent:
 - mark internal/legacy;
 - block new Harness releases from using it;
 - put behind service network/auth;
-- migrate traffic to PAPER Relay;
+- migrate traffic to DARI Relay;
 - instrument remaining callers;
 - remove external access after migration window.
 
@@ -6150,7 +6150,7 @@ The compatibility interface does not become a supported PCCP external API.
 
 ## 38.7 Idempotency/correlation
 
-All write/admin APIs and PAPER side effects:
+All write/admin APIs and DARI side effects:
 - idempotency;
 - stable event IDs;
 - Working Session/Exchange correlation;
@@ -6161,12 +6161,12 @@ All write/admin APIs and PAPER side effects:
 
 Separate:
 - admin API version;
-- PAPER core/extension version;
+- DARI core/extension version;
 - catalog schema version;
 - model capability schema;
 - event schema.
 
-Harness compatibility is derived from PAPER/catalog versions, not admin API version.
+Harness compatibility is derived from DARI/catalog versions, not admin API version.
 
 ---
 
@@ -6217,8 +6217,8 @@ pccp.account.auth
 pccp.subscription.lifecycle
 pccp.entitlement.revision
 pccp.harness.enrollment
-pccp.paper.connection
-pccp.paper.exchange
+pccp.dari.connection
+pccp.dari.exchange
 pccp.catalog.epoch
 pccp.catalog.announcement
 pccp.catalog.withdrawal
@@ -6294,7 +6294,7 @@ Security/provenance critical events retain:
 - durable buffering;
 - tamper evidence/signatures where required.
 
-Operational high-volume token deltas need not be individually signed if final authenticated evidence/usage records bind the stream according to PAPER.
+Operational high-volume token deltas need not be individually signed if final authenticated evidence/usage records bind the stream according to DARI.
 
 ## 39.7 Consumer isolation
 
@@ -6539,7 +6539,7 @@ Initial objectives:
 | Component | Public | Enterprise |
 |---|---:|---:|
 | OAuth/account auth | 99.95% target | N/A/customer IdP |
-| PAPER ingress/Relay | 99.95% | 99.9%+ |
+| DARI ingress/Relay | 99.95% | 99.9%+ |
 | entitlement authorization | 99.95% with bounded lease cache | 99.9% |
 | model catalog | 99.95% for new sessions | 99.9% |
 | model gateway/PIA routing | 99.95% excluding maintenance | 99.9% |
@@ -6575,7 +6575,7 @@ Retain:
 Public:
 - cached peer/entitlement/catalog checks should be low single-digit milliseconds where local;
 - admission/routing overhead p95 target < 20 ms inside data plane excluding external scanners;
-- PAPER service overhead should remain small relative to TTFT;
+- DARI service overhead should remain small relative to TTFT;
 - model catalog delivery after auth p95 target < 500 ms for normal snapshot;
 - withdrawal/revocation propagation target < 10 s, faster for emergency where architecture permits.
 
@@ -6642,7 +6642,7 @@ A new scanner cannot be rolled globally without:
 CI must test a matrix of:
 - current Harness;
 - previous supported Harness;
-- PAPER versions;
+- DARI versions;
 - Public/Enterprise/Sovereign profiles;
 - current/next model descriptors;
 - vLLM/SGLang adapters.
@@ -6777,7 +6777,7 @@ Shared:
 - module enablement;
 - identity/auth adapters;
 - Harness enrollment/version policy;
-- PAPER protocol/extension minimums;
+- DARI protocol/extension minimums;
 - Model Catalog;
 - PMP/endpoints;
 - entitlements;
@@ -6902,7 +6902,7 @@ Install Harness
   ↓
 Launch
   ↓
-PAPER bootstrap detects no enrollment
+DARI bootstrap detects no enrollment
   ↓
 Open browser OAuth / device flow
   ↓
@@ -6914,9 +6914,9 @@ Generate Harness peer key
   ↓
 Enroll Harness
   ↓
-Receive PAPER credential
+Receive DARI credential
   ↓
-PAPER auth + user bind
+DARI auth + user bind
   ↓
 Receive Model Catalog Snapshot
   ↓
@@ -6951,7 +6951,7 @@ Do not ask users to manually edit credential files.
 When new model announced:
 - online Harness gets delta;
 - UI adds it;
-- no software update unless capability requires new PAPER/Harness version.
+- no software update unless capability requires new DARI/Harness version.
 
 When Harness upgrade is required:
 - descriptor includes min version;
@@ -6974,7 +6974,7 @@ Retain v1 sequence:
 - expand.
 
 Add:
-- validate PAPER model catalog policy;
+- validate DARI model catalog policy;
 - ensure no generic endpoint config remains in enterprise Harness;
 - map organization Catalog Model IDs to approved private/cloud PMP routes.
 
@@ -6985,8 +6985,8 @@ Existing deployment sequence:
 2. deploy v2-compatible PCCP control schemas;
 3. enable Model Catalog Service in observe mode;
 4. map all current model references to Catalog Models;
-5. deploy PAPER Relay alongside legacy Gateway;
-6. update PIA/PAPER semantic capabilities;
+5. deploy DARI Relay alongside legacy Gateway;
+6. update PIA/DARI semantic capabilities;
 7. canary new Harness;
 8. dual-record usage and compare;
 9. migrate user cohorts;
@@ -7009,12 +7009,12 @@ Use mapping/migration rather than delete/recreate.
 ## 47.8 Government migration
 
 For current Government derived deployment:
-- import PAPER/model-catalog update offline;
+- import DARI/model-catalog update offline;
 - map local approved models to Catalog Models;
 - keep local PIA;
 - validate no public dependency;
 - run conformance;
-- cut Harness to PAPER-only path.
+- cut Harness to DARI-only path.
 
 ## 47.9 Support/training
 
@@ -7067,10 +7067,10 @@ Deliver:
 Gate:
 - existing Enterprise runs unchanged using v2 schemas behind compatibility adapters.
 
-## M2 — PAPER Model Catalog + Harness Authority Migration (Weeks 4–8)
+## M2 — DARI Model Catalog + Harness Authority Migration (Weeks 4–8)
 
 Deliver:
-- `paper.models/1`;
+- `dari.models/1`;
 - catalog snapshot/delta;
 - model announce/withdraw/default;
 - `AI_OPEN` references Catalog Model + epoch;
@@ -7082,7 +7082,7 @@ Gate:
 - model can be added/withdrawn server-side without Harness release;
 - fake local model ID/base URL cannot be used.
 
-## M3 — PAPER AI Semantic v2 Capability Expansion (Weeks 5–12)
+## M3 — DARI AI Semantic v2 Capability Expansion (Weeks 5–12)
 
 Deliver:
 - normalized content-item model;
@@ -7120,12 +7120,12 @@ Deliver:
 
 Gate:
 - unpaid account cannot infer;
-- paid account enrolls and uses PAPER end-to-end without API key/base URL.
+- paid account enrolls and uses DARI end-to-end without API key/base URL.
 
 ## M5 — Relay Data Plane, Capacity Authority, and Fair Scheduler (Weeks 8–16)
 
 Deliver:
-- separate horizontally scalable PAPER Relay fleet;
+- separate horizontally scalable DARI Relay fleet;
 - hot signed state caches;
 - account-sharded Capacity Authority;
 - Agent Work Slots;
@@ -7206,7 +7206,7 @@ Deliver:
 - regional loss;
 - capacity authority loss;
 - stale catalog/revocation tests;
-- fuzz PAPER AI/model catalog;
+- fuzz DARI AI/model catalog;
 - external security review;
 - reference docs;
 - migration guide;
@@ -7221,7 +7221,7 @@ Migrations are vertical slices. Do not build a large Public dashboard before:
 - OAuth;
 - Harness identity;
 - catalog authority;
-- PAPER;
+- DARI;
 - capacity/metering
 
 are correct in the data path.
@@ -7239,11 +7239,11 @@ are correct in the data path.
 5. User at Harness limit must revoke/remove one before ordinary new enrollment.
 6. Account recovery revokes or rotates appropriate credentials.
 
-## B. PAPER-only Harness path
+## B. DARI-only Harness path
 
 7. Official Harness has no supported OpenAI/Anthropic-compatible subscription inference setting.
 8. Setting an arbitrary `base_url` cannot redirect official Harness model traffic.
-9. PAPER downgrade does not fall back to REST/WebSocket/generic provider protocol.
+9. DARI downgrade does not fall back to REST/WebSocket/generic provider protocol.
 10. Legacy Gateway route is inaccessible to v2 Harness after migration.
 
 ## C. Model catalog
@@ -7265,7 +7265,7 @@ are correct in the data path.
 22. Model recall stops new requests and updates catalog state.
 23. User-visible Catalog Model can change underlying PMP without local Harness list change.
 
-## E. PAPER AI semantics
+## E. DARI AI semantics
 
 24. Text streaming interoperates end-to-end.
 25. Tool call has stable ID and schema.
@@ -7274,7 +7274,7 @@ are correct in the data path.
 28. Streaming tool arguments cannot execute before complete/authorized.
 29. Tool result can contain normalized text/file/image where supported.
 30. Server tool and client tool lifecycle are distinguishable.
-31. MCP-backed tool cannot bypass PAPER policy.
+31. MCP-backed tool cannot bypass DARI policy.
 32. Structured output schema is represented and validated.
 33. Reasoning effort can be requested only when advertised.
 34. Hidden chain-of-thought is not required or exposed.
@@ -7314,7 +7314,7 @@ are correct in the data path.
 
 ## I. Enterprise/Government regression
 
-59. Existing org/project/repo policies still apply under PAPER.
+59. Existing org/project/repo policies still apply under DARI.
 60. Enterprise model catalog is filtered by organization/project/data policy.
 61. Full provenance resolves Catalog Model to exact PMP/endpoint.
 62. Communications/file transfer remain governed.
@@ -7350,7 +7350,7 @@ KPIs are separated by profile and purpose.
 
 ## 50.2 Public reliability
 
-- PAPER auth success;
+- DARI auth success;
 - Working Session success;
 - request success;
 - queue p50/p95/p99;
@@ -7462,8 +7462,8 @@ No KPI silently becomes:
 | Public scale overwhelms v1 CP | outages | Relay data plane, hot caches, sharded capacity authority |
 | PCCP becomes four products | maintenance failure | kernel + DeploymentProfile + modules |
 | Harness local model config survives | generic endpoint bypass/inconsistency | server catalog, remove base URL/provider path |
-| PAPER lacks modern model features | Harness regressions | semantic IR + capability coverage/conformance |
-| PAPER becomes vendor API clone | design/maintenance trap | provider-neutral semantics, own wire model |
+| DARI lacks modern model features | Harness regressions | semantic IR + capability coverage/conformance |
+| DARI becomes vendor API clone | design/maintenance trap | provider-neutral semantics, own wire model |
 | Catalog descriptor lies about model capability | runtime errors | conformance tests + adapter + eval-derived capability |
 | Stale catalog uses recalled model | safety/quality incident | epoch validation + push withdrawal + server enforcement |
 | Subscriber shares account | cost/margin | Harness registry + multi-signal integrity + capacity |
@@ -7478,14 +7478,14 @@ No KPI silently becomes:
 | vLLM/SGLang adapter lag | model rollout delay | PIA adapter boundary, no permanent fork |
 | Model capability fragmentation | client complexity | ModelDescriptor + version negotiation |
 | Tool semantics permit authority escalation | security | tool proposal external authorization |
-| Generic MCP bypass | exfiltration | MCP through Tool Broker/PAPER |
+| Generic MCP bypass | exfiltration | MCP through Tool Broker/DARI |
 | Public provenance stores too much code | privacy/breach | operational trace profile |
 | Enterprise admin privacy risk | employee/legal risk | purpose/role/audit controls |
 | Work Intelligence surveillance | adoption/legal risk | retain v1 guardrails |
 | Bifrost-inspired in-memory design loses state | inconsistency | signed source of truth + durable event journal + convergence tests |
 | Too many in-process modules hurt reliability | crashes/latency | static hot kernel + service/async boundaries |
-| QUIC blocked on some networks | connectivity | TLS/TCP PAPER fallback, no HTTP downgrade |
-| Government diverges | product fork | same PAPER/catalog, local authorities/offline bundles |
+| QUIC blocked on some networks | connectivity | TLS/TCP DARI fallback, no HTTP downgrade |
+| Government diverges | product fork | same DARI/catalog, local authorities/offline bundles |
 
 ---
 
@@ -7504,8 +7504,8 @@ PCCP v2 will not:
 - treat heavy legitimate use as abuse by definition;
 - make Trust & Safety judgments solely from raw token volume;
 - guarantee "unlimited" means infinite concurrency/compute;
-- copy OpenAI Responses or Anthropic Messages wire formats into PAPER;
-- require every current/future provider-specific feature; only announced PAPER capabilities are supported;
+- copy OpenAI Responses or Anthropic Messages wire formats into DARI;
+- require every current/future provider-specific feature; only announced DARI capabilities are supported;
 - expose hidden model chain-of-thought;
 - make MCP an alternate inference protocol;
 - replace vLLM/SGLang with a custom inference engine;
@@ -7539,7 +7539,7 @@ Architecture is locked by this PRD; the following remain tunable.
 14. how much temporary capacity state appears in model selector;
 15. default/fallback model semantics.
 
-## PAPER
+## DARI
 16. exact extension version for model catalog;
 17. exact AI Semantic IR schema;
 18. structured-output JSON Schema subset;
@@ -7566,7 +7566,7 @@ Architecture is locked by this PRD; the following remain tunable.
 
 These decisions must not reopen:
 - one-kernel architecture;
-- PAPER-only official Harness service path;
+- DARI-only official Harness service path;
 - PCCP-authoritative model catalog;
 - no arbitrary provider/base URL;
 - PIA/PMP endpoint trust.
@@ -7578,13 +7578,13 @@ These decisions must not reopen:
 PCCP v2 is complete when:
 
 1. One PCCP kernel supports Public, Enterprise, and Sovereign profiles through module/deployment configuration rather than code forks.
-2. Public subscriber can install Harness, OAuth sign in, verify subscription, enroll Harness, receive PAPER credential and begin work without API key.
+2. Public subscriber can install Harness, OAuth sign in, verify subscription, enroll Harness, receive DARI credential and begin work without API key.
 3. Harness does not contain authoritative model list.
-4. PCCP sends effective model catalog/capabilities over PAPER.
+4. PCCP sends effective model catalog/capabilities over DARI.
 5. Online model add/default/deprecation/withdrawal works without ordinary Harness release.
 6. Raw model ID/base URL/provider config cannot route subscriber traffic.
 7. Official Harness has no supported OpenAI/Anthropic-compatible inference downgrade.
-8. PAPER AI semantic layer supports modern coding-agent requirements: streaming, rich tools, approvals, parallel calls, structured output, multimodal capability negotiation, cache accounting, context management, normalized finish reasons and usage.
+8. DARI AI semantic layer supports modern coding-agent requirements: streaming, rich tools, approvals, parallel calls, structured output, multimodal capability negotiation, cache accounting, context management, normalized finish reasons and usage.
 9. PIA remains the only approved bridge to local serving engine.
 10. PCCP validates Catalog Model→PMP→Endpoint identity.
 11. Public Account/Subscription/Harness/Session/Work-Slot authority is independently modeled.
@@ -7599,7 +7599,7 @@ PCCP v2 is complete when:
 20. Enterprise Governance/Security/Provenance/Comms/Work Intelligence features from v1 continue to pass regression.
 21. Enterprise model availability is derived from organization/project/data/model policy.
 22. Full enterprise provenance resolves user-visible Catalog Model to exact PMP/PIA endpoint.
-23. Government deployment uses same PAPER/model catalog locally with no mandatory public Internet.
+23. Government deployment uses same DARI/model catalog locally with no mandatory public Internet.
 24. Legacy v1 generic Harness gateway path is removed from supported client surface.
 25. Bifrost-inspired gateway optimizations are implemented as architecture patterns without adopting API-key/provider compatibility product semantics.
 26. Model/capability conformance tests prevent advertising unsupported functionality.
@@ -7610,7 +7610,7 @@ PCCP v2 is complete when:
 
 ---
 
-# Appendix A. PAPER Model Routing and Endpoint Trust — Reference Design
+# Appendix A. DARI Model Routing and Endpoint Trust — Reference Design
 
 This appendix supersedes the v1 Harness→HTTP Gateway request sequence.
 
@@ -7618,10 +7618,10 @@ This appendix supersedes the v1 Harness→HTTP Gateway request sequence.
 
 - **Catalog Service** — user-visible ModelDescriptors and effective catalogs.
 - **PCCP Policy/Entitlement** — determines whether model is eligible.
-- **PAPER Relay** — inline governed data plane.
+- **DARI Relay** — inline governed data plane.
 - **Model Registry** — PMP and approval.
 - **Endpoint Registry** — PIA endpoints.
-- **PIA** — PAPER inference peer.
+- **PIA** — DARI inference peer.
 - **Serving Engine** — local vLLM/SGLang/etc.
 - **Model Artifact Store** — signed/encrypted PMP.
 - **KMS/Key Broker** — optional.
@@ -7630,9 +7630,9 @@ This appendix supersedes the v1 Harness→HTTP Gateway request sequence.
 ## A.2 Harness catalog sequence
 
 ```text
-Harness                     PAPER Relay / PCCP
+Harness                     DARI Relay / PCCP
    │                              │
-   │── PAPER auth/user bind ─────►│
+   │── DARI auth/user bind ─────►│
    │                              │
    │◄─ MODEL_CATALOG_SNAPSHOT ────│
    │      catalog_epoch=184       │
@@ -7664,11 +7664,11 @@ selected PIA
 ```text
 Relay                         PIA                    vLLM/SGLang
   │                            │                         │
-  │── PAPER INFERENCE_REQUEST ►│                         │
+  │── DARI INFERENCE_REQUEST ►│                         │
   │     exact PMP + lease      │                         │
   │                            │── local adapter ───────►│
   │                            │◄── stream ──────────────│
-  │◄════ PAPER token/tool ═════│                         │
+  │◄════ DARI token/tool ═════│                         │
 ```
 
 ## A.5 No name trust
@@ -7730,7 +7730,7 @@ if the serving engine exposes it.
 
 That endpoint:
 - is not the PCCP public API;
-- is not announced in PAPER catalog;
+- is not announced in DARI catalog;
 - has no subscriber API key;
 - is unreachable from normal Harness network;
 - cannot be configured by the subscriber.
@@ -7867,7 +7867,7 @@ Actual permissions are customer-defined; separation of duties should be enforcea
 | Capability | Patty Public Cloud | Enterprise | Government/Sovereign |
 |---|---:|---:|---:|
 | Patty Code Harness | ✓ | ✓ | ✓ |
-| PAPER-only service channel | ✓ | ✓ | ✓ |
+| DARI-only service channel | ✓ | ✓ | ✓ |
 | Server-authoritative Model Catalog | ✓ | ✓ policy-filtered | ✓ local/offline |
 | User OAuth | ✓ | optional | local/SSO/PKI |
 | Enterprise SSO/SCIM | — | ✓ | ✓ |
@@ -7877,7 +7877,7 @@ Actual permissions are customer-defined; separation of duties should be enforcea
 | Fair-use/account integrity | ✓ | customer policy if needed | usually not consumer-style |
 | Trust & Safety | Patty service | customer governance | agency policy |
 | Public SRE console | ✓ Patty internal | managed-service views | local ops |
-| PAPER Relay | Patty | Patty/customer | local |
+| DARI Relay | Patty | Patty/customer | local |
 | PIA/model access | Patty cloud | cloud/private/hybrid | local |
 | Generic provider/base URL in official Harness | **No** | **No** | **No** |
 | Exact PMP endpoint trust | ✓ | ✓ | ✓ |
@@ -7941,7 +7941,7 @@ Coverage reviewed:
 - usage and cache fields.
 
 Product decision:
-- PAPER should represent comparable general semantic capabilities where relevant;
+- DARI should represent comparable general semantic capabilities where relevant;
 - official Harness does not speak OpenAI wire protocol;
 - OpenAI model endpoint shapes are not copied.
 
@@ -7980,7 +7980,7 @@ Coverage reviewed:
 
 Product decision:
 - a provider-neutral semantic layer is feasible and desirable;
-- PAPER AI IR serves this role at the protocol layer;
+- DARI AI IR serves this role at the protocol layer;
 - AI SDK itself is not a protocol dependency.
 
 ## G.4 Bifrost
@@ -8012,7 +8012,7 @@ Industry services commonly:
 - prohibit account sharing/resale;
 - expose available models dynamically.
 
-PCCP v2 uses these as product references while implementing its own identity/PAPER/capacity model.
+PCCP v2 uses these as product references while implementing its own identity/DARI/capacity model.
 
 ## G.6 Korean governance baseline
 
@@ -8029,9 +8029,9 @@ PCCP provides controls/evidence, not automatic legal certification.
 ## G.7 Source refresh
 
 Because APIs and model capabilities evolve quickly:
-- capability coverage review occurs at least quarterly and before major PAPER AI revisions;
+- capability coverage review occurs at least quarterly and before major DARI AI revisions;
 - sources must be official/current;
-- additions do not automatically become mandatory PAPER features;
+- additions do not automatically become mandatory DARI features;
 - product team decides whether they represent a broadly useful semantic capability or vendor-specific behavior.
 
 ---
@@ -8044,7 +8044,7 @@ Because PCCP is already built, the first demonstrable v2 milestone should prove 
 
 1. Add `CatalogModel`, `ModelDescriptor`, `CatalogEpoch`.
 2. Map current production Patty model to one Catalog Model.
-3. Implement `paper.models` snapshot.
+3. Implement `dari.models` snapshot.
 4. Modify Harness model selector to render only snapshot.
 5. Remove/disable user custom base URL/provider config for Patty service.
 6. Modify `AI_OPEN` to send Catalog Model ID + epoch.
@@ -8064,7 +8064,7 @@ A subscriber installs Patty Code on a new Mac.
 They sign in through the browser.
 PCCP recognizes an active subscription.
 The Mac is enrolled as Harness #2.
-PAPER authenticates.
+DARI authenticates.
 PCCP sends a model catalog containing only models included in that account.
 The user selects Patty Code Standard.
 The Harness sends only the Catalog Model ID—not an endpoint.
@@ -8079,7 +8079,7 @@ At no point does the user configure or receive an OpenAI/Anthropic-compatible ba
 This proves:
 - Public profile;
 - server-authoritative model discovery;
-- PAPER-only path;
+- DARI-only path;
 - subscription/Harness authority;
 - PIA trust;
 - semantic concurrency;
@@ -8088,7 +8088,7 @@ This proves:
 ## H.3 Second slice
 
 After that:
-- expand PAPER AI tool/structured/multimodal semantic coverage;
+- expand DARI AI tool/structured/multimodal semantic coverage;
 - Account Capacity Lease;
 - fair scheduler;
 - account integrity;

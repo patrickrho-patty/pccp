@@ -44,7 +44,7 @@ const PATTERN_PRESETS = {
     { id: 'sandbox-escape', label: '샌드박스 탈출 (Sandbox Escape)', desc: '권한 상승, 예상치 못한 프로세스', value: '__INFRA_SANDBOX_ESCAPE__' },
     { id: 'endpoint-bypass', label: '엔드포인트 우회 (Endpoint Bypass)', desc: 'vLLM/SGLang 직접 접근 시도', value: '__INFRA_ENDPOINT_BYPASS__' },
     { id: 'attestation-loss', label: '증명 손실 (Attestation Loss)', desc: 'PIA 증명 만료/무효', value: '__INFRA_ATTESTATION_LOSS__' },
-    { id: 'protocol-downgrade', label: '프로토콜 다운그레이드 (Protocol Downgrade)', desc: 'PAPER → HTTP 폴백 시도', value: '__INFRA_PROTOCOL_DOWNGRADE__' },
+    { id: 'protocol-downgrade', label: '프로토콜 다운그레이드 (Protocol Downgrade)', desc: 'DARI → HTTP 폴백 시도', value: '__INFRA_PROTOCOL_DOWNGRADE__' },
   ],
 }
 

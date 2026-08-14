@@ -22,7 +22,7 @@ python3 scripts/demo.py
 
 # Or start individual components:
 make dev-server   # Control Plane API + Admin UI on :8080
-make dev-relay    # PAPER Relay on :8090
+make dev-relay    # DARI Relay on :8090
 make dev-pia      # Patty Inference Agent on :9090
 ```
 
@@ -41,10 +41,10 @@ Then open http://localhost:8080 and bootstrap with:
 
 ```
 developer machine                        PCCP                                         inference host
-┌───────────────┐      PAPER (QUIC/TCP)  ┌──────────────────────────────┐              ┌────────────┐
+┌───────────────┐      DARI (QUIC/TCP)  ┌──────────────────────────────┐              ┌────────────┐
 │ Patty Code    │ ─────────────────────► │   Control Plane (admin)     │              │            │
-│  Harness      │                        │ ┌──────────────────────────┐ │     PAPER    │   PIA      │
-│  (HARNESS     │                        │ │   PAPER Relay (data)     │ │ ───────────► │ (INFERENCE)│
+│  Harness      │                        │ ┌──────────────────────────┐ │     DARI    │   PIA      │
+│  (HARNESS     │                        │ │   DARI Relay (data)     │ │ ───────────► │ (INFERENCE)│
 │   profile)    │                        │ │  auth · lease · policy   │ │              │            │
 └───────────────┘                        │ │  DLP · verdict · evidence│ │              └─────┬──────┘
                                         │ └──────────────────────────┘ │                    │
@@ -58,7 +58,7 @@ developer machine                        PCCP                                   
 | Component | Port | Description |
 |---|---|---|
 | Control Plane | 8080 | REST API + React admin UI, org/user/harness/model/policy management |
-| PAPER Relay | 8090 | Data plane: auth, lease validation, model routing, evidence emission |
+| DARI Relay | 8090 | Data plane: auth, lease validation, model routing, evidence emission |
 | PIA | 9090 | Patty Inference Agent: lease verification, OpenAI-compatible proxy to vLLM |
 
 ## Tech Stack
@@ -68,7 +68,7 @@ developer machine                        PCCP                                   
 | Backend | Go 1.26 |
 | Frontend | React 18 + TypeScript + Vite + Tailwind CSS |
 | ORM | GORM (PostgreSQL / SQLite) |
-| Protocol | PAPER (CBOR + COSE-Sign1, QUIC/TCP transport) |
+| Protocol | DARI (CBOR + COSE-Sign1, QUIC/TCP transport) |
 | Crypto | Ed25519, SHA-256 |
 | Default Language | Korean (ko-KR) with i18n support |
 
@@ -78,10 +78,10 @@ developer machine                        PCCP                                   
 pccp/
 ├── cmd/                    # Binary entrypoints
 │   ├── pccp-server/        # Control Plane
-│   ├── pccp-relay/         # PAPER Relay
+│   ├── pccp-relay/         # DARI Relay
 │   └── pccp-pia/           # Patty Inference Agent
 ├── internal/
-│   ├── paper/              # PAPER protocol library (CBOR, COSE, framing, state machine)
+│   ├── paper/              # DARI protocol library (CBOR, COSE, framing, state machine)
 │   ├── models/             # 30 GORM domain models
 │   ├── db/                 # Database layer (PostgreSQL/SQLite)
 │   ├── identity/           # User auth, harness enrollment, PPC issuance
@@ -93,7 +93,7 @@ pccp/
 │   ├── api/                # REST API handlers
 │   └── config/             # Configuration
 ├── web/                    # React admin UI
-├── conformance/            # PAPER conformance suite
+├── conformance/            # DARI conformance suite
 ├── deployments/            # Docker + Kubernetes
 ├── scripts/                # Demo and utility scripts
 └── docs/                   # PRDs, specs, plans, API reference
@@ -108,7 +108,7 @@ pccp/
 go test ./...
 
 # Protocol tests only
-go test ./internal/paper/ -v
+go test ./internal/dari/ -v
 
 # Conformance suite
 go test ./conformance/ -v
@@ -142,7 +142,7 @@ pnpm build  # Build to web/dist/
 - [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) — Build order
 - [API Reference](docs/API_REFERENCE.md) — REST API docs
 - [Product PRD](docs/plans/Patty_Code_Control_Plane_PRD_v1.md)
-- [PAPER Protocol Spec](docs/plans/PAPER/PAPER_Protocol_Specification_v1.0.md)
+- [DARI Protocol Spec](docs/plans/DARI/DARI_Protocol_Specification_v1.0.md)
 
 ## Guardrails (non-negotiable)
 
@@ -150,7 +150,7 @@ pnpm build  # Build to web/dist/
 2. **Schema before UI.** Every entity defined in the PRD becomes a signed schema before any dashboard renders it.
 3. **Vertical slices, not horizontal layers.** Every increment must ship end-to-end through Harness → Relay → PIA → Control, even if the surface is tiny. No "build all the dashboards first".
 4. **Evidence is part of the build.** Every protected action emits an event in the same commit the action is implemented. No retroactive "add logging later".
-5. **Conformance is part of the protocol.** PAPER comes with a conformance suite. Reference implementation must pass it. Independent implementations must be able to pass it.
+5. **Conformance is part of the protocol.** DARI comes with a conformance suite. Reference implementation must pass it. Independent implementations must be able to pass it.
 6. **Open-source boundary is enforced.** What is open stays open; what is proprietary stays proprietary. The control plane itself is open source (see PRD §9.9). The trust boundary is the signed model package and the endpoint attestation, not the secrecy of the code.
 7. **No phantom compliance.** Do not claim "CSAP compliant", "KISA certified", or "ISMS-P compliant" because a feature exists. Maps and evidence are the product; the certifications are the customer's process.
 8. **No HTTP/REST/WebSocket for protocol traffic.** The protocol binds QUIC and TLS/TCP. If the network blocks QUIC, fall back to native TLS/TCP — never to REST. The HTTP API is for admin/control-plane only.

@@ -90,7 +90,7 @@ export default function AccountPortal() {
             </div>
           </div>
           <div className="mt-4 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
-            ℹ️ 퍼블릭 계정은 API 키 없이 OAuth로 인증하고 PAPER 프로토콜로 서비스를 이용합니다. (v2 §10C.1)
+            ℹ️ 퍼블릭 계정은 API 키 없이 OAuth로 인증하고 DARI 프로토콜로 서비스를 이용합니다. (v2 §10C.1)
           </div>
           <button type="submit" className="btn-primary mt-4">생성 · Create Account</button>
         </form>

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/gorm"
 )
 
@@ -29,7 +29,7 @@ func New(db *gorm.DB) (*Service, error) {
 }
 
 // SigningPublicKey returns the ed25519 public half of the lease/epoch
-// signing key. The PAPER listener transports it to enrolled harnesses
+// signing key. The DARI listener transports it to enrolled harnesses
 // in the AUTH_ACK payload so the connector can verify issued leases
 // without a side channel.
 func (s *Service) SigningPublicKey() ed25519.PublicKey {
@@ -54,7 +54,7 @@ func (s *Service) CreatePolicyEpoch(orgID string, allowedModels []string, transi
 
 	epoch := &models.PolicyEpoch{
 		OrganizationID:    orgID,
-		EpochID:           paper.GenerateID("epoch"),
+		EpochID:           dari.GenerateID("epoch"),
 		EpochNumber:       nextNum,
 		OrgPolicyDigest:   s.computePolicyDigest(orgID, "org"),
 		ModelPolicyDigest: s.computePolicyDigest(orgID, "model"),
@@ -107,7 +107,7 @@ func (s *Service) IsModelAllowed(epochID, modelPackageID string) (bool, error) {
 	return false, nil
 }
 
-// IssueCapabilityLease creates a signed capability lease for a session (PAPER §22).
+// IssueCapabilityLease creates a signed capability lease for a session (DARI §22).
 type IssueLeaseRequest struct {
 	OrganizationID     string              `json:"organization_id"`
 	SubjectPeerID      string              `json:"subject_peer_id"`
@@ -143,7 +143,7 @@ func (s *Service) IssueCapabilityLease(req IssueLeaseRequest) (*models.Capabilit
 	notAfter := now.Add(req.Validity).Truncate(time.Second)
 	lease := &models.CapabilityLease{
 		OrganizationID:       req.OrganizationID,
-		LeaseID:              paper.GenerateID("lease"),
+		LeaseID:              dari.GenerateID("lease"),
 		SubjectPeerID:        req.SubjectPeerID,
 		UserID:               req.UserID,
 		SessionID:            req.SessionID,
@@ -161,7 +161,7 @@ func (s *Service) IssueCapabilityLease(req IssueLeaseRequest) (*models.Capabilit
 		Status:               "active",
 	}
 
-	// CP signs the lease using COSE-Sign1 (PAPER §22). The signed body
+	// CP signs the lease using COSE-Sign1 (DARI §22). The signed body
 	// is the canonical, domain-separated, length-prefixed layout the
 	// connector's LeaseVerifier recomputes (see canonical.go + the
 	// cross-repo lease conformance suite) — it binds every scope field,
@@ -183,11 +183,11 @@ func (s *Service) IssueCapabilityLease(req IssueLeaseRequest) (*models.Capabilit
 		LeaseSequence:      uint64(lease.LeaseSequence),
 		IssuedAtUnixMs:     now.UnixMilli(),
 	})
-	sign1, err := paper.CreateCOSESign1(canonical, s.signingKey, []byte("pccp-policy"))
+	sign1, err := dari.CreateCOSESign1(canonical, s.signingKey, []byte("pccp-policy"))
 	if err != nil {
 		return nil, fmt.Errorf("policy: sign lease: %w", err)
 	}
-	encoded, err := paper.EncodeCOSESign1(sign1)
+	encoded, err := dari.EncodeCOSESign1(sign1)
 	if err != nil {
 		return nil, fmt.Errorf("policy: encode lease signature: %w", err)
 	}

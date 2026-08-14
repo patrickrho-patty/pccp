@@ -16,16 +16,16 @@ Rebuild the Sensenova `GOVERNED AI EXCHANGE` PNG as an editable, publication-rea
 - restrained navy, slate, white, and orange palette;
 - flat rectangular process boxes with consistent geometry;
 - uppercase sans-serif labels readable at reduced size;
-- a conventional path above and a PAPER path below;
+- a conventional path above and a DARI path below;
 - the three governance badges grouped above `PAPER RELAY`;
-- a continuous orange provenance spine below the PAPER path;
+- a continuous orange provenance spine below the DARI path;
 - an evidence-receipt document icon at the end of the spine.
 
 ## Semantic corrections
 
 - The conventional path runs left to right from human intent to post-hoc logs.
 - The dashed reconstruction arrow runs backward from post-hoc logs toward the originating interaction.
-- The PAPER path runs left to right from human intent to code commit.
+- The DARI path runs left to right from human intent to code commit.
 - Governance badges visually attach to the Relay rather than floating between unrelated stages.
 - The provenance spine covers the governed exchange and terminates in the Evidence Receipt.
 

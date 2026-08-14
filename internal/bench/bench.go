@@ -1,6 +1,6 @@
 // Package bench is the F3 latency/streaming benchmark harness
 // (docs/feature-plans/harness/F-latency-streaming.md). It measures the
-// PAPER governed stack against the two incumbent transports under a
+// DARI governed stack against the two incumbent transports under a
 // deterministic, canned token schedule so the measured variable is the
 // protocol stack, not the model:
 //
@@ -36,7 +36,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/relay"
 )
 
@@ -75,8 +75,8 @@ func Run(ctx context.Context, turns int, sched Schedule) ([]Result, error) {
 	}
 	var out []Result
 
-	// Arm A: PAPER.
-	paperRes, err := runPaperArm(ctx, turns, sched)
+	// Arm A: DARI.
+	paperRes, err := runDARIArm(ctx, turns, sched)
 	if err != nil {
 		return nil, fmt.Errorf("paper arm: %w", err)
 	}
@@ -174,18 +174,18 @@ func (m *mockPIA) close() { m.srv.Close() }
 // benchTrustPeer runs the HELLO→AUTH→SESSION_OPEN handshake against
 // the relay using a fresh enrolled credential, then measures the
 // governed exchange loop.
-type paperClient struct {
-	conn   *paper.TransportConn
+type dariWireClient struct {
+	conn   *dari.TransportConn
 	serial string
 	peerID string
 	cred   []byte
 	priv   ed25519.PrivateKey
 }
 
-// runPaperArm spins the full stack in-process: relay listener with a
+// runDARIArm spins the full stack in-process: relay listener with a
 // real trust bundle, an enrolled harness credential, the session
 // handshake, and N governed exchanges with streaming.
-func runPaperArm(ctx context.Context, turns int, sched Schedule) (Result, error) {
+func runDARIArm(ctx context.Context, turns int, sched Schedule) (Result, error) {
 	res := Result{Arm: "DARI (governed, streaming)", Turns: turns}
 
 	// Mock PIA streaming the schedule.
@@ -216,7 +216,7 @@ func runPaperArm(ctx context.Context, turns int, sched Schedule) (Result, error)
 		RevokedSerials:  revoked,
 	}
 	addr := freeLocalAddr()
-	listener := relay.NewPaperListener(svc, nil, trust)
+	listener := relay.NewDARIListener(svc, nil, trust)
 	ctxLi, cancelLi := context.WithCancel(ctx)
 	defer cancelLi()
 	go listener.ListenTCP(ctxLi, addr)
@@ -240,12 +240,12 @@ func runPaperArm(ctx context.Context, turns int, sched Schedule) (Result, error)
 	var ttfts, itls, totals, colds, warms []float64
 	var wireBytes int64
 	chunks := 0
-	var client *paperClient
+	var client *dariWireClient
 
 	for turn := 0; turn < turns; turn++ {
 		turnStart := time.Now()
 		if client == nil {
-			client, err = dialPaper(addr, "harness-bench", cred, priv)
+			client, err = dialDARI(addr, "harness-bench", cred, priv)
 			if err != nil {
 				return res, err
 			}
@@ -262,7 +262,7 @@ func runPaperArm(ctx context.Context, turns int, sched Schedule) (Result, error)
 			"stream":     true,
 		})
 		t0 := time.Now()
-		if err := client.conn.SendMessage(paper.MsgAIOpen, nil, payload, 1, 1); err != nil {
+		if err := client.conn.SendMessage(dari.MsgAIOpen, nil, payload, 1, 1); err != nil {
 			return res, err
 		}
 		wireBytes += int64(len(payload)) + 16
@@ -277,8 +277,8 @@ func runPaperArm(ctx context.Context, turns int, sched Schedule) (Result, error)
 				return res, err
 			}
 			wireBytes += int64(len(rec.Payload)) + 16
-			switch paper.MessageType(rec.MessageType) {
-			case paper.MsgAITokenChunk:
+			switch dari.MessageType(rec.MessageType) {
+			case dari.MsgAITokenChunk:
 				now := time.Now()
 				var ch struct {
 					Text string `json:"text"`
@@ -293,7 +293,7 @@ func runPaperArm(ctx context.Context, turns int, sched Schedule) (Result, error)
 					last = now
 					chunks++
 				}
-			case paper.MsgEvidenceReceipt:
+			case dari.MsgEvidenceReceipt:
 				// Governance traffic rides the same stream; ack with the
 				// exact CBOR shape the relay decodes.
 				var rcpt struct {
@@ -303,12 +303,12 @@ func runPaperArm(ctx context.Context, turns int, sched Schedule) (Result, error)
 				if paperUnmarshal(rec.Payload, &rcpt) == nil && rcpt.ReceiptID != "" {
 					d := sha256.Sum256([]byte("bench-ack|" + rcpt.ReceiptID))
 					ackBody, _ := relay.BuildReceiptAckCBOR(rcpt.ReceiptID, rcpt.ExchangeID, d, time.Now().UnixMilli())
-					client.conn.SendMessage(paper.MsgEvidenceReceiptAck, nil, ackBody, 0, 1)
+					client.conn.SendMessage(dari.MsgEvidenceReceiptAck, nil, ackBody, 0, 1)
 					wireBytes += int64(len(ackBody)) + 16
 				}
-			case paper.MsgAIComplete:
+			case dari.MsgAIComplete:
 				done = true
-			case paper.MsgClose:
+			case dari.MsgClose:
 				return res, fmt.Errorf("relay closed during bench: %s", rec.Payload)
 			}
 		}
@@ -332,20 +332,20 @@ func runPaperArm(ctx context.Context, turns int, sched Schedule) (Result, error)
 	return res, nil
 }
 
-// dialPaper performs HELLO + AUTH_PROOF + SESSION_OPEN + setup consume
+// dialDARI performs HELLO + AUTH_PROOF + SESSION_OPEN + setup consume
 // and returns the live client.
-func dialPaper(addr, peerID string, cred []byte, priv ed25519.PrivateKey) (*paperClient, error) {
-	conn, err := paper.DialTCP(addr, nil, paper.DefaultTransportConfig())
+func dialDARI(addr, peerID string, cred []byte, priv ed25519.PrivateKey) (*dariWireClient, error) {
+	conn, err := dari.DialTCP(addr, nil, dari.DefaultTransportConfig())
 	if err != nil {
 		return nil, err
 	}
-	hello := &paper.HelloMessage{
+	hello := &dari.HelloMessage{
 		CoreVersions:      []uint8{1},
-		PeerProfile:       paper.ProfileHarness,
+		PeerProfile:       dari.ProfileHarness,
 		TransportFeatures: []string{"tcp-tls"},
-		Extensions:        map[string]uint8{"paper.ai/1": 1},
+		Extensions:        map[string]uint8{"dari.ai/1": 1},
 		EncodingProfiles:  []string{"cbor", "json"},
-		CryptoProfiles:    []string{"PAPER-BASE-1"},
+		CryptoProfiles:    []string{"DARI-BASE-1"},
 		ClientNonce:       make([]byte, 32),
 	}
 	ack, err := conn.Handshake(hello)
@@ -359,30 +359,30 @@ func dialPaper(addr, peerID string, cred []byte, priv ed25519.PrivateKey) (*pape
 		conn.Close()
 		return nil, err
 	}
-	var challenge paper.AuthChallengeMessage
+	var challenge dari.AuthChallengeMessage
 	if err := paperUnmarshal(rec.Payload, &challenge); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("challenge decode: %v", err)
 	}
-	helloCBOR, _ := paper.CanonicalHelloCBOR(hello)
-	ackCBOR, _ := paper.CanonicalAckCBOR(ack)
-	credDigest := paper.ComputeObjectDigest(paper.ObjTypePeerCredential, cred)
-	transcript := paper.AuthContext(helloCBOR, ackCBOR, hello.ClientNonce, challenge.ServerNonce, []byte("tcp-exporter"), credDigest.Bytes())
-	proofBytes := paper.PeerProofSigningBytes(transcript.Bytes(), challenge.ChallengeID, challenge.RevocationEpoch)
+	helloCBOR, _ := dari.CanonicalHelloCBOR(hello)
+	ackCBOR, _ := dari.CanonicalAckCBOR(ack)
+	credDigest := dari.ComputeObjectDigest(dari.ObjTypePeerCredential, cred)
+	transcript := dari.AuthContext(helloCBOR, ackCBOR, hello.ClientNonce, challenge.ServerNonce, []byte("tcp-exporter"), credDigest.Bytes())
+	proofBytes := dari.PeerProofSigningBytes(transcript.Bytes(), challenge.ChallengeID, challenge.RevocationEpoch)
 	sig := ed25519.Sign(priv, proofBytes)
-	proof := &paper.AuthProofMessage{
+	proof := &dari.AuthProofMessage{
 		Credential:         cred,
 		Signature:          sig,
-		KeyAlgorithm:       paper.COSEAlgEdDSA,
+		KeyAlgorithm:       dari.COSEAlgEdDSA,
 		ChallengeID:        challenge.ChallengeID,
-		RevocationEvidence: paper.EncodeRevocationEpoch(challenge.RevocationEpoch),
+		RevocationEvidence: dari.EncodeRevocationEpoch(challenge.RevocationEpoch),
 	}
-	proofCBOR, err := paper.MarshalCBOR(proof)
+	proofCBOR, err := dari.MarshalCBOR(proof)
 	if err != nil {
 		conn.Close()
 		return nil, err
 	}
-	if err := conn.SendControl(paper.MsgAuthProof, nil, proofCBOR); err != nil {
+	if err := conn.SendControl(dari.MsgAuthProof, nil, proofCBOR); err != nil {
 		conn.Close()
 		return nil, err
 	}
@@ -400,16 +400,16 @@ func dialPaper(addr, peerID string, cred []byte, priv ed25519.PrivateKey) (*pape
 			conn.Close()
 			return nil, err
 		}
-		switch paper.MessageType(rec.MessageType) {
-		case paper.MsgAuthAck:
+		switch dari.MessageType(rec.MessageType) {
+		case dari.MsgAuthAck:
 			sawAuthAck = true
-		case paper.MsgClose:
+		case dari.MsgClose:
 			conn.Close()
 			return nil, fmt.Errorf("rejected: %s", rec.Payload)
 		}
 	}
 	open, _ := json.Marshal(map[string]string{"session_id": "bench-sess", "user_id": "bench-user", "model": "bench-model"})
-	if err := conn.SendMessage(paper.MsgSessionOpen, nil, open, 0, 0); err != nil {
+	if err := conn.SendMessage(dari.MsgSessionOpen, nil, open, 0, 0); err != nil {
 		conn.Close()
 		return nil, err
 	}
@@ -424,15 +424,15 @@ func dialPaper(addr, peerID string, cred []byte, priv ed25519.PrivateKey) (*pape
 			conn.Close()
 			return nil, err
 		}
-		switch paper.MessageType(rec.MessageType) {
-		case paper.MsgSessionGrant:
+		switch dari.MessageType(rec.MessageType) {
+		case dari.MsgSessionGrant:
 			sawGrant = true
-		case paper.MsgClose:
+		case dari.MsgClose:
 			conn.Close()
 			return nil, fmt.Errorf("session rejected: %s", rec.Payload)
 		}
 	}
-	return &paperClient{conn: conn, peerID: peerID, cred: cred, priv: priv}, nil
+	return &dariWireClient{conn: conn, peerID: peerID, cred: cred, priv: priv}, nil
 }
 
 // ---------------------------------------------------------------------------

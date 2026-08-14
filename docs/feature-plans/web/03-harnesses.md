@@ -1,9 +1,9 @@
 # 03 — 하네스 · Harnesses (`web/src/pages/Harnesses.tsx`)
 
-> Vertical read: component → `api.ts:56` → `server.go` harness handlers → `identity.EnrollHarness/RevokeHarness` (95/192) → `models/identity.go` Harness/Device/EnrollmentCode. Cross-checked against the live auth path (`relay/paper_listener.go handleConn`, `patty-code-pccp/internal/provider/paper/paper.go`).
+> Vertical read: component → `api.ts:56` → `server.go` harness handlers → `identity.EnrollHarness/RevokeHarness` (95/192) → `models/identity.go` Harness/Device/EnrollmentCode. Cross-checked against the live auth path (`relay/paper_listener.go handleConn`, `patty-code-pccp/internal/provider/dari/dari.go`).
 
 ## What this page actually is
-Admin management of **enrolled Patty Code Harness instances** (`Harness` entity) — the developer's coding agent as a governed PAPER peer. Each harness has a device, an ed25519 key pair, a signed PeerCredential (PPC), a binding to one or more developers (`AllowedUsers`), and a lifecycle (pending→enrolled→active→quarantined→revoked). Enrollment is the moment a developer's machine becomes a governed peer (§8.4).
+Admin management of **enrolled Patty Code Harness instances** (`Harness` entity) — the developer's coding agent as a governed DARI peer. Each harness has a device, an ed25519 key pair, a signed PeerCredential (PPC), a binding to one or more developers (`AllowedUsers`), and a lifecycle (pending→enrolled→active→quarantined→revoked). Enrollment is the moment a developer's machine becomes a governed peer (§8.4).
 
 ## Current vertical (what exists)
 | Layer | Reality |
@@ -14,16 +14,16 @@ Admin management of **enrolled Patty Code Harness instances** (`Harness` entity)
 | `RevokeHarness` (192) | sets `status=revoked`+reason, **records audit**; **does NOT revoke the PPC in the CA revocation list, does NOT terminate sessions** |
 | `handleQuarantineHarness` (1843) | sets `status=quarantined`+`risk_state=high`, **terminates active sessions** (DB-level); no live propagation |
 | `handleReactivateHarness` (1860) | flips back to enrolled/normal; no PPC re-issue |
-| Live auth (cross-ref) | harness `provider/paper` sends **hardcoded** `[]byte("patty-harness-credential")`/`Signature`; Relay `handleConn` **accepts any proof** ("Phase 0: accept any valid PPC format") |
+| Live auth (cross-ref) | harness `provider/dari` sends **hardcoded** `[]byte("patty-harness-credential")`/`Signature`; Relay `handleConn` **accepts any proof** ("Phase 0: accept any valid PPC format") |
 
 ## Gaps — grounded
 
 ### A. The core trust disconnect (highest severity)
-**A1. Issued PPC is never presented or verified.** `EnrollHarness` mints a real signed credential stored in `harness.CredentialJSON`, but (a) the harness PAPER client sends hardcoded strings instead of the PPC, and (b) the Relay never verifies the proof. So enrollment is theater — any peer speaking PAPER framing authenticates. *Fix:* harness `provider/paper` must load + present the enrolled PPC (COSE-Sign1 over the HELLO/HELLO_ACK transcript); Relay must verify signature against the PCCP CA, check the CA revocation epoch, and reject on mismatch. Note: `identity.VerifyHarnessAuth` (signature-verify logic) already exists but the `relay` package doesn't import `identity`, so it's unwired — the fix is largely *wire existing logic*, not new crypto. Without this, §8.4/§9.6 and the entire identity thesis fail.
+**A1. Issued PPC is never presented or verified.** `EnrollHarness` mints a real signed credential stored in `harness.CredentialJSON`, but (a) the harness DARI client sends hardcoded strings instead of the PPC, and (b) the Relay never verifies the proof. So enrollment is theater — any peer speaking DARI framing authenticates. *Fix:* harness `provider/dari` must load + present the enrolled PPC (COSE-Sign1 over the HELLO/HELLO_ACK transcript); Relay must verify signature against the PCCP CA, check the CA revocation epoch, and reject on mismatch. Note: `identity.VerifyHarnessAuth` (signature-verify logic) already exists but the `relay` package doesn't import `identity`, so it's unwired — the fix is largely *wire existing logic*, not new crypto. Without this, §8.4/§9.6 and the entire identity thesis fail.
 
 ### B. Modeled-but-unwired
 **B1. Revocation doesn't revoke the credential.** `RevokeHarness` flips status but never calls a CA revoke (no `s.ca.Revoke`) and doesn't terminate sessions (quarantine does, revoke doesn't — inconsistent). *Fix:* revoke = mark PPC revoked in CA revocation list + terminate sessions + propagate to relay (reject next connect).
-**B2. `LastHeartbeat`/`LastAttestation` never updated.** Fields exist; nothing writes them (no heartbeat/attestation channel from harness). *Fix:* harness heartbeat over PAPER → updates + stale detection.
+**B2. `LastHeartbeat`/`LastAttestation` never updated.** Fields exist; nothing writes them (no heartbeat/attestation channel from harness). *Fix:* harness heartbeat over DARI → updates + stale detection.
 **B3. `EnrollmentCode` unused on this page.** `identity.GenerateEnrollmentCode` exists; admin-pastes-raw-pubkey is the only flow. *Fix:* issue a one-time enrollment code; the harness enrolls itself using it (no admin key-paste).
 **B4. Seat enforcement.** `Organization.MaxHarnessSeats` exists; enrollment doesn't check it. *Fix:* block enroll at the limit.
 

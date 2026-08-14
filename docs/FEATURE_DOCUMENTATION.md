@@ -1,8 +1,8 @@
 # PCCP v2 — Complete Feature Documentation
-## Web Admin Console + Harness PAPER Integration
+## Web Admin Console + Harness DARI Integration
 
 **Last Updated:** 2026-08-12
-**Status:** Production-ready control plane with full PAPER protocol integration
+**Status:** Production-ready control plane with full DARI protocol integration
 
 ---
 
@@ -12,7 +12,7 @@
 2. [Patty Operations Console (Public Cloud)](#patty-operations-console)
 3. [Customer Control Console (Enterprise/Government)](#customer-control-console)
 4. [Account Portal (Subscriber Self-Service)](#account-portal)
-5. [Harness PAPER Protocol Integration](#harness-paper-protocol-integration)
+5. [Harness DARI Protocol Integration](#harness-paper-protocol-integration)
 6. [20 Enterprise Harness Features](#20-enterprise-harness-features)
 7. [Backend API Reference](#backend-api-reference)
 8. [Security Architecture](#security-architecture)
@@ -47,7 +47,7 @@ for development purposes.
 - **Subscription status breakdown**: 6 clickable cards (총계정, 활성, 미납, 연체, 취소, 만료)
 - Click any card → filtered account list with risk states
 - **Risk overview**: Account integrity, T&S cases, capacity flags, open findings
-- **System health**: Control Plane, PAPER Relay, Event Spine, Metering, Catalog, PIA
+- **System health**: Control Plane, DARI Relay, Event Spine, Metering, Catalog, PIA
 - **Platform events**: Recent audit events (aggregate only, no session content per §1212)
 
 ### SRE Operations Console
@@ -233,23 +233,23 @@ Unified page with 3 tabs showing the **three separate model identities**:
 
 ---
 
-## Harness PAPER Protocol Integration
+## Harness DARI Protocol Integration
 
 ### Overview
-The Patty Code Harness (`patcode`) now speaks PAPER protocol natively. 
+The Patty Code Harness (`patcode`) now speaks DARI protocol natively. 
 There is no OpenAI/Anthropic fallback.
 
 ### New Harness Packages
-1. **`internal/paperproto/`** — Vendored PAPER protocol library
+1. **`internal/dariproto/`** — Vendored DARI protocol library
    - `constants.go`: Message types matching PCCP exactly
    - `framing.go`: 32-byte binary record encode/decode  
-   - `transport.go`: TLS/TCP dial, PAPER preface, Send/Recv records
+   - `transport.go`: TLS/TCP dial, DARI preface, Send/Recv records
    - `messages.go`: CBOR-encoded handshake + JSON AI payloads
 
-2. **`internal/provider/paper/`** — PAPER provider
+2. **`internal/provider/dari/`** — DARI provider
    - Registers as `kind = "paper"` via `init()`
    - Implements `provider.Provider` (Stream method)
-   - Connects to PCCP PAPER Relay via TLS/TCP
+   - Connects to PCCP DARI Relay via TLS/TCP
    - Performs HELLO → HELLO_ACK → AUTH_CHALLENGE → AUTH_PROOF → AUTH_ACK
    - Sends AI_OPEN with Catalog Model ID (no base_url/api_key)
    - Receives AI_TOKEN_CHUNK streaming + AI_COMPLETE
@@ -264,8 +264,8 @@ There is no OpenAI/Anthropic fallback.
 ### End-to-End Data Path
 ```
 Harness (patcode)
-  → PAPER TLS/TCP (CBOR framing, ALPN "paper/1")
-  → PAPER Relay (:8444)
+  → DARI TLS/TCP (CBOR framing, ALPN "dari/1" (legacy fallback accepted — see the DARI migration record))
+  → DARI Relay (:8444)
   → HTTP forward
   → PIA (:9090)
   → HTTP
@@ -370,5 +370,5 @@ Harness (patcode)
 - **DB models**: 44 auto-migrated
 - **API routes**: 90+ endpoints
 - **React pages**: 30 (with profile-aware routing)
-- **Harness**: PAPER provider + 4 paperproto packages
-- **PAPER messages**: 50+ types (HELLO, AUTH, AI_OPEN, AI_COMPLETE, etc.)
+- **Harness**: DARI provider + 4 dariproto packages
+- **DARI messages**: 50+ types (HELLO, AUTH, AI_OPEN, AI_COMPLETE, etc.)

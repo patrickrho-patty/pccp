@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/gorm"
 )
 
@@ -64,7 +64,7 @@ func (s *Service) RecordAction(req RecordActionRequest) (*models.ActionEnvelope,
 
 	envelope := &models.ActionEnvelope{
 		OrganizationID: req.OrganizationID,
-		ActionID:       paper.GenerateID("act"),
+		ActionID:       dari.GenerateID("act"),
 		SessionID:      req.SessionID,
 		ExchangeID:     req.ExchangeID,
 		UserID:         req.UserID,
@@ -86,12 +86,12 @@ func (s *Service) RecordAction(req RecordActionRequest) (*models.ActionEnvelope,
 	// Compute envelope digest
 	envelope.EnvelopeDigest = s.computeEnvelopeDigest(envelope)
 
-	// CP signs the envelope using COSE-Sign1 (PAPER §34)
-	sign1, err := paper.CreateCOSESign1([]byte(envelope.EnvelopeDigest), s.signingKey, []byte("pccp-ca"))
+	// CP signs the envelope using COSE-Sign1 (DARI §34)
+	sign1, err := dari.CreateCOSESign1([]byte(envelope.EnvelopeDigest), s.signingKey, []byte("pccp-ca"))
 	if err != nil {
 		return nil, fmt.Errorf("provenance: sign action envelope: %w", err)
 	}
-	encoded, err := paper.EncodeCOSESign1(sign1)
+	encoded, err := dari.EncodeCOSESign1(sign1)
 	if err != nil {
 		return nil, fmt.Errorf("provenance: encode action signature: %w", err)
 	}
@@ -248,7 +248,7 @@ func (s *Service) BindCommit(orgID, repoID, commitSHA, changeSetID, sessionID, b
 	return binding, nil
 }
 
-// IssueEvidenceReceipt creates a signed evidence receipt for a completed exchange (PAPER §34).
+// IssueEvidenceReceipt creates a signed evidence receipt for a completed exchange (DARI §34).
 type IssueReceiptRequest struct {
  	OrganizationID string `json:"organization_i_d"`
  	ExchangeID     string `json:"exchange_i_d"`
@@ -284,13 +284,13 @@ func (s *Service) IssueEvidenceReceipt(req IssueReceiptRequest) (*models.Evidenc
 		IssuedAt:       time.Now().Format(time.RFC3339),
 	}
 
-	// Relay signs the receipt using COSE-Sign1 (PAPER §34)
+	// Relay signs the receipt using COSE-Sign1 (DARI §34)
 	receiptData := s.buildReceiptSigningData(receipt)
-	sign1, err := paper.CreateCOSESign1(receiptData, s.signingKey, []byte(s.relayID))
+	sign1, err := dari.CreateCOSESign1(receiptData, s.signingKey, []byte(s.relayID))
 	if err != nil {
 		return nil, fmt.Errorf("provenance: sign receipt: %w", err)
 	}
-	encoded, err := paper.EncodeCOSESign1(sign1)
+	encoded, err := dari.EncodeCOSESign1(sign1)
 	if err != nil {
 		return nil, fmt.Errorf("provenance: encode receipt: %w", err)
 	}
@@ -304,7 +304,7 @@ func (s *Service) IssueEvidenceReceipt(req IssueReceiptRequest) (*models.Evidenc
 }
 
 // AckEvidenceReceipt records the harness's tamper-evidence ack for an
-// issued receipt (PAPER §40.3). Idempotent: re-acking a receipt keeps
+// issued receipt (DARI §40.3). Idempotent: re-acking a receipt keeps
 // the original timestamp.
 func (s *Service) AckEvidenceReceipt(exchangeID string) error {
 	if exchangeID == "" {

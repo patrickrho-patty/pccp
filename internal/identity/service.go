@@ -10,21 +10,21 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/gorm"
 )
 
 // Service handles identity, enrollment, and authentication operations.
 type Service struct {
 	db          *gorm.DB
-	ca          *paper.PeerCredentialIssuer
+	ca          *dari.PeerCredentialIssuer
 	revocations *CredentialRevocations
 }
 
 // New creates a new identity service. It initializes or loads the control
 // plane's CA key pair for issuing PPCs.
 func New(db *gorm.DB) (*Service, error) {
-	ca, err := paper.NewPeerCredentialIssuer("pccp-ca")
+	ca, err := dari.NewPeerCredentialIssuer("pccp-ca")
 	if err != nil {
 		return nil, fmt.Errorf("identity: init CA: %w", err)
 	}
@@ -39,7 +39,7 @@ func (s *Service) CAPublicKeyHex() string {
 // CAIssuerID returns the credential issuer identifier ("pccp-ca").
 func (s *Service) CAIssuerID() string { return s.ca.IssuerID }
 
-// CAPublicKeyRaw returns the CA's ed25519 public key bytes. The PAPER
+// CAPublicKeyRaw returns the CA's ed25519 public key bytes. The DARI
 // listener builds its trust bundle from this.
 func (s *Service) CAPublicKeyRaw() ed25519.PublicKey {
 	return append(ed25519.PublicKey(nil), s.ca.PublicKey...)
@@ -102,7 +102,7 @@ type EnrollHarnessRequest struct {
 }
 
 // EnrollHarness enrolls a new harness instance and issues a PPC.
-func (s *Service) EnrollHarness(req EnrollHarnessRequest) (*models.Harness, *paper.PeerCredential, error) {
+func (s *Service) EnrollHarness(req EnrollHarnessRequest) (*models.Harness, *dari.PeerCredential, error) {
 	// Parse the public key
 	pubBytes, err := hex.DecodeString(req.PublicKeyHex)
 	if err != nil || len(pubBytes) != ed25519.PublicKeySize {
@@ -127,10 +127,10 @@ func (s *Service) EnrollHarness(req EnrollHarnessRequest) (*models.Harness, *pap
 
 	// Issue PPC
 	pubKey := ed25519.PublicKey(pubBytes)
-	cred, err := s.ca.Issue(paper.IssueRequest{
+	cred, err := s.ca.Issue(dari.IssueRequest{
 		SubjectPeerID:          req.HarnessID,
 		Organization:           req.OrganizationID,
-		Profile:                paper.ProfileHarness,
+		Profile:                dari.ProfileHarness,
 		PublicKey:              pubKey,
 		Validity:               90 * 24 * time.Hour, // 90-day validity
 		RevocationAuthority:    s.ca.IssuerID,
@@ -142,7 +142,7 @@ func (s *Service) EnrollHarness(req EnrollHarnessRequest) (*models.Harness, *pap
 	}
 
 	credentialHex := hex.EncodeToString(cred.SignedCredential)
-	credentialDigest := paper.ComputeObjectDigest(paper.ObjTypePeerCredential, cred.SignedCredential)
+	credentialDigest := dari.ComputeObjectDigest(dari.ObjTypePeerCredential, cred.SignedCredential)
 
 	// Create harness record
 	harness := &models.Harness{
@@ -193,7 +193,7 @@ func (s *Service) VerifyHarnessAuth(harnessID string, signature, message []byte)
 	}
 	pubKey := ed25519.PublicKey(pubBytes)
 
-	if !paper.VerifyEd25519(pubKey, message, signature) {
+	if !dari.VerifyEd25519(pubKey, message, signature) {
 		return nil, errors.New("identity: signature verification failed")
 	}
 
@@ -242,6 +242,17 @@ func (s *Service) RevokeHarness(orgID, harnessID, reason string) error {
 	return nil
 }
 
+// CredentialHexForHarness returns the stored COSE-Sign1 credential hex
+// for an enrolled harness (operational tooling; the HTTP enroll
+// handler returns the same value at enrollment time).
+func (s *Service) CredentialHexForHarness(harnessID string) (string, error) {
+	var harness models.Harness
+	if err := s.db.Where("harness_id = ?", harnessID).First(&harness).Error; err != nil {
+		return "", fmt.Errorf("identity: harness %s not found: %w", harnessID, err)
+	}
+	return harness.CredentialJSON, nil
+}
+
 // RevocationSnapshot returns the current monotonic epoch and revoked serials.
 func (s *Service) RevocationSnapshot() (uint64, map[string]uint64) {
 	return s.revocations.snapshot()
@@ -252,11 +263,11 @@ func credentialSerial(encoded string) string {
 	if err != nil {
 		return ""
 	}
-	sign1, err := paper.DecodeCOSESign1(credential)
+	sign1, err := dari.DecodeCOSESign1(credential)
 	if err != nil {
 		return ""
 	}
-	decoded, err := paper.DecodePeerCredential(sign1.Payload)
+	decoded, err := dari.DecodePeerCredential(sign1.Payload)
 	if err != nil {
 		return ""
 	}
@@ -328,7 +339,7 @@ func (s *Service) CreateBaseline(orgID, repoID, branch, commitSHA, commitMsg, au
 
 // OpenSession creates a working session.
 func (s *Service) OpenSession(orgID, harnessID, userID, projectID, repoID, branch, baselineID, title, purpose, modelClass string) (*models.Session, error) {
-	sessionID := paper.GenerateID("ses")
+	sessionID := dari.GenerateID("ses")
 	sess := &models.Session{
 		AuditBase: models.AuditBase{
 			OrganizationID: orgID,

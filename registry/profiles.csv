@@ -1,5 +1,5 @@
 profile,description,usage
-RELAY,Relay data-plane peer,Used by PAPER Relays
+RELAY,Relay data-plane peer,Used by DARI Relays
 HARNESS,Harness client peer,Used by Patty Code Harness instances
 INFERENCE,Inference endpoint peer,Used by PIAs
 CONTROL,Control plane peer,Used by CP administrative services

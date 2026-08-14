@@ -1,20 +1,20 @@
 # PCCP Current State
 
-**Last updated:** PAPER transport wired, both listeners working
+**Last updated:** DARI transport wired, both listeners working
 
-## PAPER Protocol Status
+## DARI Protocol Status
 
 ### Transport (wired into data path):
-- ✅ Relay PAPER listener on :8444 (accepts Harness connections)
-- ✅ PIA PAPER listener on :9444 (accepts Relay connections)  
-- ✅ Relay paper_client.go connects to PIA via PAPER when PCCP_PIA_PAPER_ADDR set
-- ✅ HTTP fallback for dev when PCCP_PIA_PAPER_ADDR not set
+- ✅ Relay DARI listener on :8444 (accepts Harness connections)
+- ✅ PIA DARI listener on :9444 (accepts Relay connections)  
+- ✅ Relay paper_client.go connects to PIA via DARI when PCCP_PIA_DARI_ADDR set
+- ✅ HTTP fallback for dev when PCCP_PIA_DARI_ADDR not set
 
 ### Deployed:
-- ✅ PIA running on patricks-mint (:9090 HTTP, :9444 PAPER)
+- ✅ PIA running on patricks-mint (:9090 HTTP, :9444 DARI)
 - ✅ Connected to vLLM Qwen3 MoE (10.200.82.233:8033)
 - ✅ Control Plane on localhost (:8080)
-- ✅ Relay on localhost (:8090 HTTP, :8444 PAPER)
+- ✅ Relay on localhost (:8090 HTTP, :8444 DARI)
 
 ### Open Source Deliverables:
 - ✅ adapters/vllm/ — Reusable vLLM adapter
@@ -22,15 +22,15 @@
 - ✅ sdk/piapi/ — PIA SDK (as .txt documentation)
 - ✅ sdk/examples/ — Example PIA (as .txt documentation)
 - ✅ registry/ — Protocol registries (messages, profiles, errors, crypto)
-- ✅ PAPER.md — Adoption documentation
+- ✅ DARI.md — Adoption documentation
 
 ## Comprehensive Audit Gaps (from previous session)
 
 ### CRITICAL (now addressed):
-1. ✅ PAPER is now the inference transport (was HTTP)
-2. ⚠️ PAPER AI Semantic v2 defined but not used in data path yet
+1. ✅ DARI is now the inference transport (was HTTP)
+2. ⚠️ DARI AI Semantic v2 defined but not used in data path yet
 3. ⚠️ Legacy HTTP path still exists as fallback
-4. ⚠️ No PAPER streaming (single request/response only)
+4. ⚠️ No DARI streaming (single request/response only)
 
 ### MODERATE:
 5. ❌ No hot signed state cache in Relay

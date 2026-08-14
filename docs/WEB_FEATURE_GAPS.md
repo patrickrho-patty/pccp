@@ -327,7 +327,7 @@ Legend: features = new critical/near-critical capabilities; improvements = concr
 
 ## 11. 커뮤니케이션 허브 · Communications (`Communications.tsx`)
 **Critical features (§21–23, §6.5)**
-1. Real-time delivery to harness (WebSocket/PAPER) — today CP-side only.
+1. Real-time delivery to harness (WebSocket/DARI) — today CP-side only.
 2. E2E encryption indicator + key management (§21.5).
 3. File transfer **actual storage** — today metadata only.
 4. Context-linking messages to AI sessions (§21.6) — make first-class.
@@ -705,7 +705,7 @@ Legend: features = new critical/near-critical capabilities; improvements = concr
 1. These "20 features" are seeded defaults — make them real, configurable, enforced.
 2. Per-feature enable/disable by org/affiliate.
 3. Severity → routing → owner workflow.
-4. Tie each feature to a harness capability + PAPER message.
+4. Tie each feature to a harness capability + DARI message.
 5. Compliance/evidence per feature.
 6. Audit of feature toggles.
 7. Rollout rings (§33.10).

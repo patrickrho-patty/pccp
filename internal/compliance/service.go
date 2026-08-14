@@ -368,7 +368,7 @@ func (s *Service) assessControlState(orgID string, control ControlMapping) (stat
 	case "audit":
 		return s.checkAuditLogging(orgID)
 	case "encryption":
-		return "compliant", "PAPER TLS 1.3 + COSE-Sign1 (by design)"
+		return "compliant", "DARI TLS 1.3 + COSE-Sign1 (by design)"
 	case "network":
 		return s.checkNetworkSecurity(orgID)
 	case "incident":

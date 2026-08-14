@@ -2,18 +2,18 @@
 
 **Generated:** 2026-08-13
 **Harness location:** `patty-code-pccp/` (Go agent + desktop shell)
-**Grounding:** verified against actual harness code. Honest baseline first — the harness is a **mature local agent**: `capability` (2K LOC ledger), `evidence` (5.7K), `control` (37K), `permission` (3.1K), `guardian` (1.5K), `hook` (6K), plus `worktree`, `sandbox`, `secrets`, `checkpoint`, `trajectory`, and a real `internal/provider/paper` + vendored `paperproto`. The foundation is strong.
+**Grounding:** verified against actual harness code. Honest baseline first — the harness is a **mature local agent**: `capability` (2K LOC ledger), `evidence` (5.7K), `control` (37K), `permission` (3.1K), `guardian` (1.5K), `hook` (6K), plus `worktree`, `sandbox`, `secrets`, `checkpoint`, `trajectory`, and a real `internal/provider/dari` + vendored `dariproto`. The foundation is strong.
 
 **The gap is the PCCP integration layer.** Eight governance categories return **zero files** in the harness: policy-epoch binding, DLP/PII/injection, server model-catalog, change-freeze, coding-standard packs, mandatory acknowledgement, forced-version/ring, and model recall. Evidence is **local-only** — nothing streams to the control plane. A governed enterprise harness is the whole point of our positioning; these are the critical features missing.
 
 ---
 
-## A. Trust & transport (the harness must be a governed PAPER peer, not an OpenAI client)
+## A. Trust & transport (the harness must be a governed DARI peer, not an OpenAI client)
 
-**1. PAPER-only enforcement with OpenAI/Anthropic path removed by default.**
-Today `internal/provider/{openai,anthropic}` coexist with `paper`. Per §0.2/§9.2 and your explicit requirement, the harness must **refuse** non-PAPER endpoints in enterprise/gov/public builds (dev fallback only, feature-flagged). Add a build/deployment lock that errors out if `provider != paper` in non-dev profiles.
+**1. DARI-only enforcement with OpenAI/Anthropic path removed by default.**
+Today `internal/provider/{openai,anthropic}` coexist with `paper`. Per §0.2/§9.2 and your explicit requirement, the harness must **refuse** non-DARI endpoints in enterprise/gov/public builds (dev fallback only, feature-flagged). Add a build/deployment lock that errors out if `provider != paper` in non-dev profiles.
 
-**2. Full PAPER enrollment & capability-lease lifecycle.**
+**2. Full DARI enrollment & capability-lease lifecycle.**
 `workspacelease` exists, but enrollment (cert issuance from PCCP CA), lease acquisition, renewal, and **fail-closed on expiry** must be first-class: the harness cannot start a protected session without a valid lease, and must gracefully stop (not silently fall back) when a lease expires mid-session (§8.4).
 
 **3. Hardware/runtime attestation at enrollment.**
@@ -23,7 +23,7 @@ The harness should attest its runtime (binary signature, build hash, OS, sandbox
 Zero files today. The harness must fetch and **bind** to the active policy epoch, refuse to act if its epoch is stale/revoked, and re-bind on epoch change (§13.1, §10A.5). This is what makes "governance before routing" real on the client.
 
 **5. Server-authoritative model catalog consumption.**
-Zero files. The harness must take its model list **from PCCP over PAPER** (`paper.models/1`), not from local `patty.toml` defaults (§10A, §0.1). Local config becomes connection/identity only. This kills the "user types a fake model ID" problem at the source.
+Zero files. The harness must take its model list **from PCCP over DARI** (`dari.models/1`), not from local `patty.toml` defaults (§10A, §0.1). Local config becomes connection/identity only. This kills the "user types a fake model ID" problem at the source.
 
 ---
 
@@ -49,7 +49,7 @@ Given a span, the harness can reconstruct and replay the exact context+model to 
 ## C. Inline security governance (enforce before the byte leaves the machine)
 
 **11. Client-side DLP / Korean-PII / secret redaction before send.**
-Zero files. The harness must scan outgoing context for Korean PII (RRN, 계좌, 카드, 사업자번호) and secrets **before** PAPER dispatch, with policy-driven block/redact/allow (§16.3, §16.5). Relying on the Relay alone is too late and too coarse.
+Zero files. The harness must scan outgoing context for Korean PII (RRN, 계좌, 카드, 사업자번호) and secrets **before** DARI dispatch, with policy-driven block/redact/allow (§16.3, §16.5). Relying on the Relay alone is too late and too coarse.
 
 **12. Prompt-injection defense at the harness boundary.**
 Guard against indirect injection from repo content / tool output / MCP (§16.4, §35.8): treat untrusted content as data, detect override/jailbreak patterns, and refuse to act on injected instructions. `guardian` is the natural home.
@@ -89,7 +89,7 @@ Zero files. On a signed recall advisory from PCCP, the harness suspends the reca
 **21. Lease/quota/fair-use awareness in the UI.**
 The harness should show the developer their work-slot class, queue position, and remaining capacity lease — so "why am I slow/throttled" is explainable, not opaque (§10C.3, §10C.7).
 
-**22. Comms hub delivered in-IDE over PAPER.**
+**22. Comms hub delivered in-IDE over DARI.**
 Presence, 1:1/chat, broadcasts, file handoff, and **admin commands** delivered to the harness (§21.2, §22.4) — today comms is CP-side only. The harness is where the developer actually is.
 
 **23. Sovereign / air-gap operation.**
@@ -107,7 +107,7 @@ The harness must not surface raw-activity surveillance to managers; Work-Intel s
 ---
 
 ## Priority call
-The single highest-leverage cluster is **A + B** (PAPER-only + provenance streaming + catalog/epoch binding): it's what converts this from "a good local agent" into "a governed Patty Code harness," and it's the precondition for nearly every enterprise/gov sale. C (inline DLP/injection) and D (the Korean differentiators) are what then differentiate us from OpenAI/Anthropic/Cursor-style tools. E rounds out operability.
+The single highest-leverage cluster is **A + B** (DARI-only + provenance streaming + catalog/epoch binding): it's what converts this from "a good local agent" into "a governed Patty Code harness," and it's the precondition for nearly every enterprise/gov sale. C (inline DLP/injection) and D (the Korean differentiators) are what then differentiate us from OpenAI/Anthropic/Cursor-style tools. E rounds out operability.
 
 ---
 

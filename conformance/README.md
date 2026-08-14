@@ -1,8 +1,8 @@
-# PAPER Conformance Suite
+# DARI Conformance Suite
 
-This directory contains the PAPER protocol conformance tests.
+This directory contains the DARI protocol conformance tests.
 
-Per PAPER §70, the conformance suite covers:
+Per DARI §70, the conformance suite covers:
 
 1. **Framing** — record encode/decode, 32-byte prelude, limits
 2. **Authentication** — challenge-response, replay protection, credential validation
@@ -12,7 +12,7 @@ Per PAPER §70, the conformance suite covers:
 6. **Collaboration** — chat/presence/file independent lane classes
 7. **Provenance** — spine node digest verification, evidence receipt validation
 
-## Protocol Invariants (PAPER Appendix E)
+## Protocol Invariants (DARI Appendix E)
 
 1. No protected action without authenticated peer.
 2. No protected action outside a valid Capability Lease.

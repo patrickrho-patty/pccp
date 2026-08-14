@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/gorm"
 )
 
@@ -57,7 +57,7 @@ type Incident struct {
 // CreateIncident creates a new security incident.
 func (s *Service) CreateIncident(inc Incident) (*Incident, error) {
 	if inc.ID == "" {
-		inc.ID = paper.GenerateID("inc")
+		inc.ID = dari.GenerateID("inc")
 	}
 	if inc.Status == "" {
 		inc.Status = "open"

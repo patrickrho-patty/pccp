@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Service implements telemetry and metering (PAPER §50).
+// Service implements telemetry and metering (DARI §50).
 // Prompt content is never telemetry. Metering events used for billing
 // MUST be tied to authenticated Exchange/Session IDs.
 type Service struct {
@@ -30,7 +30,7 @@ func New(db *gorm.DB) *Service {
 	}
 }
 
-// MetricType identifies a telemetry metric type (PAPER §50).
+// MetricType identifies a telemetry metric type (DARI §50).
 type MetricType string
 
 const (
@@ -136,7 +136,7 @@ func (s *Service) GetHistogramStats(name string) HistogramStats {
 	return stats
 }
 
-// RecordMetering records a metering event for billing (PAPER §50).
+// RecordMetering records a metering event for billing (DARI §50).
 // Metering events MUST be tied to authenticated Exchange/Session IDs.
 type MeteringEvent struct {
  	OrganizationID string `json:"organization_i_d"`

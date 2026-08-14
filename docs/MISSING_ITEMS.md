@@ -44,8 +44,8 @@ Concrete proof of the pattern — these functions all exist and are documented a
 
 | # | Requirement | Status | Evidence |
 |---|---|---|---|
-| 1.1 | PAPER is the **sole** Harness protocol (§0.2, §38.1) | ⚠️ UNWIRED | `getPaperInferenceClient()` activates **only if `PCCP_PIA_PAPER_ADDR` set**; otherwise silent HTTP fallback (`internal/relay/paper_listener.go:285`). Not enforced. |
-| 1.2 | Every request runs the 14-stage pipeline (§10.2) | ⚠️ UNWIRED | `RunPipeline` has **0 callers**; live path `handleApplicationMessages`→`forwardAIToPIA` runs 0 stages (`internal/relay/paper_listener.go:206,252`). |
+| 1.1 | DARI is the **sole** Harness protocol (§0.2, §38.1) | ⚠️ UNWIRED | `getDARIInferenceClient()` activates **only if `PCCP_PIA_DARI_ADDR` set**; otherwise silent HTTP fallback (`internal/relay/dari_listener.go:285`). Not enforced. |
+| 1.2 | Every request runs the 14-stage pipeline (§10.2) | ⚠️ UNWIRED | `RunPipeline` has **0 callers**; live path `handleApplicationMessages`→`forwardAIToPIA` runs 0 stages (`internal/relay/dari_listener.go:206,252`). |
 | 1.3 | §10.5 Bifrost: governance **before** routing; in-memory hot state; no DB-per-token | 🔴 MISSING | No cache layer; dead pipeline queries DB per stage. |
 | 1.4 | Raw/fake model ID rejected (§10A.11) | 🟡 FAKE | `ValidateCatalogModel` only rejects `""` and is never called (`internal/relay/pipeline.go:17`). `forwardAIToPIA` accepts any model string. |
 | 1.5 | Metering on path (§10.9, §29.13) | ⚠️ UNWIRED | `RecordUsage` exists but never called from relay/PIA. |
@@ -57,7 +57,7 @@ Concrete proof of the pattern — these functions all exist and are documented a
 | 1.11 | Catalog Model → PMP → Endpoint validation chain (§9.5) | 🟡 FAKE | `findEndpoint` does a DB lookup but the catalog→PMP→lease attestation chain is not enforced on live path. |
 | 1.12 | CP must NOT expose OpenAI-compat model invocation (§10.11) | 🔴 VIOLATED | `internal/api/server.go:121` registers `POST /v1/chat/completions`; `:885` returns a **mock** response when PIA unconfigured. |
 
-**What IS real (honest):** the PAPER crypto/transport library — `cbor.go` (real `fxamacker/cbor` deterministic RFC 8949), `quic.go` (real `quic-go`), `cose.go`/`peer.go` (real ed25519 sign/verify), 52 message types, handshake/framing/transport with tests. ✅ (Caveat: `QUICMigrationSupport() bool { return true }` is a hardcoded lie; `InsecureSkipVerify:true` defaults in dev TLS configs.)
+**What IS real (honest):** the DARI crypto/transport library — `cbor.go` (real `fxamacker/cbor` deterministic RFC 8949), `quic.go` (real `quic-go`), `cose.go`/`peer.go` (real ed25519 sign/verify), 52 message types, handshake/framing/transport with tests. ✅ (Caveat: `QUICMigrationSupport() bool { return true }` is a hardcoded lie; `InsecureSkipVerify:true` defaults in dev TLS configs.)
 
 ---
 
@@ -94,7 +94,7 @@ Concrete proof of the pattern — these functions all exist and are documented a
 
 | # | Requirement | Status | Evidence |
 |---|---|---|---|
-| C.1 | Server-authoritative catalog **sent to harness over PAPER** (§10A.4 `paper.models/1`) | 🔴 MISSING | Extension is only *advertised* in HELLO (`paper_client.go:60`) + message-type stubs (`paper/models.go`). **No code ever pushes a snapshot to a connected harness.** Falsifies DoD #3, #4. |
+| C.1 | Server-authoritative catalog **sent to harness over DARI** (§10A.4 `dari.models/1`) | 🔴 MISSING | Extension is only *advertised* in HELLO (`paper_client.go:60`) + message-type stubs (`paper/models.go`). **No code ever pushes a snapshot to a connected harness.** Falsifies DoD #3, #4. |
 | C.2 | Catalog epoch lifecycle (§10A.5) | ⚠️ UNWIRED | `GenerateCatalogEpoch`/`ValidateCatalogEpoch` exist (`catalog/service.go:81,130`); not bound to the relay path. |
 | C.3 | Admin catalog CRUD | ✅ REAL | `RegisterCatalogModel`, `WithdrawModel`, `AnnounceModel`, `SeedDefaultCatalog` (DB-backed). |
 
@@ -161,7 +161,7 @@ Concrete proof of the pattern — these functions all exist and are documented a
 | # | Requirement | Status | Evidence |
 |---|---|---|---|
 | 8.1 | Chat / presence / broadcast (CRUD) | ✅ REAL (metadata) | `communications` package: real DB-backed conversations, messages, presence, broadcasts. |
-| 8.2 | Real-time delivery to harness (§21.2) | 🔴 MISSING | No WebSocket/SSE; not delivered over PAPER to harness. CP-side only. |
+| 8.2 | Real-time delivery to harness (§21.2) | 🔴 MISSING | No WebSocket/SSE; not delivered over DARI to harness. CP-side only. |
 | 8.3 | File transfer actual storage (§23) | 🟡 PARTIAL | `CreateFileTransfer`/`CompleteFileTransfer` record metadata; no real file storage/transfer. |
 | 8.4 | End-to-end encryption (§21.5) | 🔴 MISSING | — |
 
@@ -231,7 +231,7 @@ Concrete proof of the pattern — these functions all exist and are documented a
 
 | # | Requirement | Status | Evidence |
 |---|---|---|---|
-| X.1 | §10B PAPER AI Semantic Contract (tools, structured output, multimodal, streaming events, cache) | ⚠️ UNWIRED | Rich types defined (`paper/ai_v2.go`: `ToolDescriptorV2`, `AIStreamEvent`, `ToolCallV2`, …) but used **nowhere** outside that file. Live path uses bare `{model,messages,max_tokens}`. Falsifies DoD #8. |
+| X.1 | §10B DARI AI Semantic Contract (tools, structured output, multimodal, streaming events, cache) | ⚠️ UNWIRED | Rich types defined (`paper/ai_v2.go`: `ToolDescriptorV2`, `AIStreamEvent`, `ToolCallV2`, …) but used **nowhere** outside that file. Live path uses bare `{model,messages,max_tokens}`. Falsifies DoD #8. |
 | X.2 | §29 Billing / chargeback / rate-limit hierarchy | 🟡 PARTIAL | Subscription/usage modeled; chargeback (§29.12), rate-limit hierarchy (§29.8), payment provider (§29.9) MISSING. |
 | X.3 | §30 Model & GPU operations | ✅ REAL / ⚠️ | `gpuops`: real endpoint/GPU metrics + routing decision + tests. Not fed by live telemetry from PIA/vLLM. |
 | X.4 | §36 Key management / rotation | 🟡 PARTIAL | `keymgmt`: Ed25519 key gen + rotation fields modeled; NO HSM/KMS; keys held in DB/memory. |
@@ -241,20 +241,20 @@ Concrete proof of the pattern — these functions all exist and are documented a
 | X.8 | §45 Reporting (scheduled/standard) | 🟡 PARTIAL | `reporting`: real generators (governance/usage/security/executive + digest); §45.2 scheduled delivery (email/cron) MISSING. |
 | X.9 | §46 Product admin / config change mgmt | ✅ REAL | `configmgmt`: full lifecycle state machine (draft→validating→pending_approval→approved→publishing→rolling_out→enforcing→rolled_back). |
 | X.10 | §47 Public onboarding / enterprise rollout / v1→v2 migration | 🔴 MISSING | No onboarding wizard, no rollout flow, no brownfield migration tooling. |
-| X.11 | §49 Cross-product acceptance criteria (A–J) | ⚠️ MOSTLY FAIL | Maps to P0/P1 gaps: auth/subscription (B), PAPER-only (C), model catalog (D), AI semantics (E), capacity (F), account integrity (G), SRE (H). Most acceptance gates currently fail. |
+| X.11 | §49 Cross-product acceptance criteria (A–J) | ⚠️ MOSTLY FAIL | Maps to P0/P1 gaps: auth/subscription (B), DARI-only (C), model catalog (D), AI semantics (E), capacity (F), account integrity (G), SRE (H). Most acceptance gates currently fail. |
 | X.12 | §50 Product KPIs / observability | 🔴 MISSING | No real metrics/KPI collection pipeline. |
 
 ## Severity-ranked rebuild priorities
 
 **P0 — product is not functional without these (the inference path is ungoverned):**
-1. Wire the 14-stage `RunPipeline` onto the live PAPER path (§10.2) — currently dead code.
-2. Enforce PAPER as the sole transport; remove/gate the CP `/v1/chat/completions` OpenAI endpoint (§0.2, §10.11, §38.1).
+1. Wire the 14-stage `RunPipeline` onto the live DARI path (§10.2) — currently dead code.
+2. Enforce DARI as the sole transport; remove/gate the CP `/v1/chat/completions` OpenAI endpoint (§0.2, §10.11, §38.1).
 3. Wire metering (`RecordUsage`) + evidence (`CloseExchange`) into the automatic inference lifecycle (§10.2 stages 13–14, §10.9).
 4. Enforce fleet revocation/quarantine + catalog/PMP validation on the live path (so admin actions actually take effect).
 
 **P1 — trust boundary & enforcement:**
 5. PMP signature/hash verification at PIA (§9.4) — replace placeholder attestation.
-6. Push the model catalog to harnesses over PAPER (`paper.models/1`) (§10A).
+6. Push the model catalog to harnesses over DARI (`dari.models/1`) (§10A).
 7. Inline DLP/injection/security on the live path (§16).
 8. Real fair scheduler admission (§10C.7) — revive the dead `scheduler` package or remove the claim.
 

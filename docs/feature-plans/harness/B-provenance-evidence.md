@@ -10,7 +10,7 @@
 ## The gaps (provenance is local-only → PCCP's provenance product is empty)
 
 ### B1. Evidence emits nothing to PCCP
-- The Ledger has no export/emit/send; it's in-memory/local. PCCP's `CodeExplorer`/`Provenance` are permanently empty (CodeExplorer A). *Fix:* a provenance-emission path: as the harness edits files, build `ChangeSet` + line-level `ProvenanceSpan` and push to the Relay (new PAPER `PROVENANCE`/`CHANGESET` records — none exist in `paperproto` today); Relay records via `provenance.CreateChangeSet/CreateProvenanceSpan` (currently uncalled).
+- The Ledger has no export/emit/send; it's in-memory/local. PCCP's `CodeExplorer`/`Provenance` are permanently empty (CodeExplorer A). *Fix:* a provenance-emission path: as the harness edits files, build `ChangeSet` + line-level `ProvenanceSpan` and push to the Relay (new DARI `PROVENANCE`/`CHANGESET` records — none exist in `dariproto` today); Relay records via `provenance.CreateChangeSet/CreateProvenanceSpan` (currently uncalled).
 
 ### B2. No content-addressed, rename-safe attribution
 - `ChangeSet.AttributionState` (AI_GENERATED / AI_THEN_HUMAN_EDITED / …) and `ProvenanceSpan.ASTFingerprint` are stored but **never computed**. *Fix:* compute attribution from edit provenance; AST-anchor spans so they survive rename/move (§19.2/§19.5); add a survival test.
@@ -23,7 +23,7 @@
 
 ## Implementation notes
 - The harness already classifies mutations and tracks commands/reviews locally — B1 is largely *transmit what the Ledger already knows*, structured as ChangeSet/Span, not new detection.
-- Depends on Harness A (PAPER record types) and CodeExplorer A (PCCP write-side).
+- Depends on Harness A (DARI record types) and CodeExplorer A (PCCP write-side).
 
 ## Acceptance
 - After a governed session edits code, an admin clicking that code in `CodeExplorer` sees the originating session/user/model/exchange + AI/human attribution; spans survive a file rename; receipts verify.

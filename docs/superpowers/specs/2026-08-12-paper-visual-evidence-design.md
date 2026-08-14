@@ -2,7 +2,7 @@
 
 ## Objective
 
-Bring the arXiv manuscript back into alignment with its publication plan by adding the missing visual and reproducibility artifacts without changing the PAPER method or presenting unmeasured behavior as a result.
+Bring the arXiv manuscript back into alignment with its publication plan by adding the missing visual and reproducibility artifacts without changing the DARI method or presenting unmeasured behavior as a result.
 
 ## Scope
 

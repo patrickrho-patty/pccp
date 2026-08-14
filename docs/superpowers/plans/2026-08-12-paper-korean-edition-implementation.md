@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a complete Korean scholarly edition of the PAPER manuscript as `PAPER_arXiv_KO.pdf`.
+**Goal:** Build a complete Korean scholarly edition of the DARI manuscript as `DARI_arXiv_KO.pdf`.
 
 **Architecture:** Keep the English manuscript immutable and create a parallel XeLaTeX entry point. Reuse empirical data, bibliography, equations, and conceptual PNGs; localize editable diagram/chart sources and all manuscript prose.
 
@@ -13,7 +13,7 @@
 - Translate the complete manuscript, including appendix and limitations.
 - Preserve claim strength, measurements, equations, citations, and identifiers.
 - Use native Korean academic prose rather than word-for-word translation.
-- Do not modify `main.tex` or `PAPER_arXiv.pdf`.
+- Do not modify `main.tex` or `DARI_arXiv.pdf`.
 - Do not touch unrelated concurrent application changes.
 
 ---
@@ -41,7 +41,7 @@
 ### Task 3: Build and inspect the Korean PDF
 
 **Files:**
-- Generate: `docs/plans/PAPER/arxiv/PAPER_arXiv_KO.pdf`
+- Generate: `docs/plans/PAPER/arxiv/DARI_arXiv_KO.pdf`
 
 - [ ] Build with XeLaTeX and BibTeX until references stabilize.
 - [ ] Check embedded fonts, Hangul extraction, references, citations, and layout diagnostics.

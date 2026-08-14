@@ -12,7 +12,7 @@
 
 - Work directly on the current branch; do not create a branch or worktree.
 - Do not modify environment or secret files.
-- Preserve the PAPER method and all current evidence boundaries.
+- Preserve the DARI method and all current evidence boundaries.
 - Use the Qwen Image 2 PNG as the lead conceptual figure.
 - Generate empirical plots only from `benchmark-data/core-primitives.tsv`.
 - Do not claim B0--B4, TTFT, scale, adversarial, or provenance-fidelity results.
@@ -88,8 +88,8 @@
 ### Task 5: PDF and Archive Verification
 
 **Files:**
-- Produce: `docs/plans/PAPER/arxiv/PAPER_arXiv.pdf`
-- Produce: `docs/plans/PAPER/arxiv/PAPER-arXiv-source.tar.gz`
+- Produce: `docs/plans/PAPER/arxiv/DARI_arXiv.pdf`
+- Produce: `docs/plans/PAPER/arxiv/DARI-arXiv-source.tar.gz`
 
 **Interfaces:**
 - Consumes: all publication sources and data from Tasks 1--4.
@@ -99,5 +99,5 @@
 - [ ] Confirm with `pdfinfo` that the PDF is US Letter and non-empty; confirm with `pdffonts` that every font is embedded.
 - [ ] Render every page with `pdftoppm`, create a contact sheet, and inspect every page plus each new figure at original resolution for clipping, illegible labels, table overflow, orphan headings, and blank regions.
 - [ ] Extract PDF text and confirm all four figure captions, SCITT, benchmark limitations, and appendix headings are present.
-- [ ] Unpack `PAPER-arXiv-source.tar.gz` into a fresh temporary directory and run `make clean all check` there with exit code 0.
+- [ ] Unpack `DARI-arXiv-source.tar.gz` into a fresh temporary directory and run `make clean all check` there with exit code 0.
 - [ ] Run `git diff --check` on authored sources and report unrelated workspace changes without modifying them.

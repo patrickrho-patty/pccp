@@ -12,7 +12,7 @@ A **tracker for enterprise-only harness capabilities** (§33) — the catalog of
 
 ## Gaps — grounded
 **A. Features reference mostly-unimplemented capabilities.** coding_standards (§33.11 — 0 harness files), sandbox_execution (§31.2 — fake runtime), exception_workflow (§33.8 — missing), etc. Tracking them as `active/enforced` is phantom (same risk as Compliance). *Fix:* status must reflect real implementation; mark `planned` until the capability + harness reporting exist.
-**B. Harness never reports.** `LastReportedAt`/`LastValue`/violations are designed for harness-reported telemetry that doesn't flow (HARNESS D). *Fix:* harness emits feature-status + violation events over PAPER; PCCP records them.
+**B. Harness never reports.** `LastReportedAt`/`LastValue`/violations are designed for harness-reported telemetry that doesn't flow (HARNESS D). *Fix:* harness emits feature-status + violation events over DARI; PCCP records them.
 **C. `Enforced` flag is inert** — nothing blocks work when an enforced feature is absent (no harness-side gate). 
 **D. Seed may add duplicates on repeat** (no dedupe shown — verify); no per-org enable/disable by affiliate; no rollout rings.
 
@@ -31,7 +31,7 @@ A **tracker for enterprise-only harness capabilities** (§33) — the catalog of
 1. Make the 20 features real/configurable/enforced → **A/B/C** ✅
 2. Per-feature enable/disable by org/affiliate → **D** (per-affiliate) ✅
 3. Severity → routing → owner workflow → **add**; routing/owner workflow.
-4. Tie each feature to a harness capability + PAPER message → **B** ✅
+4. Tie each feature to a harness capability + DARI message → **B** ✅
 5. Compliance/evidence per feature → **add**; per-feature evidence.
 6. Audit of feature toggles → **add**; toggle audit.
 7. Rollout rings (§33.10) → **D** ✅

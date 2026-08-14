@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// IdempotencyClass declares the replay behavior of a side-effecting operation (PAPER §52).
+// IdempotencyClass declares the replay behavior of a side-effecting operation (DARI §52).
 type IdempotencyClass string
 
 const (
@@ -16,7 +16,7 @@ const (
 	ClassNeverAutoRetry    IdempotencyClass = "NEVER_AUTORETRY"
 )
 
-// Protection implements replay protection (PAPER §51) and idempotency tracking (PAPER §52).
+// Protection implements replay protection (DARI §51) and idempotency tracking (DARI §52).
 type Protection struct {
 	mu sync.Mutex
 	// replayWindow tracks seen idempotency keys within the active window
@@ -132,7 +132,7 @@ func (p *Protection) cleanup() {
 	}
 }
 
-// OperationClass maps operation types to their idempotency classes (PAPER §52 table).
+// OperationClass maps operation types to their idempotency classes (DARI §52 table).
 func OperationClass(operationType string) IdempotencyClass {
 	switch operationType {
 	case "presence.update":

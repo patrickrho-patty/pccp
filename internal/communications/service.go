@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/gorm"
 )
 
@@ -199,5 +199,5 @@ func (s *Service) ListConversations(orgID, userID string) ([]models.Conversation
 
 // CreateFileTransferID generates a transfer ID.
 func CreateFileTransferID() string {
-	return paper.GenerateID("xfer")
+	return dari.GenerateID("xfer")
 }

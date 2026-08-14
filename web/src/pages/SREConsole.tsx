@@ -73,7 +73,7 @@ export default function SREConsole() {
             </div>
             <div className="card text-center">
               <div className="text-3xl font-bold text-green-600">●</div>
-              <div className="text-sm text-gray-500 mt-1">PAPER Relay</div>
+              <div className="text-sm text-gray-500 mt-1">DARI Relay</div>
               <div className="text-xs text-gray-400">port 8090</div>
             </div>
             <div className="card text-center">
@@ -116,7 +116,7 @@ export default function SREConsole() {
                 { name: 'OAuth/OIDC', nameKo: '인증 서비스', status: 'healthy' },
                 { name: 'Subscription', nameKo: '구독 관리', status: 'healthy' },
                 { name: 'Harness Registry', nameKo: '하네스 등록', status: 'healthy' },
-                { name: 'PAPER Ingress', nameKo: 'PAPER 수신', status: 'healthy' },
+                { name: 'DARI Ingress', nameKo: 'DARI 수신', status: 'healthy' },
                 { name: 'Relay Fleet', nameKo: '릴레이 플릿', status: 'healthy' },
                 { name: 'Capacity Authority', nameKo: '용량 관리', status: 'healthy' },
                 { name: 'Model Catalog', nameKo: '모델 카탈로그', status: 'healthy' },

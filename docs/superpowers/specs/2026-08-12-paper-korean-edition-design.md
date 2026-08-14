@@ -16,7 +16,7 @@ Produce a standalone Korean-language PDF of the complete PAPER manuscript that r
 
 ## Typesetting
 
-Create `main_ko.tex` as an independent XeLaTeX entry point. Use NanumMyeongjo for body text and Noto Sans CJK KR for headings and sans-serif elements, with the existing page geometry, spacing, equations, colors, tables, and figure order. Produce `PAPER_arXiv_KO.pdf` without modifying the English PDF. NanumMyeongjo is used because the host exposes no actual Noto Serif CJK KR face and would otherwise substitute an unrelated Latin serif.
+Create `main_ko.tex` as an independent XeLaTeX entry point. Use NanumMyeongjo for body text and Noto Sans CJK KR for headings and sans-serif elements, with the existing page geometry, spacing, equations, colors, tables, and figure order. Produce `DARI_arXiv_KO.pdf` without modifying the English PDF. NanumMyeongjo is used because the host exposes no actual Noto Serif CJK KR face and would otherwise substitute an unrelated Latin serif.
 
 The two conceptual PNG illustrations contain baked-in English labels and remain unchanged. Their captions and surrounding explanations are translated. LaTeX-native figures and the benchmark chart receive Korean labels through Korean-specific figure source files.
 

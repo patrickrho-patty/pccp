@@ -14,7 +14,7 @@ type Tool struct {
 	Status         string `gorm:"type:varchar(32);default:'active'" json:"status"`
 }
 
-// Approval is a governance approval for an exchange or action (PRD §13.3, PAPER §25).
+// Approval is a governance approval for an exchange or action (PRD §13.3, DARI §25).
 type Approval struct {
 	Base
 	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`

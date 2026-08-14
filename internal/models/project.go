@@ -55,7 +55,7 @@ type RepoBaseline struct {
 	CreatedBy      string `gorm:"type:varchar(64)" json:"created_by,omitempty"` // session ID
 }
 
-// Session is a working session (PAPER §21).
+// Session is a working session (DARI §21).
 type Session struct {
 	AuditBase
 	HarnessID      string `gorm:"type:varchar(64);index;not null" json:"harness_id"`
@@ -65,7 +65,7 @@ type Session struct {
 	Branch         string `gorm:"type:varchar(255)" json:"branch,omitempty"`
 	BaselineID     string `gorm:"type:varchar(64);index" json:"baseline_id,omitempty"`
 	// Protocol state
-	SessionID      string `gorm:"type:varchar(64);uniqueIndex" json:"session_id"` // PAPER working session ID
+	SessionID      string `gorm:"type:varchar(64);uniqueIndex" json:"session_id"` // DARI working session ID
 	PolicyEpochID  string `gorm:"type:varchar(64)" json:"policy_epoch_id"`
 	LeaseID        string `gorm:"type:varchar(64);index" json:"lease_id,omitempty"`
 	// Session metadata
@@ -84,7 +84,7 @@ type Session struct {
 type PromptExchange struct {
 	Base
 	SessionID      string `gorm:"type:varchar(64);index;not null" json:"session_id"`
-	ExchangeID     string `gorm:"type:varchar(64);index" json:"exchange_id"` // PAPER exchange ID
+	ExchangeID     string `gorm:"type:varchar(64);index" json:"exchange_id"` // DARI exchange ID
 	PromptText     string `gorm:"type:text" json:"prompt_text,omitempty"`    // may be redacted per policy
 	ResponseText   string `gorm:"type:text" json:"response_text,omitempty"`
 	ModelPackageID string `gorm:"type:varchar(64)" json:"model_package_id,omitempty"`

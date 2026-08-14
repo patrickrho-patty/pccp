@@ -6,7 +6,7 @@ Improve the paper's scientific presentation without adding decorative mathematic
 
 ## Scope
 
-The work changes only the PAPER arXiv package. It will:
+The work changes only the DARI arXiv package. It will:
 
 1. Keep the primitive-latency chart data-driven from `benchmark-data/core-primitives.tsv`.
 2. Add logarithmic headroom above the 1 MiB record value so its label remains inside the plotting area.

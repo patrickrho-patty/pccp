@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/gorm"
 )
 
@@ -105,7 +105,7 @@ func (s *Service) Emit(req EmitRequest) (*EventEnvelope, error) {
 	}
 
 	now := time.Now().Format(time.RFC3339Nano)
-	eventID := paper.GenerateID("evt")
+	eventID := dari.GenerateID("evt")
 
 	// Get session sequence number for chained hashing (PRD §39.3)
 	seq := s.nextSequence(req.SessionID)

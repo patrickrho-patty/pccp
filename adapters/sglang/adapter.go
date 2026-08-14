@@ -1,7 +1,7 @@
 // Package sglangadapter provides a reusable adapter for connecting SGLang
-// inference engines to the PAPER protocol via a PIA.
+// inference engines to the DARI protocol via a PIA.
 //
-// Per PAPER Appendix C: "PIA adapter examples for vLLM and SGLang."
+// Per DARI Appendix C: "PIA adapter examples for vLLM and SGLang."
 package sglangadapter
 
 import (

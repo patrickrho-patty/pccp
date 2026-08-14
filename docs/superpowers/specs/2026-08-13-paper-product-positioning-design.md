@@ -22,7 +22,7 @@ The reader should leave with three reactions:
 
 The paper may state that:
 
-- the PAPER specification is openly implementable;
+- the DARI specification is openly implementable;
 - the Go implementation includes framing, canonical objects, signed evidence, state machines, Relay, PIA, policy, lease, catalog, provenance, transport, and conformance surfaces;
 - PAPER is integrated into the official Patty Code Harness as the sole supported service-inference route;
 - the Harness sends Catalog Model identity rather than arbitrary provider URLs or API keys;

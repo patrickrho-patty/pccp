@@ -3,7 +3,7 @@
 > Vertical read: component → `api.ts` → `server.go` session handlers → `identity.OpenSession/CloseSession` → `models/project.go:59 Session`.
 
 ## What this page actually is
-Admin-operated view of **governed AI coding sessions** — the `Session` entity that binds a developer (`user_id`) + harness (`harness_id`) + project/repo/branch + model to a PAPER working session (`session_id`). It's where an admin opens/pauses/resumes/closes sessions and inspects what happened (timeline, changesets, findings, conversation). Sessions are the spine of provenance (§19) and live ops (§14).
+Admin-operated view of **governed AI coding sessions** — the `Session` entity that binds a developer (`user_id`) + harness (`harness_id`) + project/repo/branch + model to a DARI working session (`session_id`). It's where an admin opens/pauses/resumes/closes sessions and inspects what happened (timeline, changesets, findings, conversation). Sessions are the spine of provenance (§19) and live ops (§14).
 
 ## Current vertical (what exists)
 | Layer | Reality |
@@ -13,7 +13,7 @@ Admin-operated view of **governed AI coding sessions** — the `Session` entity 
 | `Session` model (`project.go:59`) | has `PolicyEpochID`, `LeaseID`, `BaselineID`, `ProtectionProfile`(default P0), `SessionTTL`, `IdleTTL`, `ModelClass`, status `{pending,active,idle,closed,terminated}` |
 | `identity.OpenSession` (273) | creates a row with generated `session_id`, status `active`, **hardcoded `ProtectionProfile="P0"`, hardcoded TTLs (8h/30m)**, **`PolicyEpochID`/`LeaseID`/`BaselineID` left empty** |
 | `handleOpenSession` (frontend) | silently defaults `organization_id`/`harness_id` to `sessions[0]`/`harnesses[0]` — mis-binds if lists empty/reorder |
-| Close/pause/resume | flip `Status`; **no propagation to the live harness/relay** — closing a session here doesn't kill the live PAPER session |
+| Close/pause/resume | flip `Status`; **no propagation to the live harness/relay** — closing a session here doesn't kill the live DARI session |
 | Inspector fetches | usage/timeline/exchanges each fetched separately on expand — redundant; provenance/usage are empty until `RecordUsage`/evidence are wired |
 
 ## Gaps — grounded
@@ -25,7 +25,7 @@ Admin-operated view of **governed AI coding sessions** — the `Session` entity 
 **A4. Idle detection unused.** status has `idle` but nothing transitions active→idle. *Fix:* a job (or relay signal) marks idle past `IdleTTL`, auto-closes past `SessionTTL`.
 
 ### B. Genuinely missing
-**B1. Live token-stream of an active session** (§14.1) — card view shows status text, not output; depends on PAPER `AI_TOKEN_CHUNK` streaming + SSE fan-out (MISSING_ITEMS X.1) with visibility-level gating (§27).
+**B1. Live token-stream of an active session** (§14.1) — card view shows status text, not output; depends on DARI `AI_TOKEN_CHUNK` streaming + SSE fan-out (MISSING_ITEMS X.1) with visibility-level gating (§27).
 **B2. Per-exchange policy decision log** (§13) — exchanges carry a `verdict_result` badge but no *why*; needs the pipeline to emit `PolicyDecision` per exchange (MISSING_ITEMS 1.2/F2) once wired.
 **B3. Close/pause/resume don't reach the live path** — they flip DB status only. *Fix:* Relay must honor session state (kill stream on close/terminate); today the relay checks nothing.
 **B4. No server-side list query** — `handleListSessions` returns all, client slices. *Fix:* `?page=&status=&model=&user=&project=&range=`.

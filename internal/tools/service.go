@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/gorm"
 )
 
@@ -78,7 +78,7 @@ func (s *Service) DecideApproval(approvalID, reviewerID, decision, reason string
 }
 
 // CheckToolAuthorization determines if a tool use is allowed.
-// Per PAPER invariant 5: no tool proposal grants authority by itself.
+// Per DARI invariant 5: no tool proposal grants authority by itself.
 type ToolAuthResult struct {
 	Allowed     bool   `json:"allowed"`
 	RequiresApproval bool `json:"requires_approval"`
@@ -104,7 +104,7 @@ func (s *Service) CheckToolAuthorization(orgID, toolName, sessionID, leaseID str
 		}, nil
 	}
 
-	// A tool proposal never grants authority by itself (PAPER invariant 5).
+	// A tool proposal never grants authority by itself (DARI invariant 5).
 	// The capability lease must explicitly allow the tool class.
 	var lease models.CapabilityLease
 	if err := s.db.Where("lease_id = ?", leaseID).First(&lease).Error; err != nil {
@@ -193,5 +193,5 @@ func (s *Service) SeedDefaultTools(orgID string) error {
 
 // GenerateApprovalID generates a unique approval ID.
 func GenerateApprovalID() string {
-	return paper.GenerateID("appr")
+	return dari.GenerateID("appr")
 }

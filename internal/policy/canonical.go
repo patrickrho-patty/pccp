@@ -6,14 +6,14 @@ import (
 )
 
 // This file mirrors — byte-for-byte — the connector's canonical lease
-// signing body (`patty-code-pccp/internal/paperproto/lease.go::
+// signing body (`patty-code-pccp/internal/dariproto/lease.go::
 // Lease.SigningBytes`). The relay signs this body; the connector's
 // LeaseVerifier recomputes it and rejects any drift. The
 // `internal/lease_conformance` suite pins the layout; the relay-side
 // fixture there must equal this implementation.
 
 // LeaseDomain is the domain-separation prefix. It must match the
-// connector's `paperproto.LeaseDomain` exactly.
+// connector's `dariproto.LeaseDomain` exactly.
 const LeaseDomain = "DARI-CAPABILITY-LEASE-v1\x00"
 
 // LeaseSigningInput is the exact field set bound by the canonical

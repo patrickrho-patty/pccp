@@ -1,6 +1,6 @@
 package models
 
-// ModelPackage is a signed Patty Model Package (PMP) — PRD §9.3, PAPER §40.2.
+// ModelPackage is a signed Patty Model Package (PMP) — PRD §9.3, DARI §40.2.
 type ModelPackage struct {
 	Base
 	PackageID      string `gorm:"type:varchar(64);uniqueIndex;not null" json:"package_id"` // e.g. pmp_01J...
@@ -39,11 +39,11 @@ type ModelPackage struct {
 	Expiry          string `gorm:"type:timestamp" json:"expiry,omitempty"`
 }
 
-// InferenceEndpoint is an enrolled model serving endpoint (PRD §9.4, PAPER §40.3).
+// InferenceEndpoint is an enrolled model serving endpoint (PRD §9.4, DARI §40.3).
 type InferenceEndpoint struct {
 	Base
 	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
-	EndpointID     string `gorm:"type:varchar(64);uniqueIndex;not null" json:"endpoint_id"` // PAPER endpoint ID
+	EndpointID     string `gorm:"type:varchar(64);uniqueIndex;not null" json:"endpoint_id"` // DARI endpoint ID
 	Name           string `gorm:"type:varchar(255)" json:"name"`
 	// PIA identity
 	PIAPeerID      string `gorm:"type:varchar(64);index" json:"pia_peer_id"`
@@ -95,7 +95,7 @@ type EndpointAttestation struct {
 	Timestamp      string `gorm:"type:timestamp" json:"timestamp"`
 }
 
-// EndpointLease is a short-lived authorization to route to an endpoint (PRD §9.4 A.5, PAPER §40.4).
+// EndpointLease is a short-lived authorization to route to an endpoint (PRD §9.4 A.5, DARI §40.4).
 type EndpointLease struct {
 	Base
 	EndpointID     string `gorm:"type:varchar(64);index;not null" json:"endpoint_id"`
@@ -124,7 +124,7 @@ type EndpointLease struct {
 	IssuedAt       string `gorm:"type:timestamp" json:"issued_at"`
 }
 
-// PolicyEpoch identifies the exact effective policy set (PAPER §23).
+// PolicyEpoch identifies the exact effective policy set (DARI §23).
 type PolicyEpoch struct {
 	Base
 	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
@@ -146,7 +146,7 @@ type PolicyEpoch struct {
 	Status          string `gorm:"type:varchar(32);default:'active'" json:"status"`
 }
 
-// CapabilityLease is a signed authorization object (PAPER §22).
+// CapabilityLease is a signed authorization object (DARI §22).
 type CapabilityLease struct {
 	Base
 	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`

@@ -16,7 +16,7 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/catalog"
 	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/policy"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
 	"github.com/patrickrho-patty/pccp/internal/realtime"
@@ -25,7 +25,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Service implements the PAPER Relay data plane.
+// Service implements the DARI Relay data plane.
 // The Relay authenticates peers, validates capability leases, binds policy
 // epochs, performs governance checks, routes to enrolled PIA, and emits
 // evidence receipts.
@@ -71,11 +71,11 @@ type Exchange struct {
 	HarnessID      string                 `json:"harness_id"`
 	LeaseID        string                 `json:"lease_id"`
 	PolicyEpochID  string                 `json:"policy_epoch_id"`
-	State          paper.ExchangeState    `json:"state"`
+	State          dari.ExchangeState    `json:"state"`
 	ModelPackageID string                 `json:"model_package_id"`
 	EndpointID     string                 `json:"endpoint_id"`
 	EndpointLeaseID string                `json:"endpoint_lease_id,omitempty"`
-	Verdict        paper.VerdictResult    `json:"verdict"`
+	Verdict        dari.VerdictResult    `json:"verdict"`
 	OpenedAt       time.Time              `json:"opened_at"`
 	EvidenceChain  []string               `json:"evidence_chain,omitempty"`
 }
@@ -118,7 +118,7 @@ func New(db *gorm.DB, cpURL, relayID string) (*Service, error) {
 }
 
 // Identity exposes the identity service (CA + revocations) so the
-// PAPER listener can build its trust bundle and the binary can wire
+// DARI listener can build its trust bundle and the binary can wire
 // issuer keys at startup.
 func (s *Service) Identity() *identity.Service { return s.identity }
 
@@ -144,8 +144,8 @@ type OpenExchangeRequest struct {
 }
 
 // OpenExchange creates and authorizes a new governed exchange.
-func (s *Service) OpenExchange(ctx context.Context, req OpenExchangeRequest) (*Exchange, paper.VerdictResult, error) {
-	exchangeID := paper.GenerateID("exch")
+func (s *Service) OpenExchange(ctx context.Context, req OpenExchangeRequest) (*Exchange, dari.VerdictResult, error) {
+	exchangeID := dari.GenerateID("exch")
 	exchange := &Exchange{
 		ID:             exchangeID,
 		SessionID:      req.SessionID,
@@ -154,7 +154,7 @@ func (s *Service) OpenExchange(ctx context.Context, req OpenExchangeRequest) (*E
 		HarnessID:      req.HarnessID,
 		LeaseID:        req.LeaseID,
 		PolicyEpochID:  req.PolicyEpochID,
-		State:          paper.ExchangeCreated,
+		State:          dari.ExchangeCreated,
 		ModelPackageID: req.ModelPackageID,
 		OpenedAt:       time.Now(),
 	}
@@ -163,22 +163,22 @@ func (s *Service) OpenExchange(ctx context.Context, req OpenExchangeRequest) (*E
 	var resolution governResolution
 	verdict, err := s.authorize(ctx, req, &resolution)
 	if err != nil {
-		exchange.State = paper.ExchangeDenied
-		exchange.Verdict = paper.VerdictDeny
+		exchange.State = dari.ExchangeDenied
+		exchange.Verdict = dari.VerdictDeny
 		s.recordExchange(exchange)
-		return exchange, paper.VerdictDeny, fmt.Errorf("relay: authorization failed: %w", err)
+		return exchange, dari.VerdictDeny, fmt.Errorf("relay: authorization failed: %w", err)
 	}
 	exchange.Verdict = verdict
 	exchange.EndpointID = resolution.EndpointID
 	exchange.EndpointLeaseID = resolution.EpLeaseID
 
-	if verdict == paper.VerdictDeny {
-		exchange.State = paper.ExchangeDenied
+	if verdict == dari.VerdictDeny {
+		exchange.State = dari.ExchangeDenied
 		s.recordExchange(exchange)
 		return exchange, verdict, fmt.Errorf("relay: exchange denied")
 	}
 
-	exchange.State = paper.ExchangeAuthorized
+	exchange.State = dari.ExchangeAuthorized
 	s.recordExchange(exchange)
 
 	// Record the action
@@ -203,24 +203,24 @@ func (s *Service) OpenExchange(ctx context.Context, req OpenExchangeRequest) (*E
 
 // authorize performs the governance checks for an exchange and resolves the
 // serving endpoint + lease (carried out via *res so RouteInference reuses).
-func (s *Service) authorize(ctx context.Context, req OpenExchangeRequest, res *governResolution) (paper.VerdictResult, error) {
+func (s *Service) authorize(ctx context.Context, req OpenExchangeRequest, res *governResolution) (dari.VerdictResult, error) {
 	// 1. Validate the capability lease
 	var lease models.CapabilityLease
 	if err := s.db.Where("lease_id = ? AND organization_id = ?", req.LeaseID, req.OrganizationID).First(&lease).Error; err != nil {
-		return paper.VerdictDeny, fmt.Errorf("capability lease not found")
+		return dari.VerdictDeny, fmt.Errorf("capability lease not found")
 	}
 	if lease.Status != "active" {
-		return paper.VerdictDeny, fmt.Errorf("lease status is %s", lease.Status)
+		return dari.VerdictDeny, fmt.Errorf("lease status is %s", lease.Status)
 	}
 	notAfter, _ := time.Parse(time.RFC3339, lease.NotAfter)
 	if time.Now().After(notAfter) {
-		return paper.VerdictDeny, fmt.Errorf("lease expired")
+		return dari.VerdictDeny, fmt.Errorf("lease expired")
 	}
 
 	// 2. Validate model is allowed under policy epoch
 	var epoch models.PolicyEpoch
 	if err := s.db.Where("epoch_id = ?", req.PolicyEpochID).First(&epoch).Error; err != nil {
-		return paper.VerdictDeny, fmt.Errorf("policy epoch not found")
+		return dari.VerdictDeny, fmt.Errorf("policy epoch not found")
 	}
 
 	var allowedModels []string
@@ -233,16 +233,16 @@ func (s *Service) authorize(ctx context.Context, req OpenExchangeRequest, res *g
 		}
 	}
 	if !modelAllowed {
-		return paper.VerdictDeny, fmt.Errorf("model %s not allowed under policy epoch %s", req.ModelPackageID, req.PolicyEpochID)
+		return dari.VerdictDeny, fmt.Errorf("model %s not allowed under policy epoch %s", req.ModelPackageID, req.PolicyEpochID)
 	}
 
 	// 3. Check for model recall
 	var pkg models.ModelPackage
 	if err := s.db.Where("package_id = ?", req.ModelPackageID).First(&pkg).Error; err != nil {
-		return paper.VerdictDeny, fmt.Errorf("model package not found")
+		return dari.VerdictDeny, fmt.Errorf("model package not found")
 	}
 	if pkg.State == "recalled" {
-		return paper.VerdictDeny, fmt.Errorf("model %s has been recalled", req.ModelPackageID)
+		return dari.VerdictDeny, fmt.Errorf("model %s has been recalled", req.ModelPackageID)
 	}
 
 	// 4. Find a valid endpoint with lease
@@ -251,7 +251,7 @@ func (s *Service) authorize(ctx context.Context, req OpenExchangeRequest, res *g
 	err := s.db.Where("organization_id = ? AND model_package_id = ? AND status = 'active'",
 		req.OrganizationID, req.ModelPackageID).First(&endpoint).Error
 	if err != nil {
-		return paper.VerdictDeny, fmt.Errorf("no active endpoint for model %s", req.ModelPackageID)
+		return dari.VerdictDeny, fmt.Errorf("no active endpoint for model %s", req.ModelPackageID)
 	}
 
 	// Check for valid endpoint lease
@@ -259,12 +259,12 @@ func (s *Service) authorize(ctx context.Context, req OpenExchangeRequest, res *g
 		endpoint.EndpointID, time.Now().Format(time.RFC3339)).
 		Order("issued_at DESC").First(&epLease).Error
 	if err != nil {
-		return paper.VerdictDeny, fmt.Errorf("no valid endpoint lease for endpoint %s", endpoint.EndpointID)
+		return dari.VerdictDeny, fmt.Errorf("no valid endpoint lease for endpoint %s", endpoint.EndpointID)
 	}
 
 	res.EndpointID = endpoint.EndpointID
 	res.EpLeaseID = epLease.LeaseID
-	return paper.VerdictAllow, nil
+	return dari.VerdictAllow, nil
 }
 
 // RouteInference routes an inference request to a PIA endpoint.
@@ -287,13 +287,13 @@ func (s *Service) RouteInference(ctx context.Context, req InferenceRequest) (*In
 	if !ok {
 		return nil, fmt.Errorf("relay: exchange %s not found", req.ExchangeID)
 	}
-	if exchange.State != paper.ExchangeAuthorized && exchange.State != paper.ExchangeActive {
+	if exchange.State != dari.ExchangeAuthorized && exchange.State != dari.ExchangeActive {
 		return nil, fmt.Errorf("relay: exchange state is %s, not authorized", exchange.State)
 	}
 
 	// Update exchange state
 	s.mu.Lock()
-	exchange.State = paper.ExchangeActive
+	exchange.State = dari.ExchangeActive
 	s.mu.Unlock()
 
 	// Endpoint + lease were resolved once during authorize (OpenExchange).
@@ -301,8 +301,8 @@ func (s *Service) RouteInference(ctx context.Context, req InferenceRequest) (*In
 		return nil, fmt.Errorf("relay: exchange %s has no resolved endpoint", req.ExchangeID)
 	}
 
-	// Forward to PIA via the injectable forwarder — PAPER transport when
-	// PCCP_PIA_PAPER_ADDR is set, HTTP fallback otherwise (dev/legacy).
+	// Forward to PIA via the injectable forwarder — DARI transport when
+	// PCCP_PIA_DARI_ADDR is set, HTTP fallback otherwise (dev/legacy).
 	return s.routeViaForwarder(ctx, exchange, req, func(ictx context.Context, ireq InferenceRequest) (*InferenceResponse, error) {
 		return s.forwarder(ictx, ireq, exchange.EndpointLeaseID)
 	})
@@ -318,12 +318,12 @@ func (s *Service) RouteInferenceStream(ctx context.Context, req InferenceRequest
 	if !ok {
 		return nil, fmt.Errorf("relay: exchange %s not found", req.ExchangeID)
 	}
-	if exchange.State != paper.ExchangeAuthorized && exchange.State != paper.ExchangeActive {
+	if exchange.State != dari.ExchangeAuthorized && exchange.State != dari.ExchangeActive {
 		return nil, fmt.Errorf("relay: exchange state is %s, not authorized", exchange.State)
 	}
 
 	s.mu.Lock()
-	exchange.State = paper.ExchangeActive
+	exchange.State = dari.ExchangeActive
 	s.mu.Unlock()
 	if exchange.EndpointID == "" {
 		return nil, fmt.Errorf("relay: exchange %s has no resolved endpoint", req.ExchangeID)
@@ -357,31 +357,31 @@ func (s *Service) routeViaForwarder(ctx context.Context, exchange *Exchange, req
 		PolicyEpochID:  exchange.PolicyEpochID,
 		LeaseID:        exchange.LeaseID,
 		ActionType:     "ai.inference",
-		VerdictResult:  string(paper.VerdictAllow),
+		VerdictResult:  string(dari.VerdictAllow),
 	})
 
 	// Update exchange with completion
 	s.mu.Lock()
-	exchange.State = paper.ExchangeCompleted
+	exchange.State = dari.ExchangeCompleted
 	s.mu.Unlock()
 
 	return inferenceResp, nil
 }
 
-// defaultForwarder is the production forwarder: PAPER transport when configured,
+// defaultForwarder is the production forwarder: DARI transport when configured,
 // HTTP fallback otherwise (dev/legacy only — not v2 compliant).
 func (s *Service) defaultForwarder(ctx context.Context, req InferenceRequest, endpointLeaseID string) (*InferenceResponse, error) {
 	var inferenceResp InferenceResponse
 
-	paperClient := getPaperInferenceClient()
-	if paperClient != nil {
+	dariClient := getDARIInferenceClient()
+	if dariClient != nil {
 		interfaceMsgs := make([]map[string]interface{}, len(req.Messages))
 		for i, m := range req.Messages {
 			interfaceMsgs[i] = map[string]interface{}{"role": m["role"], "content": m["content"]}
 		}
-		result, err := paperClient.SendInference(ctx, req.Model, interfaceMsgs, req.MaxTokens)
+		result, err := dariClient.SendInference(ctx, req.Model, interfaceMsgs, req.MaxTokens)
 		if err != nil {
-			return nil, fmt.Errorf("relay: PAPER inference failed: %w", err)
+			return nil, fmt.Errorf("relay: DARI inference failed: %w", err)
 		}
 		inferenceResp.ID = result.ID
 		inferenceResp.Model = result.Model
@@ -481,7 +481,7 @@ func (s *Service) CloseExchange(ctx context.Context, exchangeID string) (*models
 		FinalState:     string(exchange.State),
 		FirstEventSeq:  0,
 		LastEventSeq:   uint64(len(exchange.EvidenceChain)),
-		ChainRoot:      paper.GenerateID("chainroot"),
+		ChainRoot:      dari.GenerateID("chainroot"),
 		PolicyEpochID:  exchange.PolicyEpochID,
 		ModelPackageID: exchange.ModelPackageID,
 		EndpointID:     exchange.EndpointID,
@@ -493,7 +493,7 @@ func (s *Service) CloseExchange(ctx context.Context, exchangeID string) (*models
 	s.recordExchangeProvenance(exchange)
 
 	s.mu.Lock()
-	exchange.State = paper.ExchangeCompleted
+	exchange.State = dari.ExchangeCompleted
 	delete(s.exchanges, exchangeID)
 	s.mu.Unlock()
 
@@ -595,7 +595,7 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 		PolicyEpochID:  lease.PolicyEpochID,
 		ModelPackageID: pkg.PackageID,
 	})
-	if err != nil || verdict != paper.VerdictAllow {
+	if err != nil || verdict != dari.VerdictAllow {
 		return nil, nil, fmt.Errorf("relay: exchange denied for harness %s (verdict=%s): %w", req.HarnessID, verdict, err)
 	}
 
@@ -670,7 +670,7 @@ func (s *Service) recordUsage(ex *Exchange, req InferenceRequest, resp *Inferenc
 
 // AuthorizePeer is the connect-time gate: an enrolled harness in good standing
 // is allowed; unknown/revoked/quarantined harnesses are rejected. This ties
-// fleet revocation/quarantine (web/09-fleet) to the live PAPER path — a revoked
+// fleet revocation/quarantine (web/09-fleet) to the live DARI path — a revoked
 // harness can no longer authenticate. Full PPC signature verification is a
 // follow-up once the harness presents real signed credentials (Harness A).
 func (s *Service) AuthorizePeer(harnessID string) (string, error) {

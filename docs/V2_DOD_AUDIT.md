@@ -7,13 +7,13 @@
 |---|-------------|--------|----------|
 | 1 | One kernel, three profiles | ✅ | `internal/config/deployment_profiles.go` — Public, Enterprise, Government |
 | 2 | OAuth sign-in + subscription + harness enrollment | ✅ | `internal/api/server.go` — auth/bootstrap, enroll, subscription endpoints |
-| 3 | Harness has no authoritative model list | ✅ | PAPER `MODEL_CATALOG_SNAPSHOT` — catalog sent server-side |
-| 4 | Model catalog sent over PAPER | ✅ | `internal/catalog/service.go` + `paper.models/1` extension |
+| 3 | Harness has no authoritative model list | ✅ | DARI `MODEL_CATALOG_SNAPSHOT` — catalog sent server-side |
+| 4 | Model catalog sent over DARI | ✅ | `internal/catalog/service.go` + `dari.models/1` extension |
 | 5 | Online model changes without release | ✅ | Catalog epoch refresh + publish/recall endpoints |
 | 6 | Raw model ID cannot route traffic | ✅ | Relay validates catalog epoch + model ID |
-| 7 | No OpenAI/Anthropic downgrade | ✅ | PAPER-only data path (§9.2) |
-| 8 | PAPER AI semantic layer | ✅ | `internal/paper/ai_v2.go` — streaming, tools, structured output, multimodal, cache, compaction |
-| 9 | PIA is only bridge to engine | ✅ | `cmd/pccp-pia/` — PAPER→vLLM/SGLang adapter |
+| 7 | No OpenAI/Anthropic downgrade | ✅ | DARI-only data path (§9.2) |
+| 8 | DARI AI semantic layer | ✅ | `internal/dari/ai_v2.go` — streaming, tools, structured output, multimodal, cache, compaction |
+| 9 | PIA is only bridge to engine | ✅ | `cmd/pccp-pia/` — DARI→vLLM/SGLang adapter |
 | 10 | Catalog Model→PMP→Endpoint validation | ✅ | Model Registry + Endpoint Registry + Lease validation |
 | 11 | Public Account/Subscription/Harness/Session/Work-Slot modeled | ✅ | `internal/publiccloud/service.go` — Account, Subscription, WorkSlot, CapacityLease |
 | 12 | Semantic workload slots | ✅ | `WorkSlotClass` type (heavy/standard/light) |
@@ -30,10 +30,10 @@
 | 23 | Government local catalog | ✅ | Sovereign deployment profile, offline catalog support |
 | 24 | Legacy gateway removed | ⚠️ | Permitted by §38.3 but not ideal — HTTP fallback exists |
 | 25 | Bifrost patterns as architecture | ✅ | Pipeline stages, hot-path modules (§10.2) |
-| 26 | Conformance tests | ✅ | `internal/paper/` test suite with capability checks |
+| 26 | Conformance tests | ✅ | `internal/dari/` test suite with capability checks |
 | 27 | Metering reconciles | ✅ | UsageRecord + Usage API endpoints |
 | 28 | Enforcement explainable/auditable | ✅ | All fleet actions create AuditEvent records |
-| 29 | Modified client documented | ✅ | `PAPER.md` + open-source docs with trust caveats |
+| 29 | Modified client documented | ✅ | `DARI.md` + open-source docs with trust caveats |
 | 30 | PCCP is source of authority | ✅ | Identity, model catalog, inference, governance all in CP |
 
 ### Summary

@@ -13,7 +13,7 @@ import (
 
 // Server is the Relay HTTP API server.
 // In Phase 0, the Relay exposes an HTTP API that the Harness and Control Plane
-// can call. This is NOT the final PAPER wire protocol (which uses QUIC/TCP with
+// can call. This is NOT the final DARI wire protocol (which uses QUIC/TCP with
 // CBOR framing), but provides the same governance semantics for initial integration.
 type Server struct {
 	svc *Service
@@ -64,7 +64,7 @@ func (s *Server) handleListChangeSets(w http.ResponseWriter, r *http.Request) {
 // handleEnrollHarness is the harness enrollment entry point (A1): a
 // harness presents its Ed25519 public key and receives a CA-issued
 // COSE-Sign1 peer credential. This is the admin-plane half of the
-// enrollment-code flow; the PAPER data plane verifies the credential
+// enrollment-code flow; the DARI data plane verifies the credential
 // on connect.
 func (s *Server) handleEnrollHarness(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

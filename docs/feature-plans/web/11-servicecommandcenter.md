@@ -9,7 +9,7 @@ The **Patty Ops landing/command center** for the public service (§6.1) — at-a
 - Reads `/api/dashboard` (real counts: users/harnesses/sessions/endpoints + active sessions), public accounts, health, realtime, telemetry. Stat cards + subscriber table (plan/integrity/T&S/capacity states).
 
 ## Gaps — grounded
-**A1. Live traffic view missing** (§6.1) — only counts, no active accounts/harnesses/sessions/slots/queues/PAPER-exchanges view. *Fix:* live-traffic panel.
+**A1. Live traffic view missing** (§6.1) — only counts, no active accounts/harnesses/sessions/slots/queues/DARI-exchanges view. *Fix:* live-traffic panel.
 **A2. Account-integrity / T&S / capacity not shown live** (§8.9) — states are static. *Fix:* live state per dimension (depends on detection/scheduler wiring).
 **A3. Work-slot & queue health** from the (dead) scheduler — absent. *Fix:* wire scheduler.
 **A4. Capacity-lease issuer/validator not live.** *Fix:* live lease state.

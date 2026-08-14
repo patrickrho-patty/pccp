@@ -92,7 +92,7 @@ type ProvenanceSpan struct {
 	SpanDigest     string `gorm:"type:varchar(128)" json:"span_digest"` // content-addressed
 }
 
-// CommitBinding links a git commit to provenance (PRD §18.6, PAPER §43).
+// CommitBinding links a git commit to provenance (PRD §18.6, DARI §43).
 type CommitBinding struct {
 	Base
 	OrganizationID string `gorm:"type:varchar(64);index" json:"organization_id"`
@@ -124,7 +124,7 @@ type AuditEvent struct {
 	OccurredAt     string `gorm:"type:timestamp" json:"occurred_at"`
 }
 
-// EvidenceReceipt is a COSE-signed proof of an exchange (PAPER §34).
+// EvidenceReceipt is a COSE-signed proof of an exchange (DARI §34).
 type EvidenceReceipt struct {
 	Base
 	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
@@ -148,6 +148,6 @@ type EvidenceReceipt struct {
 	RedactionManifest string `gorm:"type:text" json:"redaction_manifest,omitempty"`
 	IssuedAt       string `gorm:"type:timestamp" json:"issued_at"`
 	// AcknowledgedAt records (RFC3339) when the harness confirmed
-	// receipt of this evidence receipt over PAPER; empty until acked.
+	// receipt of this evidence receipt over DARI; empty until acked.
 	AcknowledgedAt string `gorm:"type:timestamp" json:"acknowledged_at,omitempty"`
 }
