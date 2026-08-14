@@ -36,6 +36,15 @@ func (s *Service) CAPublicKeyHex() string {
 	return hex.EncodeToString(s.ca.PublicKey)
 }
 
+// CAIssuerID returns the credential issuer identifier ("pccp-ca").
+func (s *Service) CAIssuerID() string { return s.ca.IssuerID }
+
+// CAPublicKeyRaw returns the CA's ed25519 public key bytes. The PAPER
+// listener builds its trust bundle from this.
+func (s *Service) CAPublicKeyRaw() ed25519.PublicKey {
+	return append(ed25519.PublicKey(nil), s.ca.PublicKey...)
+}
+
 // CreateOrganization creates a new organization.
 func (s *Service) CreateOrganization(name, nameKo, slug, profile string) (*models.Organization, error) {
 	org := &models.Organization{

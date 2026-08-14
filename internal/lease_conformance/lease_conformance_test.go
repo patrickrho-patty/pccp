@@ -1,10 +1,10 @@
 package lease_conformance
 
 import (
-	"bytes"
 	"crypto/ed25519"
+	"encoding/binary"
 	"encoding/hex"
-	"strings"
+	"sort"
 	"testing"
 	"time"
 
@@ -12,158 +12,213 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/policy"
 )
 
-// This file is the cross-repository contract guard for the
-// connector's capability-lease lifecycle (harness feature plan A3).
-// The relay issues leases via `policy.IssueCapabilityLease`, signs
-// them with COSE-Sign1, and accepts them via the harness's
-// `paperproto.LeaseClient`. Because the two repositories can't
-// import each other, we re-derive the connector's byte contract
-// here using the same primitives (sha256, ed25519, length-prefixed
-// CBOR) and prove the relay's issuer can produce a lease the
-// connector's verifier accepts end-to-end.
+// This file pins the cross-repo capability-lease byte contract
+// (harness feature plan A3, e2e).
 //
-// The relay-side signer below does NOT import the connector; it
-// computes the signing bytes using the same fmt/Sprintf the
-// relay's `policy.IssueCapabilityLease` uses, and the connector-side
-// verifier is re-implemented inline to match `paperproto.LeaseVerifier.Verify`.
-// If the wire contract drifts, the conformance test fails with a
-// clear message.
+// The relay signs via `policy.CanonicalLeaseSigningBytes`. The
+// connector (`patty-code-pccp/internal/paperproto/lease.go::
+// Lease.SigningBytes`) recomputes the SAME bytes from the wire lease
+// and verifies the COSE-Sign1 signature. The two repos cannot import
+// each other, so this suite re-derives the connector's layout
+// INDEPENDENTLY below. If either repo changes field order, length
+// prefixes, domain prefix, or the field set, this test fails.
+//
+// Canonical layout (little-endian? NO — all big-endian):
+//
+//	"DARI-CAPABILITY-LEASE-v1\x00"
+//	lp(leaseID) lp(subject) lp(user) lp(session) lp(epoch)
+//	lp[](allowedModels) lp[](filePathRead) lp[](filePathWrite) lp[](toolClasses)
+//	lp[](repoScope maps: sorted keys, lp(k) lp(v))
+//	u64(tokenBudget) u64(notBeforeMs) u64(notAfterMs) u64(leaseSequence) u64(issuedAtMs)
+//
+// where lp = uint32-BE length prefix; lp[] = count-prefixed list; u64
+// = uint32-BE length (8) + 8-byte BE value.
 
-// relayConnectorLeaseFixture is the test-scope re-implementation of
-// `policy.IssueCapabilityLease` that doesn't require a database.
-// The relay's production signer uses the same `fmt.Sprintf` body
-// layout and the same `paper.CreateCOSESign1` envelope, so the
-// connector's verifier accepts either side's output.
-func relayConnectorLeaseIssue(t *testing.T, issuerKey ed25519.PrivateKey, req policy.IssueLeaseRequest) string {
+const leaseDomain = "DARI-CAPABILITY-LEASE-v1\x00"
+
+type connectorLeaseView struct {
+	leaseID            string
+	subject            string
+	user               string
+	session            string
+	epoch              string
+	allowedModels      []string
+	filePathReadScope  []string
+	filePathWriteScope []string
+	toolClasses        []string
+	repositoryScope    []map[string]string
+	tokenBudget        uint64
+	notBeforeUnixMs    uint64
+	notAfterUnixMs     uint64
+	leaseSequence      uint64
+	issuedAtUnixMs     uint64
+}
+
+// connectorSigningBytes re-derives the connector's recomputation. It
+// is written from the connector's published layout, NOT from the
+// relay's canonical.go — a copy-paste of the relay implementation
+// would make this test tautological.
+func connectorSigningBytes(l connectorLeaseView) []byte {
+	dst := append([]byte(nil), leaseDomain...)
+	dst = lp(dst, l.leaseID)
+	dst = lp(dst, l.subject)
+	dst = lp(dst, l.user)
+	dst = lp(dst, l.session)
+	dst = lp(dst, l.epoch)
+	dst = lpList(dst, l.allowedModels)
+	dst = lpList(dst, l.filePathReadScope)
+	dst = lpList(dst, l.filePathWriteScope)
+	dst = lpList(dst, l.toolClasses)
+
+	// Repository scope: count-prefixed maps of sorted length-prefixed
+	// key/value pairs.
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(l.repositoryScope)))
+	dst = append(dst, lenBuf[:]...)
+	for _, m := range l.repositoryScope {
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		binary.BigEndian.PutUint32(lenBuf[:], uint32(len(keys)))
+		dst = append(dst, lenBuf[:]...)
+		for _, k := range keys {
+			dst = lp(dst, k)
+			dst = lp(dst, m[k])
+		}
+	}
+
+	dst = u64(dst, l.tokenBudget)
+	dst = u64(dst, l.notBeforeUnixMs)
+	dst = u64(dst, l.notAfterUnixMs)
+	dst = u64(dst, l.leaseSequence)
+	dst = u64(dst, l.issuedAtUnixMs)
+	return dst
+}
+
+func lp(dst []byte, v string) []byte {
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(v)))
+	dst = append(dst, lenBuf[:]...)
+	return append(dst, v...)
+}
+
+func lpList(dst []byte, values []string) []byte {
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(values)))
+	dst = append(dst, lenBuf[:]...)
+	for _, v := range values {
+		dst = lp(dst, v)
+	}
+	return dst
+}
+
+func u64(dst []byte, v uint64) []byte {
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], 8)
+	dst = append(dst, lenBuf[:]...)
+	var valBuf [8]byte
+	binary.BigEndian.PutUint64(valBuf[:], v)
+	return append(dst, valBuf[:]...)
+}
+
+// relayIssuedFixture issues a REAL relay lease (real DB-backed signer
+// path is exercised in internal/policy; here we sign via the relay's
+// actual canonical helper with the relay's actual COSE envelope).
+func relaySignedBody(t *testing.T, key ed25519.PrivateKey, in policy.LeaseSigningInput) []byte {
 	t.Helper()
-	now := time.Now()
-	notBefore := now.Format(time.RFC3339)
-	notAfter := now.Add(req.Validity).Format(time.RFC3339)
-	leaseID := conformanceLeaseID
-	body := leaseID + "|" + req.SubjectPeerID + "|" + req.UserID + "|" + req.SessionID + "|" + req.PolicyEpochID + "|" + notBefore + "|" + notAfter
-	sign1, err := paper.CreateCOSESign1([]byte(body), issuerKey, []byte("pccp-policy"))
+	sign1, err := paper.CreateCOSESign1(policy.CanonicalLeaseSigningBytes(in), key, []byte("pccp-policy"))
 	if err != nil {
-		t.Fatalf("sign lease: %v", err)
+		t.Fatalf("sign: %v", err)
 	}
-	encoded, err := paper.EncodeCOSESign1(sign1)
-	if err != nil {
-		t.Fatalf("encode lease signature: %v", err)
-	}
-	return hex.EncodeToString(encoded)
+	return sign1.Payload
 }
 
-// conformanceLeaseID is the stable lease ID used by the
-// conformance tests. The relay and the connector agree on the
-// body layout via this constant.
-const conformanceLeaseID = "lease-conformance-1"
-
-// relayVerifyLeaseSignature is the test-scope re-implementation of
-// the connector's `paperproto.LeaseVerifier.verifySignature`. It
-// recomputes the signing bytes and verifies the COSE-Sign1 envelope
-// against the issuer's public key. A drift in the byte layout fails
-// verification.
-func relayVerifyLeaseSignature(t *testing.T, signature string, leaseID, subject, user, session, epoch, notBefore, notAfter string, issuerPub ed25519.PublicKey) error {
-	t.Helper()
-	body := leaseID + "|" + subject + "|" + user + "|" + session + "|" + epoch + "|" + notBefore + "|" + notAfter
-	raw, err := hex.DecodeString(signature)
-	if err != nil {
-		return err
+// TestCanonicalLeaseBytesMatchConnectorLayout is the core pin: the
+// relay's canonical bytes equal the connector's independently derived
+// recomputation for a fully-populated lease.
+func TestCanonicalLeaseBytesMatchConnectorLayout(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	in := policy.LeaseSigningInput{
+		LeaseID:            "lease-conn-1",
+		SubjectPeerID:      "harness-peer-9",
+		UserID:             "user-7",
+		SessionID:          "sess-3",
+		PolicyEpochID:      "epoch-2",
+		AllowedModels:      []string{"m-x", "m-y"},
+		FilePathReadScope:  []string{"a/*.go"},
+		FilePathWriteScope: []string{"a/b.go"},
+		ToolClasses:        []string{"read", "edit"},
+		RepositoryScope:    []map[string]string{{"repo": "r1", "branch": "main"}},
+		TokenBudget:        12345,
+		NotBeforeUnixMs:    now.UnixMilli(),
+		NotAfterUnixMs:     now.Add(time.Hour).UnixMilli(),
+		LeaseSequence:      4,
+		IssuedAtUnixMs:     now.UnixMilli(),
 	}
-	sign1, err := paper.DecodeCOSESign1(raw)
-	if err != nil {
-		return err
-	}
-	if sign1.Payload != nil && string(sign1.Payload) != body {
-		t.Logf("payload mismatch: got %q, want %q", string(sign1.Payload), body)
-		return nil
-	}
-	return paper.VerifyCOSESign1(sign1, issuerPub)
-}
-
-// TestConnectorLeaseEndToEndConformance is the cross-repo
-// conformance test for the capability-lease lifecycle. The relay
-// issues a lease via the same `fmt.Sprintf` body format and the
-// same `paper.CreateCOSESign1` envelope as production. The
-// connector-side verifier (re-implemented here for cross-repo
-// compatibility) accepts the same bytes.
-func TestConnectorLeaseEndToEndConformance(t *testing.T) {
-	issuer, err := paper.NewPeerCredentialIssuer("pccp-ca")
-	if err != nil {
-		t.Fatalf("issuer: %v", err)
-	}
-
-	req := policy.IssueLeaseRequest{
-		OrganizationID: "org-test",
-		SubjectPeerID:  "hrn:patty:test",
-		UserID:         "alice",
-		SessionID:      "ses-test",
-		PolicyEpochID:  "epoch-2026-01",
-		AllowedModels:  []string{"patty-code-standard"},
-		TokenBudget:    8192,
-		Validity:       time.Hour,
-	}
-	signature := relayConnectorLeaseIssue(t, issuer.PrivateKey, req)
-
-	// Confirm the relay's signer reproduces the same byte layout
-	// the production signer uses. The body format is
-	// `leaseID|subject|user|session|epoch|notBefore|notAfter`.
-	// The test below recomputes the same string and verifies the
-	// COSE-Sign1 envelope.
-	now := time.Now()
-	notBefore := now.Format(time.RFC3339)
-	notAfter := now.Add(req.Validity).Format(time.RFC3339)
-	if err := relayVerifyLeaseSignature(t, signature, conformanceLeaseID, req.SubjectPeerID, req.UserID, req.SessionID, req.PolicyEpochID, notBefore, notAfter, issuer.PublicKey); err != nil {
-		t.Fatalf("connector verifier rejected the relay's lease: %v", err)
+	relayBytes := policy.CanonicalLeaseSigningBytes(in)
+	connectorBytes := connectorSigningBytes(connectorLeaseView{
+		leaseID:            in.LeaseID,
+		subject:            in.SubjectPeerID,
+		user:               in.UserID,
+		session:            in.SessionID,
+		epoch:              in.PolicyEpochID,
+		allowedModels:      in.AllowedModels,
+		filePathReadScope:  in.FilePathReadScope,
+		filePathWriteScope: in.FilePathWriteScope,
+		toolClasses:        in.ToolClasses,
+		repositoryScope:    in.RepositoryScope,
+		tokenBudget:        uint64(in.TokenBudget),
+		notBeforeUnixMs:    uint64(in.NotBeforeUnixMs),
+		notAfterUnixMs:     uint64(in.NotAfterUnixMs),
+		leaseSequence:      in.LeaseSequence,
+		issuedAtUnixMs:     uint64(in.IssuedAtUnixMs),
+	})
+	if string(relayBytes) != string(connectorBytes) {
+		t.Fatalf("canonical lease bytes diverge:\nrelay    = %x\nconnector= %x", relayBytes, connectorBytes)
 	}
 }
 
-// TestConnectorLeaseSignerUsesIssuerKeyFailsForOtherKey pins the
-// trust boundary: a lease signed by a different issuer's key is
-// rejected by the connector's verifier.
-func TestConnectorLeaseSignerUsesIssuerKeyFailsForOtherKey(t *testing.T) {
-	issuer, err := paper.NewPeerCredentialIssuer("pccp-ca")
-	if err != nil {
-		t.Fatalf("issuer: %v", err)
+// TestRelaySignatureVerifiesUnderConnectorLayout proves the signed
+// COSE payload is exactly the bytes the connector recomputes, and the
+// Ed25519 signature verifies under the issuer public key.
+func TestRelaySignatureVerifiesUnderConnectorLayout(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	now := time.Now().Truncate(time.Second)
+	in := policy.LeaseSigningInput{
+		LeaseID:         "lease-conn-2",
+		SubjectPeerID:   "harness-peer-1",
+		UserID:          "u1",
+		SessionID:       "s1",
+		PolicyEpochID:   "e1",
+		AllowedModels:   []string{"*"},
+		TokenBudget:     1000,
+		NotBeforeUnixMs: now.UnixMilli(),
+		NotAfterUnixMs:  now.Add(8 * time.Hour).UnixMilli(),
+		LeaseSequence:   1,
+		IssuedAtUnixMs:  now.UnixMilli(),
 	}
-	otherIssuer, err := paper.NewPeerCredentialIssuer("rogue-ca")
-	if err != nil {
-		t.Fatalf("other issuer: %v", err)
-	}
-	req := policy.IssueLeaseRequest{
-		OrganizationID: "org-test",
-		SubjectPeerID:  "hrn:patty:test",
-		UserID:         "alice",
-		SessionID:      "ses-test",
-		PolicyEpochID:  "epoch-2026-01",
-		Validity:       time.Hour,
-	}
-	signature := relayConnectorLeaseIssue(t, issuer.PrivateKey, req)
-	now := time.Now()
-	notBefore := now.Format(time.RFC3339)
-	notAfter := now.Add(req.Validity).Format(time.RFC3339)
-	rogueErr := relayVerifyLeaseSignature(t, signature, conformanceLeaseID, req.SubjectPeerID, req.UserID, req.SessionID, req.PolicyEpochID, notBefore, notAfter, otherIssuer.PublicKey)
-	if rogueErr == nil {
-		t.Fatal("rogue-issuer lease must not verify")
-	}
-	if !strings.Contains(rogueErr.Error(), "COSE-Sign1") {
-		t.Errorf("expected COSE-Sign1 error, got %v", rogueErr)
-	}
-}
+	payload := relaySignedBody(t, priv, in)
 
-// TestConnectorLeaseSigningBytesPinned guards the byte-string
-// layout: the body format the relay uses to sign (and the connector
-// uses to verify) is `leaseID|subject|user|session|epoch|notBefore|notAfter`.
-// A drift in field order or separator breaks the contract.
-func TestConnectorLeaseSigningBytesPinned(t *testing.T) {
-	issuer, err := paper.NewPeerCredentialIssuer("pccp-ca")
-	if err != nil {
-		t.Fatalf("issuer: %v", err)
+	expect := connectorSigningBytes(connectorLeaseView{
+		leaseID:         in.LeaseID,
+		subject:         in.SubjectPeerID,
+		user:            in.UserID,
+		session:         in.SessionID,
+		epoch:           in.PolicyEpochID,
+		allowedModels:   in.AllowedModels,
+		tokenBudget:     uint64(in.TokenBudget),
+		notBeforeUnixMs: uint64(in.NotBeforeUnixMs),
+		notAfterUnixMs:  uint64(in.NotAfterUnixMs),
+		leaseSequence:   in.LeaseSequence,
+		issuedAtUnixMs:  uint64(in.IssuedAtUnixMs),
+	})
+	if string(payload) != string(expect) {
+		t.Fatal("signed payload is not the connector-computable body")
 	}
-	now := time.Now()
-	notBefore := now.Format(time.RFC3339)
-	notAfter := now.Add(time.Hour).Format(time.RFC3339)
-	body := "lease-pin" + "|" + "hrn:patty:user" + "|" + "alice" + "|" + "ses-pin" + "|" + "epoch-2026-01" + "|" + notBefore + "|" + notAfter
-	sign1, err := paper.CreateCOSESign1([]byte(body), issuer.PrivateKey, []byte("pccp-policy"))
+
+	sign1, err := paper.CreateCOSESign1(payload, priv, []byte("pccp-policy"))
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
@@ -171,23 +226,43 @@ func TestConnectorLeaseSigningBytesPinned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
-	// A wrong body (different field order) must NOT verify.
-	wrongBody := "hrn:patty:user" + "|" + "lease-pin" + "|" + "alice" + "|" + "ses-pin" + "|" + "epoch-2026-01" + "|" + notBefore + "|" + notAfter
-	wrongSign1, err := paper.CreateCOSESign1([]byte(wrongBody), issuer.PrivateKey, []byte("pccp-policy"))
-	if err != nil {
-		t.Fatalf("sign wrong: %v", err)
-	}
-	wrongEncoded, err := paper.EncodeCOSESign1(wrongSign1)
-	if err != nil {
-		t.Fatalf("encode wrong: %v", err)
-	}
-	raw, _ := hex.DecodeString(hex.EncodeToString(encoded))
-	wrongRaw, _ := hex.DecodeString(hex.EncodeToString(wrongEncoded))
-	if bytesEqual(raw, wrongRaw) {
-		t.Fatal("different signing bodies produced identical signatures")
+	_ = hex.EncodeToString(encoded)
+
+	// The connector's verification path: decode envelope, compare
+	// payload to recomputed body, verify the COSE Sig_structure under
+	// the issuer key.
+	if err := paper.VerifyCOSESign1(sign1, pub); err != nil {
+		t.Fatalf("lease signature does not verify under issuer public key: %v", err)
 	}
 }
 
-// bytesEqual is a thin wrapper around bytes.Equal kept for symmetry
-// with the conformance helpers.
-func bytesEqual(a, b []byte) bool { return bytes.Equal(a, b) }
+// TestCanonicalLayoutEmptyScopes pins the zero-value encodings (empty
+// lists, no repo scope) so a relay that omits optional fields stays
+// byte-compatible with the connector.
+func TestCanonicalLayoutEmptyScopes(t *testing.T) {
+	a := policy.CanonicalLeaseSigningBytes(policy.LeaseSigningInput{LeaseID: "l", SubjectPeerID: "s", UserID: "u", SessionID: "se", PolicyEpochID: "e"})
+	b := connectorSigningBytes(connectorLeaseView{leaseID: "l", subject: "s", user: "u", session: "se", epoch: "e"})
+	if string(a) != string(b) {
+		t.Fatalf("empty-scope encoding diverges:\nrelay=%x\nconn =%x", a, b)
+	}
+}
+
+// TestRogueIssuerRejected: a signature from a different key never
+// verifies under the pinned issuer.
+func TestRogueIssuerRejected(t *testing.T) {
+	pub, _, _ := ed25519.GenerateKey(nil)
+	_, rogue, _ := ed25519.GenerateKey(nil)
+	now := time.Now().Truncate(time.Second)
+	in := policy.LeaseSigningInput{
+		LeaseID: "l", SubjectPeerID: "s", UserID: "u", SessionID: "se", PolicyEpochID: "e",
+		NotBeforeUnixMs: now.UnixMilli(), NotAfterUnixMs: now.Add(time.Hour).UnixMilli(),
+		LeaseSequence: 1, IssuedAtUnixMs: now.UnixMilli(),
+	}
+	sign1, err := paper.CreateCOSESign1(policy.CanonicalLeaseSigningBytes(in), rogue, []byte("pccp-policy"))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if err := paper.VerifyCOSESign1(sign1, pub); err == nil {
+		t.Fatal("rogue issuer signature must not verify")
+	}
+}

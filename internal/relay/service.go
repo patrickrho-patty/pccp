@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"strings"
 	"os"
 	"time"
 
@@ -353,7 +354,7 @@ func (s *Service) defaultForwarder(ctx context.Context, req InferenceRequest, en
 		inferenceResp.Choices = result.Choices
 		inferenceResp.Usage = result.Usage
 	} else {
-		piaURL := os.Getenv("PCCP_PIA_URL")
+		piaURL := piaAPIBase()
 		if piaURL == "" {
 			piaURL = "http://localhost:9090"
 		}
@@ -365,10 +366,10 @@ func (s *Service) defaultForwarder(ctx context.Context, req InferenceRequest, en
 			"exchange_id": req.ExchangeID,
 		}
 		bodyJSON, _ := json.Marshal(piaReq)
-		httpReq, _ := http.NewRequestWithContext(ctx, "POST", piaURL+"/v1/chat/completions", bytes.NewReader(bodyJSON))
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("X-Endpoint-Lease", endpointLeaseID)
-		httpReq.Header.Set("X-Exchange-ID", req.ExchangeID)
+		httpReq, err := s.preparePIARequest(ctx, piaURL, bodyJSON, endpointLeaseID, req.ExchangeID)
+		if err != nil {
+			return nil, fmt.Errorf("relay: PIA request build failed: %w", err)
+		}
 
 		resp, err := s.httpClient.Do(httpReq)
 		if err != nil {
@@ -382,6 +383,52 @@ func (s *Service) defaultForwarder(ctx context.Context, req InferenceRequest, en
 		json.NewDecoder(resp.Body).Decode(&inferenceResp)
 	}
 	return &inferenceResp, nil
+}
+
+// preparePIARequest builds the outbound PIA request with the relay's
+// authentication. A PIA that requires a bearer key (e.g. an
+// OpenAI-compatible endpoint fronting vLLM/SGLang, or the yolo-auto
+// gateway) reads it from PCCP_PIA_API_KEY / YOLO_AUTO_API_KEY.
+func (s *Service) preparePIARequest(ctx context.Context, url string, body []byte, endpointLeaseID, exchangeID string) (*http.Request, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url+"/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-Endpoint-Lease", endpointLeaseID)
+	httpReq.Header.Set("X-Exchange-ID", exchangeID)
+	if key := piaAPIKey(); key != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+key)
+	}
+	return httpReq, nil
+}
+
+// piaAPIKey resolves the PIA bearer credential. The YOLO_AUTO_* pair
+// mimics a vLLM/SGLang deployment behind an OpenAI-compatible gateway
+// for live-path validation.
+func piaAPIKey() string {
+	if k := os.Getenv("PCCP_PIA_API_KEY"); k != "" {
+		return k
+	}
+	return os.Getenv("YOLO_AUTO_API_KEY")
+}
+
+// piaAPIBase resolves the PIA base URL (OpenAI-compatible), normalized
+// to the HOST ROOT (any trailing "/v1" or "/" is stripped — callers
+// append "/v1/chat/completions"). Gateways like yolo-auto hand out
+// ".../v1" as the base; naively concatenating produced /v1/v1/.
+func piaAPIBase() string {
+	u := os.Getenv("PCCP_PIA_URL")
+	if u == "" {
+		u = os.Getenv("YOLO_AUTO_ENDPOINT")
+	}
+	for strings.HasSuffix(u, "/") {
+		u = u[:len(u)-1]
+	}
+	if strings.HasSuffix(u, "/v1") {
+		u = u[:len(u)-3]
+	}
+	return u
 }
 
 // CloseExchange finalizes an exchange and issues an evidence receipt.

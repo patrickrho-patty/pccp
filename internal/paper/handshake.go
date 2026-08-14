@@ -1,5 +1,10 @@
 package paper
 
+import (
+	"errors"
+	"sort"
+)
+
 // HelloMessage is the HELLO message sent by the initiating peer (PAPER §15.1).
 type HelloMessage struct {
 	CoreVersions          []uint8            `cbor:"1,keyasint"`
@@ -191,4 +196,106 @@ type AICompleteMessage struct {
 	OutputDigest      []byte `cbor:"7,keyasint"`
 	ToolProposals     []string `cbor:"8,keyasint,omitempty"`
 	ErrorState        string `cbor:"9,keyasint,omitempty"`
+}
+
+// canonicalHelloForAuth renders the HELLO into deterministic CBOR for
+// the AUTH transcript hash. Map fields are encoded as key-SORTED
+// arrays so both peers compute identical bytes regardless of Go's
+// random map iteration order.
+type canonicalKV struct {
+	Key   string `cbor:"1,keyasint"`
+	Value uint8  `cbor:"2,keyasint"`
+}
+
+type canonicalHello struct {
+	CoreVersions          []uint8        `cbor:"1,keyasint"`
+	PeerProfile           PeerProfile    `cbor:"2,keyasint"`
+	TransportFeatures     []string       `cbor:"3,keyasint"`
+	Extensions            []canonicalKV  `cbor:"4,keyasint"`
+	EncodingProfiles      []string       `cbor:"5,keyasint"`
+	CryptoProfiles        []string       `cbor:"6,keyasint"`
+	ClientNonce           []byte         `cbor:"7,keyasint"`
+	CredentialHint        []byte         `cbor:"8,keyasint,omitempty"`
+	ImplementationName    string         `cbor:"9,keyasint,omitempty"`
+	ImplementationVersion string         `cbor:"10,keyasint,omitempty"`
+}
+
+type canonicalAck struct {
+	CoreVersion       uint8             `cbor:"1,keyasint"`
+	ExtensionVersions []canonicalKV     `cbor:"2,keyasint"`
+	CryptoProfile     string            `cbor:"3,keyasint"`
+	ServerNonce       []byte            `cbor:"4,keyasint"`
+	RelayCredential   []byte            `cbor:"5,keyasint"`
+	AuthChallenge     []byte            `cbor:"6,keyasint"`
+	MinHarnessVersion string            `cbor:"7,keyasint,omitempty"`
+	ResourceLimits    []canonicalLimit  `cbor:"8,keyasint,omitempty"`
+}
+
+type canonicalLimit struct {
+	Key   string `cbor:"1,keyasint"`
+	Value uint64 `cbor:"2,keyasint"`
+}
+
+func sortedKVs(m map[string]uint8) []canonicalKV {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]canonicalKV, 0, len(m))
+	for _, k := range keys {
+		out = append(out, canonicalKV{Key: k, Value: m[k]})
+	}
+	return out
+}
+
+func sortedLimits(m map[string]uint64) []canonicalLimit {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]canonicalLimit, 0, len(m))
+	for _, k := range keys {
+		out = append(out, canonicalLimit{Key: k, Value: m[k]})
+	}
+	return out
+}
+
+// CanonicalHelloCBOR returns the deterministic CBOR encoding of a HELLO
+// used by both peers when computing the AUTH transcript.
+func CanonicalHelloCBOR(h *HelloMessage) ([]byte, error) {
+	if h == nil {
+		return nil, errors.New("paper: nil hello")
+	}
+	return MarshalCBOR(canonicalHello{
+		CoreVersions:          h.CoreVersions,
+		PeerProfile:           h.PeerProfile,
+		TransportFeatures:     h.TransportFeatures,
+		Extensions:            sortedKVs(h.Extensions),
+		EncodingProfiles:      h.EncodingProfiles,
+		CryptoProfiles:        h.CryptoProfiles,
+		ClientNonce:           h.ClientNonce,
+		CredentialHint:        h.CredentialHint,
+		ImplementationName:    h.ImplementationName,
+		ImplementationVersion: h.ImplementationVersion,
+	})
+}
+
+// CanonicalAckCBOR returns the deterministic CBOR encoding of a
+// HELLO_ACK used by both peers when computing the AUTH transcript.
+func CanonicalAckCBOR(a *HelloAckMessage) ([]byte, error) {
+	if a == nil {
+		return nil, errors.New("paper: nil ack")
+	}
+	return MarshalCBOR(canonicalAck{
+		CoreVersion:       a.CoreVersion,
+		ExtensionVersions: sortedKVs(a.ExtensionVersions),
+		CryptoProfile:     a.CryptoProfile,
+		ServerNonce:       a.ServerNonce,
+		RelayCredential:   a.RelayCredential,
+		AuthChallenge:     a.AuthChallenge,
+		MinHarnessVersion: a.MinHarnessVersion,
+		ResourceLimits:    sortedLimits(a.ResourceLimits),
+	})
 }

@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/paper"
 	"github.com/patrickrho-patty/pccp/internal/policy"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
@@ -63,15 +65,28 @@ func (pl *PaperListener) setupSession(ctx context.Context, conn *paper.Transport
 		userID = "user-" + connID
 	}
 
-	// Resolve or create the active policy epoch for the org. A
-	// bootstrap org without an epoch gets one allowing the requested
-	// model so a freshly enrolled harness can work immediately.
-	epoch, err := pl.svc.Policy().GetActiveEpoch(orgID)
+	// Resolve or create the active policy epoch for the org. The
+	// epoch's allow-list carries MODEL PACKAGE IDs (the relay's
+	// authorize() compares against the package ID); the lease below
+	// carries MODEL IDs (the connector's AuthorizeExchange compares
+	// against the model ID). ensureModelServing returns the package
+	// so both lists stay coherent.
+	pkg, err := pl.ensureModelServing(orgID, model)
 	if err != nil {
-		allowed := []string{model}
-		if model == "" {
-			allowed = []string{"*"}
-		}
+		pl.sendJSONError(conn, connID, "model serving unavailable: "+err.Error())
+		return
+	}
+	epoch, err := pl.svc.Policy().GetActiveEpoch(orgID)
+	if err == nil && !epochAllowsPackage(epoch, pkg.PackageID) {
+		// The active epoch predates this model's publication. Issue a
+		// new epoch carrying the previous models plus this package —
+		// the same transition a control plane runs on catalog publish.
+		var prev []string
+		json.Unmarshal([]byte(epoch.AllowedModelsJSON), &prev)
+		epoch, err = pl.svc.Policy().CreatePolicyEpoch(orgID, append(prev, pkg.PackageID), "immediate")
+	}
+	if err != nil {
+		allowed := []string{pkg.PackageID}
 		epoch, err = pl.svc.Policy().CreatePolicyEpoch(orgID, allowed, "immediate")
 		if err != nil {
 			pl.sendJSONError(conn, connID, "policy epoch unavailable: "+err.Error())
@@ -80,7 +95,7 @@ func (pl *PaperListener) setupSession(ctx context.Context, conn *paper.Transport
 	}
 
 	// Push POLICY_EPOCH (0x0D10).
-	wireEpoch, err := buildWirePolicyEpoch(epoch, "pccp-policy")
+	wireEpoch, err := buildWirePolicyEpoch(epoch, pl.svc.Policy().SigningPublicKey())
 	if err != nil {
 		pl.sendJSONError(conn, connID, "epoch encode failed: "+err.Error())
 		return
@@ -95,14 +110,24 @@ func (pl *PaperListener) setupSession(ctx context.Context, conn *paper.Transport
 		return
 	}
 
-	// Push CATALOG_SNAPSHOT (0x0D01) bound to the epoch.
+	// Push CATALOG_SNAPSHOT (0x0D01) bound to the epoch. The snapshot
+	// merges the org's CatalogModels with the ModelPackage registry so
+	// a freshly bootstrapped relay advertises its governed models.
 	descriptors, err := pl.svc.Catalog().GetEffectiveCatalog("", orgID, "")
 	if err != nil {
 		log.Printf("relay: catalog resolve for %s failed: %v", connID, err)
 		descriptors = nil
 	}
+	if pkg != nil {
+		descriptors = append(descriptors, models.ModelDescriptor{
+			CatalogModelID: pkg.ModelID,
+			DisplayName:    pkg.Name,
+			ReleaseChannel: pkg.Version,
+		})
+	}
 	thumb := sha256.Sum256(pl.svc.Policy().SigningPublicKey())
 	wireCatalog := buildWireCatalogSnapshot(epoch.EpochID, thumb, descriptors, time.Now())
+	wireCatalog.Digest = wireCatalogDigest(wireCatalog)
 	catalogBody, err := encodeWire(wireCatalog)
 	if err != nil {
 		pl.sendJSONError(conn, connID, "catalog encode failed: "+err.Error())
@@ -151,14 +176,13 @@ func (pl *PaperListener) setupSession(ctx context.Context, conn *paper.Transport
 	log.Printf("relay: session %s granted for %s (epoch=%s lease=%s)", sessionID, connID, epoch.EpochID, lease.LeaseID)
 }
 
-// leaseRequest builds the issuance request. The lease inherits the
-// epoch's model allow-list; a session that named a specific model
-// gets that model appended so the first exchange is never
-// self-denied.
+// leaseRequest builds the issuance request. The lease's allowed-models
+// list carries MODEL IDs — the connector's AuthorizeExchange compares
+// the requested model ID against exactly these.
 func (pl *PaperListener) leaseRequest(connID, orgID, sessionID, userID, epochID, model string) policy.IssueLeaseRequest {
-	allowed := []string{"*"}
-	if model != "" {
-		allowed = []string{model, "*"}
+	allowed := []string{model}
+	if model == "" && pl.svc != nil {
+		allowed = nil // relay-side validation catches an unnamed model
 	}
 	peerID := pl.peerIDForConn(connID)
 	return policy.IssueLeaseRequest{
@@ -170,6 +194,91 @@ func (pl *PaperListener) leaseRequest(connID, orgID, sessionID, userID, epochID,
 		AllowedModels:  allowed,
 		Validity:       8 * time.Hour,
 	}
+}
+
+// ensureModelServing guarantees the governed chain a real exchange
+// needs: ModelPackage → InferenceEndpoint → EndpointLease. A relay
+// configured with an external OpenAI-compatible PIA (env PCCP_PIA_URL
+// / YOLO_AUTO_ENDPOINT, mimicking a vLLM/SGLang deployment) registers
+// its models here on first session. Returns the package for the
+// requested model.
+func (pl *PaperListener) ensureModelServing(orgID, model string) (*models.ModelPackage, error) {
+	if model == "" {
+		return nil, fmt.Errorf("no model requested")
+	}
+	db := pl.svc.db
+
+	var pkg models.ModelPackage
+	err := db.Where("model_id = ?", model).First(&pkg).Error
+	if err != nil {
+		pkg = models.ModelPackage{
+			PackageID:      "pmp-" + model,
+			ModelID:        model,
+			Name:           model,
+			Family:         "general",
+			State:          "published",
+		}
+		if err := db.Create(&pkg).Error; err != nil {
+			return nil, fmt.Errorf("register model package: %w", err)
+		}
+	}
+
+	var endpoint models.InferenceEndpoint
+	err = db.Where("organization_id = ? AND model_package_id = ? AND status = 'active'",
+		orgID, pkg.PackageID).First(&endpoint).Error
+	if err != nil {
+		endpoint = models.InferenceEndpoint{
+			OrganizationID: orgID,
+			EndpointID:     "ep-" + pkg.PackageID,
+			Name:           "primary PIA for " + model,
+			PIAPeerID:      "pia-local",
+			ModelPackageID: pkg.PackageID,
+			ServingEngine:  "openai-compat",
+			Status:         "active",
+		}
+		if err := db.Create(&endpoint).Error; err != nil {
+			return nil, fmt.Errorf("register endpoint: %w", err)
+		}
+	}
+
+	var epLease models.EndpointLease
+	err = db.Where("endpoint_id = ? AND status = 'active' AND not_after > ?",
+		endpoint.EndpointID, time.Now().Format(time.RFC3339)).
+		First(&epLease).Error
+	if err != nil {
+		now := time.Now()
+		epLease = models.EndpointLease{
+			EndpointID:     endpoint.EndpointID,
+			OrganizationID: orgID,
+			ModelPackageID: pkg.PackageID,
+			LeaseID:        paper.GenerateID("epl"),
+			PIAPeerID:      "pia-local",
+			Status:         "active",
+		}
+		epLease.NotBefore = now.Format(time.RFC3339)
+		epLease.NotAfter = now.Add(7 * 24 * time.Hour).Format(time.RFC3339)
+		epLease.IssuedAt = now.Format(time.RFC3339)
+		if err := db.Create(&epLease).Error; err != nil {
+			return nil, fmt.Errorf("issue endpoint lease: %w", err)
+		}
+	}
+	return &pkg, nil
+}
+
+// epochAllowsPackage reports whether the epoch's allow-list contains
+// the package ID.
+func epochAllowsPackage(epoch *models.PolicyEpoch, packageID string) bool {
+	if epoch == nil {
+		return false
+	}
+	var allowed []string
+	json.Unmarshal([]byte(epoch.AllowedModelsJSON), &allowed)
+	for _, m := range allowed {
+		if m == packageID {
+			return true
+		}
+	}
+	return false
 }
 
 // orgForPeer resolves the authenticated credential's organization.

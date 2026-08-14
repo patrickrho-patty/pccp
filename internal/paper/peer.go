@@ -292,3 +292,13 @@ func hexEncode(b []byte) string {
 	}
 	return string(out)
 }
+
+// DecodeRevocationEpochOrZero is the non-erroring variant used by
+// debug logging.
+func DecodeRevocationEpochOrZero(evidence []byte) uint64 {
+	v, err := DecodeRevocationEpoch(evidence)
+	if err != nil {
+		return 0
+	}
+	return v
+}

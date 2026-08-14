@@ -136,7 +136,11 @@ func (s *Service) IssueCapabilityLease(req IssueLeaseRequest) (*models.Capabilit
 		"write": req.FilePathWriteScope,
 	})
 
-	now := time.Now()
+	// Truncate to whole seconds so the RFC3339 storage columns and the
+	// signed/wire UnixMilli values agree exactly on roundtrip — the
+	// connector recomputes the signature from the wire fields.
+	now := time.Now().Truncate(time.Second)
+	notAfter := now.Add(req.Validity).Truncate(time.Second)
 	lease := &models.CapabilityLease{
 		OrganizationID:       req.OrganizationID,
 		LeaseID:              paper.GenerateID("lease"),
@@ -151,17 +155,35 @@ func (s *Service) IssueCapabilityLease(req IssueLeaseRequest) (*models.Capabilit
 		TokenBudget:          req.TokenBudget,
 		ProtectionProfile:    "P0",
 		NotBefore:            now.Format(time.RFC3339),
-		NotAfter:             now.Add(req.Validity).Format(time.RFC3339),
+		NotAfter:             notAfter.Format(time.RFC3339),
 		LeaseSequence:        1,
 		IssuedAt:             now.Format(time.RFC3339),
 		Status:               "active",
 	}
 
-	// CP signs the lease using COSE-Sign1 (PAPER §22)
-	leaseBody := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s",
-		lease.LeaseID, lease.SubjectPeerID, lease.UserID, lease.SessionID,
-		lease.PolicyEpochID, lease.NotBefore, lease.NotAfter)
-	sign1, err := paper.CreateCOSESign1([]byte(leaseBody), s.signingKey, []byte("pccp-policy"))
+	// CP signs the lease using COSE-Sign1 (PAPER §22). The signed body
+	// is the canonical, domain-separated, length-prefixed layout the
+	// connector's LeaseVerifier recomputes (see canonical.go + the
+	// cross-repo lease conformance suite) — it binds every scope field,
+	// the token budget, the validity window, and the sequence number.
+	canonical := CanonicalLeaseSigningBytes(LeaseSigningInput{
+		LeaseID:            lease.LeaseID,
+		SubjectPeerID:      lease.SubjectPeerID,
+		UserID:             lease.UserID,
+		SessionID:          lease.SessionID,
+		PolicyEpochID:      lease.PolicyEpochID,
+		AllowedModels:      req.AllowedModels,
+		FilePathReadScope:  req.FilePathReadScope,
+		FilePathWriteScope: req.FilePathWriteScope,
+		ToolClasses:        req.ToolClasses,
+		RepositoryScope:    req.RepositoryScope,
+		TokenBudget:        lease.TokenBudget,
+		NotBeforeUnixMs:    now.UnixMilli(),
+		NotAfterUnixMs:     notAfter.UnixMilli(),
+		LeaseSequence:      uint64(lease.LeaseSequence),
+		IssuedAtUnixMs:     now.UnixMilli(),
+	})
+	sign1, err := paper.CreateCOSESign1(canonical, s.signingKey, []byte("pccp-policy"))
 	if err != nil {
 		return nil, fmt.Errorf("policy: sign lease: %w", err)
 	}

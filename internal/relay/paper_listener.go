@@ -14,6 +14,7 @@ import (
 	"log"
 	"math/big"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -204,12 +205,12 @@ func (pl *PaperListener) handleConn(ctx context.Context, netConn net.Conn) {
 	}
 	log.Printf("relay: paper AUTH_PROOF received from %s", connID)
 
-	helloCBOR, err := paper.MarshalCBOR(hello)
+	helloCBOR, err := paper.CanonicalHelloCBOR(hello)
 	if err != nil {
 		log.Printf("relay: paper encode HELLO transcript for %s failed: %v", connID, err)
 		return
 	}
-	ackCBOR, err := paper.MarshalCBOR(ack)
+	ackCBOR, err := paper.CanonicalAckCBOR(ack)
 	if err != nil {
 		log.Printf("relay: paper encode HELLO_ACK transcript for %s failed: %v", connID, err)
 		return
@@ -223,6 +224,10 @@ func (pl *PaperListener) handleConn(ctx context.Context, netConn net.Conn) {
 		[]byte("tcp-exporter"),
 		credentialDigest.Bytes(),
 	)
+	if os.Getenv("PAPER_DEBUG_AUTH") == "1" {
+		log.Printf("relay: AUTH_DEBUG helloCBOR=%x\nackCBOR=%x\nclientNonce=%x serverNonce=%x credDigest=%x transcript=%x challengeID=%x epoch=%d",
+			helloCBOR, ackCBOR, hello.ClientNonce, challenge.ServerNonce, credentialDigest.Bytes(), transcript.Bytes(), proof.ChallengeID, paper.DecodeRevocationEpochOrZero(proof.RevocationEvidence))
+	}
 	credential, err := pl.authenticator.VerifyPeerProof(ctx, transcript.Bytes(), proof)
 	if err != nil {
 		log.Printf("relay: paper rejecting peer proof %s: %v", connID, err)
@@ -440,13 +445,13 @@ func (pl *PaperListener) governAIOpen(ctx context.Context, conn *paper.Transport
 		"output_tokens": outTok,
 		"total_tokens":  inTok + outTok,
 	})
+	// B3: push the evidence receipt BEFORE AI_COMPLETE — the
+	// connector's stream reader terminates on AI_COMPLETE, so the
+	// receipt must already be in flight for the ack to happen.
+	pl.pushEvidenceReceiptMessage(conn, connID, receipt)
+
 	conn.SendMessage(paper.MsgAIComplete, nil, completePayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
 	log.Printf("relay: governed AI_COMPLETE sent to %s", connID)
-
-	// B3: GovernInference already issued the signed evidence receipt;
-	// push it to the harness so the connector retains tamper-evidence
-	// and acks back.
-	pl.pushEvidenceReceiptMessage(conn, connID, receipt)
 }
 
 // pushEvidenceReceiptMessage encodes and pushes an issued receipt.

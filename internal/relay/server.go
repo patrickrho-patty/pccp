@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/patrickrho-patty/pccp/internal/identity"
 )
 
 // Server is the Relay HTTP API server.
@@ -26,11 +28,49 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/v1/enroll", s.handleEnrollHarness)
 	mux.HandleFunc("/v1/exchanges", s.handleOpenExchange)
 	mux.HandleFunc("/v1/exchanges/", s.handleExchangeAction)
 	mux.HandleFunc("/v1/inference", s.handleInference)
 
 	return mux
+}
+
+// handleEnrollHarness is the harness enrollment entry point (A1): a
+// harness presents its Ed25519 public key and receives a CA-issued
+// COSE-Sign1 peer credential. This is the admin-plane half of the
+// enrollment-code flow; the PAPER data plane verifies the credential
+// on connect.
+func (s *Server) handleEnrollHarness(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req identity.EnrollHarnessRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.OrganizationID == "" || req.HarnessID == "" || req.PublicKeyHex == "" {
+		writeError(w, http.StatusBadRequest, "organization_id, harness_id, and public_key_hex are required")
+		return
+	}
+	if req.UserID == "" {
+		req.UserID = "user-" + req.HarnessID
+	}
+	harness, cred, err := s.svc.Identity().EnrollHarness(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "enrollment failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"harness_id":      harness.HarnessID,
+		"organization_id": harness.OrganizationID,
+		"credential_hex":  harness.CredentialJSON,
+		"serial":          cred.Serial,
+		"issuer":          cred.Issuer,
+		"expires_ms":      cred.NotAfter,
+	})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

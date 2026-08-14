@@ -63,14 +63,17 @@ func CreateCOSESign1(payload []byte, privKey ed25519.PrivateKey, keyID []byte) (
 		return nil, fmt.Errorf("paper: marshal protected header: %w", err)
 	}
 
-	// Build Sig_structure
-	sigStruct := SigStructure{
-		Context:       "Signature1",
-		BodyProtected: protectedBytes,
-		ExternalAAD:   []byte{},
-		Payload:       payload,
+	// Build Sig_structure as the RFC 8152 §4.4 ARRAY form:
+	// ["Signature1", body_protected, external_aad, payload]. The
+	// connector recomputes exactly this array; a map-form encoding
+	// would never verify cross-repo.
+	sigInput := []interface{}{
+		"Signature1",
+		protectedBytes,
+		[]byte{},
+		payload,
 	}
-	sigBytes, err := MarshalCBOR(sigStruct)
+	sigBytes, err := MarshalCBOR(sigInput)
 	if err != nil {
 		return nil, fmt.Errorf("paper: marshal sig structure: %w", err)
 	}
@@ -95,14 +98,15 @@ func VerifyCOSESign1(sign1 *COSESign1, pubKey ed25519.PublicKey) error {
 		return errors.New("paper: empty public key")
 	}
 
-	// Reconstruct Sig_structure
-	sigStruct := SigStructure{
-		Context:       "Signature1",
-		BodyProtected: sign1.Protected,
-		ExternalAAD:   []byte{},
-		Payload:       sign1.Payload,
+	// Reconstruct the RFC 8152 array-form Sig_structure (must equal
+	// the connector's recomputation byte-for-byte).
+	sigInput := []interface{}{
+		"Signature1",
+		sign1.Protected,
+		[]byte{},
+		sign1.Payload,
 	}
-	sigBytes, err := MarshalCBOR(sigStruct)
+	sigBytes, err := MarshalCBOR(sigInput)
 	if err != nil {
 		return fmt.Errorf("paper: marshal sig structure for verify: %w", err)
 	}

@@ -1,6 +1,9 @@
 package relay
 
 import (
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -118,29 +121,34 @@ func buildWireLease(lease *models.CapabilityLease, issuerID string) (*wireLease,
 // ---------------------------------------------------------------------------
 
 type wirePolicyEpoch struct {
-	EpochID          string `cbor:"1,keyasint"`
-	IssuedAtUnixMs   int64  `cbor:"2,keyasint"`
-	NotBeforeUnixMs  int64  `cbor:"3,keyasint"`
-	NotAfterUnixMs   int64  `cbor:"4,keyasint"`
-	MonotonicSequence uint64 `cbor:"5,keyasint"`
-	Issuer           string `cbor:"6,keyasint,omitempty"`
-	EpochDigest      [32]byte `cbor:"7,keyasint,omitempty"`
+	EpochID           string   `cbor:"1,keyasint"`
+	IssuedAtUnixMs    int64    `cbor:"2,keyasint"`
+	NotBeforeUnixMs   int64    `cbor:"3,keyasint"`
+	NotAfterUnixMs    int64    `cbor:"4,keyasint"`
+	MonotonicSequence uint64   `cbor:"5,keyasint"`
+	// IssuerKeyThumbprint mirrors the connector's field 6: the SHA-256
+	// of the issuer's public key bytes.
+	IssuerKeyThumbprint [32]byte `cbor:"6,keyasint"`
+	// Digest mirrors the connector's field 7: the policy content
+	// digest (empty when the epoch carries no content body).
+	Digest [32]byte `cbor:"7,keyasint,omitempty"`
 }
 
-func buildWirePolicyEpoch(epoch *models.PolicyEpoch, issuerID string) (*wirePolicyEpoch, error) {
+func buildWirePolicyEpoch(epoch *models.PolicyEpoch, issuerPub ed25519.PublicKey) (*wirePolicyEpoch, error) {
 	if epoch == nil {
 		return nil, fmt.Errorf("relay: nil policy epoch")
 	}
 	created := epoch.CreatedAt.UnixMilli()
 	// The model carries no explicit validity window; the relay grants a
 	// 24h binding window after which the connector re-binds on connect.
+	thumb := sha256.Sum256(issuerPub)
 	return &wirePolicyEpoch{
-		EpochID:           epoch.EpochID,
-		IssuedAtUnixMs:    created,
-		NotBeforeUnixMs:   created,
-		NotAfterUnixMs:    created + 24*int64(time.Hour/time.Millisecond),
-		MonotonicSequence: epoch.EpochNumber,
-		Issuer:            issuerID,
+		EpochID:             epoch.EpochID,
+		IssuedAtUnixMs:      created,
+		NotBeforeUnixMs:     created,
+		NotAfterUnixMs:      created + 24*int64(time.Hour/time.Millisecond),
+		MonotonicSequence:   epoch.EpochNumber,
+		IssuerKeyThumbprint: thumb,
 	}, nil
 }
 
@@ -172,6 +180,35 @@ type wireCatalogSnapshot struct {
 	IssuerKeyThumbprint [32]byte          `cbor:"6,keyasint"`
 	Digest              [32]byte          `cbor:"7,keyasint"`
 	Entries             []wireCatalogEntry `cbor:"8,keyasint"`
+}
+
+// catalogDomain mirrors the connector's paperproto.CatalogDomain.
+const catalogDomain = "DARI-CATALOG-v1\x00"
+
+// wireCatalogDigest mirrors the connector's CatalogDigest — the
+// snapshot's Digest field MUST equal this recomputation or the
+// connector rejects the push.
+func wireCatalogDigest(snap *wireCatalogSnapshot) [32]byte {
+	h := sha256.New()
+	h.Write([]byte(catalogDomain))
+	var b8 [8]byte
+	binary.BigEndian.PutUint64(b8[:], snap.Version)
+	h.Write(b8[:])
+	h.Write([]byte(snap.EpochID))
+	binary.BigEndian.PutUint64(b8[:], snap.IssuedSequence)
+	h.Write(b8[:])
+	h.Write(snap.IssuerKeyThumbprint[:])
+	binary.BigEndian.PutUint64(b8[:], uint64(snap.NotAfterUnixMs))
+	h.Write(b8[:])
+	for i := range snap.Entries {
+		h.Write([]byte(snap.Entries[i].ModelID))
+		h.Write([]byte(snap.Entries[i].Version))
+		h.Write(snap.Entries[i].ModelPackageDigest[:])
+		h.Write(snap.Entries[i].EndpointDigest[:])
+	}
+	var d [32]byte
+	copy(d[:], h.Sum(nil))
+	return d
 }
 
 func buildWireCatalogSnapshot(epochID string, issuerThumbprint [32]byte, descriptors []models.ModelDescriptor, now time.Time) *wireCatalogSnapshot {

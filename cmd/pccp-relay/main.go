@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"flag"
 	"log"
@@ -50,19 +51,44 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Build the PAPER trust bundle from the identity CA. The relay's
+	// PeerAuthenticator verifies every AUTH_PROOF against this issuer
+	// set and the live revocation snapshot — the A1 e2e wiring. A
+	// harness without a CA-issued, unrevoked PPC cannot authenticate.
+	epoch, revoked := svc.Identity().RevocationSnapshot()
+	revokedSerials := make(map[string]uint64, len(revoked))
+	for serial, at := range revoked {
+		revokedSerials[serial] = at
+	}
+	trust := relay.TrustBundle{
+		Issuers: map[string]ed25519.PublicKey{
+			svc.Identity().CAIssuerID(): svc.Identity().CAPublicKeyRaw(),
+		},
+		ProtocolVersion: 1,
+		RevocationEpoch: epoch,
+		RevokedSerials:  revokedSerials,
+	}
+
 	// Start PAPER native protocol listener (TLS/TCP with CBOR framing)
 	// Per README guardrail: "No HTTP/REST/WebSocket for protocol traffic."
-	paperTLS := &tls.Config{
-		InsecureSkipVerify: true,
-		MinVersion:         tls.VersionTLS13,
-		NextProtos:         []string{relay.PaperALPN},
+	// A nil config makes the listener generate a self-signed dev cert;
+	// when real certs are configured they take precedence.
+	var paperTLS *tls.Config
+	if cert := os.Getenv("PCCP_RELAY_TLS_CERT"); cert != "" {
+		key := os.Getenv("PCCP_RELAY_TLS_KEY")
+		loaded, lerr := tls.LoadX509KeyPair(cert, key)
+		if lerr != nil {
+			log.Fatalf("failed to load PAPER TLS cert/key: %v", lerr)
+		}
+		paperTLS = &tls.Config{
+			MinVersion:   tls.VersionTLS13,
+			NextProtos:   []string{relay.PaperALPN},
+			Certificates: []tls.Certificate{loaded},
+		}
 	}
-	// In production, load actual certs from cfg.TLSCertFile / cfg.TLSKeyFile
-	// For dev: pass nil so NewPaperListener generates self-signed certs
-	_ = paperTLS // keep for production config reference
-	paperListener := relay.NewPaperListener(svc, nil)
+	paperListener := relay.NewPaperListener(svc, paperTLS, trust)
 	go func() {
-		log.Printf("Starting PAPER native listener on %s", *paperAddr)
+		log.Printf("Starting PAPER native listener on %s (issuer=%s, revoked=%d)", *paperAddr, svc.Identity().CAIssuerID(), len(revokedSerials))
 		if err := paperListener.ListenTCP(ctx, *paperAddr); err != nil && ctx.Err() == nil {
 			log.Printf("PAPER listener error: %v", err)
 		}
