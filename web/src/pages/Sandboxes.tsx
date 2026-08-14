@@ -42,8 +42,8 @@ export default function Sandboxes() {
     } catch {}
   }
 
-  const statusBadge = (s: string) => { const m: Record<string,string> = { running:'badge-green', stopped:'badge-gray', isolated:'badge-red', error:'badge-red' }; return m[s] || 'badge-gray' }
-  const statusLabel = (s: string) => { const m: Record<string,string> = { running:'실행 중', stopped:'중지됨', isolated:'격리됨', error:'오류' }; return m[s] || s }
+  const statusBadge = (s: string) => { const m: Record<string,string> = { running:'badge-green', defined:'badge-gray', stopped:'badge-gray', isolated:'badge-red', error:'badge-red' }; return m[s] || 'badge-gray' }
+  const statusLabel = (s: string) => { const m: Record<string,string> = { running:'실행 중', defined:'정의만 됨 (런타임 없음)', stopped:'중지됨', isolated:'격리됨', error:'오류' }; return m[s] || s }
 
   const modeInfo: Record<string, { icon: string; desc: string; isolation: string }> = {
     docker: { icon: '🐳', desc: 'Docker 컨테이너', isolation: '네임스페이스 격리' },

@@ -235,8 +235,41 @@ func (s *Service) RevokeCapabilityLease(leaseID string) error {
 	return result.Error
 }
 
+// computePolicyDigest derives the content digest of an org's ACTIVE
+// rule set for a domain. The digest covers the actual rules that will
+// be enforced — ID, scope, and canonical config — sorted
+// deterministically so an identical rule set always yields the
+// identical digest, and any rule change (create/enable/disable/edit)
+// changes it. An org with no rules in the domain digests the empty
+// set (a stable, honest value), not a timestamp.
 func (s *Service) computePolicyDigest(orgID, domain string) string {
-	data := fmt.Sprintf("%s|%s|%d", orgID, domain, time.Now().UnixNano())
-	h := sha256.Sum256([]byte(data))
-	return "sha256:" + hex.EncodeToString(h[:])
+	var rules []models.PolicyRule
+	s.db.Where("organization_id = ? AND domain = ? AND enabled = ?", orgID, domain, true).
+		Order("id ASC").Find(&rules)
+
+	h := sha256.New()
+	fmt.Fprintf(h, "DARI-POLICY-DIGEST-v1\x00")
+	fmt.Fprintf(h, "org=%s;domain=%s;rules=%d\x00", orgID, domain, len(rules))
+	for _, r := range rules {
+		fmt.Fprintf(h, "rule=%s;scope=%s/%s;config=%s\x00", r.ID, r.Scope, r.ScopeName, canonicalJSONString(r.ConfigJSON))
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil))
+}
+
+// canonicalJSONString normalizes a stored JSON config so key-order
+// differences in storage do not change the digest. Unparseable
+// configs digest as their literal bytes (a change is a change).
+func canonicalJSONString(s string) string {
+	if s == "" {
+		return "{}"
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(s), &parsed); err != nil {
+		return s
+	}
+	out, err := json.Marshal(parsed)
+	if err != nil {
+		return s
+	}
+	return string(out)
 }

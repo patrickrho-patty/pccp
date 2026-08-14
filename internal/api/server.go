@@ -3306,8 +3306,32 @@ func (s *Server) handleSeedEnterpriseFeatures(w http.ResponseWriter, r *http.Req
 		{"project_offboard", "Project Offboarding", "프로젝트 오프보딩", "audit", "§33.14", false},
 	}
 
+	// liveFeatures are the capabilities whose enforcement loop is
+	// actually wired today (validated end-to-end by the DARI live
+	// suites: governed tool gate, workflow gates, sandbox policy,
+	// network grants, provenance, evidence receipts). Everything else
+	// seeds as planned — the tracker reports reality, not aspiration.
+	liveFeatures := map[string]bool{
+		"change_freeze":    true, // workflow gate (governed)
+		"model_recall":     true, // workflow gate (governed)
+		"mandatory_ack":    true, // workflow gate (governed)
+		"sandbox_execution": true, // sandbox policy (governed E4)
+		"command_auth":     true, // tool registry gate (governed C3)
+		"network_egress":   true, // network grants (governed C4)
+		"mcp_allowlist":    true, // tool registry covers MCP (C3)
+		"ai_attribution":   true, // provenance emission + ingestion (B1/B2)
+		"audit_export":     true, // evidence receipts + ack loop (B3)
+		"data_classification": true, // DLP finding classification on live path
+	}
+
 	inserted := 0
 	for _, d := range defaults {
+		// Idempotent seed: re-running never duplicates rows.
+		var existing models.EnterpriseHarnessFeature
+		if err := s.db.Where("organization_id = ? AND feature_key = ?", orgID, d.Key).First(&existing).Error; err == nil {
+			continue
+		}
+		live := liveFeatures[d.Key]
 		feature := &models.EnterpriseHarnessFeature{
 			Base: models.Base{},
 			OrganizationID: orgID,
@@ -3316,9 +3340,14 @@ func (s *Server) handleSeedEnterpriseFeatures(w http.ResponseWriter, r *http.Req
 			FeatureNameKo:  d.NameKo,
 			Category:       d.Category,
 			PRDRef:         d.PRD,
-			Enabled:        true,
-			Enforced:       d.Enforced,
-			Status:         "active",
+			Enabled:        live,
+			Enforced:       live && d.Enforced,
+			Status: func() string {
+				if live {
+					return "active"
+				}
+				return "planned"
+			}(),
 		}
 		if err := s.db.Create(feature).Error; err != nil {
 			log.Printf("enterprise seed: failed to create %s: %v", d.Key, err)
@@ -3327,5 +3356,5 @@ func (s *Server) handleSeedEnterpriseFeatures(w http.ResponseWriter, r *http.Req
 		inserted++
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "seeded", "count": inserted})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "seeded", "count": inserted, "note": "features seed by actual enforcement state; unwired capabilities are 'planned'"})
 }

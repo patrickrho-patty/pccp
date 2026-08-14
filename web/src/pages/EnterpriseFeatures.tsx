@@ -138,6 +138,7 @@ export default function EnterpriseFeatures() {
                           <div className="text-xs text-gray-400">{f.feature_name}</div>
                         </div>
                         <div className="flex items-center gap-1">
+                          {f.status === 'planned' && <span className="badge-gray text-[10px]" title="아직 시행되지 않음">계획</span>}
                           {f.enforced && <span className="badge-red text-[10px]">의무</span>}
                           <Link to="/audit" className="text-[10px] text-gray-400 hover:underline">{f.prd_ref}</Link>
                         </div>

@@ -3,6 +3,9 @@ package sandbox
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
@@ -48,7 +51,11 @@ type Sandbox struct {
 	ResourceLimits  string      `json:"resource_limits,omitempty"` // JSON
 	NetworkPolicy   string      `json:"network_policy,omitempty"`  // JSON: allowed destinations
 	// State
-	Status          string      `json:"status"` // pending, running, paused, destroyed, failed
+	Status          string      `json:"status"` // pending, defined, running, paused, destroyed, failed
+	// RuntimeProvider records the HONEST provisioning outcome: the
+	// runtime that actually hosts the sandbox, or "none (...)" when
+	// definition-only.
+	RuntimeProvider string      `json:"runtime_provider,omitempty"`
 	StartedAt       string      `json:"started_at,omitempty"`
 	DestroyedAt     string      `json:"destroyed_at,omitempty"`
 	// Forensics
@@ -93,17 +100,71 @@ func (s *Service) CreateSandbox(req CreateRequest) (*Sandbox, error) {
 		Status:         "pending",
 	}
 
-	// In a real implementation, this would provision via Docker/containerd/Kubernetes.
-	// For now, we record the sandbox definition.
+	// Provisioning: attempt a real runtime when one is reachable, and
+	// record the HONEST outcome either way. The definition is always
+	// persisted; the status reflects what actually happened:
+	//   running  — the runtime accepted the container and reported it up
+	//   defined  — no runtime reachable; definition recorded, not running
+	// A sandbox the control plane cannot honestly call "running" is
+	// never labeled running.
 	if err := s.recordSandbox(sandbox); err != nil {
 		return nil, err
 	}
 
-	sandbox.Status = "running"
-	sandbox.StartedAt = time.Now().Format(time.RFC3339)
-	s.updateSandboxStatus(sandbox.ID, "running", sandbox.StartedAt)
+	if outcome := s.attemptProvision(sandbox); outcome.provisioned {
+		sandbox.Status = "running"
+		sandbox.StartedAt = outcome.startedAt
+		sandbox.RuntimeProvider = outcome.provider
+		s.updateSandboxStatus(sandbox.ID, "running", sandbox.StartedAt)
+	} else {
+		// No runtime reachable — record the definition with the honest
+		// status and the provider probe result for operators.
+		sandbox.Status = "defined"
+		sandbox.RuntimeProvider = "none (" + outcome.detail + ")"
+		s.updateSandboxStatus(sandbox.ID, "defined", "")
+	}
 
 	return sandbox, nil
+}
+
+// provisionOutcome reports a provisioning attempt.
+type provisionOutcome struct {
+	provisioned bool
+	startedAt   string
+	provider    string
+	detail      string
+}
+
+// attemptProvision tries to bring the sandbox up on a reachable local
+// runtime (Docker API over its unix socket). It returns a failure
+// detail rather than an error: an unreachable runtime is an expected
+// deployment condition, not a fault.
+func (s *Service) attemptProvision(sandbox *Sandbox) provisionOutcome {
+	client := &http.Client{Timeout: 3 * time.Second}
+	// Docker socket probe. A deployment with a real runtime answers.
+	endpoints := []string{"http://localhost/v1.41/containers/json?limit=1"}
+	if dockerHost := os.Getenv("DOCKER_HOST"); dockerHost != "" {
+		endpoints = append([]string{strings.TrimSuffix(dockerHost, "/") + "/containers/json?limit=1"}, endpoints...)
+	}
+	for _, ep := range endpoints {
+		if ep == "" {
+			continue
+		}
+		resp, err := client.Get(ep)
+		if err != nil {
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode >= 200 && resp.StatusCode < 500 {
+			return provisionOutcome{
+				provisioned: false, // runtime reachable; container scheduling is engine-specific
+				provider:    "docker-api",
+				startedAt:   time.Now().Format(time.RFC3339),
+				detail:      "runtime reachable; engine scheduling not wired in this build",
+			}
+		}
+	}
+	return provisionOutcome{provisioned: false, detail: "no container runtime reachable"}
 }
 
 // DestroySandbox destroys a sandbox and generates destruction evidence (PRD §31.2).
@@ -247,7 +308,7 @@ func (s *Service) recordSandbox(sb *Sandbox) error {
 		Action:         "sandbox_create",
 		ResourceType:   "sandbox",
 		ResourceID:     sb.ID,
-		Details:        fmt.Sprintf(`{"mode":"%s","image":"%s"}`, sb.Mode, sb.BaseImage),
+		Details:        fmt.Sprintf(`{"mode":"%s","image":"%s","status":"%s","runtime_provider":"%s"}`, sb.Mode, sb.BaseImage, sb.Status, sb.RuntimeProvider),
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	}

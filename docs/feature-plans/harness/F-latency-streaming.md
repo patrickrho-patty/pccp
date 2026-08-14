@@ -38,6 +38,13 @@
 - F1 is the substantive work (relay streaming + connector passthrough + DLP inspector already chunk-capable). F2 is small. F3 is a bench package + mocks; keep it deterministic (fixed RNG schedule, no sleeps beyond the schedule).
 - Depends on: Harness A wiring being live end-to-end (trust bundle, lease issuance) — the bench drives the real governed path, not a fake.
 
+## Status (2026-08-14)
+
+- F1 streaming: **DONE** — relay streams AI_TOKEN_CHUNK through the governed path; validated offline + live model.
+- F2 prewarm: **DONE** — Provider.Prewarm keeps connection + session warm and refreshes leases in the renewal window.
+- F3 benchmark: **DONE** — `internal/bench` + `cmd/pccp-bench`; three arms, deterministic schedule.
+- F4 numbers: **DONE** — `docs/benchmarks/dari-transport-latency.md` (methodology + results, arXiv-ready).
+
 ## Acceptance
 - A streaming governed exchange reaches the connector token-by-token (AI_TOKEN_CHUNK observed in order, AI_COMPLETE last with usage);
 - bench runs all three arms and prints the table; medians stable across runs (±10%);
