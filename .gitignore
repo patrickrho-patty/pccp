@@ -38,3 +38,4 @@ docs/plans/DARI/arxiv/*.pdf
 docs/plans/DARI/arxiv/*.tar.gz
 docs/plans/DARI/arxiv/Makefile
 tmp-relay
+pccp-relay
