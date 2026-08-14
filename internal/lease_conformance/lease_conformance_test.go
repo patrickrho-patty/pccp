@@ -1,6 +1,7 @@
 package lease_conformance
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
 	"strings"
@@ -187,15 +188,6 @@ func TestConnectorLeaseSigningBytesPinned(t *testing.T) {
 	}
 }
 
-// bytesEqual is a small helper for the conformance test.
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
+// bytesEqual is a thin wrapper around bytes.Equal kept for symmetry
+// with the conformance helpers.
+func bytesEqual(a, b []byte) bool { return bytes.Equal(a, b) }
