@@ -147,4 +147,7 @@ type EvidenceReceipt struct {
 	Signature      string `gorm:"type:text" json:"signature"` // COSE-Sign1
 	RedactionManifest string `gorm:"type:text" json:"redaction_manifest,omitempty"`
 	IssuedAt       string `gorm:"type:timestamp" json:"issued_at"`
+	// AcknowledgedAt records (RFC3339) when the harness confirmed
+	// receipt of this evidence receipt over PAPER; empty until acked.
+	AcknowledgedAt string `gorm:"type:timestamp" json:"acknowledged_at,omitempty"`
 }

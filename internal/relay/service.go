@@ -12,8 +12,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/patrickrho-patty/pccp/internal/catalog"
+	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/paper"
+	"github.com/patrickrho-patty/pccp/internal/policy"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
 	"github.com/patrickrho-patty/pccp/internal/realtime"
 	"github.com/patrickrho-patty/pccp/internal/security"
@@ -31,6 +34,9 @@ type Service struct {
 	security   *security.Service
 	workintel  *workintel.Service
 	realtime   *realtime.Service
+	identity   *identity.Service
+	policy     *policy.Service
+	catalog    *catalog.Service
 	forwarder  inferenceForwarder
 	cpURL      string
 	relayID    string
@@ -79,6 +85,18 @@ func New(db *gorm.DB, cpURL, relayID string) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("relay: init provenance: %w", err)
 	}
+	identitySvc, err := identity.New(db)
+	if err != nil {
+		return nil, fmt.Errorf("relay: init identity: %w", err)
+	}
+	policySvc, err := policy.New(db)
+	if err != nil {
+		return nil, fmt.Errorf("relay: init policy: %w", err)
+	}
+	catalogSvc, err := catalog.New(db)
+	if err != nil {
+		return nil, fmt.Errorf("relay: init catalog: %w", err)
+	}
 
 	s := &Service{
 		db:         db,
@@ -86,6 +104,9 @@ func New(db *gorm.DB, cpURL, relayID string) (*Service, error) {
 		security:   security.New(db),
 		workintel:  workintel.New(db),
 		realtime:   realtime.New(),
+		identity:   identitySvc,
+		policy:     policySvc,
+		catalog:    catalogSvc,
 		cpURL:      cpURL,
 		relayID:    relayID,
 		httpClient: &http.Client{Timeout: 120 * time.Second},
@@ -94,6 +115,17 @@ func New(db *gorm.DB, cpURL, relayID string) (*Service, error) {
 	s.forwarder = s.defaultForwarder
 	return s, nil
 }
+
+// Identity exposes the identity service (CA + revocations) so the
+// PAPER listener can build its trust bundle and the binary can wire
+// issuer keys at startup.
+func (s *Service) Identity() *identity.Service { return s.identity }
+
+// Policy exposes the policy service (epochs + capability leases).
+func (s *Service) Policy() *policy.Service { return s.policy }
+
+// Catalog exposes the model-catalog service.
+func (s *Service) Catalog() *catalog.Service { return s.catalog }
 
 // OpenExchange starts a governed exchange for an AI inference request.
 type OpenExchangeRequest struct {

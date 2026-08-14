@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/paper"
 )
 
@@ -35,6 +36,8 @@ type PaperListener struct {
 	conns             map[string]credentialConnection
 	credentialSerials map[string]string // connID → authenticated credential serial
 	sessions          map[string]string // connID → working sessionID (from SESSION_OPEN)
+	credentials       map[string]*paper.PeerCredential // connID → verified credential (org/peer binding)
+	sessionEpochs     map[string]string // connID → policy epoch bound at session setup
 }
 
 type credentialConnection interface {
@@ -64,6 +67,8 @@ func NewPaperListener(svc *Service, tlsConfig *tls.Config, trust ...TrustBundle)
 		conns:             make(map[string]credentialConnection),
 		credentialSerials: make(map[string]string),
 		sessions:          make(map[string]string),
+		credentials:       make(map[string]*paper.PeerCredential),
+		sessionEpochs:     make(map[string]string),
 	}
 }
 
@@ -144,6 +149,8 @@ func (pl *PaperListener) handleConn(ctx context.Context, netConn net.Conn) {
 		delete(pl.conns, connID)
 		delete(pl.credentialSerials, connID)
 		delete(pl.sessions, connID)
+		delete(pl.credentials, connID)
+		delete(pl.sessionEpochs, connID)
 		pl.mu.Unlock()
 	}()
 
@@ -242,8 +249,11 @@ func (pl *PaperListener) handleConn(ctx context.Context, netConn net.Conn) {
 		log.Printf("relay: paper credential %s revoked during authentication", credential.Serial)
 		return
 	}
+	pl.mu.Lock()
+	pl.credentials[connID] = credential
+	pl.mu.Unlock()
 
-	if err := conn.SendControl(paper.MsgAuthAck, nil, []byte("authenticated")); err != nil {
+	if err := conn.SendControl(paper.MsgAuthAck, nil, pl.authAckPayload()); err != nil {
 		log.Printf("relay: paper AUTH_ACK to %s failed: %v", connID, err)
 		return
 	}
@@ -267,6 +277,8 @@ func (pl *PaperListener) trackAuthenticatedConnection(connID, serial string, con
 		_ = conn.Close()
 		delete(pl.conns, connID)
 		delete(pl.sessions, connID)
+		delete(pl.credentials, connID)
+		delete(pl.sessionEpochs, connID)
 		return false
 	}
 	pl.conns[connID] = conn
@@ -291,6 +303,8 @@ func (pl *PaperListener) RevokeCredential(serial string, epoch uint64) {
 		delete(pl.conns, connID)
 		delete(pl.credentialSerials, connID)
 		delete(pl.sessions, connID)
+		delete(pl.credentials, connID)
+		delete(pl.sessionEpochs, connID)
 	}
 	pl.mu.Unlock()
 
@@ -328,16 +342,34 @@ func (pl *PaperListener) handleApplicationMessages(ctx context.Context, conn *pa
 		case record.Kind == paper.KindMessage && msgType == paper.MsgSessionOpen:
 			var so struct {
 				SessionID string `json:"session_id"`
+				UserID    string `json:"user_id"`
+				Model     string `json:"model"`
 			}
 			json.Unmarshal(record.Payload, &so)
 			if so.SessionID != "" {
 				pl.setSession(connID, so.SessionID)
 			}
 			log.Printf("relay: paper SESSION_OPEN from %s session=%s", connID, so.SessionID)
+			pl.setupSession(ctx, conn, connID, so.SessionID, so.UserID, so.Model)
 
 		case record.Kind == paper.KindMessage && msgType == paper.MsgAIOpen:
 			log.Printf("relay: paper AI_OPEN from %s, governing", connID)
 			pl.governAIOpen(ctx, conn, record, connID, harnessID)
+
+		case record.Kind == paper.KindMessage && msgType == paper.MsgChangeSet:
+			pl.ingestChangeSet(conn, connID, harnessID, record)
+
+		case record.Kind == paper.KindMessage && msgType == paper.MsgProvenanceNode:
+			pl.ingestSpan(conn, connID, harnessID, record)
+
+		case record.Kind == paper.KindMessage && msgType == paper.MsgCommitBind:
+			pl.ingestCommitBinding(conn, connID, harnessID, record)
+
+		case record.Kind == paper.KindMessage && msgType == paper.MsgActionEnvelope:
+			pl.ingestActionEnvelope(conn, connID, harnessID, record)
+
+		case record.Kind == paper.KindMessage && msgType == paper.MsgEvidenceReceiptAck:
+			pl.ingestReceiptAck(conn, connID, record)
 
 		case record.Kind == paper.KindData:
 			log.Printf("relay: paper DATA from %s, lane=%d seq=%d", connID, record.LaneID, record.LaneSequence)
@@ -369,7 +401,9 @@ func (pl *PaperListener) setSession(connID, sessionID string) {
 }
 
 // governAIOpen runs an AI_OPEN through the governed flow and sends the
-// AI_COMPLETE (or MsgClose on denial/failure) back to the harness.
+// AI_COMPLETE (or MsgClose on denial/failure) back to the harness. A
+// completed governed exchange also issues a signed evidence receipt
+// (B3) so the harness retains tamper-evidence for the exchange.
 func (pl *PaperListener) governAIOpen(ctx context.Context, conn *paper.TransportConn, reqRecord *paper.Record, connID, harnessID string) {
 	greq, err := buildGovernRequest(harnessID, pl.sessionFor(connID), reqRecord.Payload)
 	if err != nil {
@@ -379,7 +413,7 @@ func (pl *PaperListener) governAIOpen(ctx context.Context, conn *paper.Transport
 		return
 	}
 
-	resp, _, err := pl.svc.GovernInference(ctx, greq)
+	resp, receipt, err := pl.svc.GovernInference(ctx, greq)
 	if err != nil {
 		log.Printf("relay: governed inference denied/failed for %s: %v", connID, err)
 		errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
@@ -408,6 +442,26 @@ func (pl *PaperListener) governAIOpen(ctx context.Context, conn *paper.Transport
 	})
 	conn.SendMessage(paper.MsgAIComplete, nil, completePayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
 	log.Printf("relay: governed AI_COMPLETE sent to %s", connID)
+
+	// B3: GovernInference already issued the signed evidence receipt;
+	// push it to the harness so the connector retains tamper-evidence
+	// and acks back.
+	pl.pushEvidenceReceiptMessage(conn, connID, receipt)
+}
+
+// pushEvidenceReceiptMessage encodes and pushes an issued receipt.
+func (pl *PaperListener) pushEvidenceReceiptMessage(conn *paper.TransportConn, connID string, receipt *models.EvidenceReceipt) {
+	if receipt == nil {
+		return
+	}
+	body, err := encodeWire(buildWireEvidenceReceipt(receipt))
+	if err != nil {
+		log.Printf("relay: receipt encode for %s failed: %v", connID, err)
+		return
+	}
+	if err := conn.SendMessage(paper.MsgEvidenceReceipt, nil, body, 0, 5); err != nil {
+		log.Printf("relay: receipt push to %s failed: %v", connID, err)
+	}
 }
 
 // buildGovernRequest parses an AI_OPEN payload into a GovernRequest. Pure helper

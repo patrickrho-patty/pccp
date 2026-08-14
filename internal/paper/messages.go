@@ -47,6 +47,9 @@ const (
 	MsgApprovalRequest MessageType = 0x0305
 	MsgApprovalResult  MessageType = 0x0306
 	MsgEvidenceReceipt MessageType = 0x0307
+	// MsgEvidenceReceiptAck is the connector's tamper-evidence ack for
+	// a received receipt (cross-repo registry; see relay/paper_wire.go).
+	MsgEvidenceReceiptAck MessageType = 0x0308
 )
 
 // AI inference (0x0400–0x04FF)
@@ -80,6 +83,9 @@ const (
 	MsgProvenanceNode MessageType = 0x0700
 	MsgChangeSet      MessageType = 0x0701
 	MsgCommitBind     MessageType = 0x0702
+	// MsgActionEnvelope carries a connector-built action record for
+	// the audit stream (cross-repo registry; see relay/paper_wire.go).
+	MsgActionEnvelope MessageType = 0x0703
 )
 
 // Chat / presence (0x0800–0x08FF)
@@ -99,6 +105,17 @@ const (
 const (
 	MsgBroadcast     MessageType = 0x0B00
 	MsgAdminDirective MessageType = 0x0B01
+	// MsgAdminCommandResult is the connector's execution-evidence
+	// reply to an admin directive (cross-repo registry).
+	MsgAdminCommandResult MessageType = 0x0B02
+)
+
+// Session-governance extensions (0x0D00–0x0DFF) — the extension
+// registry shared with the harness connector (relay/paper_wire.go).
+// The 0x0D0x catalog block lives in models.go; 0x0D10 is the
+// policy-epoch push bound to a session setup.
+const (
+	MsgPolicyEpochPush MessageType = 0x0D10
 )
 
 // Telemetry / metering (0x0C00–0x0CFF)

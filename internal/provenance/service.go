@@ -303,6 +303,31 @@ func (s *Service) IssueEvidenceReceipt(req IssueReceiptRequest) (*models.Evidenc
 	return receipt, nil
 }
 
+// AckEvidenceReceipt records the harness's tamper-evidence ack for an
+// issued receipt (PAPER §40.3). Idempotent: re-acking a receipt keeps
+// the original timestamp.
+func (s *Service) AckEvidenceReceipt(exchangeID string) error {
+	if exchangeID == "" {
+		return fmt.Errorf("provenance: empty exchange id")
+	}
+	res := s.db.Model(&models.EvidenceReceipt{}).
+		Where("exchange_id = ? AND acknowledged_at = ''", exchangeID).
+		Update("acknowledged_at", time.Now().Format(time.RFC3339))
+	if res.Error != nil {
+		return fmt.Errorf("provenance: ack receipt: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		// Already acked or unknown; verify it exists so an unknown
+		// exchange fails rather than silently succeeding.
+		var count int64
+		s.db.Model(&models.EvidenceReceipt{}).Where("exchange_id = ?", exchangeID).Count(&count)
+		if count == 0 {
+			return fmt.Errorf("provenance: receipt for exchange %s not found", exchangeID)
+		}
+	}
+	return nil
+}
+
 // CodeSpanLookup looks up provenance by file path and line range (PRD §19.1, Phase 2 gate).
 // This answers: "who wrote this code, when, using which model, in which session?"
 type CodeSpanLookup struct {

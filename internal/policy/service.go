@@ -28,6 +28,14 @@ func New(db *gorm.DB) (*Service, error) {
 	return &Service{db: db, signingKey: priv}, nil
 }
 
+// SigningPublicKey returns the ed25519 public half of the lease/epoch
+// signing key. The PAPER listener transports it to enrolled harnesses
+// in the AUTH_ACK payload so the connector can verify issued leases
+// without a side channel.
+func (s *Service) SigningPublicKey() ed25519.PublicKey {
+	return s.signingKey.Public().(ed25519.PublicKey)
+}
+
 // CreatePolicyEpoch creates a new immutable policy epoch for an organization.
 func (s *Service) CreatePolicyEpoch(orgID string, allowedModels []string, transitionMode string) (*models.PolicyEpoch, error) {
 	// Get the next epoch number

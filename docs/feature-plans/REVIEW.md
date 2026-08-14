@@ -3,7 +3,7 @@
 **Reviewed:** every doc in `docs/feature-plans/` against the intended item lists in `WEB_FEATURE_GAPS.md` (10 features + ~15 improvements per page), `HARNESS_FEATURE_GAPS.md` (26 features), and the conversation's explicit asks.
 
 ## Outcome summary
-- **All 26 web pages + 5 harness sections have a plan** (no page missing).
+- **All 26 web pages + 6 harness sections have a plan** (no page missing). Harness F (latency/streaming benchmark, added 2026-08-14) is **not yet implemented** — tracked as new work.
 - **Every plan is grounded** in that page's code vertical (component→api→handlers→service→model) — verified by file:line citations; stale gap-doc claims were corrected at write time (e.g., Tools dup-bug-fixed, LiveView SSE-not-mounted).
 - This review found and fixed 3 classes of incompleteness (below).
 
@@ -48,3 +48,7 @@
 - Improvement counts on consolidated pages are lower than 15 because the repeating global UX items (favorites/sub-menu/animation/empty-state/responsive/keyboard-nav) now live once in `00-cross-cutting.md` rather than being duplicated per page (DRY). Each page retains its page-specific improvements.
 - Two gap-doc claims were intentionally **corrected** (not dropped) because the code contradicts them: Tools "seeds duplicates" → actually deduped (RegisterTool + DB verified); LiveView "scripted fakery" → actually SSE-wired but the route isn't mounted + no emitter.
 - Harness plans (A–E) collectively cover all 26 HARNESS_FEATURE_GAPS features, grounded in `patty-code-pccp` source + PCCP comms code.
+
+
+## Addendum (2026-08-14): Harness F
+`harness/F-latency-streaming.md` added after the original review — the operator's benchmark request (DARI vs Responses/SSE vs Codex-style WS Responses; numbers destined for the arXiv paper). Status: **planned, not started**. Prerequisites: Harness A e2e wiring live (F3 drives the real governed path).
