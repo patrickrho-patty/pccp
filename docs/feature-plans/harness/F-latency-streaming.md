@@ -26,7 +26,7 @@
   4. **turn-start overhead** (connect+auth+session-setup vs warm reuse),
   5. **bytes-on-wire** per exchange (CBOR vs SSE text framing overhead).
 - Three arms on identical localhost topology and identical canned model output:
-  - **A. DARI/PAPER** (this stack, streaming after F1),
+  - **A. DARI** (this stack, streaming after F1),
   - **B. Responses/SSE** — mock Responses endpoint over HTTP SSE (the "typical" method),
   - **C. Codex-style WS Responses** — mock Responses endpoint over a cached WebSocket (mirroring `client.rs` behavior; reference implementation notes from `~/projects/codex`).
 - All arms hit a **canned token source** (deterministic schedule) so the network/protocol stack is what's measured, not model speed.
