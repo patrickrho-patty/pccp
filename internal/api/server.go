@@ -198,9 +198,19 @@ func (s *Server) setupRouter() {
 			r.Get("/", s.handleListProjects)
 			r.Post("/", s.handleCreateProject)
 			r.Get("/{id}", s.handleGetProject)
+			r.Get("/{id}/detail", s.handleGetProjectDetail)
 			r.Put("/{id}", s.handleUpdateProject)
 			r.Delete("/{id}", s.handleDeleteProject)
+			r.Post("/{id}/restore", s.handleRestoreProject)
+			r.Get("/{id}/archive-impact", s.handleProjectArchiveImpact)
+			r.Get("/{id}/usage", s.handleProjectUsage)
+			r.Get("/{id}/members", s.handleListProjectMembers)
+			r.Post("/{id}/members", s.handleAddProjectMember)
+			r.Delete("/{id}/members/{userId}", s.handleRemoveProjectMember)
+			r.Get("/{id}/change-requests", s.handleListProjectChangeRequests)
+			r.Post("/{id}/policy-pack", s.handleBindProjectPolicyPack)
 		})
+		r.Post("/change-requests/{id}/decide", s.handleDecideChangeRequest)
 
 		// Repositories
 		r.Route("/repositories", func(r chi.Router) {
@@ -1169,6 +1179,12 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	if orgID != "" {
 		q = q.Where("organization_id = ?", orgID)
 	}
+	// Server-side filters (projects B5): status + group affiliate.
+	for _, key := range []string{"status", "group_affiliate"} {
+		if v := r.URL.Query().Get(key); v != "" {
+			q = q.Where(key+" = ?", v)
+		}
+	}
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 		page, _ := strconv.Atoi(pageStr)
 		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
@@ -1186,12 +1202,37 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 		q.Count(&total)
 		var projects []models.Project
 		q.Offset((page - 1) * size).Limit(size).Find(&projects)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"data": projects, "total": total, "page": page, "size": size})
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"data": s.decorateProjects(projects), "total": total, "page": page, "size": size,
+		})
 		return
 	}
 	var projects []models.Project
 	q.Find(&projects)
-	writeJSON(w, http.StatusOK, projects)
+	writeJSON(w, http.StatusOK, s.decorateProjects(projects))
+}
+
+// decorateProjects attaches per-project aggregates (repos, sessions,
+// real membership count) so list cards render true numbers without
+// client-side cross-page joins (projects B1/UX4).
+func (s *Server) decorateProjects(projects []models.Project) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(projects))
+	for _, proj := range projects {
+		row := map[string]interface{}{}
+		b, _ := json.Marshal(proj)
+		json.Unmarshal(b, &row)
+		var memberCount, repoCount, sessionCount, activeCount int64
+		s.db.Model(&models.ProjectMember{}).Where("project_id = ?", proj.ID).Count(&memberCount)
+		s.db.Model(&models.Repository{}).Where("project_id = ?", proj.ID).Count(&repoCount)
+		s.db.Model(&models.Session{}).Where("project_id = ?", proj.ID).Count(&sessionCount)
+		s.db.Model(&models.Session{}).Where("project_id = ? AND status = 'active'", proj.ID).Count(&activeCount)
+		row["member_count"] = memberCount
+		row["repository_count"] = repoCount
+		row["session_count"] = sessionCount
+		row["active_session_count"] = activeCount
+		out = append(out, row)
+	}
+	return out
 }
 
 func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
@@ -1202,6 +1243,9 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		Slug           string   `json:"slug"`
 		AllowedModels  []string `json:"allowed_models"`
 		Description    string   `json:"description"`
+		ProjectCode    string   `json:"project_code"`
+		GroupAffiliate string   `json:"group_affiliate"`
+		PolicyPackID   string   `json:"policy_pack_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -1216,9 +1260,23 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// A1/A3: description + Korean enterprise attrs + policy pack are
+	// persisted (they were silently dropped before).
+	updates := map[string]interface{}{}
 	if req.Description != "" {
-		proj.Description = req.Description
-		s.db.Save(proj)
+		updates["description"] = req.Description
+	}
+	if req.ProjectCode != "" {
+		updates["project_code"] = req.ProjectCode
+	}
+	if req.GroupAffiliate != "" {
+		updates["group_affiliate"] = req.GroupAffiliate
+	}
+	if req.PolicyPackID != "" {
+		updates["policy_pack_id"] = req.PolicyPackID
+	}
+	if len(updates) > 0 {
+		s.db.Model(proj).Updates(updates)
 	}
 	writeJSON(w, http.StatusCreated, proj)
 }
@@ -1405,6 +1463,15 @@ func (s *Server) handleOpenSession(w http.ResponseWriter, r *http.Request) {
 	if req.RepositoryID != "" {
 		if frozen, freeze, _ := s.ext().Korean.IsChangeFrozen(orgID, req.RepositoryID); frozen && freeze != nil {
 			writeError(w, http.StatusForbidden, fmt.Sprintf("변경 중단 중 · Change freeze: %s", freeze.FreezeReasonKo))
+			return
+		}
+	}
+	// Archive freeze (projects B4, §33.13-style): an archived project
+	// rejects new sessions until restored.
+	if req.ProjectID != "" {
+		var proj models.Project
+		if s.db.First(&proj, "id = ?", req.ProjectID).Error == nil && proj.Status == "archived" {
+			writeError(w, http.StatusForbidden, "보관된 프로젝트입니다 · Project is archived — restore it to open new sessions")
 			return
 		}
 	}
@@ -2855,11 +2922,14 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var updates struct {
-		Name          *string  `json:"name,omitempty"`
-		NameKo        *string  `json:"name_ko,omitempty"`
-		Description   *string  `json:"description,omitempty"`
-		Status        *string  `json:"status,omitempty"`
-		AllowedModels []string `json:"allowed_models,omitempty"`
+		Name           *string  `json:"name,omitempty"`
+		NameKo         *string  `json:"name_ko,omitempty"`
+		Description    *string  `json:"description,omitempty"`
+		Status         *string  `json:"status,omitempty"`
+		AllowedModels  []string `json:"allowed_models,omitempty"`
+		ProjectCode    *string  `json:"project_code,omitempty"`
+		GroupAffiliate *string  `json:"group_affiliate,omitempty"`
+		PolicyPackID   *string  `json:"policy_pack_id,omitempty"`
 	}
 	decodeJSON(r, &updates)
 	if updates.Name != nil {
@@ -2877,6 +2947,15 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	if len(updates.AllowedModels) > 0 {
 		b, _ := json.Marshal(updates.AllowedModels)
 		proj.AllowedModelClasses = string(b)
+	}
+	if updates.ProjectCode != nil {
+		proj.ProjectCode = *updates.ProjectCode
+	}
+	if updates.GroupAffiliate != nil {
+		proj.GroupAffiliate = *updates.GroupAffiliate
+	}
+	if updates.PolicyPackID != nil {
+		proj.PolicyPackID = *updates.PolicyPackID
 	}
 	s.db.Save(&proj)
 	s.db.Create(&models.AuditEvent{
@@ -2908,7 +2987,322 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "archived"})
+	impact := s.projectArchiveImpact(id)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "archived", "impact": impact})
+}
+
+// projectArchiveImpact counts what an archive affects (projects UX14):
+// active sessions that will be frozen, attached repositories, members.
+func (s *Server) projectArchiveImpact(projectID string) map[string]interface{} {
+	var activeSessions, repos, members int64
+	s.db.Model(&models.Session{}).Where("project_id = ? AND status = 'active'", projectID).Count(&activeSessions)
+	s.db.Model(&models.Repository{}).Where("project_id = ? AND status = 'active'", projectID).Count(&repos)
+	s.db.Model(&models.ProjectMember{}).Where("project_id = ?", projectID).Count(&members)
+	return map[string]interface{}{
+		"active_sessions": activeSessions,
+		"repositories":    repos,
+		"members":         members,
+	}
+}
+
+// handleProjectArchiveImpact previews the archive blast radius before
+// the operator confirms (projects UX14).
+func (s *Server) handleProjectArchiveImpact(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	writeJSON(w, http.StatusOK, s.projectArchiveImpact(id))
+}
+
+// handleRestoreProject un-archives a project (projects B4).
+func (s *Server) handleRestoreProject(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	s.db.Model(&models.Project{}).Where("id = ?", id).Update("status", "active")
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.project.restored",
+		ActorType:      "admin",
+		Action:         "restore_project",
+		ResourceType:   "project",
+		ResourceID:     id,
+		Details:        "project restored",
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "active"})
+}
+
+// handleProjectUsage rolls up the project cost center (projects B6,
+// §29.12): sessions, token usage, and recorded cost across all of the
+// project's sessions.
+func (s *Server) handleProjectUsage(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var proj models.Project
+	if err := s.db.First(&proj, "id = ?", id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
+		return
+	}
+	var sessionIDs []string
+	s.db.Model(&models.Session{}).Where("project_id = ?", id).Pluck("session_id", &sessionIDs)
+
+	summary := map[string]interface{}{
+		"project_id":    id,
+		"session_count": len(sessionIDs),
+		"input_tokens":  int64(0),
+		"output_tokens": int64(0),
+		"total_tokens":  int64(0),
+		"cost_micros":   int64(0),
+		"currency":      "KRW",
+		"by_model":      map[string]int64{},
+		"by_session":    map[string]int64{},
+	}
+	if len(sessionIDs) > 0 {
+		var records []models.UsageRecord
+		s.db.Where("session_id IN ?", sessionIDs).Find(&records)
+		for _, rec := range records {
+			if rec.MetricType == "tokens_in" {
+				summary["input_tokens"] = summary["input_tokens"].(int64) + rec.Quantity
+			} else if rec.MetricType == "tokens_out" {
+				summary["output_tokens"] = summary["output_tokens"].(int64) + rec.Quantity
+			}
+			summary["total_tokens"] = summary["total_tokens"].(int64) + rec.Quantity
+			summary["cost_micros"] = summary["cost_micros"].(int64) + rec.CostMicros
+			summary["by_model"].(map[string]int64)[rec.ModelPackageID] += rec.Quantity
+			summary["by_session"].(map[string]int64)[rec.SessionID] += rec.Quantity
+		}
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
+// handleListProjectMembers returns the real roster with user info
+// (projects B1) — no more session-derived guessing.
+func (s *Server) handleListProjectMembers(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var members []models.ProjectMember
+	s.db.Where("project_id = ?", id).Order("created_at DESC").Find(&members)
+	type memberRow struct {
+		models.ProjectMember
+		User *models.User `json:"user,omitempty"`
+	}
+	out := make([]memberRow, 0, len(members))
+	for _, m := range members {
+		row := memberRow{ProjectMember: m}
+		var user models.User
+		if s.db.First(&user, "id = ?", m.UserID).Error == nil {
+			row.User = &user
+		}
+		out = append(out, row)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleAddProjectMember assigns a role to a user on the project
+// (projects B1).
+func (s *Server) handleAddProjectMember(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	var req struct {
+		UserID string `json:"user_id"`
+		Role   string `json:"role"`
+	}
+	if err := decodeJSON(r, &req); err != nil || req.UserID == "" {
+		writeError(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+	if req.Role == "" {
+		req.Role = "member"
+	}
+	var proj models.Project
+	if s.db.First(&proj, "id = ?", id).Error != nil {
+		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
+		return
+	}
+	member := models.ProjectMember{
+		OrganizationID: orgID,
+		ProjectID:      id,
+		UserID:         req.UserID,
+		Role:           req.Role,
+	}
+	if err := s.db.Where("project_id = ? AND user_id = ?", id, req.UserID).
+		Assign(models.ProjectMember{Role: req.Role}).
+		FirstOrCreate(&member).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.project.member_added",
+		ActorType:      "admin",
+		Action:         "add_project_member",
+		ResourceType:   "project",
+		ResourceID:     id,
+		Details:        fmt.Sprintf(`{"user_id":"%s","role":"%s"}`, req.UserID, req.Role),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
+	writeJSON(w, http.StatusCreated, member)
+}
+
+// handleRemoveProjectMember removes a roster entry (projects B1).
+func (s *Server) handleRemoveProjectMember(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	userID := chi.URLParam(r, "userId")
+	orgID := getOrgID(r)
+	s.db.Where("project_id = ? AND user_id = ?", id, userID).Delete(&models.ProjectMember{})
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.project.member_removed",
+		ActorType:      "admin",
+		Action:         "remove_project_member",
+		ResourceType:   "project",
+		ResourceID:     id,
+		Details:        fmt.Sprintf(`{"user_id":"%s"}`, userID),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+// handleBindProjectPolicyPack binds a versioned policy pack to the
+// project (projects B2) — surfaced as the project's effective policy.
+func (s *Server) handleBindProjectPolicyPack(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	var req struct {
+		PolicyPackID string `json:"policy_pack_id"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.PolicyPackID != "" {
+		var pack models.PolicyPack
+		if s.db.First(&pack, "id = ?", req.PolicyPackID).Error != nil {
+			writeError(w, http.StatusNotFound, "policy pack not found")
+			return
+		}
+	}
+	s.db.Model(&models.Project{}).Where("id = ?", id).Update("policy_pack_id", req.PolicyPackID)
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.project.policy_pack_bound",
+		ActorType:      "admin",
+		Action:         "bind_project_policy_pack",
+		ResourceType:   "project",
+		ResourceID:     id,
+		Details:        fmt.Sprintf(`{"policy_pack_id":"%s"}`, req.PolicyPackID),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "bound", "policy_pack_id": req.PolicyPackID})
+}
+
+// handleGetProjectDetail assembles the project detail page (projects
+// B3): repos, real membership roster, sessions, policy binding, usage,
+// change-control queue, and audit.
+func (s *Server) handleGetProjectDetail(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var proj models.Project
+	if err := s.db.First(&proj, "id = ?", id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
+		return
+	}
+	result := map[string]interface{}{"project": proj}
+
+	var repos []models.Repository
+	s.db.Where("project_id = ?", id).Find(&repos)
+	result["repositories"] = repos
+
+	var members []models.ProjectMember
+	s.db.Where("project_id = ?", id).Find(&members)
+	type memberRow struct {
+		models.ProjectMember
+		User *models.User `json:"user,omitempty"`
+	}
+	rows := make([]memberRow, 0, len(members))
+	for _, m := range members {
+		row := memberRow{ProjectMember: m}
+		var user models.User
+		if s.db.First(&user, "id = ?", m.UserID).Error == nil {
+			row.User = &user
+		}
+		rows = append(rows, row)
+	}
+	result["members"] = rows
+
+	var sessions []models.Session
+	s.db.Where("project_id = ?", id).Order("created_at DESC").Limit(50).Find(&sessions)
+	result["sessions"] = sessions
+
+	if proj.PolicyPackID != "" {
+		var pack models.PolicyPack
+		if s.db.First(&pack, "id = ?", proj.PolicyPackID).Error == nil {
+			result["policy_pack"] = pack
+		}
+	}
+
+	var changes []models.ChangeRequest
+	s.db.Where("project_id = ?", id).Order("created_at DESC").Find(&changes)
+	result["change_requests"] = changes
+
+	var auditEvents []models.AuditEvent
+	s.db.Where("resource_id = ?", id).Order("occurred_at DESC").Limit(50).Find(&auditEvents)
+	result["audit_events"] = auditEvents
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// handleListProjectChangeRequests lists the project's AI change-control
+// queue (projects B7).
+func (s *Server) handleListProjectChangeRequests(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var changes []models.ChangeRequest
+	s.db.Where("project_id = ?", id).Order("created_at DESC").Find(&changes)
+	writeJSON(w, http.StatusOK, changes)
+}
+
+// handleDecideChangeRequest approves or denies a queued high-risk
+// change (projects B7).
+func (s *Server) handleDecideChangeRequest(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	var req struct {
+		Approve bool   `json:"approve"`
+		Reason  string `json:"reason"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	var cr models.ChangeRequest
+	if s.db.First(&cr, "id = ?", id).Error != nil {
+		writeError(w, http.StatusNotFound, "change request not found")
+		return
+	}
+	if cr.Status != "pending" {
+		writeError(w, http.StatusConflict, "change request already decided")
+		return
+	}
+	status := "approved"
+	if !req.Approve {
+		status = "denied"
+	}
+	cr.Status = status
+	cr.DecidedBy = orgID
+	cr.DecisionReason = req.Reason
+	cr.DecidedAt = time.Now().Format(time.RFC3339)
+	s.db.Save(&cr)
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.project.change_request_decided",
+		ActorType:      "admin",
+		Action:         "decide_change_request",
+		ResourceType:   "change_request",
+		ResourceID:     id,
+		Details:        fmt.Sprintf(`{"status":"%s","reason":"%s"}`, status, req.Reason),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
+	writeJSON(w, http.StatusOK, cr)
 }
 
 func (s *Server) handleUpdateRepository(w http.ResponseWriter, r *http.Request) {
@@ -3773,7 +4167,79 @@ func (s *Server) handlePostChangeSet(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	// AI change-control (projects B7, §33.4): score the change; changes
+	// requiring approval route to the project's queue instead of
+	// flowing straight through.
+	if cr, ok := s.queueHighRiskChange(orgID, cs, req.FilesChanged); ok {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"change_set": cs, "change_request": cr, "queued": true})
+		return
+	}
 	writeJSON(w, http.StatusOK, cs)
+}
+
+// queueHighRiskChange scores a changeset with the impact engine and
+// creates a change-control queue item when approval is required.
+func (s *Server) queueHighRiskChange(orgID string, cs *models.ChangeSet, files []string) (*models.ChangeRequest, bool) {
+	if len(files) == 0 {
+		return nil, false
+	}
+	var req impact.AnalyzeRequest
+	req.OrganizationID = orgID
+	req.RepositoryID = cs.RepositoryID
+	if len(files) > 0 {
+		req.FilePath = files[0]
+	}
+	req.SymbolsChanged = files
+	for _, f := range files {
+		ps := impact.DetectPathSensitivity(f)
+		if ps.IsAuth || strings.Contains(f, "auth") || strings.Contains(f, "credential") || strings.Contains(f, "token") {
+			req.IsAuth = true
+		}
+		if ps.IsCrypto || strings.Contains(f, "crypto") || strings.Contains(f, "key") || strings.Contains(f, "sign") {
+			req.IsCrypto = true
+		}
+		if ps.IsDB || strings.Contains(f, "migration") || strings.Contains(f, "schema") {
+			req.IsDBMigration = true
+		}
+		if ps.IsConfig || strings.Contains(f, "config") || strings.Contains(f, "prod") {
+			req.IsConfig = true
+		}
+	}
+	_, score, err := s.impact.AnalyzeChange(req)
+	if err != nil || score == nil || !score.RequiresApproval {
+		return nil, false
+	}
+	var repo models.Repository
+	s.db.First(&repo, "id = ?", cs.RepositoryID)
+	projectID := repo.ProjectID
+	cr := &models.ChangeRequest{
+		OrganizationID: orgID,
+		ProjectID:      projectID,
+		RepositoryID:   cs.RepositoryID,
+		ChangeSetID:    cs.ID,
+		SessionID:      cs.SessionID,
+		Title:          fmt.Sprintf("%d개 파일 변경 · AI-generated change", len(files)),
+		Kind:           "ai_code_change",
+		RiskLevel:      score.Level,
+		RiskScore:      score.Score,
+		Status:         "pending",
+		RequestedBy:    cs.UserID,
+	}
+	if err := s.db.Create(cr).Error; err != nil {
+		return nil, false
+	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.project.change_request_created",
+		ActorType:      "system",
+		Action:         "queue_change_request",
+		ResourceType:   "change_request",
+		ResourceID:     cr.ID,
+		Details:        fmt.Sprintf(`{"changeset":"%s","risk":"%s","score":%.1f}`, cs.ID, score.Level, score.Score),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
+	return cr, true
 }
 
 // handlePostProvenanceSpan receives a ProvenanceSpan from a harness, mapping a

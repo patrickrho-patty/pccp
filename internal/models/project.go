@@ -100,3 +100,35 @@ type PromptExchange struct {
 	Status         string `gorm:"type:varchar(32);default:'pending'" json:"status"`
 	CreatedAt2     string `gorm:"column:created_at_2;type:timestamp" json:"created_at_2,omitempty"`
 }
+
+// ProjectMember is a real membership/role binding (projects B1) — the
+// roster that entitlement (§13) and analytics read, replacing the
+// previous session-derived member count.
+type ProjectMember struct {
+	Base
+	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
+	ProjectID      string `gorm:"type:varchar(64);uniqueIndex:idx_pm_proj_user,priority:1;index;not null" json:"project_id"`
+	UserID         string `gorm:"type:varchar(64);uniqueIndex:idx_pm_proj_user,priority:2;index;not null" json:"user_id"`
+	Role           string `gorm:"type:varchar(32);default:'member'" json:"role"` // owner, admin, member, viewer
+}
+
+// ChangeRequest is an AI change-control queue item (projects B7, PRD
+// §33.4): high-risk changesets route here for human decision instead
+// of flowing straight through.
+type ChangeRequest struct {
+	Base
+	OrganizationID string  `gorm:"type:varchar(64);index;not null" json:"organization_id"`
+	ProjectID      string  `gorm:"type:varchar(64);index" json:"project_id"`
+	RepositoryID   string  `gorm:"type:varchar(64);index" json:"repository_id"`
+	ChangeSetID    string  `gorm:"type:varchar(64);index" json:"change_set_id"`
+	SessionID      string  `gorm:"type:varchar(64);index" json:"session_id,omitempty"`
+	Title          string  `gorm:"type:varchar(255)" json:"title"`
+	Kind           string  `gorm:"type:varchar(64)" json:"kind"`   // ai_code_change, model_change, config_change
+	RiskLevel      string  `gorm:"type:varchar(32)" json:"risk_level"`
+	RiskScore      float64 `json:"risk_score"`
+	Status         string  `gorm:"type:varchar(32);default:'pending'" json:"status"` // pending, approved, denied
+	RequestedBy    string  `gorm:"type:varchar(64)" json:"requested_by"`
+	DecidedBy      string  `gorm:"type:varchar(64)" json:"decided_by,omitempty"`
+	DecisionReason string  `gorm:"type:text" json:"decision_reason,omitempty"`
+	DecidedAt      string  `gorm:"type:timestamp" json:"decided_at,omitempty"`
+}
