@@ -166,7 +166,6 @@ type LatencyPredictor struct {
 	cfg    PredictorConfig
 	models map[string]*bayesModel
 	global *bayesModel
-	ttft   bool // this predictor forecasts TTFT; TPOT uses a twin
 }
 
 // NewLatencyPredictor builds a predictor.
@@ -176,6 +175,37 @@ func NewLatencyPredictor(cfg PredictorConfig) *LatencyPredictor {
 		models: make(map[string]*bayesModel),
 		global: newBayesModel(cfg),
 	}
+}
+
+// LatencyPredictorPair forecasts both TTFT and TPOT (spec §14 row 7:
+// predicted-latency routing needs both objectives).
+type LatencyPredictorPair struct {
+	TTFT *LatencyPredictor
+	TPOT *LatencyPredictor
+}
+
+// NewLatencyPredictorPair builds the TTFT/TPOT twins.
+func NewLatencyPredictorPair(cfg PredictorConfig) *LatencyPredictorPair {
+	return &LatencyPredictorPair{
+		TTFT: NewLatencyPredictor(cfg),
+		TPOT: NewLatencyPredictor(cfg),
+	}
+}
+
+// Observe folds one completion into both twins (ttftMs, tpotMs).
+func (p *LatencyPredictorPair) Observe(configID string, f PredictorFeatures, ttftMs, tpotMs float64) {
+	p.TTFT.Observe(configID, f, ttftMs)
+	p.TPOT.Observe(configID, f, tpotMs)
+}
+
+// PSLOViolation returns the TTFT-side violation risk.
+func (p *LatencyPredictorPair) PSLOViolation(configID string, f PredictorFeatures, sloMs float64) float64 {
+	return p.TTFT.PSLOViolation(configID, f, sloMs)
+}
+
+// PITLViolation returns the TPOT-side violation risk.
+func (p *LatencyPredictorPair) PITLViolation(configID string, f PredictorFeatures, sloMs float64) float64 {
+	return p.TPOT.PSLOViolation(configID, f, sloMs)
 }
 
 // Observe folds one completion observation into the config's model and
@@ -216,14 +246,16 @@ func (p *LatencyPredictor) predictFrom(m, global *bayesModel, x []float64) Predi
 		w := float64(50-m.count) / 50 * p.cfg.GlobalPull
 		mean = mean*(1-w) + gMean*w
 	}
-	// Predictive variance: β⁻¹ + xᵀΛ⁻¹x.
+	// Predictive variance: the observation-noise term shrinks with the
+	// evidence count (more completions → tighter forecasts), plus the
+	// parameter-uncertainty term xᵀΛ⁻¹x.
 	xPrecInvX := 0.0
 	for i := 0; i < predictorDim; i++ {
 		for j := 0; j < predictorDim; j++ {
 			xPrecInvX += x[i] * m.precInv[i*predictorDim+j] * x[j]
 		}
 	}
-	variance := 1.0/p.cfg.NoisePrecision + xPrecInvX
+	variance := (1.0/p.cfg.NoisePrecision)/float64(m.count+1) + xPrecInvX
 	if variance < p.cfg.MinVariance {
 		variance = p.cfg.MinVariance
 	}

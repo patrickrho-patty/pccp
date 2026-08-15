@@ -123,3 +123,17 @@ func TestPredictorUpdatesAreZeroHop(t *testing.T) {
 		t.Fatalf("100 local predictions took %dms — far too slow for zero-hop", elapsed)
 	}
 }
+
+func TestPredictorPairTTFTAndTPOT(t *testing.T) {
+	p := NewLatencyPredictorPair(DefaultPredictorConfig())
+	// Same config: TTFT slow, TPOT fast.
+	for i := 0; i < 200; i++ {
+		p.Observe("cfg", sampleFeatures(), 800, 30)
+	}
+	if p.PSLOViolation("cfg", sampleFeatures(), 500) < 0.9 {
+		t.Fatal("slow TTFT must violate the 500ms SLO")
+	}
+	if p.PITLViolation("cfg", sampleFeatures(), 100) > 0.1 {
+		t.Fatal("fast TPOT must satisfy the 100ms ITL SLO")
+	}
+}
