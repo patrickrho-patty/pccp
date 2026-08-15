@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
+import EmptyState from '../components/EmptyState'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
 
@@ -106,6 +107,15 @@ export default function SubscriberManagement() {
         <div className="card py-3 px-4 text-center"><div className="text-2xl font-bold text-yellow-600">{stats.grace}</div><div className="text-xs text-gray-500">미납</div></div>
         <div className="card py-3 px-4 text-center"><div className="text-2xl font-bold text-red-600">{stats.flagged}</div><div className="text-xs text-gray-500">위험 플래그</div></div>
         <div className="card py-3 px-4 text-center"><div className="text-2xl font-bold text-indigo-600">{stats.new30d}</div><div className="text-xs text-gray-500">최근 30일 가입</div></div>
+      </div>
+
+      {/* Refund Request Queue — honest placeholder (payment provider not configured) */}
+      <div className="card mb-6">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold">환불 요청 큐 · Refund Request Queue</h3>
+          <span className="badge-gray">결제 미연동 · Payments not configured</span>
+        </div>
+        <EmptyState icon="💳" title="환불 요청이 없습니다" message="결제 제공자 연동 후 환불/크레딧 요청이 여기에 표시됩니다 (데모 데이터 생성 없음)" />
       </div>
 
       {/* Filter + Table */}
@@ -231,6 +241,15 @@ export default function SubscriberManagement() {
               )}
             </div>
 
+            {/* Support Linkage — honest placeholder */}
+            <div className="card">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold">지원 케이스 연계 · Support Linkage</h3>
+                <span className="badge-gray">미연동 · Not wired</span>
+              </div>
+              <EmptyState icon="🎧" title="연계된 지원 케이스 없음" message="지원 케이스 시스템 연동 후 이 구독자의 케이스가 표시됩니다" />
+            </div>
+
             {/* Actions */}
             <div className="card">
               <h3 className="text-sm font-semibold mb-3">관리 작업 · Actions</h3>
@@ -248,7 +267,7 @@ export default function SubscriberManagement() {
   )
 }
 
-function authHeaders() {
+function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('pccp_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }

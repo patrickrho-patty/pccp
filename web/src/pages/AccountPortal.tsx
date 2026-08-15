@@ -3,15 +3,36 @@ import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { showToast } from '../components/Toast'
 
+// 플랜 사양 — backend publiccloud.getPlanConfig과 동일 (internal/publiccloud/service.go)
+const PLANS: { id: string; label: string; harnesses: number; active: number; normal: number; heavy: number }[] = [
+  { id: 'free', label: 'Free (무료)', harnesses: 1, active: 1, normal: 1, heavy: 0 },
+  { id: 'developer', label: 'Developer (개발자)', harnesses: 2, active: 2, normal: 5, heavy: 1 },
+  { id: 'pro', label: 'Pro (프로)', harnesses: 3, active: 2, normal: 5, heavy: 2 },
+  { id: 'team', label: 'Team (팀)', harnesses: 3, active: 3, normal: 8, heavy: 3 },
+  { id: 'enterprise', label: 'Enterprise (기업)', harnesses: 10, active: 5, normal: 10, heavy: 5 },
+]
+
+// 아직 백엔드 라우트가 없는 셀프 서비스 기능 (spec 24 §A/B — honest placeholders)
+const NOT_YET_AVAILABLE = [
+  { ko: '결제 수단 · 인보이스', en: 'Invoices / Payment', ref: '§6.6' },
+  { ko: '사용량 이력 · 페어유즈', en: 'Usage History / Fair Use', ref: '§10C.4' },
+  { ko: '보안 이벤트', en: 'Security Events', ref: '§6.6' },
+  { ko: '활성 세션 조회 · 원격 종료', en: 'Active Sessions / Remote Kill', ref: '§6.6' },
+  { ko: '계정 복구', en: 'Account Recovery', ref: '§6.6' },
+  { ko: '데이터 내보내기 · 삭제', en: 'Data Export / Delete', ref: '§6.6' },
+  { ko: '지원 요청', en: 'Support Request', ref: '§6.6' },
+]
+
 export default function AccountPortal() {
   const [accounts, setAccounts] = useState<any[]>([])
-  const [selected, setSelected] = useState<any>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [form, setForm] = useState({ email: '', display_name: '', display_name_ko: '', plan: 'developer' })
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [leases, setLeases] = useState<Record<string, any>>({})
+  const [planChange, setPlanChange] = useState<Record<string, string>>({})
 
   const load = () => {
-    fetch('/api/public/accounts', { headers: authHeaders() })
-      .then(r => r.json())
+    api.publicAccounts()
       .then(data => setAccounts(Array.isArray(data) ? data : []))
       .catch(() => setAccounts([]))
   }
@@ -30,25 +51,29 @@ export default function AccountPortal() {
     }
   }
 
-  const handleCreateSub = async (id: string, plan: string) => {
-    try {
-      await api.publicCreateSub(id, plan)
-      load()
-    } catch (err: any) {
-      showToast('구독 생성 실패: ' + err.message)
-    }
-  }
-
   const handleLease = async (id: string) => {
     try {
       const lease = await api.publicLease(id)
-      showToast(`용량 리스 발급됨\n슬롯: ${lease.active_agent_slots}개\n헤비: ${lease.heavy_slots}개\n유효: ${lease.valid_until}`)
+      setLeases(prev => ({ ...prev, [id]: lease }))
     } catch (err: any) {
       showToast('리스 발급 실패: ' + err.message)
     }
   }
 
+  const handlePlanChange = async (id: string, plan: string) => {
+    try {
+      await api.publicCreateSub(id, plan)
+      showToast(`플랜이 ${plan}(으)로 변경되었습니다`)
+      setPlanChange(prev => ({ ...prev, [id]: '' }))
+      load()
+    } catch (err: any) {
+      showToast('플랜 변경 실패: ' + err.message)
+    }
+  }
+
   const stateBadge = (s: string) => s === 'normal' || s === 'active' ? 'badge-green' : s === 'grace' || s === 'flagged' ? 'badge-yellow' : 'badge-red'
+
+  const fmtTime = (t?: string) => t ? t.slice(0, 19).replace('T', ' ') : ''
 
   return (
     <div>
@@ -81,11 +106,11 @@ export default function AccountPortal() {
             <div>
               <label className="label">플랜 · Plan</label>
               <select className="input" value={form.plan} onChange={e => setForm({ ...form, plan: e.target.value })}>
-                <option value="free">Free (무료)</option>
-                <option value="developer">Developer (개발자) — 2 하네스, 5 슬롯</option>
-                <option value="pro">Pro (프로) — 3 하네스, 5 슬롯</option>
-                <option value="team">Team (팀) — 3 하네스, 8 슬롯</option>
-                <option value="enterprise">Enterprise (기업) — 10 하네스, 10 슬롯</option>
+                {PLANS.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.label} — 하네스 {p.harnesses}, 일반 슬롯 {p.normal}, 헤비 {p.heavy}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
@@ -142,6 +167,9 @@ export default function AccountPortal() {
                   <div className="text-xs text-gray-500">백그라운드</div>
                 </div>
               </div>
+              {a.subscription_expiry && (
+                <p className="text-xs text-gray-400 mb-4">구독 만료 · Expiry: {fmtTime(a.subscription_expiry)}</p>
+              )}
 
               {/* Risk States */}
               <div className="grid grid-cols-4 gap-2 mb-4">
@@ -165,24 +193,94 @@ export default function AccountPortal() {
 
               {/* Actions */}
               <div className="flex gap-2 pt-3 border-t border-gray-100">
+                <button onClick={() => setExpanded(expanded === a.id ? null : a.id)} className="btn-secondary text-xs">
+                  {expanded === a.id ? '관리 닫기' : '계정 관리 · Manage'}
+                </button>
                 <button onClick={() => handleLease(a.id)} className="btn-secondary text-xs">
                   용량 리스 발급 · Issue Lease
                 </button>
                 {a.subscription_status !== 'active' && (
-                  <button onClick={() => handleCreateSub(a.id, 'developer')} className="btn-primary text-xs">
+                  <button onClick={() => handlePlanChange(a.id, 'developer')} className="btn-primary text-xs">
                     구독 시작 · Subscribe
                   </button>
                 )}
               </div>
+
+              {/* Inline capacity lease result (replaces alert) */}
+              {leases[a.id] && (
+                <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-green-800">용량 리스 발급됨 · Capacity Lease Issued (§10C.5)</span>
+                    <span className="text-[10px] text-green-700 font-mono">유효: {fmtTime(leases[a.id].valid_until)} (TTL 5분)</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 text-center">
+                    <div><div className="text-sm font-bold text-green-800">{leases[a.id].active_agent_slots}</div><div className="text-[10px] text-green-700">에이전트 슬롯</div></div>
+                    <div><div className="text-sm font-bold text-green-800">{leases[a.id].heavy_slots}</div><div className="text-[10px] text-green-700">헤비 슬롯</div></div>
+                    <div><div className="text-sm font-bold text-green-800">{leases[a.id].background_slots}</div><div className="text-[10px] text-green-700">백그라운드</div></div>
+                    <div><div className="text-sm font-bold text-green-800">{leases[a.id].priority_weight}</div><div className="text-[10px] text-green-700">우선순위</div></div>
+                  </div>
+                </div>
+              )}
+
+              {/* Manage panel */}
+              {expanded === a.id && (
+                <div className="mt-4 pt-4 border-t border-gray-100 space-y-4">
+                  {/* Plan change — real: POST /api/public/accounts/{id}/subscription updates entitlements */}
+                  <div>
+                    <h4 className="text-sm font-semibold mb-2">플랜 변경 · Plan Change</h4>
+                    <div className="flex gap-2">
+                      <select
+                        className="input flex-1"
+                        value={planChange[a.id] ?? a.subscription_plan ?? 'developer'}
+                        onChange={e => setPlanChange(prev => ({ ...prev, [a.id]: e.target.value }))}
+                      >
+                        {PLANS.map(p => (
+                          <option key={p.id} value={p.id} disabled={p.id === a.subscription_plan}>
+                            {p.label} — 하네스 {p.harnesses}, 일반 {p.normal}, 헤비 {p.heavy}{p.id === a.subscription_plan ? ' (현재)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => handlePlanChange(a.id, planChange[a.id] ?? a.subscription_plan ?? 'developer')}
+                        disabled={!planChange[a.id] || planChange[a.id] === a.subscription_plan}
+                        className="btn-primary text-xs disabled:opacity-50"
+                      >
+                        적용
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-gray-400 mt-1">즉시 적용 · 결제/정산 미연동 — 인보이스는 아직 제공되지 않습니다.</p>
+                  </div>
+
+                  {/* Harness management — links to the existing My Devices surface */}
+                  <div>
+                    <h4 className="text-sm font-semibold mb-2">하네스 관리 · Harnesses</h4>
+                    <p className="text-xs text-gray-500">
+                      하네스 목록·해지는 <Link to="/harnesses" className="text-patty-600 hover:underline">내 기기 (My Devices)</Link> 메뉴에서 이용하세요. 계정 단위 일괄 로그아웃은 아직 제공되지 않습니다.
+                    </p>
+                  </div>
+
+                  {/* Honest placeholders — no backend routes yet (spec 24 Phase 2/3) */}
+                  <div>
+                    <h4 className="text-sm font-semibold mb-2">아직 제공되지 않는 기능 · Not Yet Available</h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      {NOT_YET_AVAILABLE.map(item => (
+                        <div key={item.en} className="flex items-center justify-between p-2 rounded-lg border border-gray-100 bg-gray-50">
+                          <div>
+                            <div className="text-xs text-gray-600">{item.ko}</div>
+                            <div className="text-[10px] text-gray-400">{item.en} · {item.ref}</div>
+                          </div>
+                          <span className="badge-gray text-[10px]">준비 중</span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-gray-400 mt-2">해당 기능의 백엔드 API가 아직 라우팅되지 않아 실제 동작 대신 상태를 정직하게 표시합니다.</p>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
       )}
     </div>
   )
-}
-
-function authHeaders() {
-  const token = localStorage.getItem('pccp_token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
 }

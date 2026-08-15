@@ -3,16 +3,22 @@ import EmptyState from '../components/EmptyState'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { showToast } from '../components/Toast'
+import { formatRelative } from '../utils/format'
 
 export default function SREConsole() {
-  const [tab, setTab] = useState<'overview' | 'accounts' | 'capacity' | 'risk'>('overview')
+  const [tab, setTab] = useState<'overview' | 'reliability' | 'accounts' | 'capacity' | 'risk'>('overview')
   const [accounts, setAccounts] = useState<any[]>([])
+  const [incidents, setIncidents] = useState<any[]>([])
   const [health, setHealth] = useState<any>({})
 
   useEffect(() => {
     fetch('/api/public/accounts', { headers: authHeaders() })
       .then(r => r.json()).then(data => setAccounts(Array.isArray(data) ? data : []))
       .catch(() => setAccounts([]))
+
+    fetch('/api/incidents', { headers: authHeaders() })
+      .then(r => r.json()).then(data => setIncidents(Array.isArray(data) ? data : []))
+      .catch(() => setIncidents([]))
 
     // Health checks
     Promise.all([
@@ -45,6 +51,7 @@ export default function SREConsole() {
       <div className="flex gap-1 mb-6 border-b border-gray-200">
         {[
           { id: 'overview', label: '서비스 현황', labelEn: 'Overview' },
+          { id: 'reliability', label: '신뢰성', labelEn: 'Reliability' },
           { id: 'accounts', label: '계정 관리', labelEn: 'Accounts' },
           { id: 'capacity', label: '용량', labelEn: 'Capacity' },
           { id: 'risk', label: '위험 관리', labelEn: 'Risk' },
@@ -139,6 +146,127 @@ export default function SREConsole() {
                   </span>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reliability Tab */}
+      {tab === 'reliability' && (
+        <div className="space-y-4">
+          {/* SLO / Burn Rate */}
+          <div className="card">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold">SLO / 버닝레이트 · SLO & Burn Rate</h3>
+              <span className="badge-yellow">미계측 · Not instrumented</span>
+            </div>
+            <p className="text-xs text-gray-400 mb-3">
+              SLO 메트릭 파이프라인(§43)이 아직 연결되지 않아 버닝레이트/에러 버짓을 계산할 수 없습니다. 아래는 텔레메트리 스냅샷의 실측값입니다.
+            </p>
+            {Object.keys(health.telemetry?.counters || {}).length > 0 || Object.keys(health.telemetry?.gauges || {}).length > 0 ? (
+              <div className="space-y-1">
+                {Object.entries(health.telemetry?.counters || {}).map(([k, v]) => (
+                  <div key={`c-${k}`} className="flex items-center gap-3 text-xs py-1 px-2 bg-gray-50 rounded">
+                    <span className="font-mono truncate flex-1">{k}</span>
+                    <span className="text-gray-400">counter</span>
+                    <span className="font-medium">{String(v)}</span>
+                  </div>
+                ))}
+                {Object.entries(health.telemetry?.gauges || {}).map(([k, v]) => (
+                  <div key={`g-${k}`} className="flex items-center gap-3 text-xs py-1 px-2 bg-gray-50 rounded">
+                    <span className="font-mono truncate flex-1">{k}</span>
+                    <span className="text-gray-400">gauge</span>
+                    <span className="font-medium">{String(v)}</span>
+                  </div>
+                ))}
+                <p className="text-[10px] text-gray-400 mt-1">스냅샷 시각 · Snapshot: {health.telemetry?.timestamp?.slice(0, 19).replace('T', ' ') || '-'}</p>
+              </div>
+            ) : (
+              <EmptyState icon="📉" title="수집된 SLO 메트릭이 없습니다" message="텔레메트리 파이프라인이 연결되면 표시됩니다 (데모 데이터 생성 없음)" />
+            )}
+          </div>
+
+          {/* Incident Timeline */}
+          <div className="card">
+            <h3 className="text-sm font-semibold mb-3">인시던트 타임라인 · Incident Timeline</h3>
+            {incidents.length === 0 ? (
+              <EmptyState icon="🚨" title="기록된 인시던트가 없습니다" message="/api/incidents로 생성된 인시던트가 표시됩니다" />
+            ) : (
+              <div className="space-y-2">
+                {incidents.map((inc: any) => (
+                  <div key={inc.id} className="p-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={inc.severity === 'critical' ? 'badge-red' : inc.severity === 'high' ? 'badge-yellow' : 'badge-gray'}>{inc.severity}</span>
+                      <span className="text-sm font-medium">{inc.title_ko || inc.title}</span>
+                      <span className={`ml-auto text-xs font-medium ${inc.status === 'resolved' || inc.status === 'closed' ? 'text-green-600' : 'text-red-600'}`}>{inc.status}</span>
+                    </div>
+                    {inc.description && <p className="text-xs text-gray-500 mb-2">{inc.description}</p>}
+                    <div className="flex items-center gap-4 text-[10px] text-gray-400 flex-wrap">
+                      <span>발생 · First seen: {inc.first_seen_at?.slice(0, 19).replace('T', ' ') || '-'}</span>
+                      <span>격리 · Contained: {inc.contained_at ? inc.contained_at.slice(0, 19).replace('T', ' ') : '-'}</span>
+                      <span>해결 · Resolved: {inc.resolved_at ? inc.resolved_at.slice(0, 19).replace('T', ' ') : '미해결'}</span>
+                      {inc.category && <span className="font-mono">{inc.category}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Alert Routing Config */}
+          <div className="card">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold">알림 라우팅 설정 · Alert Routing (SEV)</h3>
+              <span className="badge-yellow">설정 저장 미구현 · Not wired</span>
+            </div>
+            <p className="text-xs text-gray-400 mb-3">
+              Slack/이메일/온콜 채널 연동이 아직 구축되지 않았습니다(§10C.14). 아래는 정의된 라우팅 정책이며 저장·발송은 불가합니다.
+            </p>
+            <table className="w-full overflow-x-auto block">
+              <thead>
+                <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
+                  <th className="pb-2">심각도</th>
+                  <th className="pb-2">채널</th>
+                  <th className="pb-2">대응</th>
+                  <th className="pb-2">에스컬레이션</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  { sev: 'SEV-1', ko: '서비스 전면 장애', channels: 'Slack #sev1 + 이메일 + 온콜 호출', response: '즉시 (15분 내)', escalation: 'SRE 리드 → CTO' },
+                  { sev: 'SEV-2', ko: '부분 저하', channels: 'Slack #alerts + 온콜 알림', response: '업무시간 내', escalation: '당직 → SRE 리드' },
+                  { sev: 'SEV-3', ko: '경고', channels: 'Slack #alerts', response: '다음 영업일', escalation: '티켓 생성' },
+                ].map(s => (
+                  <tr key={s.sev} className="border-b border-gray-100 last:border-0">
+                    <td className="py-2"><span className={s.sev === 'SEV-1' ? 'badge-red' : s.sev === 'SEV-2' ? 'badge-yellow' : 'badge-gray'}>{s.sev}</span> <span className="text-xs text-gray-500">{s.ko}</span></td>
+                    <td className="py-2 text-xs text-gray-500">{s.channels}</td>
+                    <td className="py-2 text-xs text-gray-500">{s.response}</td>
+                    <td className="py-2 text-xs text-gray-500">{s.escalation}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Regional Health */}
+          <div className="card">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold">지역별 상태 · Regional Health</h3>
+              <span className="badge-gray">단일 지역 배포 · Single region</span>
+            </div>
+            <p className="text-xs text-gray-400 mb-3">
+              다중 지역 상태는 아직 계측되지 않았습니다(§7.1). 현재 배포의 실측 상태만 표시됩니다.
+            </p>
+            <div className="p-3 bg-gray-50 rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-sm font-medium">kr-central <span className="text-xs text-gray-400 font-normal">현재 배포 · Current deployment</span></span>
+                <span className={health.cp?.status === 'ok' ? 'badge-green ml-auto' : 'badge-yellow ml-auto'}>{health.cp?.status || 'unknown'}</span>
+              </div>
+              <div className="flex items-center gap-4 text-[10px] text-gray-400 flex-wrap">
+                <span>컨트롤 플레인: {health.cp?.service || '-'} v{health.cp?.version || '-'}</span>
+                <span>실시간 클라이언트: {health.realtime?.connected_clients ?? 0}</span>
+                <span>헬스 체크: {health.cp?.timestamp ? formatRelative(health.cp.timestamp) : '-'}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -307,7 +435,7 @@ export default function SREConsole() {
   )
 }
 
-function authHeaders() {
+function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('pccp_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }

@@ -24,10 +24,32 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     }),
-  bootstrap: (email: string, password: string, orgName: string) =>
+  bootstrap: (email: string, password: string, orgName: string, profile?: string) =>
     request<{ organization_id: string }>('/api/auth/bootstrap', {
       method: 'POST',
-      body: JSON.stringify({ email, password, org_name: orgName }),
+      body: JSON.stringify({ email, password, org_name: orgName, profile }),
+    }),
+
+  // SSO (§8.2) — real routed endpoints. NOTE: these sit behind the admin auth
+  // middleware; unauthenticated callers get 401 until the backend opens them.
+  ssoOIDCAuthUrl: (redirectUri: string, state: string, issuer: string, clientId: string) =>
+    request<{ auth_url: string }>(
+      `/api/sso/oidc/auth-url?redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}&issuer=${encodeURIComponent(issuer)}&client_id=${encodeURIComponent(clientId)}`
+    ),
+  ssoOIDCCallback: (code: string, redirectUri: string) =>
+    request<any>('/api/sso/oidc/callback', {
+      method: 'POST',
+      body: JSON.stringify({ code, redirect_uri: redirectUri }),
+    }),
+  ssoSAMLRedirect: (idpEntityId: string, idpSsoUrl: string, relayState: string) =>
+    request<{ redirect_url: string }>('/api/sso/saml/redirect', {
+      method: 'POST',
+      body: JSON.stringify({ idp_entity_id: idpEntityId, idp_sso_url: idpSsoUrl, relay_state: relayState }),
+    }),
+  ssoSAMLCallback: (samlResponse: string, relayState: string) =>
+    request<any>('/api/sso/saml/callback', {
+      method: 'POST',
+      body: JSON.stringify({ saml_response: samlResponse, relay_state: relayState }),
     }),
 
   // Dashboard

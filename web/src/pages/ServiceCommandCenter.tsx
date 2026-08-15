@@ -91,7 +91,7 @@ export default function ServiceCommandCenter() {
               onClick={() => setSelectedStatus(c.filter === '' ? 'all' : c.filter)}
               className={`text-center p-3 rounded-lg cursor-pointer transition-all ${cardBg[c.color]} ${selectedStatus === (c.filter === '' ? 'all' : c.filter) ? 'ring-2 ring-blue-400' : ''}`}
             >
-              <div className={`text-2xl font-bold ${cardText[c.color]}`}>{c.filter === '' ? c.count : c.items.length}</div>
+              <div className={`text-2xl font-bold ${cardText[c.color]}`}>{c.filter === '' ? c.count : (c.items?.length ?? 0)}</div>
               <div className="text-xs font-medium text-gray-700 mt-1">{c.ko}</div>
               <div className="text-[10px] text-gray-400">{c.en}</div>
               <div className="text-[10px] text-gray-400 mt-1">{c.desc}</div>
@@ -177,6 +177,68 @@ export default function ServiceCommandCenter() {
         </div>
       </div>
 
+      {/* Live Traffic (partially instrumented — honest placeholder, §6.1) */}
+      <div className="card mb-6">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold">실시간 트래픽 · Live Traffic</h3>
+          <span className="badge-yellow">부분 계측 · Partially instrumented</span>
+        </div>
+        <p className="text-xs text-gray-400 mb-4">DARI 교환 스트림·큐 깊이·슬롯 대기열은 아직 연결되지 않았습니다. 아래는 실측 가능한 지표입니다.</p>
+        <div className="grid grid-cols-4 gap-3">
+          <div className="text-center p-3 bg-purple-50 rounded-lg">
+            <div className="text-2xl font-bold text-purple-600">{dash?.active_sessions?.length || 0}</div>
+            <div className="text-xs text-gray-500">활성 세션 · Active Sessions</div>
+          </div>
+          <div className="text-center p-3 bg-blue-50 rounded-lg">
+            <div className="text-2xl font-bold text-blue-600">{health.rt?.connected_clients ?? 0}</div>
+            <div className="text-xs text-gray-500">실시간 클라이언트 · Realtime Clients</div>
+          </div>
+          <div className="text-center p-3 bg-green-50 rounded-lg">
+            <div className="text-2xl font-bold text-green-600">{dash?.harnesses || 0}</div>
+            <div className="text-xs text-gray-500">하네스 · Harnesses</div>
+          </div>
+          <div className="text-center p-3 bg-gray-50 rounded-lg">
+            <div className="text-2xl font-bold text-gray-400">–</div>
+            <div className="text-xs text-gray-500">DARI 교환 · Exchanges <span className="text-[10px] text-gray-400 block">미계측</span></div>
+          </div>
+        </div>
+      </div>
+
+      {/* Ops queues: T&S / Refund / Support */}
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        {/* Trust & Safety queue — derived from live account records */}
+        <div className="card">
+          <h3 className="text-sm font-semibold mb-1">T&S 케이스 큐 · Trust & Safety Queue</h3>
+          <p className="text-xs text-gray-400 mb-3">케이스 라이프사이클은 미구축 — 계정 레코드의 trust_safety_state 플래그에서 도출(실측)</p>
+          {accounts.filter(a => a.trust_safety_state && a.trust_safety_state !== 'normal').length === 0 ? (
+            <EmptyState icon="🛡" title="T&S 플래그 계정 없음" message="trust_safety_state가 'normal'이 아닌 계정이 여기 표시됩니다" />
+          ) : (
+            <div className="space-y-1">
+              {accounts.filter(a => a.trust_safety_state && a.trust_safety_state !== 'normal').map((a: any, i: number) => (
+                <div key={a.id || i} className="flex items-center gap-2 text-xs p-2 bg-red-50 rounded">
+                  <span className="font-medium truncate flex-1">{a.display_name_ko || a.display_name || a.email}</span>
+                  <span className="badge-red">{a.trust_safety_state}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Refund queue — honest placeholder (payments not configured) */}
+        <div className="card">
+          <h3 className="text-sm font-semibold mb-1">환불 큐 · Refund Queue</h3>
+          <p className="text-xs text-gray-400 mb-3">결제 제공자가 미설정 상태입니다(Payments not_configured)</p>
+          <EmptyState icon="💳" title="환불 요청이 없습니다" message="결제 연동 후 환불/크레딧 요청이 여기 표시됩니다 (데모 데이터 생성 없음)" />
+        </div>
+
+        {/* Support timeline — honest placeholder */}
+        <div className="card">
+          <h3 className="text-sm font-semibold mb-1">지원 타임라인 · Support Timeline</h3>
+          <p className="text-xs text-gray-400 mb-3">계정별 지원 케이스 타임라인(§6.1 Support)</p>
+          <EmptyState icon="🎧" title="지원 케이스 파이프라인 미연결" message="지원 케이스 시스템 연동 후 계정별 타임라인이 표시됩니다" />
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 gap-4">
         {/* Risk Overview */}
         <div className="card">
@@ -246,7 +308,7 @@ export default function ServiceCommandCenter() {
   )
 }
 
-function authHeaders() {
+function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('pccp_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
