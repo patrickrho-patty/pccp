@@ -10,12 +10,12 @@ func TestVirtualEngineReplaysTrace(t *testing.T) {
 	// real adapter — replaying production traces through the REAL
 	// scheduler with synthetic GPUs.
 	ve := NewVirtualEngine(VirtualEngineSpec{
-		Model:          "model-a",
-		PrefillTPS:     1000,
-		DecodeTPS:      50,
-		MaxConcurrent:  8,
-		KVBlocks:       4096,
-		FailureRate:    0,
+		Model:           "model-a",
+		PrefillTPS:      1000,
+		DecodeTPS:       50,
+		MaxConcurrent:   8,
+		KVBlocks:        4096,
+		FailureRate:     0,
 		LatencyJitterMs: 0,
 	})
 	tr := TraceRecord{

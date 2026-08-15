@@ -152,6 +152,7 @@ func (l *DARIListener) handleConn(netConn net.Conn) {
 			if result.Outcome != OutcomeDenied {
 				l.svc.Registry.Register(reg.Card, ed25519.PublicKey(cred.PublicKey), time.Now())
 				l.svc.Serving.Dispatcher.SetSelector(l.svc.Serving.selectorFor(l.svc))
+				l.svc.SyncRouter()
 			}
 			if result.Outcome == OutcomeQuarantined {
 				l.svc.Registry.MarkQuarantined(reg.Card.WorkerID, result.Reason)
@@ -198,6 +199,7 @@ func (l *DARIListener) handleConn(netConn net.Conn) {
 				// Push the live load into the S2 selector; a freed slot
 				// wakes the dispatch loop.
 				l.svc.Serving.Dispatcher.SetSelector(l.svc.Serving.selectorFor(l.svc))
+				l.svc.SyncRouter()
 			}
 			if result.Outcome == OutcomeQuarantined {
 				l.svc.Registry.MarkQuarantined(hb.Card.WorkerID, result.Reason)

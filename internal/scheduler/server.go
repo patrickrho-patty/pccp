@@ -17,16 +17,60 @@ type Scheduler struct {
 	KV        *KVIndex
 }
 
-// NewScheduler assembles the S1 scheduler with the given trust material,
-// policy source, lease parameters, and evidence signing key.
+// NewScheduler assembles the full S1–S12 scheduler with the given trust
+// material, policy source, lease parameters, and evidence signing key.
+// The production composition: registry + admission + evidence + serving
+// stack (gateway/dispatcher/queue) + KV index + cost router + gang
+// registry + SLO table + latency predictor + autoscaler + batch gateway.
 func NewScheduler(trust Trust, policy PolicySource, ttl, grace time.Duration, evidenceKey ed25519.PrivateKey) *Scheduler {
-	return &Scheduler{
+	svc := &Scheduler{
 		Registry:  NewRegistry(ttl, grace),
 		Admission: NewAdmission(trust, NewRevocationStore(), policy),
 		Evidence:  NewEvidenceLog(evidenceKey),
 		Serving:   NewServing(),
 		KV:        NewKVIndex(),
 	}
+	svc.wireServingStack()
+	return svc
+}
+
+// wireServingStack composes the S2–S12 serving path: the dispatcher's
+// router consumes the KV index, gang registry, SLO table, and predictor;
+// receipts land in a bounded store; the batch gateway and autoscaler are
+// built for the binary to expose.
+func (s *Scheduler) wireServingStack() {
+	router := NewCostRouter(DefaultRouterConfig())
+	router.SetKV(s.KV)
+	router.SetReceipts(NewReceiptStore(1024))
+	router.SetGang(NewGangRegistry())
+	router.SetSLOResolver(NewSLOResolver())
+	router.SetPredictor(NewLatencyPredictor(DefaultPredictorConfig()))
+	s.Serving.Dispatcher.SetRouter(router)
+}
+
+// SyncRouter refreshes the router's worker/gang/load tables from the
+// live registry. Called on every register/heartbeat (the listener owns
+// the card feed; the router owns placement).
+func (s *Scheduler) SyncRouter() {
+	router := s.Serving.Dispatcher.router
+	if router == nil {
+		return
+	}
+	gang := router.gang
+	for _, e := range s.Registry.List() {
+		router.UpsertWorker(e, RouterWorkerState{
+			ActiveRequests: int(e.Card.ActiveSeqs),
+			Load:           WorkerLoad{MaxConcurrent: int(e.Card.MaxConcurrentSeqs), Active: int(e.Card.ActiveSeqs)},
+		})
+		if gang != nil {
+			gang.Upsert(e)
+		}
+	}
+}
+
+// Router exposes the composed cost router (admin/telemetry wiring).
+func (s *Scheduler) Router() *CostRouter {
+	return s.Serving.Dispatcher.router
 }
 
 // Admit runs the admission ladder for a registration/heartbeat request.
