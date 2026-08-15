@@ -1,0 +1,46 @@
+\begin{tikzpicture}[
+  font=\small,
+  state/.style={draw=paperink, fill=paperblue, rounded corners=2pt,
+    minimum width=1.95cm, minimum height=0.95cm, align=center,
+    text=paperink, font=\small\bfseries},
+  gate/.style={draw=paperamber, fill=paperamberlight, rounded corners=2pt,
+    align=center, text=paperink, font=\scriptsize, inner sep=3pt,
+    minimum width=1.85cm, minimum height=0.95cm},
+  optnode/.style={draw=paperblueedge, dashed, thick, fill=paperblue,
+    rounded corners=2pt, align=center, text=paperink, font=\scriptsize\bfseries,
+    minimum width=2.05cm, minimum height=0.8cm},
+  required/.style={-{Latex[length=2.2mm]}, very thick, draw=paperink},
+  optional/.style={-{Latex[length=2.2mm]}, thick, dashed, draw=paperblueedge},
+  note/.style={font=\scriptsize, text=paperblueedge, align=center}
+]
+  \node[state] (open) {\textsc{Open}};
+  \node[state, right=0.28cm of open] (auth) {\textsc{Authorize}};
+  \node[state, right=0.28cm of auth] (route) {\textsc{Route}};
+  \node[state, right=0.28cm of route] (stream) {\textsc{Stream}};
+  \node[state, right=0.28cm of stream] (final) {\textsc{Finalize}};
+  \node[state, right=0.28cm of final] (close) {\textsc{Close}};
+
+  \draw[required] (open) -- (auth);
+  \draw[required] (auth) -- (route);
+  \draw[required] (route) -- (stream);
+  \draw[required] (stream) -- (final);
+  \draw[required] (final) -- (close);
+
+  \node[gate, below=0.45cm of open] {Credential 결합\\피어·세션};
+  \node[gate, below=0.45cm of auth] {인가 증서\\인가 결정 + 정책 상태};
+  \node[gate, below=0.45cm of route] {모델 아티팩트 명세서\\+ 추론 피어};
+  \node[gate, below=0.45cm of stream] {순번 lane\\토큰·데이터};
+  \node[gate, below=0.45cm of final] {부수 효과 인가\\멱등성 등급};
+  \node[gate, below=0.45cm of close] {검증 가능 실행 증거\\서명 루트};
+
+  \node[optnode, below=2.6cm of stream, xshift=-1.05cm] (toolprop) {도구 제안\\(선택)};
+  \node[gate, right=2.25cm of toolprop] (toolauth) {도구 인가\\(제안 시 필수)};
+  \node[optnode, right=2.25cm of toolauth] (exec) {효과\\실행};
+
+  \draw[optional] ([yshift=-0.18cm]stream.south) -| (toolprop.north);
+  \draw[required] (toolprop) -- (toolauth);
+  \draw[required] (toolauth) -- (exec);
+  \draw[optional] (exec.north) |- ([yshift=-0.3cm]final.east);
+
+  \node[note, below=0.35cm of toolauth] {도구 제안은 선택 사항이며,\\제안된 도구의 인가는 선택 사항이 아니다.};
+\end{tikzpicture}

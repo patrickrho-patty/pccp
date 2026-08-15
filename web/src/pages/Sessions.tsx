@@ -75,7 +75,7 @@ export default function Sessions() {
     // Auto-refresh for live updates
     const interval = setInterval(load, 10000)
     return () => clearInterval(interval)
-  }, [page])
+  }, [page, filters.search])
 
   const filtered = useFilteredData(sessions, filters, FILTER_CONFIG)
   // Server-side pagination (web/01 B): `sessions` already IS the

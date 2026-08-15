@@ -102,6 +102,9 @@ type EnrollHarnessRequest struct {
 	DeviceOSVersion  string `json:"device_os_version,omitempty"`
 	DeviceArch       string `json:"device_arch,omitempty"`
 	EnrollmentMode   string `json:"enrollment_mode,omitempty"`
+	// EnrollmentCode is the one-time code issued to the operator
+	// (harnesses B3); validated by the API layer before enrollment.
+	EnrollmentCode string `json:"enrollment_code,omitempty"`
 }
 
 // EnrollHarness enrolls a new harness instance and issues a PPC.

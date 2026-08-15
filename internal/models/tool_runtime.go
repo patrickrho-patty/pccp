@@ -79,6 +79,7 @@ func AllModels() []interface{} {
 	return []interface{}{
 		// Identity
 		&Organization{},
+		&OrgSetting{},
 		&BusinessUnit{},
 		&User{},
 		&Role{},

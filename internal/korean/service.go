@@ -3,6 +3,7 @@ package korean
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
@@ -211,7 +212,9 @@ type ForcedVersion struct {
 	Reason         string `json:"reason"`
 }
 
-// SetForcedHarnessVersion sets a minimum harness version requirement.
+// SetForcedHarnessVersion sets a minimum harness version requirement
+// (harnesses C2): the requirement is stored durably as an OrgSetting so
+// enroll + list can enforce it, plus the audit record.
 func (s *Service) SetForcedHarnessVersion(orgID, minVersion, releaseRing, deadline, reason string) error {
 	details, _ := json.Marshal(ForcedVersion{
 		OrganizationID: orgID,
@@ -220,6 +223,17 @@ func (s *Service) SetForcedHarnessVersion(orgID, minVersion, releaseRing, deadli
 		Deadline:       deadline,
 		Reason:         reason,
 	})
+
+	setting := &models.OrgSetting{
+		OrganizationID: orgID,
+		Key:            "forced_harness_version",
+		Value:          string(details),
+	}
+	if err := s.db.Where("organization_id = ? AND key = ?", orgID, "forced_harness_version").
+		Assign(models.OrgSetting{Value: string(details)}).
+		FirstOrCreate(setting).Error; err != nil {
+		return err
+	}
 
 	audit := &models.AuditEvent{
 		OrganizationID: orgID,
@@ -231,6 +245,56 @@ func (s *Service) SetForcedHarnessVersion(orgID, minVersion, releaseRing, deadli
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	}
 	return s.db.Create(audit).Error
+}
+
+// GetForcedHarnessVersion returns the org's forced minimum harness
+// version requirement (harnesses C2), or nil when unset.
+func (s *Service) GetForcedHarnessVersion(orgID string) *ForcedVersion {
+	var setting models.OrgSetting
+	if err := s.db.Where("organization_id = ? AND key = ?", orgID, "forced_harness_version").
+		First(&setting).Error; err != nil {
+		return nil
+	}
+	var fv ForcedVersion
+	if err := json.Unmarshal([]byte(setting.Value), &fv); err != nil {
+		return nil
+	}
+	return &fv
+}
+
+// IsVersionBelowFloor reports whether a semver-ish version string is
+// below the given floor (numeric comparison on major.minor.patch).
+func IsVersionBelowFloor(version, floor string) bool {
+	if floor == "" {
+		return false
+	}
+	v := parseVersion(version)
+	f := parseVersion(floor)
+	for i := 0; i < 3; i++ {
+		if v[i] > f[i] {
+			return false
+		}
+		if v[i] < f[i] {
+			return true
+		}
+	}
+	return false
+}
+
+func parseVersion(v string) [3]int {
+	var out [3]int
+	parts := strings.Split(strings.TrimSpace(v), ".")
+	for i := 0; i < 3 && i < len(parts); i++ {
+		n := 0
+		for _, c := range parts[i] {
+			if c < '0' || c > '9' {
+				break
+			}
+			n = n*10 + int(c-'0')
+		}
+		out[i] = n
+	}
+	return out
 }
 
 // GetAISkillsMatrix returns the AI skills matrix for the organization (PRD §33.7).

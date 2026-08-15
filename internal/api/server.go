@@ -2,6 +2,8 @@ package api
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -17,6 +19,7 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/audit"
 	"github.com/patrickrho-patty/pccp/internal/communications"
 	"github.com/patrickrho-patty/pccp/internal/context"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/events"
 	"github.com/patrickrho-patty/pccp/internal/fleet"
 	"github.com/patrickrho-patty/pccp/internal/gitscm"
@@ -181,7 +184,9 @@ func (s *Server) setupRouter() {
 		r.Route("/harnesses", func(r chi.Router) {
 			r.Get("/", s.handleListHarnesses)
 			r.Post("/enroll", s.handleEnrollHarness)
+			r.Post("/heartbeat", s.handleHarnessHeartbeat)
 			r.Get("/{id}", s.handleGetHarness)
+			r.Get("/{id}/detail", s.handleGetHarnessDetail)
 			r.Post("/{id}/revoke", s.handleRevokeHarness)
 			r.Post("/{id}/quarantine", s.handleQuarantineHarness)
 			r.Post("/{id}/reactivate", s.handleReactivateHarness)
@@ -777,6 +782,16 @@ func (s *Server) handleListHarnesses(w http.ResponseWriter, r *http.Request) {
 	if orgID != "" {
 		q = q.Where("organization_id = ?", orgID)
 	}
+	// Entity filters (harnesses C4): status/risk/ring/user are
+	// server-side so the UI never client-slices the full table.
+	for _, key := range []string{"status", "risk_state", "build_channel"} {
+		if v := r.URL.Query().Get(key); v != "" {
+			q = q.Where(key+" = ?", v)
+		}
+	}
+	if v := r.URL.Query().Get("user"); v != "" {
+		q = q.Where("allowed_users LIKE ?", "%"+v+"%")
+	}
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 		page, _ := strconv.Atoi(pageStr)
 		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
@@ -794,12 +809,37 @@ func (s *Server) handleListHarnesses(w http.ResponseWriter, r *http.Request) {
 		q.Count(&total)
 		var harnesses []models.Harness
 		q.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&harnesses)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"data": harnesses, "total": total, "page": page, "size": size})
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"data": decorateHarnesses(harnesses), "total": total, "page": page, "size": size,
+		})
 		return
 	}
 	var harnesses []models.Harness
 	q.Order("created_at DESC").Find(&harnesses)
-	writeJSON(w, http.StatusOK, harnesses)
+	writeJSON(w, http.StatusOK, decorateHarnesses(harnesses))
+}
+
+// decorateHarnesses adds the stale flag (harnesses B2): enrolled/active
+// harnesses whose last heartbeat is older than the heartbeat window are
+// flagged stale for the UI and risk scoring.
+func decorateHarnesses(harnesses []models.Harness) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(harnesses))
+	now := time.Now()
+	for _, h := range harnesses {
+		row := map[string]interface{}{}
+		b, _ := json.Marshal(h)
+		json.Unmarshal(b, &row)
+		row["stale"] = false
+		if h.Status == "enrolled" || h.Status == "active" {
+			if t, err := time.Parse(time.RFC3339, h.LastHeartbeat); err != nil {
+				row["stale"] = true
+			} else if now.Sub(t) > harnessStaleAfter {
+				row["stale"] = true
+			}
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 func (s *Server) handleEnrollHarness(w http.ResponseWriter, r *http.Request) {
@@ -813,6 +853,30 @@ func (s *Server) handleEnrollHarness(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.OrganizationID == "" {
 		req.OrganizationID = getOrgID(r)
+	}
+	if req.OrganizationID == "" {
+		writeError(w, http.StatusBadRequest, "organization_id is required — enroll from an organization-scoped operator session")
+		return
+	}
+	// One-time enrollment code flow (harnesses B3): when the harness
+	// self-enrolls with a code, validate + burn it instead of trusting
+	// a raw admin paste.
+	if code := strings.TrimSpace(req.EnrollmentCode); code != "" {
+		if err := s.consumeEnrollmentCode(req.OrganizationID, code, req.UserID, req.HarnessID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		req.EnrollmentMode = "code"
+	}
+	// Forced-version floor (harnesses C2): vulnerable builds below the
+	// org's minimum version are blocked at enrollment.
+	if fv := s.ext().Korean.GetForcedHarnessVersion(req.OrganizationID); fv != nil {
+		if korean.IsVersionBelowFloor(req.BinaryVersion, fv.MinVersion) {
+			writeError(w, http.StatusForbidden, fmt.Sprintf(
+				"하네스 버전이 최소 요구 버전 미만입니다 · Harness version %s below forced minimum %s (ring %s)",
+				req.BinaryVersion, fv.MinVersion, fv.ReleaseRing))
+			return
+		}
 	}
 	// Enforce harness seat limit (enterprise licensing, PRD §29.10).
 	var hOrg models.Organization
@@ -873,7 +937,230 @@ func (s *Server) handleRevokeHarness(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+	// Live propagation (harnesses C3): the credential is in the CA
+	// revocation list (relay rebuilds at boot) AND we push the
+	// revocation to the live relay channel when configured.
+	relayPropagated := true
+	if err := s.pushRelayDirective("revoke_harness_certificate", harness.OrganizationID, harness.HarnessID, req.Reason, nil); err != nil {
+		relayPropagated = false
+		log.Printf("api: revoke %s: relay propagation skipped: %v", harness.HarnessID, err)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "revoked", "relay_propagated": relayPropagated})
+}
+
+// harnessStaleAfter is the heartbeat window after which an
+// enrolled/active harness is flagged stale (harnesses B2).
+const harnessStaleAfter = 10 * time.Minute
+
+// consumeEnrollmentCode validates and burns a one-time enrollment code
+// (harnesses B3). Unused + unexpired codes are consumed by the
+// enrolling harness ID; anything else fails closed.
+func (s *Server) consumeEnrollmentCode(orgID, code, userID, harnessID string) error {
+	if userID == "" {
+		return fmt.Errorf("enrollment code flow requires user_id")
+	}
+	if harnessID == "" {
+		return fmt.Errorf("enrollment code flow requires harness_id")
+	}
+	var ec models.EnrollmentCode
+	if err := s.db.Where("code = ? AND organization_id = ?", code, orgID).First(&ec).Error; err != nil {
+		return fmt.Errorf("등록 코드가 유효하지 않습니다 · Invalid enrollment code")
+	}
+	if ec.Used {
+		return fmt.Errorf("등록 코드가 이미 사용되었습니다 · Enrollment code already used")
+	}
+	if exp, err := time.Parse(time.RFC3339, ec.ExpiresAt); err == nil && time.Now().After(exp) {
+		return fmt.Errorf("등록 코드가 만료되었습니다 · Enrollment code expired")
+	}
+	if ec.UserID != "" && ec.UserID != userID {
+		return fmt.Errorf("등록 코드가 다른 사용자에게 발급되었습니다 · Code issued to a different user")
+	}
+	return s.db.Model(&ec).Updates(map[string]interface{}{"used": true, "used_by": harnessID}).Error
+}
+
+// handleHarnessHeartbeat receives a harness heartbeat over the control
+// plane (harnesses B2): updates LastHeartbeat/LastAttestation and the
+// device's live facts so stale detection + the fleet view reflect
+// reality instead of enroll-time snapshots.
+func (s *Server) handleHarnessHeartbeat(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrganizationID string `json:"organization_id"`
+		HarnessID      string `json:"harness_id"`
+		BinaryVersion  string `json:"binary_version,omitempty"`
+		DeviceHostname string `json:"device_hostname,omitempty"`
+		DeviceOS       string `json:"device_os,omitempty"`
+		DeviceOSVer    string `json:"device_os_version,omitempty"`
+		DeviceArch     string `json:"device_arch,omitempty"`
+		IPAddress      string `json:"ip_address,omitempty"`
+		Attestation    string `json:"attestation,omitempty"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	orgID := req.OrganizationID
+	if orgID == "" {
+		orgID = getOrgID(r)
+	}
+	if req.HarnessID == "" {
+		writeError(w, http.StatusBadRequest, "harness_id is required")
+		return
+	}
+	var harness models.Harness
+	if err := s.db.Where("harness_id = ? AND organization_id = ?", req.HarnessID, orgID).First(&harness).Error; err != nil {
+		writeError(w, http.StatusNotFound, "harness not found")
+		return
+	}
+	now := time.Now().Format(time.RFC3339)
+	updates := map[string]interface{}{"last_heartbeat": now}
+	if req.Attestation != "" {
+		updates["last_attestation"] = now
+	}
+	if req.BinaryVersion != "" {
+		updates["binary_version"] = req.BinaryVersion
+	}
+	s.db.Model(&harness).Updates(updates)
+	if harness.DeviceID != "" {
+		devUpdates := map[string]interface{}{"last_seen": now}
+		if req.DeviceHostname != "" {
+			devUpdates["hostname"] = req.DeviceHostname
+		}
+		if req.DeviceOS != "" {
+			devUpdates["os"] = req.DeviceOS
+		}
+		if req.DeviceOSVer != "" {
+			devUpdates["os_version"] = req.DeviceOSVer
+		}
+		if req.DeviceArch != "" {
+			devUpdates["arch"] = req.DeviceArch
+		}
+		if req.IPAddress != "" {
+			devUpdates["ip_address"] = req.IPAddress
+		}
+		s.db.Model(&models.Device{}).Where("id = ?", harness.DeviceID).Updates(devUpdates)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "heartbeat_at": now})
+}
+
+// handleGetHarnessDetail returns the full vertical for the harness
+// detail page (harnesses C1/C5): harness + device posture + decoded
+// credential (issuer/validity/revocation) + allowed users + sessions +
+// attestation + audit.
+func (s *Server) handleGetHarnessDetail(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var harness models.Harness
+	if err := s.db.Where("id = ? OR harness_id = ?", id, id).First(&harness).Error; err != nil {
+		writeError(w, http.StatusNotFound, "하네스를 찾을 수 없습니다")
+		return
+	}
+	result := map[string]interface{}{"harness": harness}
+
+	if harness.DeviceID != "" {
+		var device models.Device
+		if s.db.First(&device, "id = ?", harness.DeviceID).Error == nil {
+			result["device"] = device
+		}
+	}
+
+	// Decode the stored PPC for credential metadata.
+	if harness.CredentialJSON != "" {
+		cred := map[string]interface{}{}
+		if raw, err := hex.DecodeString(harness.CredentialJSON); err == nil {
+			if sign1, derr := dari.DecodeCOSESign1(raw); derr == nil {
+				if pc, perr := dari.DecodePeerCredential(sign1.Payload); perr == nil {
+					now := time.Now().UnixMilli()
+					cred["serial"] = pc.Serial
+					cred["issuer"] = pc.Issuer
+					cred["subject_peer_id"] = pc.SubjectPeerID
+					cred["not_before"] = time.UnixMilli(pc.NotBefore).Format(time.RFC3339)
+					cred["not_after"] = time.UnixMilli(pc.NotAfter).Format(time.RFC3339)
+					cred["valid"] = now >= pc.NotBefore && now <= pc.NotAfter
+					cred["build_channel"] = pc.BuildChannel
+					cred["revocation_authority"] = pc.RevocationAuthority
+					cred["revoked"] = false
+					var rev models.CredentialRevocationRecord
+					if s.db.First(&rev, "serial = ?", pc.Serial).Error == nil {
+						cred["revoked"] = true
+						cred["revoked_at"] = rev.RevokedAtRFC
+						cred["revoked_reason"] = rev.Reason
+					}
+				}
+			}
+		}
+		if len(cred) > 0 {
+			result["credential"] = cred
+		}
+	}
+
+	// Allowed users (harnesses UX1): resolve the JSON id array.
+	var allowedUserIDs []string
+	json.Unmarshal([]byte(harness.AllowedUsers), &allowedUserIDs)
+	if len(allowedUserIDs) > 0 {
+		var users []models.User
+		s.db.Where("id IN ?", allowedUserIDs).Find(&users)
+		result["allowed_users"] = users
+	}
+
+	var sessions []models.Session
+	s.db.Where("harness_id = ?", harness.HarnessID).Order("created_at DESC").Find(&sessions)
+	result["sessions"] = sessions
+
+	// Attestation history: device posture + attestation audit events.
+	var attEvents []models.AuditEvent
+	s.db.Where("resource_type = ? AND (resource_id = ? OR resource_id = ?)", "harness", harness.ID, harness.HarnessID).
+		Where("action LIKE ?", "%attestation%").
+		Order("occurred_at DESC").Limit(20).Find(&attEvents)
+	result["attestation_events"] = attEvents
+
+	var auditEvents []models.AuditEvent
+	s.db.Where("resource_id IN ?", []string{harness.ID, harness.HarnessID}).
+		Order("occurred_at DESC").Limit(50).Find(&auditEvents)
+	result["audit_events"] = auditEvents
+
+	// Stale flag (B2) + version-floor status (C2).
+	stale := false
+	if harness.Status == "enrolled" || harness.Status == "active" {
+		if t, err := time.Parse(time.RFC3339, harness.LastHeartbeat); err != nil {
+			stale = true
+		} else if time.Since(t) > harnessStaleAfter {
+			stale = true
+		}
+	}
+	result["stale"] = stale
+	if fv := s.ext().Korean.GetForcedHarnessVersion(harness.OrganizationID); fv != nil {
+		result["forced_version"] = fv
+		result["version_blocked"] = korean.IsVersionBelowFloor(harness.BinaryVersion, fv.MinVersion)
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// pushRelayDirective delivers a control-plane lifecycle event to the
+// live relay admin channel (harnesses C3 / security B1). Without
+// PCCP_RELAY_ADMIN_URL configured the call reports honestly; DB-level
+// enforcement (status gates) still applies on the next exchange.
+func (s *Server) pushRelayDirective(commandType, orgID, harnessID, reason string, payload map[string]interface{}) error {
+	base := strings.TrimSuffix(os.Getenv("PCCP_RELAY_ADMIN_URL"), "/")
+	if base == "" {
+		return fmt.Errorf("PCCP_RELAY_ADMIN_URL not configured")
+	}
+	body, _ := json.Marshal(map[string]interface{}{
+		"org_id":       orgID,
+		"target":       harnessID,
+		"command_type": commandType,
+		"reason":       reason,
+		"issued_by":    "control-plane",
+		"payload_b64":  base64.StdEncoding.EncodeToString(func() []byte { b, _ := json.Marshal(payload); return b }()),
+	})
+	resp, err := http.Post(base+"/v1/admin/directives", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("relay rejected directive: %s", resp.Status)
+	}
+	return nil
 }
 
 func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
@@ -1079,7 +1366,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			page = 1
 		}
 		if search != "" {
-			q = q.Where("title LIKE ? OR session_id LIKE ?", "%"+search+"%", "%"+search+"%")
+			q = q.Where("title LIKE ? OR session_id LIKE ? OR harness_id LIKE ? OR user_id LIKE ? OR project_id LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%", "%"+search+"%", "%"+search+"%")
 		}
 		var total int64
 		q.Count(&total)
@@ -2445,7 +2732,7 @@ func (s *Server) handleIssueEnrollmentCode(w http.ResponseWriter, r *http.Reques
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"code": code})
+	writeJSON(w, http.StatusOK, map[string]string{"code": code, "enrollment_code": code, "expires_at": time.Now().Add(24 * time.Hour).Format(time.RFC3339)})
 }
 
 // --- Policy Rules (governance rules authored in the Policy console, PRD §13) ---
@@ -2746,7 +3033,15 @@ func (s *Server) handleQuarantineHarness(w http.ResponseWriter, r *http.Request)
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "quarantined"})
+	// Live propagation (harnesses C3): the connect-time gate reads DB
+	// status on the next connection; the directive additionally tells
+	// the relay to kill the current transport when configured.
+	relayPropagated := true
+	if err := s.pushRelayDirective("quarantine_device", harness.OrganizationID, harness.HarnessID, "quarantined via control plane", map[string]interface{}{"terminate_sessions": true}); err != nil {
+		relayPropagated = false
+		log.Printf("api: quarantine %s: relay propagation skipped: %v", harness.HarnessID, err)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "quarantined", "relay_propagated": relayPropagated})
 }
 
 func (s *Server) handleReactivateHarness(w http.ResponseWriter, r *http.Request) {
