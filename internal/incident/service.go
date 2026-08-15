@@ -243,35 +243,103 @@ type PolicySimulationResult struct {
 	ExceptionsNeeded  int      `json:"exceptions_needed"`
 }
 
-// SimulatePolicy runs a proposed policy against historical events (PRD §15.5).
+// SimulatePolicy runs a proposed policy set against historical
+// sessions (PRD §15.5, policy C3): model rules are evaluated against
+// each session's model class; tool/DLP/network rules in scope count as
+// approval-requiring friction. The result is a real what-would-have-
+// happened estimate, not a constant.
 func (s *Service) SimulatePolicy(orgID string, ruleIDs []string) (*PolicySimulationResult, error) {
 	result := &PolicySimulationResult{}
 
-	// Query historical events that would match the proposed rules
-	var events []models.AuditEvent
-	s.db.Where("organization_id = ?", orgID).Limit(1000).Find(&events)
-
-	affectedUsers := make(map[string]bool)
-	_ = make(map[string]bool)
-
-	for _, e := range events {
-		// Simulate: if the event would have been blocked by the new rules
-		// This is a simplified simulation — real implementation would evaluate actual rules
-		result.WouldAllow++
-
-		if e.ActorID != "" {
-			affectedUsers[e.ActorID] = true
-		}
+	var rules []models.PolicyRule
+	if len(ruleIDs) > 0 {
+		s.db.Where("organization_id = ? AND id IN ?", orgID, ruleIDs).Find(&rules)
+	} else {
+		s.db.Where("organization_id = ? AND enabled = ? AND status = ?", orgID, true, "approved").Find(&rules)
+	}
+	if len(rules) == 0 {
+		return nil, fmt.Errorf("incident: no rules to simulate")
 	}
 
+	var sessions []models.Session
+	s.db.Where("organization_id = ?", orgID).Order("created_at DESC").Limit(1000).Find(&sessions)
+
+	affectedUsers := map[string]bool{}
+	affectedRepos := map[string]bool{}
+	for _, sess := range sessions {
+		if sess.UserID != "" {
+			affectedUsers[sess.UserID] = true
+		}
+		if sess.RepositoryID != "" {
+			affectedRepos[sess.RepositoryID] = true
+		}
+		blocked := false
+		requiresApproval := false
+		for _, r := range rules {
+			var cfg map[string]interface{}
+			json.Unmarshal([]byte(r.ConfigJSON), &cfg)
+			if cfg == nil {
+				cfg = map[string]interface{}{}
+			}
+			// Scope match: org rules apply everywhere; project/repo
+			// rules only to matching sessions.
+			applies := false
+			switch r.Scope {
+			case "org", "":
+				applies = true
+			case "project":
+				applies = r.ScopeName == "" || r.ScopeName == sess.ProjectID
+			case "repo":
+				applies = r.ScopeName == "" || r.ScopeName == sess.RepositoryID
+			default:
+				applies = true
+			}
+			if !applies {
+				continue
+			}
+			if r.Domain == "models" {
+				if allowed, ok := cfg["allowed_models"].([]interface{}); ok && len(allowed) > 0 {
+					hit := false
+					for _, a := range allowed {
+						if id, ok := a.(string); ok && id == sess.ModelClass {
+							hit = true
+							break
+						}
+					}
+					if !hit {
+						blocked = true
+					}
+				}
+			} else {
+				if blockAll, ok := cfg["block_all"].([]interface{}); ok && len(blockAll) > 0 {
+					requiresApproval = true
+				}
+				if req, ok := cfg["require_approval_for"].([]interface{}); ok && len(req) > 0 {
+					requiresApproval = true
+				}
+				if denyCaps, ok := cfg["deny_capabilities"].([]interface{}); ok && len(denyCaps) > 0 {
+					requiresApproval = true
+				}
+			}
+		}
+		if blocked {
+			result.WouldBlock++
+		} else if requiresApproval {
+			result.WouldRequireAppr++
+		} else {
+			result.WouldAllow++
+		}
+	}
 	for u := range affectedUsers {
 		result.AffectedUsers = append(result.AffectedUsers, u)
 	}
+	for repo := range affectedRepos {
+		result.AffectedRepos = append(result.AffectedRepos, repo)
+	}
 
-	// Estimate friction based on block ratio
-	totalEvents := len(events)
-	if totalEvents > 0 {
-		blockRatio := float64(result.WouldBlock) / float64(totalEvents)
+	total := len(sessions)
+	if total > 0 {
+		blockRatio := float64(result.WouldBlock+result.WouldRequireAppr) / float64(total)
 		switch {
 		case blockRatio > 0.2:
 			result.DeveloperFriction = "high"
@@ -280,8 +348,9 @@ func (s *Service) SimulatePolicy(orgID string, ruleIDs []string) (*PolicySimulat
 		default:
 			result.DeveloperFriction = "low"
 		}
+		result.ExceptionsNeeded = result.WouldBlock/5 + result.WouldRequireAppr/10
+		result.FalsePositiveEst = result.WouldRequireAppr / 4
 	}
-
 	return result, nil
 }
 

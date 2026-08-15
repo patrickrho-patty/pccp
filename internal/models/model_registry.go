@@ -139,11 +139,13 @@ type PolicyEpoch struct {
 	RetentionPolicyDigest string `gorm:"type:varchar(128)" json:"retention_policy_digest,omitempty"`
 	EngineVersion         string `gorm:"type:varchar(32)" json:"engine_version"`
 	// Config
-	AllowedModelsJSON string `gorm:"type:text" json:"allowed_models,omitempty"`                   // JSON array of model class/package IDs
-	TransitionMode    string `gorm:"type:varchar(32);default:'immediate'" json:"transition_mode"` // immediate, finish_then_renew, allow_until_expiry
-	EffectiveAt       string `gorm:"type:timestamp" json:"effective_at"`
-	SupersededBy      string `gorm:"type:varchar(64)" json:"superseded_by,omitempty"`
-	Status            string `gorm:"type:varchar(32);default:'active'" json:"status"`
+	AllowedModelsJSON  string `gorm:"type:text" json:"allowed_models,omitempty"`                   // JSON array of model class/package IDs
+	DomainPoliciesJSON string `gorm:"type:text" json:"domain_policies,omitempty"`                  // JSON: full per-domain config (tools/dlp/network/scm/session)
+	TransitionMode     string `gorm:"type:varchar(32);default:'immediate'" json:"transition_mode"` // immediate, finish_then_renew, allow_until_expiry
+	RequiresAck        bool   `gorm:"default:false" json:"requires_ack"`                           // policy C2 §33.6: users must ack before new sessions
+	EffectiveAt        string `gorm:"type:timestamp" json:"effective_at"`
+	SupersededBy       string `gorm:"type:varchar(64)" json:"superseded_by,omitempty"`
+	Status             string `gorm:"type:varchar(32);default:'active'" json:"status"`
 }
 
 // CapabilityLease is a signed authorization object (DARI §22).

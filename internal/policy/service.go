@@ -280,3 +280,42 @@ func canonicalJSONString(s string) string {
 	}
 	return string(out)
 }
+
+// --- Rule lifecycle (policy C1 §46.2) ---
+
+// ApproveRule publishes a draft rule into the active policy: the rule
+// is approved and the org's epoch is rebuilt so enforcement matches
+// the authored set.
+func (s *Service) ApproveRule(orgID, ruleID string) (*models.PolicyEpoch, error) {
+	result := s.db.Model(&models.PolicyRule{}).
+		Where("id = ? AND organization_id = ? AND status = ?", ruleID, orgID, "draft").
+		Update("status", "approved")
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, fmt.Errorf("policy: rule not found or not in draft")
+	}
+	s.recordAudit(orgID, "cp.policy.rule_approved", "admin", "policy_rule", ruleID, "rule approved")
+	return s.RebuildEpochFromRules(orgID, "immediate", false)
+}
+
+// RejectRule denies a draft rule (removes it).
+func (s *Service) RejectRule(orgID, ruleID string) error {
+	return s.db.Where("id = ? AND organization_id = ?", ruleID, orgID).
+		Delete(&models.PolicyRule{}).Error
+}
+
+// BulkSetRules enables/disables many rules at once and rebuilds the
+// epoch once (policy UX12).
+func (s *Service) BulkSetRules(orgID string, ids []string, enabled bool) (*models.PolicyEpoch, error) {
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("policy: no rule ids")
+	}
+	if err := s.db.Model(&models.PolicyRule{}).
+		Where("organization_id = ? AND id IN ?", orgID, ids).
+		Update("enabled", enabled).Error; err != nil {
+		return nil, err
+	}
+	return s.RebuildEpochFromRules(orgID, "immediate", false)
+}

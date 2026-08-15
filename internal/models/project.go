@@ -29,9 +29,9 @@ type Repository struct {
 	Status        string `gorm:"type:varchar(32);default:'active'" json:"status"`
 	// SCM integration state (repositories C1/UX9): populated by the
 	// sync pipeline, not enroll-time metadata.
-	LastSyncAt   string `gorm:"type:timestamp" json:"last_sync_at,omitempty"`
-	LastCommitAt string `gorm:"type:timestamp" json:"last_commit_at,omitempty"`
-	SyncStatus   string `gorm:"type:varchar(32)" json:"sync_status,omitempty"` // never, syncing, synced, failed
+	LastSyncAt    string `gorm:"type:timestamp" json:"last_sync_at,omitempty"`
+	LastCommitAt  string `gorm:"type:timestamp" json:"last_commit_at,omitempty"`
+	SyncStatus    string `gorm:"type:varchar(32)" json:"sync_status,omitempty"` // never, syncing, synced, failed
 	WebhookSecret string `gorm:"type:varchar(128)" json:"-"`
 }
 
@@ -129,7 +129,7 @@ type ChangeRequest struct {
 	ChangeSetID    string  `gorm:"type:varchar(64);index" json:"change_set_id"`
 	SessionID      string  `gorm:"type:varchar(64);index" json:"session_id,omitempty"`
 	Title          string  `gorm:"type:varchar(255)" json:"title"`
-	Kind           string  `gorm:"type:varchar(64)" json:"kind"`   // ai_code_change, model_change, config_change
+	Kind           string  `gorm:"type:varchar(64)" json:"kind"` // ai_code_change, model_change, config_change
 	RiskLevel      string  `gorm:"type:varchar(32)" json:"risk_level"`
 	RiskScore      float64 `json:"risk_score"`
 	Status         string  `gorm:"type:varchar(32);default:'pending'" json:"status"` // pending, approved, denied

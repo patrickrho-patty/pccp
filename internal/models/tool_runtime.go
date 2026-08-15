@@ -121,6 +121,9 @@ func AllModels() []interface{} {
 		&SecurityFinding{},
 		&SecurityRule{},
 		&PolicyRule{},
+		&PolicyTemplate{},
+		&PolicyAcknowledgement{},
+		&PolicyException{},
 		&PolicyPack{},
 		// Communications (Phase 3)
 		&Conversation{},

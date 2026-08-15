@@ -284,11 +284,30 @@ func (s *Server) setupRouter() {
 		r.Route("/policy", func(r chi.Router) {
 			r.Get("/epochs", s.handleListEpochs)
 			r.Post("/epochs", s.handleCreateEpoch)
+			r.Get("/epochs/{id}/diff", s.handleEpochDiff)
+			r.Get("/epochs/{id}/acks", s.handleListEpochAcks)
+			r.Post("/epochs/{id}/ack", s.handleAckEpoch)
+			r.Post("/epochs/{id}/require-ack", s.handleRequireEpochAck)
 			r.Get("/leases", s.handleListLeases)
 			r.Post("/leases", s.handleIssueLease)
 			r.Get("/rules", s.handleListPolicyRules)
 			r.Post("/rules", s.handleCreatePolicyRule)
+			r.Post("/rules/bulk", s.handleBulkPolicyRules)
+			r.Post("/rules/{id}/approve", s.handleApprovePolicyRule)
+			r.Post("/rules/{id}/reject", s.handleRejectPolicyRule)
 			r.Delete("/rules/{id}", s.handleDeletePolicyRule)
+			r.Get("/effective", s.handleEffectivePolicy)
+			r.Get("/packs", s.handleListPolicyPacks)
+			r.Post("/packs", s.handleCreatePolicyPack)
+			r.Post("/packs/import", s.handleImportPolicyPack)
+			r.Get("/packs/{id}/export", s.handleExportPolicyPack)
+			r.Post("/packs/{id}/assign", s.handleAssignPolicyPack)
+			r.Get("/templates", s.handleListPolicyTemplates)
+			r.Post("/templates", s.handleSavePolicyTemplate)
+			r.Delete("/templates/{id}", s.handleDeletePolicyTemplate)
+			r.Get("/exceptions", s.handleListPolicyExceptions)
+			r.Post("/exceptions", s.handleCreatePolicyException)
+			r.Post("/exceptions/{id}/decide", s.handleDecidePolicyException)
 		})
 
 		// Communications
@@ -1691,6 +1710,13 @@ func (s *Server) handleOpenSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// Bind the active policy epoch so the session carries governance context (PRD §13.1).
 	if epoch, eerr := s.policy.GetActiveEpoch(orgID); eerr == nil && epoch != nil {
+		// Acknowledgement campaign gate (policy C2, §33.6): when the
+		// active epoch requires ack, unacked users cannot open new
+		// sessions.
+		if epoch.RequiresAck && req.UserID != "" && !s.policy.HasAcked(orgID, epoch.EpochID, req.UserID) {
+			writeError(w, http.StatusForbidden, "정책 확인 필요 · Policy epoch requires acknowledgement before new sessions")
+			return
+		}
 		sess.PolicyEpochID = epoch.EpochID
 		s.db.Save(sess)
 	}
@@ -2220,11 +2246,20 @@ func (s *Server) handleListEpochs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, epochs)
 }
 
+// handleCreateEpoch creates a multi-domain epoch (policy A2): allowed
+// models + tool/DLP/network/SCM/session configs all land in one
+// coherent, digested epoch.
 func (s *Server) handleCreateEpoch(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		OrganizationID string   `json:"organization_id"`
-		AllowedModels  []string `json:"allowed_models"`
-		TransitionMode string   `json:"transition_mode"`
+		OrganizationID string                 `json:"organization_id"`
+		AllowedModels  []string               `json:"allowed_models"`
+		ToolPolicy     map[string]interface{} `json:"tool_policy"`
+		DLPPolicy      map[string]interface{} `json:"dlp_policy"`
+		NetworkPolicy  map[string]interface{} `json:"network_policy"`
+		SCMPolicy      map[string]interface{} `json:"scm_policy"`
+		SessionPolicy  map[string]interface{} `json:"session_policy"`
+		TransitionMode string                 `json:"transition_mode"`
+		RequiresAck    bool                   `json:"requires_ack"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -2234,14 +2269,32 @@ func (s *Server) handleCreateEpoch(w http.ResponseWriter, r *http.Request) {
 	if orgID == "" {
 		orgID = getOrgID(r)
 	}
-	if req.TransitionMode == "" {
-		req.TransitionMode = "immediate"
-	}
-	epoch, err := s.policy.CreatePolicyEpoch(orgID, req.AllowedModels, req.TransitionMode)
+	epoch, err := s.policy.CreatePolicyEpochFull(policy.EpochRequest{
+		OrganizationID: orgID,
+		AllowedModels:  req.AllowedModels,
+		ToolPolicy:     req.ToolPolicy,
+		DLPPolicy:      req.DLPPolicy,
+		NetworkPolicy:  req.NetworkPolicy,
+		SCMPolicy:      req.SCMPolicy,
+		SessionPolicy:  req.SessionPolicy,
+		TransitionMode: req.TransitionMode,
+		RequiresAck:    req.RequiresAck,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.policy.epoch_created",
+		ActorType:      "admin",
+		Action:         "create_policy_epoch",
+		ResourceType:   "policy_epoch",
+		ResourceID:     epoch.ID,
+		Details:        fmt.Sprintf(`{"epoch_id":"%s","transition":"%s","requires_ack":%v}`, epoch.EpochID, epoch.TransitionMode, epoch.RequiresAck),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusCreated, epoch)
 }
 
@@ -3049,10 +3102,12 @@ func (s *Server) handleCreatePolicyRule(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "domain is required")
 		return
 	}
-	// Upsert: if an existing rule ID is provided, update it.
+	// Upsert: if an existing rule ID is provided, update it. Toggling
+	// an APPROVED rule rebuilds the org epoch so enforcement matches.
 	if req.ID != "" {
 		var existing models.PolicyRule
 		if s.db.First(&existing, "id = ? AND organization_id = ?", req.ID, orgID).Error == nil {
+			wasEnforced := existing.Status == "approved" && existing.Enabled
 			existing.Enabled = req.Enabled
 			if req.Scope != "" {
 				existing.Scope = req.Scope
@@ -3070,6 +3125,9 @@ func (s *Server) handleCreatePolicyRule(w http.ResponseWriter, r *http.Request) 
 				existing.ConfigJSON = string(req.Config)
 			}
 			s.db.Save(&existing)
+			if wasEnforced || (existing.Status == "approved" && existing.Enabled) {
+				s.policy.RebuildEpochFromRules(orgID, "immediate", false)
+			}
 			writeJSON(w, http.StatusOK, existing)
 			return
 		}
@@ -3079,6 +3137,9 @@ func (s *Server) handleCreatePolicyRule(w http.ResponseWriter, r *http.Request) 
 		Name: req.Name, NameEn: req.NameEn, Description: req.Description,
 		Scope: req.Scope, ScopeName: req.ScopeName, Enabled: req.Enabled,
 		ConfigJSON: string(req.Config),
+		// New rules start as drafts (policy C1, §46.2): approval is
+		// the publish step, not the create click.
+		Status: "draft",
 	}
 	if rule.Scope == "" {
 		rule.Scope = "org"
@@ -3087,6 +3148,9 @@ func (s *Server) handleCreatePolicyRule(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Conflict detection (policy C4): overlapping approved rules in
+	// the same domain + scope are surfaced for the author.
+	conflicts, _ := s.policy.RuleConflicts(orgID, rule.Domain, rule.Scope, rule.ScopeName, rule.ID)
 	s.db.Create(&models.AuditEvent{
 		OrganizationID: orgID,
 		EventType:      "cp.policy.rule_created",
@@ -3094,19 +3158,25 @@ func (s *Server) handleCreatePolicyRule(w http.ResponseWriter, r *http.Request) 
 		Action:         "create_policy_rule",
 		ResourceType:   "policy_rule",
 		ResourceID:     rule.ID,
-		Details:        fmt.Sprintf(`{"domain":"%s","name":"%s","enabled":%v}`, rule.Domain, rule.Name, rule.Enabled),
+		Details:        fmt.Sprintf(`{"domain":"%s","name":"%s","enabled":%v,"status":"draft"}`, rule.Domain, rule.Name, rule.Enabled),
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	})
-	writeJSON(w, http.StatusCreated, rule)
+	writeJSON(w, http.StatusCreated, map[string]interface{}{"rule": rule, "conflicts": conflicts})
 }
 
 func (s *Server) handleDeletePolicyRule(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
+	var rule models.PolicyRule
+	wasEnforced := s.db.First(&rule, "id = ? AND organization_id = ?", id, orgID).Error == nil &&
+		rule.Status == "approved" && rule.Enabled
 	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).Delete(&models.PolicyRule{}).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if wasEnforced {
+		s.policy.RebuildEpochFromRules(orgID, "immediate", false)
 	}
 	s.db.Create(&models.AuditEvent{
 		OrganizationID: orgID,
