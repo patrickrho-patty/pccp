@@ -14,6 +14,7 @@ type Scheduler struct {
 	Admission *Admission
 	Evidence  *EvidenceLog
 	Serving   *Serving
+	KV        *KVIndex
 }
 
 // NewScheduler assembles the S1 scheduler with the given trust material,
@@ -24,6 +25,7 @@ func NewScheduler(trust Trust, policy PolicySource, ttl, grace time.Duration, ev
 		Admission: NewAdmission(trust, NewRevocationStore(), policy),
 		Evidence:  NewEvidenceLog(evidenceKey),
 		Serving:   NewServing(),
+		KV:        NewKVIndex(),
 	}
 }
 

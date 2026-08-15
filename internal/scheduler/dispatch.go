@@ -120,12 +120,14 @@ type RequestPayload struct {
 // the overload gate on fleet signals. Workers call Assign when a slot
 // frees; the dispatcher releases the next eligible request or nothing.
 // Submit/Cancel manage the pending-waiter side of the dispatch loop.
+// The S3 cost router supersedes capability-only selection when installed.
 type Dispatcher struct {
 	mu       sync.Mutex
 	queue    *queue.Queue
 	selector *WorkerSelector
 	policy   OverloadPolicy
 	est      *OutputEstimator
+	router   *CostRouter
 
 	fwMu      sync.Mutex
 	forwarder Forwarder
@@ -223,21 +225,48 @@ func (d *Dispatcher) assignLocked(workerID string) *Dispatch {
 	if d.selector == nil {
 		return nil
 	}
-	selected, ok := d.selector.Select(model)
-	if !ok {
-		// Late binding: no worker can take this request yet — requeue at
-		// the head of its flow and wait for a compatible slot. (A request
-		// parked here does not consume a worker slot.)
-		d.queue.Enqueue(*out.Request)
-		return nil
+	// S3 cost-model routing when installed; capability matching otherwise.
+	var selected string
+	if d.router != nil {
+		decision, err := d.router.Route(RouteRequest{
+			Model:                model,
+			Namespace:            out.Request.Tenant,
+			InputTokens:          out.Request.InputTokens,
+			CachedTokens:         out.Request.CachedInputTokens,
+			ExpectedOutputTokens: out.Request.ExpectedOutputTokens,
+		})
+		if err != nil {
+			// No eligible worker for the head request: requeue and wait
+			// (late binding).
+			d.queue.Enqueue(*out.Request)
+			return nil
+		}
+		selected = decision.WorkerID
+	} else {
+		var ok bool
+		selected, ok = d.selector.Select(model)
+		if !ok {
+			// Late binding: no worker can take this request yet — requeue
+			// at the head of its flow and wait for a compatible slot.
+			d.queue.Enqueue(*out.Request)
+			return nil
+		}
 	}
 	if selected != workerID {
-		// The freed worker cannot serve this request's model; requeue and
-		// let a compatible worker's free-slot event trigger binding.
+		// The freed worker is not the router's choice; requeue and let
+		// the chosen worker's free-slot event trigger binding.
 		d.queue.Enqueue(*out.Request)
 		return nil
 	}
 	return &Dispatch{Request: *out.Request, WorkerID: selected, Model: model}
+}
+
+// SetRouter installs the S3 cost-model router; selection switches from
+// capability matching to lowest-cost placement with KV credits.
+func (d *Dispatcher) SetRouter(r *CostRouter) {
+	d.mu.Lock()
+	d.router = r
+	d.mu.Unlock()
 }
 
 // RejectSheddable removes queued requests of shed classes during overload

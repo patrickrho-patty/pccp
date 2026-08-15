@@ -95,6 +95,15 @@ const (
 	MsgPresence    MessageType = 0x0801
 )
 
+// KV cache fabric (0x0900–0x09FF) — S3 exact KV index events: workers
+// publish journal batches keyed (worker, seq); the scheduler dedups and
+// indexes (spec §13.11).
+const (
+	MsgKVJournal    MessageType = 0x0900
+	MsgKVJournalAck MessageType = 0x0901
+	MsgKVEviction   MessageType = 0x0902
+)
+
 // Files (0x0A00–0x0AFF)
 const (
 	MsgFileOffer  MessageType = 0x0A00
@@ -219,6 +228,12 @@ func (mt MessageType) String() string {
 		return "CHAT_MESSAGE"
 	case MsgPresence:
 		return "PRESENCE"
+	case MsgKVJournal:
+		return "KV_JOURNAL"
+	case MsgKVJournalAck:
+		return "KV_JOURNAL_ACK"
+	case MsgKVEviction:
+		return "KV_EVICTION"
 	case MsgFileOffer:
 		return "FILE_OFFER"
 	case MsgFileChunk:

@@ -162,6 +162,30 @@ func (l *DARIListener) handleConn(netConn net.Conn) {
 			l.emitOutcome(result, reg.Card.WorkerID)
 			l.sendAck(conn, dari.MsgEndpointRegister, result, reg.Card.WorkerID)
 
+		case record.Kind == dari.KindMessage && msgType == dari.MsgKVJournal:
+			var journal struct {
+				Seq    uint64    `json:"seq"`
+				Blocks []KVBlock `json:"blocks"`
+			}
+			if err := json.Unmarshal(record.Payload, &journal); err != nil {
+				log.Printf("scheduler: bad KV journal from %s", cred.SubjectPeerID)
+				continue
+			}
+			applied := l.svc.KV.ApplyJournal(cred.SubjectPeerID, journal.Seq, journal.Blocks)
+			ack, _ := json.Marshal(map[string]interface{}{
+				"applied": applied,
+				"seq":     journal.Seq,
+			})
+			conn.SendMessage(dari.MsgKVJournalAck, nil, ack, record.LaneID, record.LaneSequence+1)
+
+		case record.Kind == dari.KindMessage && msgType == dari.MsgKVEviction:
+			var ev struct {
+				WorkerID string `json:"worker_id"`
+			}
+			if err := json.Unmarshal(record.Payload, &ev); err == nil {
+				l.svc.KV.EvictWorker(ev.WorkerID)
+			}
+
 		case record.Kind == dari.KindMessage && msgType == dari.MsgEndpointLease:
 			var hb HeartbeatPayload
 			if err := json.Unmarshal(record.Payload, &hb); err != nil {
