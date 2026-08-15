@@ -175,6 +175,11 @@ func (pl *DARIListener) handleConn(ctx context.Context, netConn net.Conn) {
 			"max_exchanges":   1000,
 			"max_payload_len": uint64(dari.MaxPayloadLen),
 		},
+		// D5: deployment-wide harness floor (operator-set during
+		// coordinated upgrades). A connector below the floor refuses
+		// to continue the handshake; per-org floors additionally
+		// refuse at session setup.
+		MinHarnessVersion: os.Getenv("PCCP_MIN_HARNESS_VERSION"),
 	}
 
 	if err := conn.SendHelloAck(ack); err != nil {
@@ -360,7 +365,7 @@ func (pl *DARIListener) handleApplicationMessages(ctx context.Context, conn *dar
 				pl.setSession(connID, so.SessionID)
 			}
 			log.Printf("relay: dari SESSION_OPEN from %s session=%s", connID, so.SessionID)
-			pl.setupSession(ctx, conn, connID, so)
+			pl.setupSession(ctx, conn, connID, so, hello.ImplementationVersion)
 
 		case record.Kind == dari.KindMessage && msgType == dari.MsgAIOpen:
 			log.Printf("relay: dari AI_OPEN from %s, governing", connID)

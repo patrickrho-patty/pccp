@@ -54,7 +54,7 @@ type sessionOpenRequest struct {
 // catalog snapshot is epoch-bound), then CATALOG_SNAPSHOT, then
 // LEASE_ISSUE, then SESSION_GRANT. The connector's connect() consumes
 // exactly this sequence before its first AI_OPEN.
-func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportConn, connID string, so sessionOpenRequest) {
+func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportConn, connID string, so sessionOpenRequest, harnessVersion string) {
 	if so.SessionID == "" {
 		pl.sendJSONError(conn, connID, "session_open missing session_id")
 		return
@@ -62,6 +62,12 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 	orgID := pl.orgForPeer(connID)
 	if orgID == "" {
 		pl.sendJSONError(conn, connID, "authenticated peer has no organization")
+		return
+	}
+	// D5: the org's forced harness version refuses sub-minimum
+	// connectors at session setup (the audit trail carries the floor).
+	if minV := pl.svc.ForcedHarnessVersion(orgID); minV != "" && harnessVersion != "" && versionBelow(harnessVersion, minV) {
+		pl.sendJSONError(conn, connID, "harness version "+harnessVersion+" is below the organization minimum "+minV)
 		return
 	}
 	if so.UserID == "" {
