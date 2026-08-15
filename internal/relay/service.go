@@ -3,6 +3,8 @@ package relay
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -524,6 +526,12 @@ func (s *Service) CloseExchange(ctx context.Context, exchangeID string) (*models
 		return nil, fmt.Errorf("relay: exchange not found")
 	}
 
+	// F.9 on the live path: the receipt's chain root is the LINEAR
+	// CHAIN ROOT over the exchange's actual evidence events (an empty
+	// chain yields the deterministic chain-start root bound to the
+	// exchange identity) — never a fabricated random identifier
+	// (Task 10 Step 3 audit finding).
+	root := s.evidenceChainRoot(exchange)
 	receipt, err := s.provenance.IssueEvidenceReceipt(provenance.IssueReceiptRequest{
 		OrganizationID: exchange.OrganizationID,
 		ExchangeID:     exchange.ID,
@@ -531,13 +539,20 @@ func (s *Service) CloseExchange(ctx context.Context, exchangeID string) (*models
 		FinalState:     string(exchange.State),
 		FirstEventSeq:  0,
 		LastEventSeq:   uint64(len(exchange.EvidenceChain)),
-		ChainRoot:      dari.GenerateID("chainroot"),
+		ChainRoot:      hex.EncodeToString(root[:]),
 		PolicyEpochID:  exchange.PolicyEpochID,
 		ModelPackageID: exchange.ModelPackageID,
 		EndpointID:     exchange.EndpointID,
 	})
 	if err != nil {
-		log.Printf("relay: warning: issue receipt failed: %v", err)
+		// Fail closed: an exchange whose receipt cannot be issued must
+		// not silently complete (F.8 receipt truthfulness).
+		log.Printf("relay: issue receipt failed for %s: %v", exchangeID, err)
+		s.mu.Lock()
+		exchange.State = dari.ExchangeFailed
+		delete(s.exchanges, exchangeID)
+		s.mu.Unlock()
+		return nil, fmt.Errorf("relay: evidence receipt issuance failed: %w", err)
 	}
 
 	s.recordExchangeProvenance(exchange)
@@ -548,6 +563,32 @@ func (s *Service) CloseExchange(ctx context.Context, exchangeID string) (*models
 	s.mu.Unlock()
 
 	return receipt, nil
+}
+
+// evidenceChainRoot computes the exchange's F.9 linear chain root:
+// R_0 = EvidenceChainStart(exchangeDigest) and one domain-hashed step
+// per recorded evidence event (sequence i+1, canonical bytes = the
+// recorded reference). An empty chain still yields the deterministic
+// start root bound to the exchange identity — never a random ID.
+func (s *Service) evidenceChainRoot(ex *Exchange) dari.Digest {
+	h := sha256.New()
+	h.Write([]byte("DARI-EXCHANGE-IDENTITY-v1\x00"))
+	for _, part := range []string{ex.ID, ex.SessionID, ex.OrganizationID, ex.HarnessID, ex.PolicyEpochID, ex.ModelPackageID, ex.EndpointID} {
+		h.Write([]byte(part))
+		h.Write([]byte{0})
+	}
+	var exDigest dari.Digest
+	copy(exDigest[:], h.Sum(nil))
+
+	events := make([]dari.EventCommitment, 0, len(ex.EvidenceChain))
+	for i, ref := range ex.EvidenceChain {
+		events = append(events, dari.EventCommitment{
+			Sequence:  uint64(i + 1),
+			Type:      dari.ObjTypeGovernedExchange, // opaque recorded-ref class
+			Canonical: []byte(ref),
+		})
+	}
+	return dari.LinearChainRoot(exDigest, events)
 }
 
 // recordExchangeProvenance records a ChangeSet + ProvenanceSpan for an exchange,

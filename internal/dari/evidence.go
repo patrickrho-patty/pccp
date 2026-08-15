@@ -102,8 +102,10 @@ func domainDigest(domain string, parts ...[]byte) Digest {
 	return d
 }
 
-// linearChainRoot computes R_N over all events (F.9 linear chain).
-func linearChainRoot(exchangeDigest Digest, events []EventCommitment) Digest {
+// LinearChainRoot computes R_N over all events (F.9 linear chain).
+// Zero events yields the deterministic chain start bound to the
+// exchange digest — the live receipt path relies on that property.
+func LinearChainRoot(exchangeDigest Digest, events []EventCommitment) Digest {
 	var seq [8]byte
 	r := EvidenceChainStart(exchangeDigest[:])
 	for _, ev := range events {
@@ -182,7 +184,7 @@ func BuildSegmentedCommitment(exchangeDigest Digest, events []EventCommitment, s
 		EventCount:    n,
 		SegmentSize:   segmentSize,
 		SegmentCount:  segCount,
-		LinearRoot:    linearChainRoot(exchangeDigest, events),
+		LinearRoot:    LinearChainRoot(exchangeDigest, events),
 		Peaks:         peaks,
 		MMRRoot:       root,
 	}, nil
