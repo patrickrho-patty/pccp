@@ -123,19 +123,6 @@ func decodeOpenProof(req *openRequest, binding [32]byte) (*BrowserProof, error) 
 	return p, nil
 }
 
-// FrameWriter writes data frames.
-type FrameWriter interface {
-	WriteFrame(sequence uint64, envelope []byte) error
-	WriteControl(payload []byte) error
-}
-
-// FrameReader reads frames/control messages.
-type ReadResult struct {
-	Sequence uint64
-	Envelope []byte
-	Control  []byte
-}
-
 // readFrame reads one length-prefixed frame payload.
 func readFrame(r io.Reader, max int) ([]byte, error) {
 	var lenBuf [4]byte
@@ -217,26 +204,10 @@ func (s *Server) streamSessionLoop(sessionID string, rw io.ReadWriter, stop <-ch
 		if env[0] == 0x01 {
 			// Control (status query).
 			var sr statusRequest
-			if err := json.Unmarshal(env[1:], &sr); err != nil {
+			if err := json.Unmarshal(env[1:], &sr); err != nil || sr.Type != ctrlStatus {
 				continue
 			}
-			if sr.Type != ctrlStatus {
-				continue
-			}
-			resp := statusResponse{Type: ctrlStatusResp, OperationID: sr.OperationID}
-			out, err := s.StatusQuery(sessionID, sr.OperationID, func(op string) ([]byte, error) {
-				if s.handler == nil {
-					return nil, errors.New("no handler")
-				}
-				return s.handler(sessionID, []byte("EFFECT_STATUS:"+op))
-			})
-			if err != nil {
-				resp.Error = err.Error()
-			} else {
-				resp.EnvelopeHex = hex.EncodeToString(out)
-			}
-			payload, _ := json.Marshal(resp)
-			frame := append([]byte{0x01}, payload...)
+			frame := append([]byte{0x01}, s.answerStatus(sessionID, sr.OperationID)...)
 			if err := writeFrameBuf(frame); err != nil {
 				return err
 			}
@@ -266,7 +237,6 @@ func (s *Server) streamSessionLoop(sessionID string, rw io.ReadWriter, stop <-ch
 		seqCounter++ // server-initiated band: 1_000_001, 1_000_002, …
 		var seqBuf [8]byte
 		binary.BigEndian.PutUint64(seqBuf[:], 1_000_000+seqCounter)
-		binary.BigEndian.PutUint64(seqBuf[:], seqCounter)
 		frame := append([]byte{0x02}, seqBuf[:]...)
 		frame = append(frame, resp...)
 		if err := writeFrameBuf(frame); err != nil {
@@ -351,20 +321,7 @@ func (s *Server) AcceptWebSocketFallback(conn *websocket.Conn, expectedOrigin st
 			if json.Unmarshal(data, &sr) != nil || sr.Type != ctrlStatus {
 				continue
 			}
-			resp := statusResponse{Type: ctrlStatusResp, OperationID: sr.OperationID}
-			out, err := s.StatusQuery(sess.SessionID, sr.OperationID, func(op string) ([]byte, error) {
-				if s.handler == nil {
-					return nil, errors.New("no handler")
-				}
-				return s.handler(sess.SessionID, []byte("EFFECT_STATUS:"+op))
-			})
-			if err != nil {
-				resp.Error = err.Error()
-			} else {
-				resp.EnvelopeHex = hex.EncodeToString(out)
-			}
-			payload, _ := json.Marshal(resp)
-			_ = conn.WriteMessage(websocket.TextMessage, payload)
+			_ = conn.WriteMessage(websocket.TextMessage, s.answerStatus(sess.SessionID, sr.OperationID))
 		case websocket.BinaryMessage:
 			if len(data) < 8 {
 				continue
@@ -379,11 +336,8 @@ func (s *Server) AcceptWebSocketFallback(conn *websocket.Conn, expectedOrigin st
 			}
 			if resp != nil {
 				serverSeq++
-				var out []byte
-				out = append(out, data[:0]...)
-				var seqBuf [8]byte
-				binary.BigEndian.PutUint64(seqBuf[:], 1_000_000+serverSeq)
-				out = append(out, seqBuf[:]...)
+				out := make([]byte, 8, 8+len(resp))
+				binary.BigEndian.PutUint64(out, 1_000_000+serverSeq)
 				out = append(out, resp...)
 				_ = conn.WriteMessage(websocket.BinaryMessage, out)
 			}
@@ -536,4 +490,23 @@ func (s *Server) completeOpen(req *openRequest, binding [32]byte) (BrowserSessio
 		Origin: req.Origin, Proof: proof, SubjectKey: key,
 		ChannelBinding: binding, GrantDigest: grantDigest,
 	})
+}
+
+// answerStatus serves one EFFECT_STATUS query with a signed response.
+// Shared by both carriers.
+func (s *Server) answerStatus(sessionID, opID string) []byte {
+	resp := statusResponse{Type: ctrlStatusResp, OperationID: opID}
+	out, err := s.StatusQuery(sessionID, opID, func(op string) ([]byte, error) {
+		if s.handler == nil {
+			return nil, errors.New("no governance handler")
+		}
+		return s.handler(sessionID, []byte("EFFECT_STATUS:"+op))
+	})
+	if err != nil {
+		resp.Error = err.Error()
+	} else {
+		resp.EnvelopeHex = hex.EncodeToString(out)
+	}
+	payload, _ := json.Marshal(resp)
+	return payload
 }

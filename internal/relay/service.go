@@ -655,11 +655,9 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 	// once and is reused per request while fresh.
 	revEpoch, _ := s.identity.RevocationSnapshot()
 	cacheKey := GovCacheKey(req.HarnessID, req.Model)
-	var lease models.CapabilityLease
-	if snap, cerr := s.hotState.Get(cacheKey, time.Now(), revEpoch); cerr == nil && snap != nil {
-		harness, lease = snap.Harness, snap.Lease
-	} else {
-		snap, rerr := s.ResolveGovernanceSnapshot(req.HarnessID, req.Model)
+	snap, cerr := s.hotState.Get(cacheKey, time.Now(), revEpoch)
+	if cerr != nil || snap == nil {
+		resolved, rerr := s.ResolveGovernanceSnapshot(req.HarnessID, req.Model)
 		if rerr != nil {
 			reason := "governance_resolution_failed"
 			if strings.Contains(rerr.Error(), "not in registry") {
@@ -670,9 +668,10 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 			s.denyWithoutExchange(req, harness.OrganizationID, reason)
 			return nil, nil, rerr
 		}
-		s.hotState.Put(cacheKey, snap, revEpoch)
-		harness, lease = snap.Harness, snap.Lease
+		s.hotState.Put(cacheKey, resolved, revEpoch)
+		snap = resolved
 	}
+	harness, lease := snap.Harness, snap.Lease
 	// The snapshot's harness row already resolved org+status above; a
 	// cached snapshot is only served while revocation-fresh.
 	orgID = harness.OrganizationID
@@ -692,8 +691,8 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 	// 3. The snapshot resolved the package; cache hits reuse it and
 	// re-check recall from the carried row (reject recalled).
 	var pkg models.ModelPackage
-	if cached, cerr := s.hotState.Get(cacheKey, time.Now(), revEpoch); cerr == nil && cached != nil && cached.Package.PackageID != "" {
-		pkg = cached.Package
+	if snap.Package.PackageID != "" {
+		pkg = snap.Package
 	} else if err := s.db.Where("model_id = ?", req.Model).First(&pkg).Error; err != nil {
 		s.denyWithoutExchange(req, orgID, "model_not_registered")
 		return nil, nil, fmt.Errorf("relay: model %s not in registry: %w", req.Model, err)

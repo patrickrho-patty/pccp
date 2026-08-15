@@ -229,6 +229,34 @@ func (mt MessageType) String() string {
 		return "TELEMETRY"
 	case MsgMeterUsage:
 		return "METER_USAGE"
+	case MsgEvidenceReceiptAck:
+		return "EVIDENCE_RECEIPT_ACK"
+	case MsgActionEnvelope:
+		return "ACTION_ENVELOPE"
+	case MsgAdminCommandResult:
+		return "ADMIN_COMMAND_RESULT"
+	case MsgPolicyEpochPush:
+		return "POLICY_EPOCH"
+	case MsgModelCatalogRequest:
+		return "MODEL_CATALOG_REQUEST"
+	case MsgModelCatalogSnapshot:
+		return "MODEL_CATALOG_SNAPSHOT"
+	case MsgModelCatalogDelta:
+		return "MODEL_CATALOG_DELTA"
+	case MsgModelAnnounce:
+		return "MODEL_ANNOUNCE"
+	case MsgModelWithdraw:
+		return "MODEL_WITHDRAW"
+	case MsgModelDefaultChanged:
+		return "MODEL_DEFAULT_CHANGED"
+	case MsgModelAvailability:
+		return "MODEL_AVAILABILITY"
+	case MsgModelCapabilityChanged:
+		return "MODEL_CAPABILITY_CHANGED"
+	case MsgModelUpgradeRequired:
+		return "MODEL_UPGRADE_REQUIRED"
+	case MsgCatalogAck:
+		return "CATALOG_ACK"
 	default:
 		return fmt.Sprintf("UNKNOWN(0x%04X)", uint16(mt))
 	}
