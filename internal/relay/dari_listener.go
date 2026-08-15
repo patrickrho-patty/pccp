@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -387,6 +388,44 @@ func (pl *DARIListener) handleApplicationMessages(ctx context.Context, conn *dar
 
 		default:
 			log.Printf("relay: dari %s/%s from %s (unhandled)", record.Kind, msgType, connID)
+		}
+	}
+}
+
+// BroadcastCatalogDelta pushes a fresh epoch-bound catalog snapshot to
+// every connected session (Task 15: catalog push on publish). Sessions
+// on other epochs are skipped — the connector applies deltas only
+// against its bound epoch.
+func (pl *DARIListener) BroadcastCatalogDelta() {
+	pl.mu.Lock()
+	type target struct {
+		conn  *dari.TransportConn
+		epoch string
+	}
+	var targets []target
+	for connID, epoch := range pl.sessionEpochs {
+		if raw := pl.conns[connID]; raw != nil {
+			if conn, ok := raw.(*dari.TransportConn); ok {
+				targets = append(targets, target{conn, epoch})
+			}
+		}
+	}
+	pl.mu.Unlock()
+
+	for _, t := range targets {
+		descriptors, err := pl.svc.Catalog().GetEffectiveCatalog("", "", "")
+		if err != nil {
+			continue
+		}
+		thumb := sha256.Sum256(pl.svc.Policy().SigningPublicKey())
+		snap := buildWireCatalogSnapshot(t.epoch, thumb, descriptors, time.Now())
+		snap.Digest = wireCatalogDigest(snap)
+		body, err := encodeWire(snap)
+		if err != nil {
+			continue
+		}
+		if err := t.conn.SendMessage(dari.MsgModelCatalogDelta, nil, body, 0, 2); err != nil {
+			log.Printf("relay: catalog delta to %s epoch failed: %v", t.epoch, err)
 		}
 	}
 }

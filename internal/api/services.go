@@ -7,27 +7,27 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/patrickrho-patty/pccp/internal/attestation"
-	"github.com/patrickrho-patty/pccp/internal/catalog"
-	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/publiccloud"
 	"github.com/patrickrho-patty/pccp/internal/billing"
+	"github.com/patrickrho-patty/pccp/internal/catalog"
 	"github.com/patrickrho-patty/pccp/internal/command"
 	"github.com/patrickrho-patty/pccp/internal/compliance"
 	"github.com/patrickrho-patty/pccp/internal/configmgmt"
 	"github.com/patrickrho-patty/pccp/internal/connectors"
 	"github.com/patrickrho-patty/pccp/internal/gpuops"
-	"github.com/patrickrho-patty/pccp/internal/keymgmt"
-	"github.com/patrickrho-patty/pccp/internal/mcpmarket"
-	"github.com/patrickrho-patty/pccp/internal/realtime"
-	"github.com/patrickrho-patty/pccp/internal/sovereign"
-	"github.com/patrickrho-patty/pccp/internal/sso"
 	"github.com/patrickrho-patty/pccp/internal/incident"
+	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/korean"
 	"github.com/patrickrho-patty/pccp/internal/mcp"
+	"github.com/patrickrho-patty/pccp/internal/mcpmarket"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/network"
 	"github.com/patrickrho-patty/pccp/internal/privacy"
+	"github.com/patrickrho-patty/pccp/internal/publiccloud"
+	"github.com/patrickrho-patty/pccp/internal/realtime"
 	"github.com/patrickrho-patty/pccp/internal/reporting"
 	"github.com/patrickrho-patty/pccp/internal/secret"
+	"github.com/patrickrho-patty/pccp/internal/sovereign"
+	"github.com/patrickrho-patty/pccp/internal/sso"
 	"github.com/patrickrho-patty/pccp/internal/telemetry"
 	"github.com/patrickrho-patty/pccp/internal/tools"
 	"gorm.io/gorm"
@@ -40,29 +40,29 @@ var extMap = make(map[*Server]*AdditionalServices)
 // These are initialized in ExtendedInit and accessed via the Server's
 // extension field.
 type AdditionalServices struct {
- 	Billing   *billing.Service `json:"billing"`
- 	Command   *command.Service `json:"command"`
- 	Incident  *incident.Service `json:"incident"`
- 	Korean    *korean.Service `json:"korean"`
- 	MCP       *mcp.Service `json:"m_c_p"`
- 	Network   *network.Service `json:"network"`
- 	Privacy   *privacy.Service `json:"privacy"`
- 	Reporting *reporting.Service `json:"reporting"`
- 	Secret    *secret.Service `json:"secret"`
- 	Telemetry *telemetry.Service `json:"telemetry"`
- 	Tools      *tools.Service `json:"tools"`
- 	Attestation *attestation.Service `json:"attestation"`
- 	Compliance  *compliance.Service `json:"compliance"`
- 	ConfigMgmt  *configmgmt.Service `json:"config_mgmt"`
- 	Connectors  *connectors.Service `json:"connectors"`
- 	GPUOps      *gpuops.Service `json:"g_p_u_ops"`
- 	KeyMgmt     *keymgmt.Service `json:"key_mgmt"`
- 	MCPMarket   *mcpmarket.Service `json:"m_c_p_market"`
- 	Realtime    *realtime.Service `json:"realtime"`
- 	Sovereign   *sovereign.Service `json:"sovereign"`
- 	SSO         *sso.Service `json:"s_s_o"`
-	Catalog      *catalog.Service `json:"catalog"`
-	PublicCloud  *publiccloud.Service `json:"public_cloud"`
+	Billing     *billing.Service     `json:"billing"`
+	Command     *command.Service     `json:"command"`
+	Incident    *incident.Service    `json:"incident"`
+	Korean      *korean.Service      `json:"korean"`
+	MCP         *mcp.Service         `json:"m_c_p"`
+	Network     *network.Service     `json:"network"`
+	Privacy     *privacy.Service     `json:"privacy"`
+	Reporting   *reporting.Service   `json:"reporting"`
+	Secret      *secret.Service      `json:"secret"`
+	Telemetry   *telemetry.Service   `json:"telemetry"`
+	Tools       *tools.Service       `json:"tools"`
+	Attestation *attestation.Service `json:"attestation"`
+	Compliance  *compliance.Service  `json:"compliance"`
+	ConfigMgmt  *configmgmt.Service  `json:"config_mgmt"`
+	Connectors  *connectors.Service  `json:"connectors"`
+	GPUOps      *gpuops.Service      `json:"g_p_u_ops"`
+	KeyMgmt     *keymgmt.Service     `json:"key_mgmt"`
+	MCPMarket   *mcpmarket.Service   `json:"m_c_p_market"`
+	Realtime    *realtime.Service    `json:"realtime"`
+	Sovereign   *sovereign.Service   `json:"sovereign"`
+	SSO         *sso.Service         `json:"s_s_o"`
+	Catalog     *catalog.Service     `json:"catalog"`
+	PublicCloud *publiccloud.Service `json:"public_cloud"`
 }
 
 // ext gets the additional services for this server, initializing if needed.
@@ -80,16 +80,16 @@ func (s *Server) initAdditional() *AdditionalServices {
 	ext := &AdditionalServices{
 		Attestation: attestation.New(),
 		Billing:     mustBilling(s.db),
-		Command:   command.New(),
-		Incident:  incident.New(s.db),
-		Korean:    korean.New(s.db),
-		MCP:       mcp.New(s.db),
-		Network:   network.New(s.db),
-		Privacy:   privacy.New(s.db),
-		Reporting: reporting.New(s.db),
-		Secret:    secret.New(s.db),
-		Telemetry: telemetry.New(s.db),
-		Tools:      tools.New(s.db),
+		Command:     command.New(),
+		Incident:    incident.New(s.db),
+		Korean:      korean.New(s.db),
+		MCP:         mcp.New(s.db),
+		Network:     network.New(s.db),
+		Privacy:     privacy.New(s.db),
+		Reporting:   reporting.New(s.db),
+		Secret:      secret.New(s.db),
+		Telemetry:   telemetry.New(s.db),
+		Tools:       tools.New(s.db),
 		Compliance:  compliance.New(s.db),
 		ConfigMgmt:  configmgmt.New(s.db),
 		Connectors:  connectors.New(),
@@ -946,7 +946,9 @@ func (s *Server) wrapConfigValidate(ext *AdditionalServices) http.HandlerFunc {
 func (s *Server) wrapConfigApprove(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		var req struct{ ApprovedBy string `json:"approved_by"` }
+		var req struct {
+			ApprovedBy string `json:"approved_by"`
+		}
 		decodeJSON(r, &req)
 		if err := ext.ConfigMgmt.ApproveChange(id, req.ApprovedBy); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -970,7 +972,9 @@ func (s *Server) wrapConfigPublish(ext *AdditionalServices) http.HandlerFunc {
 func (s *Server) wrapConfigRollback(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		var req struct{ Reason string `json:"reason"` }
+		var req struct {
+			Reason string `json:"reason"`
+		}
 		decodeJSON(r, &req)
 		ext.ConfigMgmt.RollbackChange(id, req.Reason)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "rolled_back"})
@@ -1315,7 +1319,6 @@ func (s *Server) wrapRealtimeStatus(ext *AdditionalServices) http.HandlerFunc {
 	}
 }
 
-
 // --- Catalog Handlers ---
 
 func (s *Server) wrapCatalogModels(ext *AdditionalServices) http.HandlerFunc {
@@ -1389,10 +1392,10 @@ func (s *Server) wrapCatalogAnnounce(ext *AdditionalServices) http.HandlerFunc {
 func (s *Server) wrapPublicCreateAccount(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Email        string `json:"email"`
-			DisplayName  string `json:"display_name"`
+			Email         string `json:"email"`
+			DisplayName   string `json:"display_name"`
 			DisplayNameKo string `json:"display_name_ko"`
-			Plan         string `json:"plan"`
+			Plan          string `json:"plan"`
 		}
 		if err := decodeJSON(r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
@@ -1430,7 +1433,9 @@ func (s *Server) wrapPublicGetAccount(ext *AdditionalServices) http.HandlerFunc 
 func (s *Server) wrapPublicCreateSub(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		var req struct{ Plan string `json:"plan"` }
+		var req struct {
+			Plan string `json:"plan"`
+		}
 		decodeJSON(r, &req)
 		sub, err := ext.PublicCloud.CreateSubscription(id, req.Plan)
 		if err != nil {
@@ -1458,15 +1463,14 @@ func (s *Server) wrapPublicSlots(ext *AdditionalServices) http.HandlerFunc {
 		id := chi.URLParam(r, "id")
 		acct, _ := ext.PublicCloud.GetAccount(id)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"max_harnesses":         acct.MaxHarnesses,
-			"max_active_harnesses":  acct.MaxActiveHarnesses,
-			"normal_work_slots":     acct.NormalWorkSlots,
-			"heavy_work_slots":      acct.HeavyWorkSlots,
-			"background_slots":      acct.BackgroundSlots,
+			"max_harnesses":        acct.MaxHarnesses,
+			"max_active_harnesses": acct.MaxActiveHarnesses,
+			"normal_work_slots":    acct.NormalWorkSlots,
+			"heavy_work_slots":     acct.HeavyWorkSlots,
+			"background_slots":     acct.BackgroundSlots,
 		})
 	}
 }
-
 
 func mustCatalog(db *gorm.DB) *catalog.Service {
 	svc, err := catalog.New(db)

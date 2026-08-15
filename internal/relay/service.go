@@ -52,6 +52,10 @@ type Service struct {
 	// (exchanges are removed at close; the log preserves the signed
 	// decisions for operational inspection).
 	decisionLog []*dari.DecisionEnvelope
+	// hotState caches governance resolution per harness (Task 15).
+	hotState *HotStateCache
+	// exchangeGate bounds governed-exchange concurrency (Task 15).
+	exchangeGate *ConcurrencyGate
 }
 
 // inferenceForwarder forwards a governed inference request to a PIA.
@@ -126,8 +130,31 @@ func New(db *gorm.DB, cpURL, relayID string) (*Service, error) {
 		exchanges:  make(map[string]*Exchange),
 	}
 	s.forwarder = s.defaultForwarder
+	s.hotState = NewHotStateCache(30 * time.Second)
+	s.exchangeGate = NewConcurrencyGate(128)
 	return s, nil
 }
+
+// OnModelPublished is invoked by the catalog/publish paths after a
+// model package becomes published: hot-state entries may reference the
+// old catalog, and connected sessions must receive the delta push.
+func (s *Service) OnModelPublished(packageID ...string) {
+	if s.hotState != nil {
+		s.hotState.InvalidateAll()
+	}
+	s.mu.RLock()
+	listeners := append([]*DARIListener(nil), s.listeners...)
+	s.mu.RUnlock()
+	for _, pl := range listeners {
+		pl.BroadcastCatalogDelta()
+	}
+}
+
+// HotState exposes the governance hot-state cache (ops/telemetry).
+func (s *Service) HotState() *HotStateCache { return s.hotState }
+
+// ExchangeGate exposes the backpressure gate (ops/telemetry).
+func (s *Service) ExchangeGate() *ConcurrencyGate { return s.exchangeGate }
 
 // Identity exposes the identity service (CA + revocations) so the
 // DARI listener can build its trust bundle and the binary can wire
@@ -573,6 +600,12 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 	if len(stream) > 0 {
 		onDelta = stream[0]
 	}
+	// Task 15 backpressure: bounded exchange concurrency; over-limit
+	// requests shed with a fail-closed error rather than queueing.
+	if err := s.exchangeGate.Acquire(); err != nil {
+		return nil, nil, err
+	}
+	defer s.exchangeGate.Release()
 	// 1. Resolve org from the enrolled harness.
 	var harness models.Harness
 	if err := s.db.Where("harness_id = ?", req.HarnessID).First(&harness).Error; err != nil {
@@ -612,14 +645,25 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 		// authoritative gate; the Session row is the CP-side view.
 	}
 
-	// 2. Resolve the active capability lease for this harness (fail-closed).
+	// 2. Resolve the active capability lease for this harness
+	// (fail-closed), through the hot-state cache when fresh (Task 15).
+	revEpoch, _ := s.identity.RevocationSnapshot()
 	var lease models.CapabilityLease
-	if err := s.db.Where("subject_peer_id = ? AND status = 'active'", req.HarnessID).
-		Order("not_after DESC").First(&lease).Error; err != nil {
-		return nil, nil, fmt.Errorf("relay: no active capability lease for harness %s: %w", req.HarnessID, err)
+	if snap, cerr := s.hotState.Get(req.HarnessID, time.Now(), revEpoch); cerr == nil && snap != nil {
+		lease = snap.Lease
+	} else {
+		if err := s.db.Where("subject_peer_id = ? AND status = 'active'", req.HarnessID).
+			Order("not_after DESC").First(&lease).Error; err != nil {
+			return nil, nil, fmt.Errorf("relay: no active capability lease for harness %s: %w", req.HarnessID, err)
+		}
+		h := models.Harness{}
+		if err := s.db.Where("harness_id = ?", req.HarnessID).First(&h).Error; err == nil {
+			s.hotState.Put(req.HarnessID, &GovernanceSnapshot{Harness: h, Lease: lease}, revEpoch)
+		}
 	}
 	notAfter, _ := time.Parse(time.RFC3339, lease.NotAfter)
 	if !notAfter.IsZero() && time.Now().After(notAfter) {
+		s.hotState.Invalidate(req.HarnessID)
 		return nil, nil, fmt.Errorf("relay: capability lease expired for harness %s", req.HarnessID)
 	}
 
@@ -789,6 +833,8 @@ func (s *Service) RevokeHarness(orgID, harnessID, reason string) error {
 		return err
 	}
 	epoch, serials := s.identity.RevocationSnapshot()
+	// Hot-state must never serve a pre-revocation snapshot.
+	s.hotState.InvalidateAll()
 	s.mu.RLock()
 	listeners := append([]*DARIListener(nil), s.listeners...)
 	s.mu.RUnlock()

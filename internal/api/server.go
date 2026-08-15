@@ -53,6 +53,15 @@ type Server struct {
 	korean     *korean.Service
 	jwtSecret  string
 	router     *chi.Mux
+	// modelPublishedHook is invoked after a successful model publish
+	// (Task 15 catalog push). Deployments link it to the relay's
+	// OnModelPublished so connected sessions receive the delta.
+	modelPublishedHook func(packageID string)
+}
+
+// SetModelPublishedHook installs the post-publish hook.
+func (s *Server) SetModelPublishedHook(hook func(packageID string)) {
+	s.modelPublishedHook = hook
 }
 
 // New creates a new API server.
@@ -1468,6 +1477,9 @@ func (s *Server) handlePublishModel(w http.ResponseWriter, r *http.Request) {
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	})
+	if s.modelPublishedHook != nil {
+		go s.modelPublishedHook(pkg.PackageID)
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "published"})
 }
 
