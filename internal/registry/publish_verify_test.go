@@ -19,7 +19,7 @@ func registryDB(t *testing.T) (*gorm.DB, *Service) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.AutoMigrate(&models.ModelPackage{}, &models.InferenceEndpoint{}, &models.EndpointLease{})
+	db.AutoMigrate(&models.ModelPackage{}, &models.InferenceEndpoint{}, &models.EndpointLease{}, &models.ServiceSigningKey{})
 	svc, err := New(db)
 	if err != nil {
 		t.Fatal(err)

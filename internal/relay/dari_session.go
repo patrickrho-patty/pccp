@@ -37,6 +37,9 @@ func (pl *DARIListener) authAckPayload() []byte {
 		"relay_id":         pl.svc.relayID,
 		"policy_issuer":    "pccp-policy",
 		"policy_issuer_pk": hex.EncodeToString(pl.svc.Policy().SigningPublicKey()),
+		// Receipt signer (B3): the connector verifies pushed evidence
+		// receipts under this key (persisted service identity).
+		"receipt_signer_pk": hex.EncodeToString(pl.svc.Provenance().SigningPublicKey()),
 	}
 	data, _ := json.Marshal(payload)
 	return data

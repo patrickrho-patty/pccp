@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/patrickrho-patty/pccp/internal/keys"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
@@ -21,9 +22,9 @@ type Service struct {
 
 // New creates a new policy service.
 func New(db *gorm.DB) (*Service, error) {
-	_, priv, err := ed25519.GenerateKey(nil)
+	priv, err := keys.LoadOrCreate(db, "policy-issuer")
 	if err != nil {
-		return nil, fmt.Errorf("policy: generate signing key: %w", err)
+		return nil, fmt.Errorf("policy: load signing key: %w", err)
 	}
 	return &Service{db: db, signingKey: priv}, nil
 }

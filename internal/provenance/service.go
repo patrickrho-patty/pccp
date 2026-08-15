@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/patrickrho-patty/pccp/internal/keys"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
@@ -23,9 +24,9 @@ type Service struct {
 
 // New creates a new provenance service.
 func New(db *gorm.DB, relayID string) (*Service, error) {
-	_, priv, err := ed25519.GenerateKey(nil)
+	priv, err := keys.LoadOrCreate(db, "provenance-receipts")
 	if err != nil {
-		return nil, fmt.Errorf("provenance: generate signing key: %w", err)
+		return nil, fmt.Errorf("provenance: load signing key: %w", err)
 	}
 	return &Service{db: db, signingKey: priv, relayID: relayID}, nil
 }
@@ -493,4 +494,10 @@ func (s *Service) computeSpanDigest(span *models.ProvenanceSpan) string {
 		span.StartLine, span.EndLine, span.AttributionState, span.SessionID)
 	h := sha256.Sum256([]byte(data))
 	return "sha256:" + hex.EncodeToString(h[:])
+}
+
+// SigningPublicKey returns the receipt signer's public half (pushed
+// to connectors in AUTH_ACK so they verify receipts locally).
+func (s *Service) SigningPublicKey() ed25519.PublicKey {
+	return s.signingKey.Public().(ed25519.PublicKey)
 }

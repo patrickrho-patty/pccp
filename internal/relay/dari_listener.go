@@ -324,6 +324,13 @@ func (pl *DARIListener) RevokeCredential(serial string, epoch uint64) {
 	pl.mu.Unlock()
 
 	for _, conn := range toClose {
+		// Graceful revocation notice first (the connector's reader can
+		// surface WHY the transport died + discard its lease), then the
+		// hard close.
+		if tc, ok := conn.(*dari.TransportConn); ok {
+			payload, _ := json.Marshal(map[string]string{"reason": "credential_revoked"})
+			_ = tc.SendMessage(dari.MsgLeaseRevoke, nil, payload, 0, 1)
+		}
 		_ = conn.Close()
 	}
 }

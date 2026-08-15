@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/patrickrho-patty/pccp/internal/keys"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
@@ -23,10 +24,11 @@ type Service struct {
 
 // New creates a new model registry service with a model-signing key pair.
 func New(db *gorm.DB) (*Service, error) {
-	pub, priv, err := ed25519.GenerateKey(nil)
+	priv, err := keys.LoadOrCreate(db, "registry-publish")
 	if err != nil {
-		return nil, fmt.Errorf("registry: generate signing key: %w", err)
+		return nil, fmt.Errorf("registry: load signing key: %w", err)
 	}
+	pub := priv.Public().(ed25519.PublicKey)
 	// Store the key fingerprint for reference
 	keyID := "patty-model-release-" + time.Now().Format("2006")
 

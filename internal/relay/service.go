@@ -195,6 +195,9 @@ func (s *Service) Identity() *identity.Service { return s.identity }
 // Policy exposes the policy service (epochs + capability leases).
 func (s *Service) Policy() *policy.Service { return s.policy }
 
+// Provenance exposes the provenance service (receipt signer identity).
+func (s *Service) Provenance() *provenance.Service { return s.provenance }
+
 // Catalog exposes the model-catalog service.
 func (s *Service) Catalog() *catalog.Service { return s.catalog }
 

@@ -56,3 +56,16 @@ func IDWithPrefix(prefix string, id *string) {
 		*id = GenerateID(prefix)
 	}
 }
+
+// ServiceSigningKey is the persisted per-service signing identity
+// (policy issuer, receipt signer, registry publish key). Created
+// once, reused across restarts.
+type ServiceSigningKey struct {
+	Base
+	Service      string `gorm:"type:varchar(64);uniqueIndex;not null" json:"service"`
+	PrivateHex   string `gorm:"type:varchar(256);not null" json:"-"`
+	CreatedAtRFC string `gorm:"type:timestamp" json:"created_at"`
+}
+
+// TableName overrides the table name.
+func (ServiceSigningKey) TableName() string { return "service_signing_keys" }
