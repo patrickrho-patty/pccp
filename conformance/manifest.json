@@ -10,82 +10,229 @@
       "profile": "dari/1",
       "status": "EXACT",
       "capabilities": [
-        {"capability": "deterministic-cbor", "test": "TestRunnerCase1NonCanonicalCBOR", "normative_requirement": "F.2 deterministic encoding; F.14-1 duplicate-key rejection", "deployment_mode": "in-process", "result": "PASS"},
-        {"capability": "attached-payload-equality", "test": "TestRunnerCase2PayloadSubstitution", "normative_requirement": "F.2 body/payload equality; F.14-2", "deployment_mode": "in-process", "result": "PASS"},
-        {"capability": "external-aad-binding", "test": "TestRunnerCase3AuthFailures", "normative_requirement": "F.2 per-object AAD; F.14-3", "deployment_mode": "in-process", "result": "PASS"},
-        {"capability": "authorization-grant-attenuation", "test": "TestRunnerCase4AttenuationFailures", "normative_requirement": "F.4 broadening rejection matrix; F.14-4", "deployment_mode": "in-process", "result": "PASS"},
-        {"capability": "signed-state-freshness", "test": "TestRunnerCase5StaleCheckpoint", "normative_requirement": "F.7 staleness; F.14-5", "deployment_mode": "in-process", "result": "PASS"},
-        {"capability": "decision-aggregation-deny-override", "test": "TestRunnerCase6DecisionFailures", "normative_requirement": "F.6 aggregation + obligations; F.14-6", "deployment_mode": "in-process", "result": "PASS"},
-        {"capability": "receipt-attestation-scope", "test": "TestRunnerCase7ReceiptFidelity", "normative_requirement": "F.8 role/claim scope; F.14-7", "deployment_mode": "in-process", "result": "PASS"},
-        {"capability": "selective-disclosure-verification", "test": "TestRunnerCase8DisclosureFailures", "normative_requirement": "F.9 disclosure verification; F.14-8", "deployment_mode": "in-process", "result": "PASS"},
-        {"capability": "effect-idempotency-replay-conflict", "test": "TestRunnerCase9EffectIdempotency", "normative_requirement": "F.10 idempotency + REPLAY_CONFLICT; F.14-9", "deployment_mode": "in-process", "result": "PASS"},
-        {"capability": "no-legacy-fallback", "test": "TestRunnerCase11NoLegacyFallback", "normative_requirement": "F.11 no paper/1 fallback; F.14-11", "deployment_mode": "in-process", "result": "PASS"},
-        {"capability": "status-shape-validation", "test": "TestRunnerCase13UnresolvedState", "normative_requirement": "F.10 status shapes; F.14-13", "deployment_mode": "in-process", "result": "PASS"}
+        {
+          "capability": "deterministic-cbor",
+          "test": "TestRunnerCase1NonCanonicalCBOR",
+          "normative_requirement": "F.2 deterministic encoding; F.14-1 duplicate-key rejection",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        },
+        {
+          "capability": "attached-payload-equality",
+          "test": "TestRunnerCase2PayloadSubstitution",
+          "normative_requirement": "F.2 body/payload equality; F.14-2",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        },
+        {
+          "capability": "external-aad-binding",
+          "test": "TestRunnerCase3AuthFailures",
+          "normative_requirement": "F.2 per-object AAD; F.14-3",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        },
+        {
+          "capability": "authorization-grant-attenuation",
+          "test": "TestRunnerCase4AttenuationFailures",
+          "normative_requirement": "F.4 broadening rejection matrix; F.14-4",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        },
+        {
+          "capability": "signed-state-freshness",
+          "test": "TestRunnerCase5StaleCheckpoint",
+          "normative_requirement": "F.7 staleness; F.14-5",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        },
+        {
+          "capability": "decision-aggregation-deny-override",
+          "test": "TestRunnerCase6DecisionFailures",
+          "normative_requirement": "F.6 aggregation + obligations; F.14-6",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        },
+        {
+          "capability": "receipt-attestation-scope",
+          "test": "TestRunnerCase7ReceiptFidelity",
+          "normative_requirement": "F.8 role/claim scope; F.14-7",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        },
+        {
+          "capability": "selective-disclosure-verification",
+          "test": "TestRunnerCase8DisclosureFailures",
+          "normative_requirement": "F.9 disclosure verification; F.14-8",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        },
+        {
+          "capability": "effect-idempotency-replay-conflict",
+          "test": "TestRunnerCase9EffectIdempotency",
+          "normative_requirement": "F.10 idempotency + REPLAY_CONFLICT; F.14-9",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        },
+        {
+          "capability": "no-legacy-fallback",
+          "test": "TestRunnerCase11NoLegacyFallback",
+          "normative_requirement": "F.11 no paper/1 fallback; F.14-11",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        },
+        {
+          "capability": "status-shape-validation",
+          "test": "TestRunnerCase13UnresolvedState",
+          "normative_requirement": "F.10 status shapes; F.14-13",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        }
       ]
     },
     {
       "profile": "dari.ai/1",
       "status": "DEGRADED",
-      "omitted": ["tokenizer-exact-accounting (estimator is marked estimated)"],
+      "omitted": [
+        "tokenizer-exact-accounting (estimator is marked estimated)"
+      ],
       "capabilities": [
-        {"capability": "governed-streaming-response", "test": "TestRunnerCase6DecisionFailures", "normative_requirement": "F.6 decisions on the live path", "deployment_mode": "relay-binary-e2e (DARI_LIVE_E2E)", "result": "PASS"}
+        {
+          "capability": "governed-streaming-response",
+          "test": "TestRunnerCase6DecisionFailures",
+          "normative_requirement": "F.6 decisions on the live path",
+          "deployment_mode": "in-process (runner F.14 case 6) + env-gated live-binary e2e in the nested harness repo (not runner-executed)",
+          "result": "PASS"
+        }
       ]
     },
     {
       "profile": "dari.tools/1",
-      "status": "EXACT",
+      "status": "DEGRADED",
       "capabilities": [
-        {"capability": "effect-lifecycle", "test": "TestRunnerCase9EffectIdempotency", "normative_requirement": "F.10 prepare/authorize/commit/abort", "deployment_mode": "in-process", "result": "PASS"},
-        {"capability": "deny-before-execution", "test": "TestRunnerCase4AttenuationFailures", "normative_requirement": "F.4 authority checks before side effects", "deployment_mode": "in-process (internal/tools executor suite)", "result": "PASS"}
+        {
+          "capability": "effect-lifecycle",
+          "test": "TestRunnerCase9EffectIdempotency",
+          "normative_requirement": "F.10 prepare/authorize/commit/abort",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        },
+        {
+          "capability": "deny-before-execution",
+          "test": "TestRunnerCase4AttenuationFailures",
+          "normative_requirement": "F.4 authority checks before side effects",
+          "deployment_mode": "in-process (internal/tools executor suite)",
+          "result": "PASS"
+        }
+      ],
+      "omitted": [
+        "deployment evidence (governed executor + sandbox runtime vectors are in-process; a governed-session deployment recording effects end-to-end is pending)"
       ]
     },
     {
       "profile": "dari.model-supply/1",
       "status": "DEGRADED",
-      "omitted": ["pmp-signature-at-publish (registry publish verifies manifest signature; PIA-side load verification pending)"],
+      "omitted": [
+        "pmp-signature-at-publish (registry publish verifies manifest signature; PIA-side load verification pending)"
+      ],
       "capabilities": [
-        {"capability": "publish-signature-verification", "test": "TestRunnerCase2PayloadSubstitution", "normative_requirement": "F.2 signature discipline on model manifests", "deployment_mode": "in-process (internal/registry publish suite)", "result": "PASS"},
-        {"capability": "catalog-push-on-publish", "test": "TestRunnerCase5StaleCheckpoint", "normative_requirement": "F.7 epoch-bound catalog state", "deployment_mode": "relay-binary-e2e (DARI_LIVE_E2E)", "result": "PASS"}
+        {
+          "capability": "publish-signature-verification",
+          "test": "TestRunnerCase2PayloadSubstitution",
+          "normative_requirement": "F.2 signature discipline on model manifests",
+          "deployment_mode": "in-process (internal/registry publish suite)",
+          "result": "PASS"
+        },
+        {
+          "capability": "catalog-push-on-publish",
+          "test": "TestRunnerCase5StaleCheckpoint",
+          "normative_requirement": "F.7 epoch-bound catalog state",
+          "deployment_mode": "in-process (runner F.14 case 5) + env-gated live-binary e2e in the nested harness repo (not runner-executed)",
+          "result": "PASS"
+        }
       ]
     },
     {
       "profile": "dari.web/1",
       "status": "DEGRADED",
-      "omitted": ["browser-deployment-evidence (in-process + carrier vectors pass; real-browser deployment evidence pending)"],
+      "omitted": [
+        "browser-deployment-evidence (in-process + carrier vectors pass; real-browser deployment evidence pending)"
+      ],
       "capabilities": [
-        {"capability": "proof-of-possession-required", "test": "TestRunnerWebFederationCollabMediaVectors", "normative_requirement": "F.13 §10 no cookie/bearer-only auth", "deployment_mode": "in-process + WS/WT carriers", "result": "PASS"},
-        {"capability": "critical-unsupported-fails-negotiation", "test": "TestRunnerCase10ProfileNegotiation", "normative_requirement": "F.13 §3 negotiation; F.14-10/12", "deployment_mode": "in-process", "result": "PASS"}
+        {
+          "capability": "proof-of-possession-required",
+          "test": "TestRunnerWebFederationCollabMediaVectors",
+          "normative_requirement": "F.13 §10 no cookie/bearer-only auth",
+          "deployment_mode": "in-process + WS/WT carriers",
+          "result": "PASS"
+        },
+        {
+          "capability": "critical-unsupported-fails-negotiation",
+          "test": "TestRunnerCase10ProfileNegotiation",
+          "normative_requirement": "F.13 §3 negotiation; F.14-10/12",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        }
       ]
     },
     {
       "profile": "dari.federation/1",
       "status": "DEGRADED",
-      "omitted": ["partner-deployment-evidence (trust-bundle vectors pass; a real partner interconnect pending)"],
+      "omitted": [
+        "partner-deployment-evidence (trust-bundle vectors pass; a real partner interconnect pending)"
+      ],
       "capabilities": [
-        {"capability": "trust-bundle-rollback-protection", "test": "TestRunnerWebFederationCollabMediaVectors", "normative_requirement": "F.13 §11 rollback rejection", "deployment_mode": "in-process", "result": "PASS"}
+        {
+          "capability": "trust-bundle-rollback-protection",
+          "test": "TestRunnerWebFederationCollabMediaVectors",
+          "normative_requirement": "F.13 §11 rollback rejection",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        }
       ]
     },
     {
       "profile": "dari.collab/1",
       "status": "DEGRADED",
-      "omitted": ["live-deployment-evidence (runtime vectors pass; live multi-peer deployment pending)"],
+      "omitted": [
+        "live-deployment-evidence (runtime vectors pass; live multi-peer deployment pending)"
+      ],
       "capabilities": [
-        {"capability": "encrypted-ordered-delivery-tamper-rejection", "test": "TestRunnerWebFederationCollabMediaVectors", "normative_requirement": "F.13 §11 collab envelope integrity", "deployment_mode": "in-process", "result": "PASS"}
+        {
+          "capability": "encrypted-ordered-delivery-tamper-rejection",
+          "test": "TestRunnerWebFederationCollabMediaVectors",
+          "normative_requirement": "F.13 §11 collab envelope integrity",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        }
       ]
     },
     {
       "profile": "dari.media/1",
       "status": "DEGRADED",
-      "omitted": ["live-deployment-evidence (runtime vectors pass; live media deployment pending)"],
+      "omitted": [
+        "live-deployment-evidence (runtime vectors pass; live media deployment pending)"
+      ],
       "capabilities": [
-        {"capability": "authorized-sessions-fail-closed", "test": "TestRunnerWebFederationCollabMediaVectors", "normative_requirement": "F.13 §11 explicit media authorization", "deployment_mode": "in-process", "result": "PASS"}
+        {
+          "capability": "authorized-sessions-fail-closed",
+          "test": "TestRunnerWebFederationCollabMediaVectors",
+          "normative_requirement": "F.13 §11 explicit media authorization",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        }
       ]
     },
     {
       "profile": "paper/1",
       "status": "EXACT",
       "capabilities": [
-        {"capability": "legacy-preface-frozen", "test": "TestRunnerCase11NoLegacyFallback", "normative_requirement": "compatibility map §6 frozen bytes", "deployment_mode": "in-process", "result": "PASS"}
+        {
+          "capability": "legacy-preface-frozen",
+          "test": "TestRunnerCase11NoLegacyFallback",
+          "normative_requirement": "compatibility map §6 frozen bytes",
+          "deployment_mode": "in-process",
+          "result": "PASS"
+        }
       ]
     }
   ]
