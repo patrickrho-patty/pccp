@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -120,6 +121,40 @@ func LoadPIAFromEnv() PIAConfig {
 	}
 }
 
+// SchedulerConfig holds pccp-scheduler (fleet registry) configuration.
+type SchedulerConfig struct {
+	// HTTP admin API (CP read-through)
+	HTTPAddr string `json:"h_t_t_p_addr"`
+	// DARI worker listener
+	DARIAddr string `json:"d_a_r_i_addr"`
+	// Trust material (hex-encoded public keys)
+	CAIssuerID         string `json:"c_a_issuer_id"`
+	CAPublicKeyHex     string `json:"c_a_public_key_hex"`
+	ConfigPublicKeyHex string `json:"config_public_key_hex"`
+	// Tenant policy (optional; static file in S1)
+	PolicyFile string `json:"policy_file"`
+	// Leases
+	LeaseTTLSeconds   int `json:"lease_t_t_l_seconds"`
+	LeaseGraceSeconds int `json:"lease_grace_seconds"`
+	// Admin API auth (empty = open, dev only)
+	AdminToken string `json:"admin_token"`
+}
+
+// LoadSchedulerFromEnv loads scheduler config from environment variables.
+func LoadSchedulerFromEnv() SchedulerConfig {
+	return SchedulerConfig{
+		HTTPAddr:           getenvDefault("PCCP_SCHED_HTTP_ADDR", ":8455"),
+		DARIAddr:           getenvDefault("PCCP_SCHED_DARI_ADDR", ":8445"),
+		CAIssuerID:         getenvDefault("PCCP_SCHED_CA_ISSUER_ID", "pccp-ca"),
+		CAPublicKeyHex:     os.Getenv("PCCP_SCHED_CA_PUBKEY_HEX"),
+		ConfigPublicKeyHex: os.Getenv("PCCP_SCHED_CONFIG_PUBKEY_HEX"),
+		PolicyFile:         os.Getenv("PCCP_SCHED_POLICY_FILE"),
+		LeaseTTLSeconds:    getenvInt("PCCP_SCHED_LEASE_TTL_SECONDS", 30),
+		LeaseGraceSeconds:  getenvInt("PCCP_SCHED_LEASE_GRACE_SECONDS", 60),
+		AdminToken:         os.Getenv("PCCP_SCHED_ADMIN_TOKEN"),
+	}
+}
+
 // EnsureStorageDir creates the storage directory if it doesn't exist.
 func EnsureStorageDir(path string) error {
 	if path == "" {
@@ -137,4 +172,16 @@ func getenvDefault(key, defaultVal string) string {
 		return defaultVal
 	}
 	return strings.TrimSpace(v)
+}
+
+func getenvInt(key string, defaultVal int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return defaultVal
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return defaultVal
+	}
+	return n
 }

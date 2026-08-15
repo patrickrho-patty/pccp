@@ -48,6 +48,12 @@ func NewDARIListener(svc *Scheduler, tlsConfig *tls.Config) *DARIListener {
 	return &DARIListener{svc: svc, tlsConfig: tlsConfig}
 }
 
+// TLSConfig returns the listener's TLS configuration (used when wiring the
+// network listener with dari.ListenTCP).
+func (l *DARIListener) TLSConfig() *tls.Config {
+	return l.tlsConfig
+}
+
 // ServeTCP accepts worker connections until the listener closes.
 func (l *DARIListener) ServeTCP(ln net.Listener) error {
 	for {
