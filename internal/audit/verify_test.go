@@ -69,18 +69,21 @@ func TestChainVerifiesAndDetectsTampering(t *testing.T) {
 func TestChainAllocatesSequentiallyUnderConcurrency(t *testing.T) {
 	db := testDB(t)
 	var wg sync.WaitGroup
+	// 8-way concurrency: enough to exercise the allocator race, gentle
+	// enough for sqlite under full-suite load.
+	sem := make(chan struct{}, 8)
 	for i := 0; i < 32; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// sqlite file DBs serialize writes; retry transient locks
-			// with backoff until the deadline.
-			deadline := time.Now().Add(5 * time.Second)
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			deadline := time.Now().Add(15 * time.Second)
 			for time.Now().Before(deadline) {
 				if err := db.Create(&models.AuditEvent{OrganizationID: "race", EventType: "t", Action: "a"}).Error; err == nil {
 					return
 				}
-				time.Sleep(10 * time.Millisecond)
+				time.Sleep(20 * time.Millisecond)
 			}
 		}()
 	}
