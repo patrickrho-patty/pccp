@@ -466,3 +466,68 @@ func parseLeaseScope(lease *models.CapabilityLease) (*leaseScopeView, error) {
 	out.ReadPaths, out.WritePaths = filePathScope.Read, filePathScope.Write
 	return out, nil
 }
+
+// ---------------------------------------------------------------------------
+// C1.3 DLP rule-pack sync (harness plan C residual): the relay pushes
+// the org's active DLP rules so the connector's scanner runs the same
+// lexicon the server enforces.
+// ---------------------------------------------------------------------------
+
+// wireDLPRule is one synced detection rule.
+type wireDLPRule struct {
+	RuleID     string `cbor:"1,keyasint"`
+	Pattern    string `cbor:"2,keyasint"`
+	Severity   string `cbor:"3,keyasint"`
+	RedactWith string `cbor:"4,keyasint,omitempty"`
+	Disabled   bool   `cbor:"5,keyasint,omitempty"`
+}
+
+// wireDLPRulePack is the epoch-bound rule pack push.
+type wireDLPRulePack struct {
+	Version    uint16        `cbor:"1,keyasint"`
+	EpochID    string        `cbor:"2,keyasint"`
+	OrgID      string        `cbor:"3,keyasint"`
+	NotAfterMs int64         `cbor:"4,keyasint"`
+	Rules      []wireDLPRule `cbor:"5,keyasint"`
+	Digest     [32]byte      `cbor:"6,keyasint"`
+}
+
+// BuildDLPRulePack assembles the push from the security service's
+// rule rows.
+func BuildDLPRulePack(epochID, orgID string, rules []SecurityRuleView, now time.Time) *wireDLPRulePack {
+	pack := &wireDLPRulePack{
+		Version: 1, EpochID: epochID, OrgID: orgID,
+		NotAfterMs: now.Add(24 * time.Hour).UnixMilli(),
+		Rules:      make([]wireDLPRule, 0, len(rules)),
+	}
+	for _, r := range rules {
+		pack.Rules = append(pack.Rules, wireDLPRule{
+			RuleID: r.RuleID, Pattern: r.Pattern, Severity: r.Severity,
+			RedactWith: r.RedactWith, Disabled: r.Disabled,
+		})
+	}
+	pack.Digest = dlpPackDigest(pack)
+	return pack
+}
+
+func dlpPackDigest(p *wireDLPRulePack) [32]byte {
+	h := sha256.New()
+	h.Write([]byte("DARI-DLP-RULEPACK-v1\x00"))
+	h.Write([]byte(p.EpochID))
+	h.Write([]byte(p.OrgID))
+	for _, r := range p.Rules {
+		fmt.Fprintf(h, "%s|%s|%s|%t|", r.RuleID, r.Pattern, r.Severity, r.Disabled)
+	}
+	var d [32]byte
+	copy(d[:], h.Sum(nil))
+	return d
+}
+
+// SecurityRuleView is the security service's rule projection.
+type SecurityRuleView struct {
+	RuleID     string
+	Pattern    string
+	Severity   string
+	RedactWith string
+	Disabled   bool
+}

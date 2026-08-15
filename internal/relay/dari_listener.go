@@ -437,6 +437,79 @@ func (pl *DARIListener) BroadcastCatalogDelta() {
 	}
 }
 
+// Broadcast pushes a governed broadcast (E2) to every connected
+// session of an org. envelope must be pre-encoded by the caller (the
+// comms service signs it).
+func (pl *DARIListener) Broadcast(orgID string, messageType dari.MessageType, body []byte) int {
+	pl.mu.Lock()
+	var targets []*connState
+	for _, state := range pl.conns {
+		if state.cred != nil && state.cred.Organization == orgID {
+			if conn, ok := state.conn.(*dari.TransportConn); ok {
+				targets = append(targets, state)
+				_ = conn // sent below under the map copy
+			}
+		}
+	}
+	// Copy transports out of the lock.
+	conns := make([]*dari.TransportConn, 0, len(targets))
+	for _, state := range targets {
+		if conn, ok := state.conn.(*dari.TransportConn); ok {
+			conns = append(conns, conn)
+		}
+	}
+	pl.mu.Unlock()
+	sent := 0
+	for _, conn := range conns {
+		if err := conn.SendMessage(messageType, nil, body, 0, 1); err == nil {
+			sent++
+		}
+	}
+	return sent
+}
+
+// DeliverAdminDirective pushes a signed admin command (E5) to every
+// connection of the target harness.
+func (pl *DARIListener) DeliverAdminDirective(harnessID string, body []byte) int {
+	pl.mu.Lock()
+	var conns []*dari.TransportConn
+	for _, state := range pl.conns {
+		if state.cred != nil && state.cred.SubjectPeerID == harnessID {
+			if conn, ok := state.conn.(*dari.TransportConn); ok {
+				conns = append(conns, conn)
+			}
+		}
+	}
+	pl.mu.Unlock()
+	sent := 0
+	for _, conn := range conns {
+		if err := conn.SendMessage(dari.MsgAdminDirective, nil, body, 0, 1); err == nil {
+			sent++
+		}
+	}
+	return sent
+}
+
+// DeliverSovereignAdvisory pushes a signed offline advisory (E3) to
+// every connected session.
+func (pl *DARIListener) DeliverSovereignAdvisory(body []byte) int {
+	pl.mu.Lock()
+	var conns []*dari.TransportConn
+	for _, state := range pl.conns {
+		if conn, ok := state.conn.(*dari.TransportConn); ok {
+			conns = append(conns, conn)
+		}
+	}
+	pl.mu.Unlock()
+	sent := 0
+	for _, conn := range conns {
+		if err := conn.SendMessage(dari.MsgBroadcast, nil, body, 0, 2); err == nil {
+			sent++
+		}
+	}
+	return sent
+}
+
 // ActiveConnections returns the number of active DARI connections.
 func (pl *DARIListener) ActiveConnections() int {
 	pl.mu.Lock()
