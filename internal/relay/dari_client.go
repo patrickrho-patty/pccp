@@ -194,7 +194,7 @@ func (c *DARIInferenceClient) Close() error {
 // If PCCP_PIA_DARI_ADDR is not set, returns nil (caller should use HTTP fallback).
 var (
 	globalDARIWireClient *DARIInferenceClient
-	globalDARIOnce   sync.Once
+	globalDARIOnce       sync.Once
 )
 
 func getDARIInferenceClient() *DARIInferenceClient {

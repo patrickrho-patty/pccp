@@ -73,11 +73,11 @@ func TestTransportRecordExchange(t *testing.T) {
 
 	// Send a record from client to server
 	testRecord := &Record{
-		Kind:        KindMessage,
-		MessageType: uint16(MsgHello),
-		Header:      []byte(`{"test":true}`),
-		Payload:     []byte("hello world"),
-		LaneID:      1,
+		Kind:         KindMessage,
+		MessageType:  uint16(MsgHello),
+		Header:       []byte(`{"test":true}`),
+		Payload:      []byte("hello world"),
+		LaneID:       1,
 		LaneSequence: 1,
 	}
 
@@ -122,13 +122,13 @@ func TestTransportHelloExchange(t *testing.T) {
 		CoreVersions:   []uint8{1},
 		PeerProfile:    ProfileHarness,
 		CryptoProfiles: []string{"DARI-BASE-1"},
-		ClientNonce:     bytes.Repeat([]byte{0xAB}, 32),
+		ClientNonce:    bytes.Repeat([]byte{0xAB}, 32),
 	}
 
 	ack := &HelloAckMessage{
 		CoreVersion:   1,
 		CryptoProfile: "DARI-BASE-1",
-		ServerNonce:    bytes.Repeat([]byte{0xCD}, 32),
+		ServerNonce:   bytes.Repeat([]byte{0xCD}, 32),
 	}
 
 	// Server-side: accept HELLO and send ACK

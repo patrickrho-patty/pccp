@@ -47,10 +47,10 @@ func DialQUIC(ctx context.Context, addr string, tlsConfig *tls.Config, config QU
 	}
 
 	quicConfig := &quic.Config{
-		MaxIdleTimeout:         config.MaxIdleTimeout,
-		KeepAlivePeriod:        config.KeepAlivePeriod,
-		MaxIncomingStreams:     int64(config.MaxIncomingStreams),
-		EnableDatagrams:        true,
+		MaxIdleTimeout:     config.MaxIdleTimeout,
+		KeepAlivePeriod:    config.KeepAlivePeriod,
+		MaxIncomingStreams: int64(config.MaxIncomingStreams),
+		EnableDatagrams:    true,
 	}
 
 	conn, err := quic.DialAddr(ctx, addr, tlsConfig, quicConfig)

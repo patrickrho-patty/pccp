@@ -12,12 +12,12 @@ func TestDARIClientConfig(t *testing.T) {
 	// Create a PPC for the client
 	issuer, _ := NewPeerCredentialIssuer("test-ca")
 	cred, _ := issuer.Issue(IssueRequest{
-		SubjectPeerID:          "hrn_client_test",
-		Organization:           "org_test",
-		Profile:                ProfileHarness,
-		PublicKey:              pub,
-		Validity:               time.Hour,
-		RevocationAuthority:    "test-ca",
+		SubjectPeerID:           "hrn_client_test",
+		Organization:            "org_test",
+		Profile:                 ProfileHarness,
+		PublicKey:               pub,
+		Validity:                time.Hour,
+		RevocationAuthority:     "test-ca",
 		AllowedProtocolVersions: []uint8{1},
 	})
 

@@ -10,8 +10,8 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 )
 
 // This file is the cross-repo wire contract for the DARI extension
@@ -47,25 +47,25 @@ import (
 // ---------------------------------------------------------------------------
 
 type wireLease struct {
-	Version           uint16              `cbor:"1,keyasint"`
-	Issuer            string              `cbor:"2,keyasint"`
-	LeaseID           string              `cbor:"3,keyasint"`
-	SubjectPeerID     string              `cbor:"4,keyasint"`
-	UserID            string              `cbor:"5,keyasint"`
-	SessionID         string              `cbor:"6,keyasint,omitempty"`
-	PolicyEpochID     string              `cbor:"7,keyasint"`
-	AllowedModels     []string            `cbor:"8,keyasint,omitempty"`
-	RepositoryScope   []map[string]string `cbor:"9,keyasint,omitempty"`
-	FilePathReadScope []string            `cbor:"10,keyasint,omitempty"`
-	FilePathWriteScope []string           `cbor:"11,keyasint,omitempty"`
-	ToolClasses       []string            `cbor:"12,keyasint,omitempty"`
-	TokenBudget       int64               `cbor:"13,keyasint,omitempty"`
-	NotBeforeUnixMs   int64               `cbor:"14,keyasint"`
-	NotAfterUnixMs    int64               `cbor:"15,keyasint"`
-	LeaseSequence     uint64              `cbor:"16,keyasint"`
-	IssuedAtUnixMs    int64               `cbor:"17,keyasint,omitempty"`
-	Status            string              `cbor:"18,keyasint,omitempty"`
-	Signature         string              `cbor:"19,keyasint,omitempty"`
+	Version            uint16              `cbor:"1,keyasint"`
+	Issuer             string              `cbor:"2,keyasint"`
+	LeaseID            string              `cbor:"3,keyasint"`
+	SubjectPeerID      string              `cbor:"4,keyasint"`
+	UserID             string              `cbor:"5,keyasint"`
+	SessionID          string              `cbor:"6,keyasint,omitempty"`
+	PolicyEpochID      string              `cbor:"7,keyasint"`
+	AllowedModels      []string            `cbor:"8,keyasint,omitempty"`
+	RepositoryScope    []map[string]string `cbor:"9,keyasint,omitempty"`
+	FilePathReadScope  []string            `cbor:"10,keyasint,omitempty"`
+	FilePathWriteScope []string            `cbor:"11,keyasint,omitempty"`
+	ToolClasses        []string            `cbor:"12,keyasint,omitempty"`
+	TokenBudget        int64               `cbor:"13,keyasint,omitempty"`
+	NotBeforeUnixMs    int64               `cbor:"14,keyasint"`
+	NotAfterUnixMs     int64               `cbor:"15,keyasint"`
+	LeaseSequence      uint64              `cbor:"16,keyasint"`
+	IssuedAtUnixMs     int64               `cbor:"17,keyasint,omitempty"`
+	Status             string              `cbor:"18,keyasint,omitempty"`
+	Signature          string              `cbor:"19,keyasint,omitempty"`
 }
 
 func buildWireLease(lease *models.CapabilityLease, issuerID string) (*wireLease, error) {
@@ -121,11 +121,11 @@ func buildWireLease(lease *models.CapabilityLease, issuerID string) (*wireLease,
 // ---------------------------------------------------------------------------
 
 type wirePolicyEpoch struct {
-	EpochID           string   `cbor:"1,keyasint"`
-	IssuedAtUnixMs    int64    `cbor:"2,keyasint"`
-	NotBeforeUnixMs   int64    `cbor:"3,keyasint"`
-	NotAfterUnixMs    int64    `cbor:"4,keyasint"`
-	MonotonicSequence uint64   `cbor:"5,keyasint"`
+	EpochID           string `cbor:"1,keyasint"`
+	IssuedAtUnixMs    int64  `cbor:"2,keyasint"`
+	NotBeforeUnixMs   int64  `cbor:"3,keyasint"`
+	NotAfterUnixMs    int64  `cbor:"4,keyasint"`
+	MonotonicSequence uint64 `cbor:"5,keyasint"`
 	// IssuerKeyThumbprint mirrors the connector's field 6: the SHA-256
 	// of the issuer's public key bytes.
 	IssuerKeyThumbprint [32]byte `cbor:"6,keyasint"`
@@ -158,27 +158,27 @@ func buildWirePolicyEpoch(epoch *models.PolicyEpoch, issuerPub ed25519.PublicKey
 // ---------------------------------------------------------------------------
 
 type wireCatalogEntry struct {
-	ModelID          string   `cbor:"1,keyasint"`
-	DisplayName      string   `cbor:"2,keyasint"`
-	Version          string   `cbor:"3,keyasint"`
+	ModelID            string   `cbor:"1,keyasint"`
+	DisplayName        string   `cbor:"2,keyasint"`
+	Version            string   `cbor:"3,keyasint"`
 	ModelPackageDigest [32]byte `cbor:"4,keyasint"`
-	EndpointDigest   [32]byte `cbor:"5,keyasint"`
-	Capabilities     []string `cbor:"6,keyasint,omitempty"`
-	TokenLimit       uint32   `cbor:"7,keyasint,omitempty"`
-	ContextWindow    uint32   `cbor:"8,keyasint,omitempty"`
-	ModeTags         []string `cbor:"9,keyasint,omitempty"`
-	PolicyEpochID    string   `cbor:"10,keyasint"`
-	ActiveUntilUnixMs int64   `cbor:"11,keyasint,omitempty"`
+	EndpointDigest     [32]byte `cbor:"5,keyasint"`
+	Capabilities       []string `cbor:"6,keyasint,omitempty"`
+	TokenLimit         uint32   `cbor:"7,keyasint,omitempty"`
+	ContextWindow      uint32   `cbor:"8,keyasint,omitempty"`
+	ModeTags           []string `cbor:"9,keyasint,omitempty"`
+	PolicyEpochID      string   `cbor:"10,keyasint"`
+	ActiveUntilUnixMs  int64    `cbor:"11,keyasint,omitempty"`
 }
 
 type wireCatalogSnapshot struct {
-	Version             uint64            `cbor:"1,keyasint"`
-	EpochID             string            `cbor:"2,keyasint"`
-	IssuedAtUnixMs      int64             `cbor:"3,keyasint"`
-	NotAfterUnixMs      int64             `cbor:"4,keyasint"`
-	IssuedSequence      uint64            `cbor:"5,keyasint"`
-	IssuerKeyThumbprint [32]byte          `cbor:"6,keyasint"`
-	Digest              [32]byte          `cbor:"7,keyasint"`
+	Version             uint64             `cbor:"1,keyasint"`
+	EpochID             string             `cbor:"2,keyasint"`
+	IssuedAtUnixMs      int64              `cbor:"3,keyasint"`
+	NotAfterUnixMs      int64              `cbor:"4,keyasint"`
+	IssuedSequence      uint64             `cbor:"5,keyasint"`
+	IssuerKeyThumbprint [32]byte           `cbor:"6,keyasint"`
+	Digest              [32]byte           `cbor:"7,keyasint"`
 	Entries             []wireCatalogEntry `cbor:"8,keyasint"`
 }
 
@@ -223,11 +223,11 @@ func buildWireCatalogSnapshot(epochID string, issuerThumbprint [32]byte, descrip
 	}
 	for _, d := range descriptors {
 		entry := wireCatalogEntry{
-			ModelID:            d.CatalogModelID,
-			DisplayName:        d.DisplayName,
-			Version:            d.ReleaseChannel,
-			PolicyEpochID:      epochID,
-			ActiveUntilUnixMs:  now.Add(24 * time.Hour).UnixMilli(),
+			ModelID:           d.CatalogModelID,
+			DisplayName:       d.DisplayName,
+			Version:           d.ReleaseChannel,
+			PolicyEpochID:     epochID,
+			ActiveUntilUnixMs: now.Add(24 * time.Hour).UnixMilli(),
 		}
 		if d.Limits.MaxOutputTokens > 0 {
 			entry.TokenLimit = uint32(d.Limits.MaxOutputTokens)
@@ -258,25 +258,25 @@ func buildWireCatalogSnapshot(epochID string, issuerThumbprint [32]byte, descrip
 // ---------------------------------------------------------------------------
 
 type wireEvidenceReceipt struct {
-	ReceiptID         string  `cbor:"1,keyasint"`
-	ExchangeID        string  `cbor:"2,keyasint"`
-	SessionID         string  `cbor:"3,keyasint,omitempty"`
-	OrganizationID    string  `cbor:"4,keyasint,omitempty"`
-	FinalState        string  `cbor:"5,keyasint,omitempty"`
-	FirstEventSeq     uint64  `cbor:"6,keyasint"`
-	LastEventSeq      uint64  `cbor:"7,keyasint"`
+	ReceiptID         string   `cbor:"1,keyasint"`
+	ExchangeID        string   `cbor:"2,keyasint"`
+	SessionID         string   `cbor:"3,keyasint,omitempty"`
+	OrganizationID    string   `cbor:"4,keyasint,omitempty"`
+	FinalState        string   `cbor:"5,keyasint,omitempty"`
+	FirstEventSeq     uint64   `cbor:"6,keyasint"`
+	LastEventSeq      uint64   `cbor:"7,keyasint"`
 	ChainRoot         [32]byte `cbor:"8,keyasint"`
 	ProvenanceRoot    [32]byte `cbor:"9,keyasint,omitempty"`
-	PolicyEpochID     string  `cbor:"10,keyasint,omitempty"`
+	PolicyEpochID     string   `cbor:"10,keyasint,omitempty"`
 	LeaseDigest       [32]byte `cbor:"11,keyasint,omitempty"`
-	RelayIdentity     string  `cbor:"12,keyasint,omitempty"`
-	ModelPackageID    string  `cbor:"13,keyasint,omitempty"`
-	EndpointID        string  `cbor:"14,keyasint,omitempty"`
-	KeyAlgorithm      string  `cbor:"15,keyasint"`
-	Signature         string  `cbor:"16,keyasint"`
-	RedactionManifest string  `cbor:"17,keyasint,omitempty"`
-	IssuedAtUnixMs    int64   `cbor:"18,keyasint"`
-	Acknowledged      bool    `cbor:"19,keyasint,omitempty"`
+	RelayIdentity     string   `cbor:"12,keyasint,omitempty"`
+	ModelPackageID    string   `cbor:"13,keyasint,omitempty"`
+	EndpointID        string   `cbor:"14,keyasint,omitempty"`
+	KeyAlgorithm      string   `cbor:"15,keyasint"`
+	Signature         string   `cbor:"16,keyasint"`
+	RedactionManifest string   `cbor:"17,keyasint,omitempty"`
+	IssuedAtUnixMs    int64    `cbor:"18,keyasint"`
+	Acknowledged      bool     `cbor:"19,keyasint,omitempty"`
 }
 
 func buildWireEvidenceReceipt(r *models.EvidenceReceipt) *wireEvidenceReceipt {
@@ -349,93 +349,93 @@ func hexVal(c byte) int {
 // ---------------------------------------------------------------------------
 
 type wireActionEnvelope struct {
-	ActionID         string `cbor:"1,keyasint"`
-	OrganizationID   string `cbor:"2,keyasint"`
-	SessionID        string `cbor:"3,keyasint,omitempty"`
-	ExchangeID       string `cbor:"4,keyasint,omitempty"`
-	UserID           string `cbor:"5,keyasint,omitempty"`
-	HarnessID        string `cbor:"6,keyasint,omitempty"`
-	ModelPackageID   string `cbor:"7,keyasint,omitempty"`
-	EndpointID       string `cbor:"8,keyasint,omitempty"`
-	ProjectID        string `cbor:"9,keyasint,omitempty"`
-	RepositoryID     string `cbor:"10,keyasint,omitempty"`
-	Branch           string `cbor:"11,keyasint,omitempty"`
-	PolicyEpochID    string `cbor:"12,keyasint,omitempty"`
-	LeaseID          string `cbor:"13,keyasint,omitempty"`
-	ActionType       string `cbor:"14,keyasint"`
-	ActionPayload    string `cbor:"15,keyasint,omitempty"`
-	VerdictResult    string `cbor:"16,keyasint,omitempty"`
-	Classification   string `cbor:"17,keyasint,omitempty"`
+	ActionID         string   `cbor:"1,keyasint"`
+	OrganizationID   string   `cbor:"2,keyasint"`
+	SessionID        string   `cbor:"3,keyasint,omitempty"`
+	ExchangeID       string   `cbor:"4,keyasint,omitempty"`
+	UserID           string   `cbor:"5,keyasint,omitempty"`
+	HarnessID        string   `cbor:"6,keyasint,omitempty"`
+	ModelPackageID   string   `cbor:"7,keyasint,omitempty"`
+	EndpointID       string   `cbor:"8,keyasint,omitempty"`
+	ProjectID        string   `cbor:"9,keyasint,omitempty"`
+	RepositoryID     string   `cbor:"10,keyasint,omitempty"`
+	Branch           string   `cbor:"11,keyasint,omitempty"`
+	PolicyEpochID    string   `cbor:"12,keyasint,omitempty"`
+	LeaseID          string   `cbor:"13,keyasint,omitempty"`
+	ActionType       string   `cbor:"14,keyasint"`
+	ActionPayload    string   `cbor:"15,keyasint,omitempty"`
+	VerdictResult    string   `cbor:"16,keyasint,omitempty"`
+	Classification   string   `cbor:"17,keyasint,omitempty"`
 	EnvelopeDigest   [32]byte `cbor:"18,keyasint"`
-	CPSignature      string `cbor:"19,keyasint,omitempty"`
-	OccurredAtUnixMs int64  `cbor:"20,keyasint"`
+	CPSignature      string   `cbor:"19,keyasint,omitempty"`
+	OccurredAtUnixMs int64    `cbor:"20,keyasint"`
 }
 
 type wireChangeSetEnvelope struct {
-	ChangeSetID      string `cbor:"1,keyasint"`
-	OrganizationID   string `cbor:"2,keyasint"`
-	SessionID        string `cbor:"3,keyasint"`
-	ExchangeID       string `cbor:"4,keyasint,omitempty"`
-	RepositoryID     string `cbor:"5,keyasint"`
-	Branch           string `cbor:"6,keyasint"`
-	BaselineID       string `cbor:"7,keyasint,omitempty"`
-	UserID           string `cbor:"8,keyasint,omitempty"`
-	HarnessID        string `cbor:"9,keyasint,omitempty"`
-	ModelPackageID   string `cbor:"10,keyasint,omitempty"`
-	EndpointID       string `cbor:"11,keyasint,omitempty"`
+	ChangeSetID      string   `cbor:"1,keyasint"`
+	OrganizationID   string   `cbor:"2,keyasint"`
+	SessionID        string   `cbor:"3,keyasint"`
+	ExchangeID       string   `cbor:"4,keyasint,omitempty"`
+	RepositoryID     string   `cbor:"5,keyasint"`
+	Branch           string   `cbor:"6,keyasint"`
+	BaselineID       string   `cbor:"7,keyasint,omitempty"`
+	UserID           string   `cbor:"8,keyasint,omitempty"`
+	HarnessID        string   `cbor:"9,keyasint,omitempty"`
+	ModelPackageID   string   `cbor:"10,keyasint,omitempty"`
+	EndpointID       string   `cbor:"11,keyasint,omitempty"`
 	FilesChanged     []string `cbor:"12,keyasint,omitempty"`
-	DiffSummary      string `cbor:"13,keyasint,omitempty"`
+	DiffSummary      string   `cbor:"13,keyasint,omitempty"`
 	DiffDigest       [32]byte `cbor:"14,keyasint"`
-	LinesAdded       int    `cbor:"15,keyasint"`
-	LinesRemoved     int    `cbor:"16,keyasint"`
-	AttributionState string `cbor:"17,keyasint"`
-	Confidence       float64 `cbor:"18,keyasint"`
+	LinesAdded       int      `cbor:"15,keyasint"`
+	LinesRemoved     int      `cbor:"16,keyasint"`
+	AttributionState string   `cbor:"17,keyasint"`
+	Confidence       float64  `cbor:"18,keyasint"`
 	ChangeSetDigest  [32]byte `cbor:"19,keyasint"`
-	Status           string `cbor:"20,keyasint,omitempty"`
+	Status           string   `cbor:"20,keyasint,omitempty"`
 }
 
 type wireSpanEnvelope struct {
-	SpanID              string `cbor:"1,keyasint"`
-	OrganizationID      string `cbor:"2,keyasint"`
-	RepositoryID        string `cbor:"3,keyasint"`
-	ChangeSetID         string `cbor:"4,keyasint,omitempty"`
-	FilePath            string `cbor:"5,keyasint"`
-	CommitSHA           string `cbor:"6,keyasint,omitempty"`
-	SymbolLang          string `cbor:"7,keyasint,omitempty"`
-	SymbolName          string `cbor:"8,keyasint,omitempty"`
-	StartLine           int    `cbor:"9,keyasint"`
-	EndLine             int    `cbor:"10,keyasint"`
+	SpanID              string   `cbor:"1,keyasint"`
+	OrganizationID      string   `cbor:"2,keyasint"`
+	RepositoryID        string   `cbor:"3,keyasint"`
+	ChangeSetID         string   `cbor:"4,keyasint,omitempty"`
+	FilePath            string   `cbor:"5,keyasint"`
+	CommitSHA           string   `cbor:"6,keyasint,omitempty"`
+	SymbolLang          string   `cbor:"7,keyasint,omitempty"`
+	SymbolName          string   `cbor:"8,keyasint,omitempty"`
+	StartLine           int      `cbor:"9,keyasint"`
+	EndLine             int      `cbor:"10,keyasint"`
 	ASTFingerprint      [32]byte `cbor:"11,keyasint"`
 	SemanticFingerprint [32]byte `cbor:"12,keyasint,omitempty"`
-	AttributionState    string `cbor:"13,keyasint"`
-	Confidence          float64 `cbor:"14,keyasint"`
-	SessionID           string `cbor:"15,keyasint,omitempty"`
-	UserID              string `cbor:"16,keyasint,omitempty"`
-	HarnessID           string `cbor:"17,keyasint,omitempty"`
-	ModelPackageID      string `cbor:"18,keyasint,omitempty"`
-	EndpointID          string `cbor:"19,keyasint,omitempty"`
+	AttributionState    string   `cbor:"13,keyasint"`
+	Confidence          float64  `cbor:"14,keyasint"`
+	SessionID           string   `cbor:"15,keyasint,omitempty"`
+	UserID              string   `cbor:"16,keyasint,omitempty"`
+	HarnessID           string   `cbor:"17,keyasint,omitempty"`
+	ModelPackageID      string   `cbor:"18,keyasint,omitempty"`
+	EndpointID          string   `cbor:"19,keyasint,omitempty"`
 	ContextRefs         []string `cbor:"20,keyasint,omitempty"`
 	ParentSpanRefs      []string `cbor:"21,keyasint,omitempty"`
 	SpanDigest          [32]byte `cbor:"22,keyasint"`
 }
 
 type wireCommitBindingEnvelope struct {
-	BindingID      string `cbor:"1,keyasint"`
-	OrganizationID string `cbor:"2,keyasint,omitempty"`
-	RepositoryID   string `cbor:"3,keyasint"`
-	CommitSHA      string `cbor:"4,keyasint"`
-	ChangeSetID    string `cbor:"5,keyasint"`
-	SessionID      string `cbor:"6,keyasint,omitempty"`
-	Branch         string `cbor:"7,keyasint,omitempty"`
-	BoundAtUnixMs  int64  `cbor:"8,keyasint"`
+	BindingID      string   `cbor:"1,keyasint"`
+	OrganizationID string   `cbor:"2,keyasint,omitempty"`
+	RepositoryID   string   `cbor:"3,keyasint"`
+	CommitSHA      string   `cbor:"4,keyasint"`
+	ChangeSetID    string   `cbor:"5,keyasint"`
+	SessionID      string   `cbor:"6,keyasint,omitempty"`
+	Branch         string   `cbor:"7,keyasint,omitempty"`
+	BoundAtUnixMs  int64    `cbor:"8,keyasint"`
 	BindingDigest  [32]byte `cbor:"9,keyasint"`
 }
 
 type wireReceiptAck struct {
-	ReceiptID     string `cbor:"1,keyasint"`
-	ExchangeID    string `cbor:"2,keyasint"`
+	ReceiptID     string   `cbor:"1,keyasint"`
+	ExchangeID    string   `cbor:"2,keyasint"`
 	AckDigest     [32]byte `cbor:"3,keyasint"`
-	AckedAtUnixMs int64  `cbor:"4,keyasint"`
+	AckedAtUnixMs int64    `cbor:"4,keyasint"`
 }
 
 func encodeWire(v interface{}) ([]byte, error) {

@@ -9,10 +9,10 @@ import (
 
 // SessionResumptionRequest requests resumption of a disconnected session (DARI §53).
 type SessionResumptionRequest struct {
-	WorkingSessionID    string `cbor:"1,keyasint"`
-	ResumptionToken     []byte `cbor:"2,keyasint"`
-	LastAckLaneSeq      uint64 `cbor:"3,keyasint"`
-	LastEvidenceReceipt []byte `cbor:"4,keyasint,omitempty"`
+	WorkingSessionID    string   `cbor:"1,keyasint"`
+	ResumptionToken     []byte   `cbor:"2,keyasint"`
+	LastAckLaneSeq      uint64   `cbor:"3,keyasint"`
+	LastEvidenceReceipt []byte   `cbor:"4,keyasint,omitempty"`
 	ActiveExchangeIDs   []string `cbor:"5,keyasint,omitempty"`
 }
 
@@ -28,14 +28,14 @@ type SessionResumptionResponse struct {
 
 // ResumptionCredential is a token that allows session resumption.
 type ResumptionCredential struct {
- 	SessionID     string `json:"session_i_d"`
- 	Token         []byte `json:"token"`
- 	IssuedAt      time.Time `json:"issued_at"`
- 	ExpiresAt     time.Time `json:"expires_at"`
- 	LastSeqNum    uint64 `json:"last_seq_num"`
- 	OrgID         string `json:"org_i_d"`
- 	UserID        string `json:"user_i_d"`
- 	HarnessID     string `json:"harness_i_d"`
+	SessionID  string    `json:"session_i_d"`
+	Token      []byte    `json:"token"`
+	IssuedAt   time.Time `json:"issued_at"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	LastSeqNum uint64    `json:"last_seq_num"`
+	OrgID      string    `json:"org_i_d"`
+	UserID     string    `json:"user_i_d"`
+	HarnessID  string    `json:"harness_i_d"`
 }
 
 // GenerateResumptionToken creates a resumption token for a session.
@@ -70,9 +70,9 @@ func (rc *ResumptionCredential) TokenHex() string {
 type LaneResumability int
 
 const (
-	LaneNonResumable       LaneResumability = 0
-	LaneResumeFromAck      LaneResumability = 1
-	LaneResumeFromStart    LaneResumability = 2
+	LaneNonResumable    LaneResumability = 0
+	LaneResumeFromAck   LaneResumability = 1
+	LaneResumeFromStart LaneResumability = 2
 )
 
 // IdempotencyClassForInferenceDisconnect handles inference disconnect semantics (DARI §54).

@@ -85,13 +85,13 @@ func TestConnSetIdentity(t *testing.T) {
 
 func TestHelloMessageCBOR(t *testing.T) {
 	hello := HelloMessage{
-		CoreVersions:      []uint8{1},
-		PeerProfile:       ProfileHarness,
-		TransportFeatures: []string{"quic", "tcp"},
-		Extensions:        map[string]uint8{"dari.ai/1": 1, "dari.tools/1": 1},
-		CryptoProfiles:    []string{"DARI-BASE-1"},
-		ClientNonce:       []byte("0123456789abcdef0123456789abcdef"),
-		ImplementationName: "patty-harness",
+		CoreVersions:          []uint8{1},
+		PeerProfile:           ProfileHarness,
+		TransportFeatures:     []string{"quic", "tcp"},
+		Extensions:            map[string]uint8{"dari.ai/1": 1, "dari.tools/1": 1},
+		CryptoProfiles:        []string{"DARI-BASE-1"},
+		ClientNonce:           []byte("0123456789abcdef0123456789abcdef"),
+		ImplementationName:    "patty-harness",
 		ImplementationVersion: "1.0.0",
 	}
 
@@ -118,16 +118,16 @@ func TestHelloMessageCBOR(t *testing.T) {
 
 func TestGovernanceEnvelopeCBOR(t *testing.T) {
 	env := GovernanceEnvelope{
-		LeaseID:    "lease_123",
-		PolicyEpoch: "epoch_456",
-		Organization: "org_789",
-		UserID:     "user_abc",
-		HarnessID:  "hrn_def",
-		SessionID:  "ses_ghi",
-		Classification: "confidential",
-		Purpose:    "code_review",
+		LeaseID:               "lease_123",
+		PolicyEpoch:           "epoch_456",
+		Organization:          "org_789",
+		UserID:                "user_abc",
+		HarnessID:             "hrn_def",
+		SessionID:             "ses_ghi",
+		Classification:        "confidential",
+		Purpose:               "code_review",
 		RequestedCapabilities: []string{"read", "write"},
-		ProtectionProfile: uint8(ProtectionP0),
+		ProtectionProfile:     uint8(ProtectionP0),
 	}
 
 	data, err := MarshalCBOR(env)

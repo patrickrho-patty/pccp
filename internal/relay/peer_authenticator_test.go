@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/dari"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )

@@ -17,14 +17,14 @@ import (
 // TransportConfig configures the DARI transport.
 type TransportConfig struct {
 	// TLS configuration
- 	TLSConfig *tls.Config `json:"t_l_s_config"`
+	TLSConfig *tls.Config `json:"t_l_s_config"`
 	// Read/write timeouts
- 	ReadTimeout  time.Duration `json:"read_timeout"`
- 	WriteTimeout time.Duration `json:"write_timeout"`
+	ReadTimeout  time.Duration `json:"read_timeout"`
+	WriteTimeout time.Duration `json:"write_timeout"`
 	// Keepalive
- 	KeepAlive time.Duration `json:"keep_alive"`
+	KeepAlive time.Duration `json:"keep_alive"`
 	// Max message size
- 	MaxMessageSize int `json:"max_message_size"`
+	MaxMessageSize int `json:"max_message_size"`
 }
 
 // DefaultTransportConfig returns sensible defaults.

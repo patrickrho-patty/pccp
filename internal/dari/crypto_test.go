@@ -73,12 +73,12 @@ func TestPeerCredentialValidity(t *testing.T) {
 
 	pub, _, _ := GenerateKeyPair()
 	cred, err := issuer.Issue(IssueRequest{
-		SubjectPeerID:          "hrn_test",
-		Organization:           "org_test",
-		Profile:                ProfileHarness,
-		PublicKey:              pub,
-		Validity:               3600e9,
-		RevocationAuthority:    "test-ca",
+		SubjectPeerID:           "hrn_test",
+		Organization:            "org_test",
+		Profile:                 ProfileHarness,
+		PublicKey:               pub,
+		Validity:                3600e9,
+		RevocationAuthority:     "test-ca",
 		AllowedProtocolVersions: []uint8{1},
 	})
 	if err != nil {

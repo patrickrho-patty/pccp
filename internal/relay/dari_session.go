@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,8 +10,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/policy"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
 )
@@ -159,21 +160,40 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 		return
 	}
 
-	// SESSION_GRANT (0x0201) closes the setup phase.
+	// Issue the DARI Authorization Grant (Task 7): signed by the
+	// policy issuer, bound to the harness's verified subject key.
+	harnessPub := ed25519.PublicKey(nil)
+	if cred := pl.credentialForConn(connID); cred != nil && len(cred.PublicKey) == ed25519.PublicKeySize {
+		harnessPub = ed25519.PublicKey(cred.PublicKey)
+	}
+	if harnessPub == nil {
+		pl.sendJSONError(conn, connID, "authenticated credential carries no subject key")
+		return
+	}
+	grantEnv, err := pl.svc.IssueSessionGrant(lease, harnessPub)
+	if err != nil {
+		pl.sendJSONError(conn, connID, "authorization grant issuance failed: "+err.Error())
+		return
+	}
+
+	// SESSION_GRANT (0x0201) closes the setup phase and carries the
+	// signed grant on dari/1 connections.
 	pl.mu.Lock()
 	pl.sessionEpochs[connID] = epoch.EpochID
+	pl.sessionGrants[connID] = grantEnv
 	pl.mu.Unlock()
 	grant, _ := json.Marshal(map[string]string{
-		"session_id":     sessionID,
-		"policy_epoch":   epoch.EpochID,
-		"lease_id":       lease.LeaseID,
-		"organization":   orgID,
+		"session_id":   sessionID,
+		"policy_epoch": epoch.EpochID,
+		"lease_id":     lease.LeaseID,
+		"organization": orgID,
+		"grant_hex":    GrantHexForWire(grantEnv),
 	})
 	if err := conn.SendMessage(dari.MsgSessionGrant, nil, grant, 0, 4); err != nil {
 		log.Printf("relay: session grant to %s failed: %v", connID, err)
 		return
 	}
-	log.Printf("relay: session %s granted for %s (epoch=%s lease=%s)", sessionID, connID, epoch.EpochID, lease.LeaseID)
+	log.Printf("relay: session %s granted for %s (epoch=%s lease=%s grant=%s)", sessionID, connID, epoch.EpochID, lease.LeaseID, grantEnv.Body.GrantID)
 }
 
 // leaseRequest builds the issuance request. The lease's allowed-models
@@ -212,11 +232,11 @@ func (pl *DARIListener) ensureModelServing(orgID, model string) (*models.ModelPa
 	err := db.Where("model_id = ?", model).First(&pkg).Error
 	if err != nil {
 		pkg = models.ModelPackage{
-			PackageID:      "pmp-" + model,
-			ModelID:        model,
-			Name:           model,
-			Family:         "general",
-			State:          "published",
+			PackageID: "pmp-" + model,
+			ModelID:   model,
+			Name:      model,
+			Family:    "general",
+			State:     "published",
 		}
 		if err := db.Create(&pkg).Error; err != nil {
 			return nil, fmt.Errorf("register model package: %w", err)
@@ -380,20 +400,20 @@ func (pl *DARIListener) ingestSpan(conn *dari.TransportConn, connID, harnessID s
 		orgID = pl.orgForPeer(connID)
 	}
 	_, err := pl.svc.provenance.CreateProvenanceSpan(provenance.CreateSpanRequest{
-		OrganizationID: orgID,
-		RepositoryID:   env.RepositoryID,
-		ChangeSetID:    env.ChangeSetID,
-		FilePath:       env.FilePath,
-		CommitSHA:      env.CommitSHA,
-		SymbolLang:     env.SymbolLang,
-		SymbolName:     env.SymbolName,
-		StartLine:      env.StartLine,
-		EndLine:        env.EndLine,
+		OrganizationID:   orgID,
+		RepositoryID:     env.RepositoryID,
+		ChangeSetID:      env.ChangeSetID,
+		FilePath:         env.FilePath,
+		CommitSHA:        env.CommitSHA,
+		SymbolLang:       env.SymbolLang,
+		SymbolName:       env.SymbolName,
+		StartLine:        env.StartLine,
+		EndLine:          env.EndLine,
 		AttributionState: env.AttributionState,
-		Confidence:     env.Confidence,
-		SessionID:      env.SessionID,
-		UserID:         env.UserID,
-		HarnessID:      harnessID,
+		Confidence:       env.Confidence,
+		SessionID:        env.SessionID,
+		UserID:           env.UserID,
+		HarnessID:        harnessID,
 	})
 	if err != nil {
 		log.Printf("relay: span record from %s failed: %v", connID, err)

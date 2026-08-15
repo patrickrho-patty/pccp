@@ -8,15 +8,15 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"sync"
-	"strings"
 	"os"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/catalog"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/policy"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
 	"github.com/patrickrho-patty/pccp/internal/realtime"
@@ -66,20 +66,20 @@ func (s *Service) SetForwarder(f inferenceForwarder) { s.forwarder = f }
 
 // Exchange tracks a governed exchange in progress.
 type Exchange struct {
-	ID             string                 `json:"id"`
-	SessionID      string                 `json:"session_id"`
-	OrganizationID string                 `json:"organization_id"`
-	UserID         string                 `json:"user_id"`
-	HarnessID      string                 `json:"harness_id"`
-	LeaseID        string                 `json:"lease_id"`
-	PolicyEpochID  string                 `json:"policy_epoch_id"`
-	State          dari.ExchangeState    `json:"state"`
-	ModelPackageID string                 `json:"model_package_id"`
-	EndpointID     string                 `json:"endpoint_id"`
-	EndpointLeaseID string                `json:"endpoint_lease_id,omitempty"`
-	Verdict        dari.VerdictResult    `json:"verdict"`
-	OpenedAt       time.Time              `json:"opened_at"`
-	EvidenceChain  []string               `json:"evidence_chain,omitempty"`
+	ID              string             `json:"id"`
+	SessionID       string             `json:"session_id"`
+	OrganizationID  string             `json:"organization_id"`
+	UserID          string             `json:"user_id"`
+	HarnessID       string             `json:"harness_id"`
+	LeaseID         string             `json:"lease_id"`
+	PolicyEpochID   string             `json:"policy_epoch_id"`
+	State           dari.ExchangeState `json:"state"`
+	ModelPackageID  string             `json:"model_package_id"`
+	EndpointID      string             `json:"endpoint_id"`
+	EndpointLeaseID string             `json:"endpoint_lease_id,omitempty"`
+	Verdict         dari.VerdictResult `json:"verdict"`
+	OpenedAt        time.Time          `json:"opened_at"`
+	EvidenceChain   []string           `json:"evidence_chain,omitempty"`
 }
 
 // New creates a new Relay service.
@@ -132,17 +132,17 @@ func (s *Service) Catalog() *catalog.Service { return s.catalog }
 
 // OpenExchange starts a governed exchange for an AI inference request.
 type OpenExchangeRequest struct {
-	OrganizationID  string `json:"organization_id"`
-	SessionID       string `json:"session_id"`
-	UserID          string `json:"user_id"`
-	HarnessID       string `json:"harness_id"`
-	LeaseID         string `json:"lease_id"`
-	PolicyEpochID   string `json:"policy_epoch_id"`
-	ModelPackageID  string `json:"model_package_id"`
-	ProjectID       string `json:"project_id,omitempty"`
-	RepositoryID    string `json:"repository_id,omitempty"`
-	Branch          string `json:"branch,omitempty"`
-	Purpose         string `json:"purpose,omitempty"`
+	OrganizationID string `json:"organization_id"`
+	SessionID      string `json:"session_id"`
+	UserID         string `json:"user_id"`
+	HarnessID      string `json:"harness_id"`
+	LeaseID        string `json:"lease_id"`
+	PolicyEpochID  string `json:"policy_epoch_id"`
+	ModelPackageID string `json:"model_package_id"`
+	ProjectID      string `json:"project_id,omitempty"`
+	RepositoryID   string `json:"repository_id,omitempty"`
+	Branch         string `json:"branch,omitempty"`
+	Purpose        string `json:"purpose,omitempty"`
 }
 
 // OpenExchange creates and authorizes a new governed exchange.
@@ -506,30 +506,30 @@ func (s *Service) CloseExchange(ctx context.Context, exchangeID string) (*models
 // establishing AI_GENERATED attribution lineage (§19).
 func (s *Service) recordExchangeProvenance(ex *Exchange) {
 	cs, csErr := s.provenance.CreateChangeSet(provenance.CreateChangeSetRequest{
-		OrganizationID:  ex.OrganizationID,
-		SessionID:       ex.SessionID,
-		ExchangeID:      ex.ID,
-		UserID:          ex.UserID,
-		HarnessID:       ex.HarnessID,
-		ModelPackageID:  ex.ModelPackageID,
-		EndpointID:      ex.EndpointID,
+		OrganizationID:   ex.OrganizationID,
+		SessionID:        ex.SessionID,
+		ExchangeID:       ex.ID,
+		UserID:           ex.UserID,
+		HarnessID:        ex.HarnessID,
+		ModelPackageID:   ex.ModelPackageID,
+		EndpointID:       ex.EndpointID,
 		AttributionState: "AI_GENERATED",
-		Confidence:      1.0,
+		Confidence:       1.0,
 	})
 	if csErr != nil {
 		log.Printf("relay: warning: create changeset failed: %v", csErr)
 		return
 	}
 	if _, spanErr := s.provenance.CreateProvenanceSpan(provenance.CreateSpanRequest{
-		OrganizationID:  ex.OrganizationID,
-		ChangeSetID:     cs.ID,
-		SessionID:       ex.SessionID,
-		UserID:          ex.UserID,
-		HarnessID:       ex.HarnessID,
-		ModelPackageID:  ex.ModelPackageID,
-		EndpointID:      ex.EndpointID,
+		OrganizationID:   ex.OrganizationID,
+		ChangeSetID:      cs.ID,
+		SessionID:        ex.SessionID,
+		UserID:           ex.UserID,
+		HarnessID:        ex.HarnessID,
+		ModelPackageID:   ex.ModelPackageID,
+		EndpointID:       ex.EndpointID,
 		AttributionState: "AI_GENERATED",
-		Confidence:      1.0,
+		Confidence:       1.0,
 	}); spanErr != nil {
 		log.Printf("relay: warning: create provenance span failed: %v", spanErr)
 	}
@@ -539,9 +539,13 @@ func (s *Service) recordExchangeProvenance(ex *Exchange) {
 type GovernRequest struct {
 	HarnessID string
 	SessionID string
-	Model     string                 // model_id (resolved to a ModelPackage)
+	Model     string // model_id (resolved to a ModelPackage)
 	Messages  []map[string]string
 	MaxTokens int
+	// Grant is the DARI Authorization Grant presented for the
+	// exchange (Task 7). When nil, the compatibility-window adapter
+	// derives a non-delegable view from the persisted legacy lease.
+	Grant *dari.GrantEnvelope
 }
 
 // GovernInference is the live-path entry point: it resolves governance context
@@ -602,6 +606,13 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 		return nil, nil, fmt.Errorf("relay: capability lease expired for harness %s", req.HarnessID)
 	}
 
+	// Legacy-lease admissibility (compat window): the persisted lease
+	// must at least be viewable as a non-delegable grant; the grant
+	// itself is verified against the resolved model below.
+	if _, gerr := DecodeLegacyCapabilityLease(&lease); gerr != nil {
+		return nil, nil, fmt.Errorf("relay: legacy lease not convertible to an authorization grant: %w", gerr)
+	}
+
 	// 3. Resolve model_id → published ModelPackage (reject recalled).
 	var pkg models.ModelPackage
 	if err := s.db.Where("model_id = ?", req.Model).First(&pkg).Error; err != nil {
@@ -609,6 +620,20 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 	}
 	if pkg.State == "recalled" {
 		return nil, nil, fmt.Errorf("relay: model %s has been recalled", req.Model)
+	}
+
+	// Authorization grant (Task 7): a presented DARI grant is the
+	// authority for the exchange — verified under the policy issuer and
+	// bound to harness/session/epoch and the requested model (either
+	// the model_id or the resolved package id may appear in scope).
+	if req.Grant != nil {
+		if err := s.VerifySessionGrant(req.Grant, req.HarnessID, req.SessionID, req.Model, time.Now().UnixMilli()); err != nil {
+			// Retry against the resolved package id before rejecting:
+			// grants may authorize either identifier form.
+			if err2 := s.VerifySessionGrant(req.Grant, req.HarnessID, req.SessionID, pkg.PackageID, time.Now().UnixMilli()); err2 != nil {
+				return nil, nil, fmt.Errorf("relay: authorization grant rejected: %w", err)
+			}
+		}
 	}
 
 	// 4. Authorize → forward → meter via the governed exchange flow.

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -35,16 +35,16 @@ func setupGovernedTestDB(t *testing.T) *gorm.DB {
 func TestGovernedExchange_AuthorizesMetersAndEvidences(t *testing.T) {
 	db := setupGovernedTestDB(t)
 	const (
-		orgID       = "org-test-1"
-		userID      = "user-test-1"
-		harnessID   = "hrn-test-1"
-		sessionID   = "ses-test-1"
-		leaseID     = "lease-test-1"
-		epochID     = "epoch-test-1"
-		modelPkgID  = "pmp-test-1"
-		modelID     = "patty-test"
-		endpointID  = "ep-test-1"
-		epLeaseID   = "eplease-test-1"
+		orgID      = "org-test-1"
+		userID     = "user-test-1"
+		harnessID  = "hrn-test-1"
+		sessionID  = "ses-test-1"
+		leaseID    = "lease-test-1"
+		epochID    = "epoch-test-1"
+		modelPkgID = "pmp-test-1"
+		modelID    = "patty-test"
+		endpointID = "ep-test-1"
+		epLeaseID  = "eplease-test-1"
 	)
 	future := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 	past := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
@@ -239,7 +239,7 @@ func TestAuthorizePeer_EnforcesStatus(t *testing.T) {
 	}
 	for _, id := range []string{"hrn-rev", "hrn-qua", "hrn-unknown"} {
 		if _, err := svc.AuthorizePeer(id); err == nil {
-		t.Errorf("harness %s should be rejected", id)
+			t.Errorf("harness %s should be rejected", id)
 		}
 	}
 }

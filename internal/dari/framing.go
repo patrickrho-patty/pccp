@@ -52,9 +52,9 @@ func (k RecordKind) String() string {
 type Flags uint16
 
 const (
-	FlagCritical Flags = 1 << 0
-	FlagFinal    Flags = 1 << 1
-	FlagEncrypted Flags = 1 << 2
+	FlagCritical   Flags = 1 << 0
+	FlagFinal      Flags = 1 << 1
+	FlagEncrypted  Flags = 1 << 2
 	FlagCompressed Flags = 1 << 3
 )
 
@@ -69,14 +69,14 @@ const MaxPayloadLen = 1024 * 1024
 
 // Record is a DARI record after parsing the 32-byte prelude.
 type Record struct {
- 	VersionMajor byte `json:"version_major"`
- 	Kind         RecordKind `json:"kind"`
- 	Flags        Flags `json:"flags"`
- 	MessageType  uint16 `json:"message_type"`
- 	Header       []byte `json:"header"`
- 	Payload      []byte `json:"payload"`
- 	LaneID       uint64 `json:"lane_i_d"`
- 	LaneSequence uint64 `json:"lane_sequence"`
+	VersionMajor byte       `json:"version_major"`
+	Kind         RecordKind `json:"kind"`
+	Flags        Flags      `json:"flags"`
+	MessageType  uint16     `json:"message_type"`
+	Header       []byte     `json:"header"`
+	Payload      []byte     `json:"payload"`
+	LaneID       uint64     `json:"lane_i_d"`
+	LaneSequence uint64     `json:"lane_sequence"`
 }
 
 // HeaderLen returns the length of the CBOR header.

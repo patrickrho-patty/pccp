@@ -26,25 +26,25 @@ const (
 
 // COSEHeader is the protected/unprotected header map.
 type COSEHeader struct {
-	Alg   COSEAlgorithm `cbor:"1,keyasint,omitempty"`
-	KID   []byte        `cbor:"4,keyasint,omitempty"`
+	Alg   COSEAlgorithm       `cbor:"1,keyasint,omitempty"`
+	KID   []byte              `cbor:"4,keyasint,omitempty"`
 	Other map[int]interface{} `cbor:"-9999,toarray,omitempty"`
 }
 
 // COSESign1 is a COSE-Sign1 signed data structure (RFC 8152 §4.2).
 type COSESign1 struct {
-	Protected   []byte      `cbor:"0,keyasint"`     // encoded protected header
-	Unprotected COSEHeader  `cbor:"1,keyasint"`     // unprotected header
-	Payload     []byte      `cbor:"2,keyasint"`     // the signed content
-	Signature   []byte      `cbor:"3,keyasint"`     // signature over Sig_structure
+	Protected   []byte     `cbor:"0,keyasint"` // encoded protected header
+	Unprotected COSEHeader `cbor:"1,keyasint"` // unprotected header
+	Payload     []byte     `cbor:"2,keyasint"` // the signed content
+	Signature   []byte     `cbor:"3,keyasint"` // signature over Sig_structure
 }
 
 // SigStructure is the structure that gets signed (RFC 8152 §4.4).
 type SigStructure struct {
-	Context     string `cbor:"0,keyasint"` // "Signature1"
+	Context       string `cbor:"0,keyasint"` // "Signature1"
 	BodyProtected []byte `cbor:"1,keyasint"`
-	ExternalAAD  []byte `cbor:"2,keyasint"` // empty in our case
-	Payload      []byte `cbor:"3,keyasint"`
+	ExternalAAD   []byte `cbor:"2,keyasint"` // empty in our case
+	Payload       []byte `cbor:"3,keyasint"`
 }
 
 // CreateCOSESign1 creates a COSE-Sign1 structure over the given payload.

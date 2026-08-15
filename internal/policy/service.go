@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -26,6 +26,12 @@ func New(db *gorm.DB) (*Service, error) {
 		return nil, fmt.Errorf("policy: generate signing key: %w", err)
 	}
 	return &Service{db: db, signingKey: priv}, nil
+}
+
+// SigningPrivateKey returns the policy issuer's private signing key.
+// Callers are the relay's in-process issuance paths only; never log it.
+func (s *Service) SigningPrivateKey() ed25519.PrivateKey {
+	return s.signingKey
 }
 
 // SigningPublicKey returns the ed25519 public half of the lease/epoch
@@ -70,8 +76,8 @@ func (s *Service) CreatePolicyEpoch(orgID string, allowedModels []string, transi
 		s.db.Model(&models.PolicyEpoch{}).
 			Where("organization_id = ? AND status = 'active'", orgID).
 			Updates(map[string]interface{}{
-				"status":         "superseded",
-				"superseded_by":  epoch.EpochID,
+				"status":        "superseded",
+				"superseded_by": epoch.EpochID,
 			})
 	}
 

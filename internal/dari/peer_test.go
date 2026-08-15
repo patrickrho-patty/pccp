@@ -17,12 +17,12 @@ func TestPeerCredentialSignAndVerify(t *testing.T) {
 	}
 
 	cred, err := issuer.Issue(IssueRequest{
-		SubjectPeerID:          "hrn_test_001",
-		Organization:           "org_test",
-		Profile:                ProfileHarness,
-		PublicKey:              pub,
-		Validity:               24 * time.Hour,
-		RevocationAuthority:    "test-ca",
+		SubjectPeerID:           "hrn_test_001",
+		Organization:            "org_test",
+		Profile:                 ProfileHarness,
+		PublicKey:               pub,
+		Validity:                24 * time.Hour,
+		RevocationAuthority:     "test-ca",
 		AllowedProtocolVersions: []uint8{1},
 	})
 	if err != nil {

@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 )
 
 // DARIALPN is the canonical ALPN identifier for the DARI protocol
@@ -36,10 +36,11 @@ type DARIListener struct {
 	authenticator     *PeerAuthenticator
 	mu                sync.Mutex
 	conns             map[string]credentialConnection
-	credentialSerials map[string]string // connID → authenticated credential serial
-	sessions          map[string]string // connID → working sessionID (from SESSION_OPEN)
+	credentialSerials map[string]string               // connID → authenticated credential serial
+	sessions          map[string]string               // connID → working sessionID (from SESSION_OPEN)
 	credentials       map[string]*dari.PeerCredential // connID → verified credential (org/peer binding)
-	sessionEpochs     map[string]string // connID → policy epoch bound at session setup
+	sessionEpochs     map[string]string               // connID → policy epoch bound at session setup
+	sessionGrants     map[string]*dari.GrantEnvelope  // connID → issued session grant
 }
 
 type credentialConnection interface {
@@ -71,6 +72,7 @@ func NewDARIListener(svc *Service, tlsConfig *tls.Config, trust ...TrustBundle) 
 		sessions:          make(map[string]string),
 		credentials:       make(map[string]*dari.PeerCredential),
 		sessionEpochs:     make(map[string]string),
+		sessionGrants:     make(map[string]*dari.GrantEnvelope),
 	}
 }
 
@@ -153,6 +155,7 @@ func (pl *DARIListener) handleConn(ctx context.Context, netConn net.Conn) {
 		delete(pl.sessions, connID)
 		delete(pl.credentials, connID)
 		delete(pl.sessionEpochs, connID)
+		delete(pl.sessionGrants, connID)
 		pl.mu.Unlock()
 	}()
 
@@ -285,6 +288,7 @@ func (pl *DARIListener) trackAuthenticatedConnection(connID, serial string, conn
 		delete(pl.sessions, connID)
 		delete(pl.credentials, connID)
 		delete(pl.sessionEpochs, connID)
+		delete(pl.sessionGrants, connID)
 		return false
 	}
 	pl.conns[connID] = conn
@@ -311,6 +315,7 @@ func (pl *DARIListener) RevokeCredential(serial string, epoch uint64) {
 		delete(pl.sessions, connID)
 		delete(pl.credentials, connID)
 		delete(pl.sessionEpochs, connID)
+		delete(pl.sessionGrants, connID)
 	}
 	pl.mu.Unlock()
 
@@ -412,6 +417,11 @@ func (pl *DARIListener) setSession(connID, sessionID string) {
 // (B3) so the harness retains tamper-evidence for the exchange.
 func (pl *DARIListener) governAIOpen(ctx context.Context, conn *dari.TransportConn, reqRecord *dari.Record, connID, harnessID string) {
 	greq, err := buildGovernRequest(harnessID, pl.sessionFor(connID), reqRecord.Payload)
+	if err == nil {
+		pl.mu.Lock()
+		greq.Grant = pl.sessionGrants[connID]
+		pl.mu.Unlock()
+	}
 	if err != nil {
 		log.Printf("relay: invalid AI_OPEN from %s: %v", connID, err)
 		errPayload, _ := json.Marshal(map[string]string{"error": "invalid AI_OPEN: " + err.Error()})

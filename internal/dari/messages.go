@@ -9,12 +9,12 @@ type MessageType uint16
 
 // Core / connection (0x0000–0x00FF)
 const (
-	MsgHello       MessageType = 0x0001
-	MsgHelloAck    MessageType = 0x0002
-	MsgPing        MessageType = 0x0003
-	MsgPong        MessageType = 0x0004
-	MsgDrain       MessageType = 0x0005
-	MsgClose       MessageType = 0x0006
+	MsgHello    MessageType = 0x0001
+	MsgHelloAck MessageType = 0x0002
+	MsgPing     MessageType = 0x0003
+	MsgPong     MessageType = 0x0004
+	MsgDrain    MessageType = 0x0005
+	MsgClose    MessageType = 0x0006
 )
 
 // Authentication / identity (0x0100–0x01FF)
@@ -24,7 +24,7 @@ const (
 	MsgUserBind      MessageType = 0x0102
 	MsgUserBindAck   MessageType = 0x0103
 	MsgCapabilities  MessageType = 0x0104
-	MsgAuthAck        MessageType = 0x0105
+	MsgAuthAck       MessageType = 0x0105
 )
 
 // Sessions / capability leases (0x0200–0x02FF)
@@ -96,14 +96,14 @@ const (
 
 // Files (0x0A00–0x0AFF)
 const (
-	MsgFileOffer MessageType = 0x0A00
-	MsgFileChunk MessageType = 0x0A01
+	MsgFileOffer  MessageType = 0x0A00
+	MsgFileChunk  MessageType = 0x0A01
 	MsgFileCommit MessageType = 0x0A02
 )
 
 // Broadcast / administration (0x0B00–0x0BFF)
 const (
-	MsgBroadcast     MessageType = 0x0B00
+	MsgBroadcast      MessageType = 0x0B00
 	MsgAdminDirective MessageType = 0x0B01
 	// MsgAdminCommandResult is the connector's execution-evidence
 	// reply to an admin directive (cross-repo registry).
@@ -248,21 +248,21 @@ const (
 type HeaderKey int
 
 const (
-	HKExchangeID         HeaderKey = 1
-	HKSessionID          HeaderKey = 2
-	HKMessageID          HeaderKey = 3
-	HKParentIDs          HeaderKey = 4
-	HKCreatedAtMs        HeaderKey = 5
-	HKOrganizationID     HeaderKey = 6
-	HKPeerID             HeaderKey = 7
-	HKLeaseID            HeaderKey = 8
-	HKPolicyEpoch        HeaderKey = 9
-	HKProvenanceParents  HeaderKey = 10
-	HKContentType        HeaderKey = 11
-	HKProtectionProfile  HeaderKey = 12
-	HKIdempotencyKey     HeaderKey = 13
-	HKClassification     HeaderKey = 14
-	HKCriticalFields     HeaderKey = 15
+	HKExchangeID        HeaderKey = 1
+	HKSessionID         HeaderKey = 2
+	HKMessageID         HeaderKey = 3
+	HKParentIDs         HeaderKey = 4
+	HKCreatedAtMs       HeaderKey = 5
+	HKOrganizationID    HeaderKey = 6
+	HKPeerID            HeaderKey = 7
+	HKLeaseID           HeaderKey = 8
+	HKPolicyEpoch       HeaderKey = 9
+	HKProvenanceParents HeaderKey = 10
+	HKContentType       HeaderKey = 11
+	HKProtectionProfile HeaderKey = 12
+	HKIdempotencyKey    HeaderKey = 13
+	HKClassification    HeaderKey = 14
+	HKCriticalFields    HeaderKey = 15
 )
 
 // ProtectionProfile is a DARI payload protection level (DARI §36).
@@ -279,35 +279,35 @@ const (
 type ExchangeState string
 
 const (
-	ExchangeCreated          ExchangeState = "CREATED"
-	ExchangeAuthorizing      ExchangeState = "AUTHORIZING"
-	ExchangeDenied           ExchangeState = "DENIED"
-	ExchangeQuarantined      ExchangeState = "QUARANTINED"
-	ExchangeWaitingApproval  ExchangeState = "WAITING_APPROVAL"
-	ExchangeAuthorized       ExchangeState = "AUTHORIZED"
-	ExchangeActive           ExchangeState = "ACTIVE"
-	ExchangeTerminated       ExchangeState = "TERMINATED"
-	ExchangeFailed           ExchangeState = "FAILED"
-	ExchangeFinalizing       ExchangeState = "FINALIZING"
-	ExchangeCompleted        ExchangeState = "COMPLETED"
+	ExchangeCreated         ExchangeState = "CREATED"
+	ExchangeAuthorizing     ExchangeState = "AUTHORIZING"
+	ExchangeDenied          ExchangeState = "DENIED"
+	ExchangeQuarantined     ExchangeState = "QUARANTINED"
+	ExchangeWaitingApproval ExchangeState = "WAITING_APPROVAL"
+	ExchangeAuthorized      ExchangeState = "AUTHORIZED"
+	ExchangeActive          ExchangeState = "ACTIVE"
+	ExchangeTerminated      ExchangeState = "TERMINATED"
+	ExchangeFailed          ExchangeState = "FAILED"
+	ExchangeFinalizing      ExchangeState = "FINALIZING"
+	ExchangeCompleted       ExchangeState = "COMPLETED"
 )
 
 // VerdictResult is the outcome of a relay enforcement verdict (DARI §27).
 type VerdictResult string
 
 const (
-	VerdictAllow              VerdictResult = "ALLOW"
-	VerdictAllowTransform     VerdictResult = "ALLOW_TRANSFORM"
+	VerdictAllow               VerdictResult = "ALLOW"
+	VerdictAllowTransform      VerdictResult = "ALLOW_TRANSFORM"
 	VerdictAllowWithObligation VerdictResult = "ALLOW_WITH_OBLIGATION"
 	VerdictRequireConfirmation VerdictResult = "REQUIRE_USER_CONFIRMATION"
-	VerdictRequireApproval    VerdictResult = "REQUIRE_REVIEWER_APPROVAL"
-	VerdictRequireSecurity    VerdictResult = "REQUIRE_SECURITY_APPROVAL"
-	VerdictRequireDual        VerdictResult = "REQUIRE_DUAL_APPROVAL"
-	VerdictQuarantine         VerdictResult = "QUARANTINE"
-	VerdictDeny               VerdictResult = "DENY"
-	VerdictTerminateSession   VerdictResult = "TERMINATE_SESSION"
-	VerdictIsolateRuntime     VerdictResult = "ISOLATE_RUNTIME"
-	VerdictCreateIncident     VerdictResult = "CREATE_INCIDENT"
+	VerdictRequireApproval     VerdictResult = "REQUIRE_REVIEWER_APPROVAL"
+	VerdictRequireSecurity     VerdictResult = "REQUIRE_SECURITY_APPROVAL"
+	VerdictRequireDual         VerdictResult = "REQUIRE_DUAL_APPROVAL"
+	VerdictQuarantine          VerdictResult = "QUARANTINE"
+	VerdictDeny                VerdictResult = "DENY"
+	VerdictTerminateSession    VerdictResult = "TERMINATE_SESSION"
+	VerdictIsolateRuntime      VerdictResult = "ISOLATE_RUNTIME"
+	VerdictCreateIncident      VerdictResult = "CREATE_INCIDENT"
 )
 
 // AssuranceLevel is the endpoint attestation assurance level (PCCP PRD §9.6).
@@ -323,12 +323,12 @@ const (
 type ConnectionState string
 
 const (
-	StateNew              ConnectionState = "NEW"
-	StateTransportReady   ConnectionState = "TRANSPORT_READY"
-	StateNegotiated       ConnectionState = "NEGOTIATED"
+	StateNew               ConnectionState = "NEW"
+	StateTransportReady    ConnectionState = "TRANSPORT_READY"
+	StateNegotiated        ConnectionState = "NEGOTIATED"
 	StatePeerAuthenticated ConnectionState = "PEER_AUTHENTICATED"
-	StateIdentityBound    ConnectionState = "IDENTITY_BOUND"
-	StateReady            ConnectionState = "READY"
-	StateDraining         ConnectionState = "DRAINING"
-	StateClosed           ConnectionState = "CLOSED"
+	StateIdentityBound     ConnectionState = "IDENTITY_BOUND"
+	StateReady             ConnectionState = "READY"
+	StateDraining          ConnectionState = "DRAINING"
+	StateClosed            ConnectionState = "CLOSED"
 )

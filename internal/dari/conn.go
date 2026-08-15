@@ -12,9 +12,9 @@ type Conn struct {
 	state ConnectionState
 
 	// Negotiated parameters
-	coreVersion     uint8
-	extensions      map[string]uint8
-	cryptoProfile   string
+	coreVersion      uint8
+	extensions       map[string]uint8
+	cryptoProfile    string
 	transportBinding string
 
 	// Authentication
@@ -24,9 +24,9 @@ type Conn struct {
 	orgID       string
 
 	// Session
-	sessionID    string
-	leaseID      string
-	policyEpoch  string
+	sessionID   string
+	leaseID     string
+	policyEpoch string
 }
 
 // NewConn creates a new connection in the NEW state.

@@ -3,16 +3,16 @@ package dari
 // Model catalog message types (PCCP v2 §10A.4 — dari.model-supply/1 extension, per the DARI profile registry).
 // These extend the DARI protocol to support server-authoritative model discovery.
 const (
-	MsgModelCatalogRequest   MessageType = 0x0D00
-	MsgModelCatalogSnapshot  MessageType = 0x0D01
-	MsgModelCatalogDelta     MessageType = 0x0D02
-	MsgModelAnnounce         MessageType = 0x0D03
-	MsgModelWithdraw         MessageType = 0x0D04
-	MsgModelDefaultChanged   MessageType = 0x0D05
-	MsgModelAvailability     MessageType = 0x0D06
+	MsgModelCatalogRequest    MessageType = 0x0D00
+	MsgModelCatalogSnapshot   MessageType = 0x0D01
+	MsgModelCatalogDelta      MessageType = 0x0D02
+	MsgModelAnnounce          MessageType = 0x0D03
+	MsgModelWithdraw          MessageType = 0x0D04
+	MsgModelDefaultChanged    MessageType = 0x0D05
+	MsgModelAvailability      MessageType = 0x0D06
 	MsgModelCapabilityChanged MessageType = 0x0D07
-	MsgModelUpgradeRequired  MessageType = 0x0D08
-	MsgCatalogAck            MessageType = 0x0D09
+	MsgModelUpgradeRequired   MessageType = 0x0D08
+	MsgCatalogAck             MessageType = 0x0D09
 )
 
 // ModelCatalogRequestMessage requests the current effective model catalog.
@@ -24,12 +24,12 @@ type ModelCatalogRequestMessage struct {
 // ModelCatalogSnapshotMessage delivers the full effective catalog to the Harness.
 // Per §10A.1: "PCCP is the authority" — the Harness renders models from this snapshot.
 type ModelCatalogSnapshotMessage struct {
-	CatalogEpoch   string            `cbor:"1,keyasint"`
-	GeneratedAt    uint64            `cbor:"2,keyasint"`
-	ValiditySecs   uint32            `cbor:"3,keyasint"`
+	CatalogEpoch   string                `cbor:"1,keyasint"`
+	GeneratedAt    uint64                `cbor:"2,keyasint"`
+	ValiditySecs   uint32                `cbor:"3,keyasint"`
 	Models         []ModelDescriptorCBOR `cbor:"4,keyasint"`
-	DefaultModelID string            `cbor:"5,keyasint,omitempty"`
-	CPSignature    []byte            `cbor:"6,keyasint"`
+	DefaultModelID string                `cbor:"5,keyasint,omitempty"`
+	CPSignature    []byte                `cbor:"6,keyasint"`
 }
 
 // ModelDescriptorCBOR is the wire-format model descriptor sent to Harness.
@@ -41,14 +41,14 @@ type ModelDescriptorCBOR struct {
 	Availability   string `cbor:"5,keyasint"`
 	DefaultRank    int    `cbor:"6,keyasint"`
 	// Capabilities (compact)
-	SupportsText     bool `cbor:"10,keyasint"`
-	SupportsImage    bool `cbor:"11,keyasint"`
-	SupportsTools    bool `cbor:"12,keyasint"`
-	SupportsParallel bool `cbor:"13,keyasint"`
-	SupportsMCP      bool `cbor:"14,keyasint"`
+	SupportsText      bool `cbor:"10,keyasint"`
+	SupportsImage     bool `cbor:"11,keyasint"`
+	SupportsTools     bool `cbor:"12,keyasint"`
+	SupportsParallel  bool `cbor:"13,keyasint"`
+	SupportsMCP       bool `cbor:"14,keyasint"`
 	SupportsReasoning bool `cbor:"15,keyasint"`
 	SupportsStreaming bool `cbor:"16,keyasint"`
-	SupportsCache    bool `cbor:"17,keyasint"`
+	SupportsCache     bool `cbor:"17,keyasint"`
 	// Limits
 	MaxInputTokens  int `cbor:"20,keyasint"`
 	MaxOutputTokens int `cbor:"21,keyasint"`

@@ -26,13 +26,13 @@ type PipelineStage struct {
 
 // PipelineResult is the result of running the full pipeline.
 type PipelineResult struct {
-	Allowed     bool
-	Verdict     string
-	Stage       string // which stage made the decision
-	Reason      string
-	Elapsed     time.Duration
-	ModelPkgID  string // resolved package
-	EndpointID  string // resolved endpoint
+	Allowed    bool
+	Verdict    string
+	Stage      string // which stage made the decision
+	Reason     string
+	Elapsed    time.Duration
+	ModelPkgID string // resolved package
+	EndpointID string // resolved endpoint
 }
 
 // RunPipeline executes the 14-stage request pipeline (§10.2).
@@ -124,17 +124,17 @@ func (s *Service) RunPipeline(req PipelineRequest) PipelineResult {
 // PipelineRequest contains all the inputs for the pipeline.
 type PipelineRequest struct {
 	// Stage 1-2: Identity
-	PeerID       string
-	UserID       string
-	AccountID    string
+	PeerID         string
+	UserID         string
+	AccountID      string
 	OrganizationID string
 
 	// Stage 3: Entitlement
 	SubscriptionPlan string
 
 	// Stage 4: Session
-	LeaseID    string
-	SessionID  string
+	LeaseID   string
+	SessionID string
 
 	// Stage 6: Policy
 	PolicyEpochID  string

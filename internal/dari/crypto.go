@@ -18,19 +18,19 @@ type ObjectType uint16
 
 // Object types used in the provenance spine and evidence chain.
 const (
-	ObjTypePeerCredential   ObjectType = 0x0100
-	ObjTypeCapabilityLease  ObjectType = 0x0200
-	ObjTypePolicyEpoch      ObjectType = 0x0201
-	ObjTypeGovernanceEnv    ObjectType = 0x0300
-	ObjTypeRelayVerdict     ObjectType = 0x0301
-	ObjTypeEvidenceReceipt  ObjectType = 0x0302
-	ObjTypeProvenanceNode   ObjectType = 0x0700
-	ObjTypeChangeSet        ObjectType = 0x0701
-	ObjTypeActionEnvelope   ObjectType = 0x0702
-	ObjTypeModelPackage     ObjectType = 0x0500
-	ObjTypeEndpointLease    ObjectType = 0x0501
-	ObjTypeEndpointAttest   ObjectType = 0x0502
-	ObjTypeRepoBaseline     ObjectType = 0x0503
+	ObjTypePeerCredential  ObjectType = 0x0100
+	ObjTypeCapabilityLease ObjectType = 0x0200
+	ObjTypePolicyEpoch     ObjectType = 0x0201
+	ObjTypeGovernanceEnv   ObjectType = 0x0300
+	ObjTypeRelayVerdict    ObjectType = 0x0301
+	ObjTypeEvidenceReceipt ObjectType = 0x0302
+	ObjTypeProvenanceNode  ObjectType = 0x0700
+	ObjTypeChangeSet       ObjectType = 0x0701
+	ObjTypeActionEnvelope  ObjectType = 0x0702
+	ObjTypeModelPackage    ObjectType = 0x0500
+	ObjTypeEndpointLease   ObjectType = 0x0501
+	ObjTypeEndpointAttest  ObjectType = 0x0502
+	ObjTypeRepoBaseline    ObjectType = 0x0503
 )
 
 // Digest is a SHA-256 content digest.

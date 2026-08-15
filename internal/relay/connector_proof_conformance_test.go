@@ -159,10 +159,10 @@ func TestConnectorProofConformanceRejectsStaleChannelBinding(t *testing.T) {
 	}
 
 	hello := &dari.HelloMessage{
-		CoreVersions:    []uint8{1},
-		PeerProfile:     dari.ProfileHarness,
-		ClientNonce:     bytes.Repeat([]byte{0x33}, 32),
-		CryptoProfiles:  []string{"DARI-BASE-1"},
+		CoreVersions:     []uint8{1},
+		PeerProfile:      dari.ProfileHarness,
+		ClientNonce:      bytes.Repeat([]byte{0x33}, 32),
+		CryptoProfiles:   []string{"DARI-BASE-1"},
 		EncodingProfiles: []string{"cbor"},
 	}
 	ack := &dari.HelloAckMessage{

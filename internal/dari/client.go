@@ -25,14 +25,14 @@ type Client struct {
 
 // ClientConfig holds client connection configuration.
 type ClientConfig struct {
- 	Addr          string `json:"addr"`  // relay address (host:port)
- 	TLSConfig     *tls.Config `json:"t_l_s_config"`
- 	PeerID        string `json:"peer_i_d"`
- 	OrganizationID string `json:"organization_i_d"`
- 	PrivateKey    ed25519.PrivateKey `json:"private_key"`
-	Credential       *PeerCredential `json:"credential"`
-	SignedCredential []byte `json:"signed_credential,omitempty"`
-	Profile          PeerProfile `json:"profile"`
+	Addr             string             `json:"addr"` // relay address (host:port)
+	TLSConfig        *tls.Config        `json:"t_l_s_config"`
+	PeerID           string             `json:"peer_i_d"`
+	OrganizationID   string             `json:"organization_i_d"`
+	PrivateKey       ed25519.PrivateKey `json:"private_key"`
+	Credential       *PeerCredential    `json:"credential"`
+	SignedCredential []byte             `json:"signed_credential,omitempty"`
+	Profile          PeerProfile        `json:"profile"`
 }
 
 // DialClient connects to a DARI relay and performs the full handshake.
@@ -79,15 +79,15 @@ func (c *Client) handshake(ctx context.Context, cfg ClientConfig) error {
 	// Phase 1: Send HELLO
 	clientNonce := make([]byte, 32)
 	hello := &HelloMessage{
-		CoreVersions:           []uint8{1},
-		PeerProfile:            cfg.Profile,
-		TransportFeatures:      []string{"tcp-tls"},
-		Extensions:             map[string]uint8{"dari.ai/1": 1, "dari.context/1": 1, "dari.tools/1": 1},
-		CryptoProfiles:         []string{"DARI-BASE-1"},
-		ClientNonce:            clientNonce,
-		CredentialHint:         []byte(cfg.PeerID),
-		ImplementationName:     "pccp-paper-client",
-		ImplementationVersion:  "1.0",
+		CoreVersions:          []uint8{1},
+		PeerProfile:           cfg.Profile,
+		TransportFeatures:     []string{"tcp-tls"},
+		Extensions:            map[string]uint8{"dari.ai/1": 1, "dari.context/1": 1, "dari.tools/1": 1},
+		CryptoProfiles:        []string{"DARI-BASE-1"},
+		ClientNonce:           clientNonce,
+		CredentialHint:        []byte(cfg.PeerID),
+		ImplementationName:    "pccp-paper-client",
+		ImplementationVersion: "1.0",
 	}
 
 	ack, err := c.conn.Handshake(hello)
@@ -180,10 +180,10 @@ func (c *Client) OpenSession(ctx context.Context, projectID, repoID, branch, mod
 // RequestInference sends an AI_OPEN + inference request.
 func (c *Client) RequestInference(ctx context.Context, sessionID string, model string, maxTokens int, contextRef []byte) error {
 	aiOpen := &AIOpenMessage{
-		RequestedModel:  model,
-		InferenceMode:   "code",
-		MaxInputTokens:  32768,
-		MaxOutputTokens: uint32(maxTokens),
+		RequestedModel:     model,
+		InferenceMode:      "code",
+		MaxInputTokens:     32768,
+		MaxOutputTokens:    uint32(maxTokens),
 		ContextManifestRef: contextRef,
 	}
 
