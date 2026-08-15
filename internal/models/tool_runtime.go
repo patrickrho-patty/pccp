@@ -49,8 +49,18 @@ type SecurityFinding struct {
 	DescriptionKo  string `gorm:"type:text" json:"description_ko,omitempty"`
 	EvidenceJSON   string `gorm:"type:text" json:"evidence,omitempty"`
 	RuleID         string `gorm:"type:varchar(128)" json:"rule_id,omitempty"`
-	Status         string `gorm:"type:varchar(32);default:'open'" json:"status"`     // open, acknowledged, resolved, false_positive
+	Status         string `gorm:"type:varchar(32);default:'open'" json:"status"`     // open, investigating, resolved, false_positive, suppressed
 	ContainsAction string `gorm:"type:varchar(64)" json:"contains_action,omitempty"` // quarantine, terminate, isolate
+	// Direction marks which side of the exchange produced the finding
+	// (security C4): request scans are the outbound context; response
+	// scans catch exfiltration in model output.
+	Direction string `gorm:"type:varchar(16);default:'request'" json:"direction,omitempty"`
+	// Suppress / accept-risk workflow (security C1): findings can be
+	// suppressed with a reason + expiry; the sweep reopens them.
+	Suppressed     bool   `gorm:"default:false" json:"suppressed"`
+	SuppressReason string `gorm:"type:text" json:"suppress_reason,omitempty"`
+	SuppressExpiry string `gorm:"type:timestamp" json:"suppress_expiry,omitempty"`
+	SuppressedBy   string `gorm:"type:varchar(64)" json:"suppressed_by,omitempty"`
 	OccurredAt     string `gorm:"type:timestamp" json:"occurred_at"`
 }
 
@@ -119,6 +129,8 @@ func AllModels() []interface{} {
 		&Tool{},
 		&Approval{},
 		&SecurityFinding{},
+		&AlertEndpoint{},
+		&PIILexicon{},
 		&SecurityRule{},
 		&PolicyRule{},
 		&PolicyTemplate{},

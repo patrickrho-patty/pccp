@@ -925,6 +925,41 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 		return nil, nil, fmt.Errorf("relay: governed inference failed: %w", err)
 	}
 
+	// Inline response inspection (security C4, §16.5): the model's
+	// OUTPUT is scanned before it leaves the relay — exfiltration in
+	// responses is recorded as findings and DENY-class output is
+	// blocked.
+	if resp != nil {
+		var responseText strings.Builder
+		for _, choice := range resp.Choices {
+			if msg, ok := choice["message"].(map[string]interface{}); ok {
+				if content, ok := msg["content"].(string); ok {
+					responseText.WriteString(content)
+					responseText.WriteByte('\n')
+				}
+			}
+			if content, ok := choice["text"].(string); ok {
+				responseText.WriteString(content)
+				responseText.WriteByte('\n')
+			}
+		}
+		if responseText.Len() > 0 {
+			secResp := s.security.CheckContext(orgID, responseText.String())
+			if len(secResp.Findings) > 0 {
+				appendEvidence(ex, "dlp_response_scan|"+secResp.Verdict)
+				for _, f := range secResp.Findings {
+					f.Direction = "response"
+					s.security.RecordFinding(orgID, req.SessionID, ex.ID, f)
+					s.realtime.NotifySecurityFinding(orgID, f.Severity, f.TitleKo)
+				}
+				if secResp.Verdict == "DENY" {
+					s.CloseExchange(ctx, ex.ID)
+					return nil, nil, fmt.Errorf("relay: response security verdict DENY — model output blocked (%d findings)", len(secResp.Findings))
+				}
+			}
+		}
+	}
+
 	appendEvidence(ex, "forward|"+pkg.PackageID)
 	ex.RecordStage(StageForward, true, pkg.PackageID)
 	if resp != nil && resp.Usage != nil {

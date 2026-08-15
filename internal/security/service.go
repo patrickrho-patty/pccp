@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
@@ -40,6 +41,9 @@ type SecurityFinding struct {
 	RuleID      string `json:"rule_id"`
 	Match       string `json:"match,omitempty"` // the matched text (may be redacted)
 	Position    int    `json:"position,omitempty"`
+	// Direction is request|response (security C4): response scans flag
+	// exfiltration in model output.
+	Direction string `json:"direction,omitempty"`
 }
 
 // CheckContext performs security checks on prompt/context content.
@@ -47,8 +51,8 @@ type SecurityFinding struct {
 func (s *Service) CheckContext(orgID, text string) CheckResult {
 	var findings []SecurityFinding
 
-	// 1. Korean PII detection (PRD §16.3)
-	findings = append(findings, s.detectKoreanPII(text)...)
+	// 1. Korean PII detection (PRD §16.3) — org lexicon override first.
+	findings = append(findings, s.detectKoreanPII(orgID, text)...)
 
 	// 2. Secret/API key detection
 	findings = append(findings, s.detectSecrets(text)...)
@@ -92,15 +96,18 @@ func (s *Service) CheckContext(orgID, text string) CheckResult {
 	}
 }
 
-// Korean PII patterns (PRD §16.3 — Korean-sensitive data detection)
-var koreanPIIPatterns = []struct {
+// piiPattern is one Korean PII detection pattern (PRD §16.3).
+type piiPattern struct {
 	RuleID   string
 	Type     string
 	Severity string
 	Pattern  *regexp.Regexp
 	Title    string
 	TitleKo  string
-}{
+}
+
+// Korean PII patterns (PRD §16.3 — Korean-sensitive data detection)
+var koreanPIIPatterns = []piiPattern{
 	{
 		RuleID:   "pii-kr-rrn",
 		Type:     "korean_pii_rrn",
@@ -264,9 +271,9 @@ var sensitivePathPatterns = []struct {
 	},
 }
 
-func (s *Service) detectKoreanPII(text string) []SecurityFinding {
+func (s *Service) detectKoreanPII(orgID, text string) []SecurityFinding {
 	var findings []SecurityFinding
-	for _, p := range koreanPIIPatterns {
+	for _, p := range s.piiPatternsFor(orgID) {
 		matches := p.Pattern.FindAllStringIndex(text, -1)
 		for _, m := range matches {
 			findings = append(findings, SecurityFinding{
@@ -344,7 +351,8 @@ func (s *Service) detectSensitivePaths(text string) []SecurityFinding {
 	return findings
 }
 
-// RecordFinding persists a security finding to the database.
+// RecordFinding persists a security finding to the database and
+// dispatches it to the org's alert endpoints (security C2).
 func (s *Service) RecordFinding(orgID, sessionID, exchangeID string, finding SecurityFinding) error {
 	f := &models.SecurityFinding{
 		OrganizationID: orgID,
@@ -356,10 +364,15 @@ func (s *Service) RecordFinding(orgID, sessionID, exchangeID string, finding Sec
 		TitleKo:        finding.TitleKo,
 		Description:    finding.Description,
 		RuleID:         finding.RuleID,
+		Direction:      finding.Direction,
 		Status:         "open",
-		OccurredAt:     "now",
+		OccurredAt:     time.Now().Format(time.RFC3339),
 	}
-	return s.db.Create(f).Error
+	if err := s.db.Create(f).Error; err != nil {
+		return err
+	}
+	s.DispatchAlerts(orgID, *f)
+	return nil
 }
 
 // HasKoreanText checks if text contains Korean characters.

@@ -318,6 +318,17 @@ func (s *Service) GetSecurityMetrics(orgID string, days int) (*SecurityMetrics, 
 	var findings []models.SecurityFinding
 	s.db.Where("organization_id = ?", orgID).Find(&findings)
 
+	// Suppressed findings (security C1) are excluded from the posture
+	// numbers — an accepted risk is not an open threat.
+	visible := findings[:0]
+	for _, f := range findings {
+		if f.Suppressed {
+			continue
+		}
+		visible = append(visible, f)
+	}
+	findings = visible
+
 	metrics.TotalFindings = int64(len(findings))
 	for _, f := range findings {
 		if f.Severity == "critical" {

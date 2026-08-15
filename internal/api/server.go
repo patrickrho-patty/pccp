@@ -340,10 +340,20 @@ func (s *Server) setupRouter() {
 		r.Get("/security/policy", s.handleGetSecurityPolicy)
 		r.Put("/security/policy", s.handleUpdateSecurityPolicy)
 		r.Get("/security/findings", s.handleSecurityFindings)
+		r.Post("/security/findings/bulk", s.handleBulkSecurityFindings)
 		r.Get("/security/findings/{id}", s.handleSecurityFindingDetail)
 		r.Put("/security/findings/{id}", s.handleUpdateFinding)
+		r.Post("/security/findings/{id}/suppress", s.handleSuppressFinding)
+		r.Post("/security/findings/{id}/reopen", s.handleReopenFinding)
 		r.Get("/security/rules", s.handleSecurityRules)
 		r.Post("/security/lockdown", s.handleSecurityLockdown)
+		r.Get("/security/lockdown-impact", s.handleSecurityLockdownImpact)
+		r.Post("/security/scan-session", s.handleScanSession)
+		r.Get("/security/alerts", s.handleListAlertEndpoints)
+		r.Post("/security/alerts", s.handleCreateAlertEndpoint)
+		r.Delete("/security/alerts/{id}", s.handleDeleteAlertEndpoint)
+		r.Get("/security/lexicon", s.handleGetLexicon)
+		r.Put("/security/lexicon", s.handleUpdateLexicon)
 
 		// Fleet Operations
 		r.Route("/fleet", func(r chi.Router) {
@@ -498,6 +508,11 @@ func (s *Server) ListenAndServe(addr string) error {
 		defer ticker.Stop()
 		for range ticker.C {
 			s.sweepSessions()
+			// Reopen findings whose suppression window expired
+			// (security C1).
+			if n := s.security.SweepSuppressions(); n > 0 {
+				log.Printf("api: reopened %d expired suppressions", n)
+			}
 		}
 	}()
 	log.Printf("api: listening on %s", addr)
@@ -3842,6 +3857,19 @@ func (s *Server) handleSecurityRules(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSecurityFindings(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
 	q := s.db.Model(&models.SecurityFinding{}).Where("organization_id = ?", orgID)
+	// Server-side filters (security UX5/UX12): severity, status, type,
+	// date range.
+	for _, key := range []string{"severity", "status", "finding_type"} {
+		if v := r.URL.Query().Get(key); v != "" {
+			q = q.Where(key+" = ?", v)
+		}
+	}
+	if v := r.URL.Query().Get("from"); v != "" {
+		q = q.Where("occurred_at >= ?", v)
+	}
+	if v := r.URL.Query().Get("to"); v != "" {
+		q = q.Where("occurred_at <= ?", v)
+	}
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 		page, _ := strconv.Atoi(pageStr)
 		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
@@ -3925,25 +3953,276 @@ func (s *Server) handleUpdateFinding(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSecurityLockdown(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	// Terminate all active sessions
-	s.db.Model(&models.Session{}).
-		Where("organization_id = ? AND status = 'active'", orgID).
-		Update("status", "terminated")
-	s.db.Model(&models.Harness{}).
-		Where("organization_id = ?", orgID).
-		Update("risk_state", "high")
+	var req struct {
+		Scope     string `json:"scope"` // org | project
+		ProjectID string `json:"project_id"`
+		Reason    string `json:"reason"`
+	}
+	if r.Body != http.NoBody {
+		decodeJSON(r, &req)
+	}
+	if req.Scope == "" {
+		req.Scope = "org"
+	}
+	if req.Scope == "project" && req.ProjectID == "" {
+		writeError(w, http.StatusBadRequest, "project scope requires project_id")
+		return
+	}
+
+	// Terminate active sessions (org-wide or project-scoped) and raise
+	// harness risk state.
+	sessionQ := s.db.Model(&models.Session{}).Where("organization_id = ? AND status = 'active'", orgID)
+	harnessQ := s.db.Model(&models.Harness{}).Where("organization_id = ?", orgID)
+	if req.Scope == "project" {
+		sessionQ = sessionQ.Where("project_id = ?", req.ProjectID)
+	}
+	var affectedHarnesses []models.Harness
+	if req.Scope == "project" {
+		// Harnesses with active sessions in the project.
+		s.db.Model(&models.Harness{}).
+			Where("organization_id = ? AND harness_id IN (?)", orgID,
+				s.db.Model(&models.Session{}).Select("harness_id").
+					Where("organization_id = ? AND status = 'active' AND project_id = ?", orgID, req.ProjectID)).
+			Find(&affectedHarnesses)
+	} else {
+		s.db.Where("organization_id = ?", orgID).Find(&affectedHarnesses)
+	}
+	sessionQ.Update("status", "terminated")
+	harnessQ.Update("risk_state", "high")
+
+	// Live propagation (security B1): DB termination is enforced by the
+	// relay's per-request session-status gate; the directive additionally
+	// notifies the relay channel when configured.
+	relayPropagated := true
+	for _, h := range affectedHarnesses {
+		if err := s.pushRelayDirective("emergency_lockdown", orgID, h.HarnessID, req.Reason, map[string]interface{}{"scope": req.Scope}); err != nil {
+			relayPropagated = false
+		}
+	}
 
 	audit := &models.AuditEvent{
 		OrganizationID: orgID,
 		EventType:      "cp.security.emergency_lockdown",
 		ActorType:      "admin",
 		Action:         "emergency_lockdown",
-		Details:        "Emergency lockdown activated via Security console",
+		Details:        fmt.Sprintf(`{"scope":"%s","project_id":"%s","reason":"%s"}`, req.Scope, req.ProjectID, req.Reason),
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	}
 	s.db.Create(audit)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "lockdown_activated"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "lockdown_activated", "scope": req.Scope,
+		"affected_harnesses": len(affectedHarnesses), "relay_propagated": relayPropagated,
+	})
+}
+
+// handleSecurityLockdownImpact previews the lockdown blast radius
+// (security UX9).
+func (s *Server) handleSecurityLockdownImpact(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	scope := r.URL.Query().Get("scope")
+	projectID := r.URL.Query().Get("project_id")
+	q := s.db.Model(&models.Session{}).Where("organization_id = ? AND status = 'active'", orgID)
+	hq := s.db.Model(&models.Harness{}).Where("organization_id = ?", orgID)
+	if scope == "project" && projectID != "" {
+		q = q.Where("project_id = ?", projectID)
+	}
+	var activeSessions, activeHarnesses int64
+	q.Count(&activeSessions)
+	hq.Where("status IN ?", []string{"enrolled", "active"}).Count(&activeHarnesses)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"scope": scope, "active_sessions": activeSessions, "active_harnesses": activeHarnesses,
+	})
+}
+
+// handleBulkSecurityFindings resolves/suppresses many findings at once
+// (security UX7).
+func (s *Server) handleBulkSecurityFindings(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var req struct {
+		IDs    []string `json:"ids"`
+		Status string   `json:"status"`
+	}
+	if err := decodeJSON(r, &req); err != nil || len(req.IDs) == 0 {
+		writeError(w, http.StatusBadRequest, "ids are required")
+		return
+	}
+	result := s.db.Model(&models.SecurityFinding{}).
+		Where("organization_id = ? AND id IN ?", orgID, req.IDs).
+		Update("status", req.Status)
+	if result.Error != nil {
+		writeError(w, http.StatusInternalServerError, result.Error.Error())
+		return
+	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.security.findings_bulk_updated",
+		ActorType:      "admin",
+		Action:         "bulk_update_findings",
+		ResourceType:   "security_finding",
+		Details:        fmt.Sprintf(`{"count":%d,"status":"%s"}`, result.RowsAffected, req.Status),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "updated", "count": result.RowsAffected})
+}
+
+// handleSuppressFinding implements the suppress/accept-risk workflow
+// (security C1).
+func (s *Server) handleSuppressFinding(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	var req struct {
+		Reason string `json:"reason"`
+		Days   int    `json:"days"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Reason == "" {
+		writeError(w, http.StatusBadRequest, "reason is required")
+		return
+	}
+	if err := s.security.SuppressFinding(orgID, id, req.Reason, getActorID(r), req.Days); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.security.finding_suppressed",
+		ActorType:      "admin",
+		Action:         "suppress_finding",
+		ResourceType:   "security_finding",
+		ResourceID:     id,
+		Details:        fmt.Sprintf(`{"reason":"%s","days":%d}`, req.Reason, req.Days),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "suppressed"})
+}
+
+// handleReopenFinding clears a suppression (security C1).
+func (s *Server) handleReopenFinding(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	if err := s.security.ReopenFinding(orgID, id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "reopened"})
+}
+
+// handleScanSession replays detection over a session's exchanges
+// (security UX8).
+func (s *Server) handleScanSession(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var req struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := decodeJSON(r, &req); err != nil || req.SessionID == "" {
+		writeError(w, http.StatusBadRequest, "session_id is required")
+		return
+	}
+	result, err := s.security.ScanSession(orgID, req.SessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// --- Alert endpoints (security C2/C3) ---
+
+func (s *Server) handleListAlertEndpoints(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var endpoints []models.AlertEndpoint
+	s.db.Where("organization_id = ?", orgID).Order("created_at DESC").Find(&endpoints)
+	writeJSON(w, http.StatusOK, endpoints)
+}
+
+func (s *Server) handleCreateAlertEndpoint(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var req struct {
+		Name       string   `json:"name"`
+		Type       string   `json:"type"` // slack, webhook, siem
+		Target     string   `json:"target"`
+		Severities []string `json:"severities"`
+		Enabled    *bool    `json:"enabled"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" || req.Target == "" {
+		writeError(w, http.StatusBadRequest, "name and target are required")
+		return
+	}
+	if req.Type == "" {
+		req.Type = "webhook"
+	}
+	severitiesJSON, _ := json.Marshal(req.Severities)
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	ep := &models.AlertEndpoint{
+		OrganizationID: orgID, Name: req.Name, Type: req.Type, Target: req.Target,
+		SeveritiesJSON: string(severitiesJSON), Enabled: enabled,
+	}
+	if err := s.db.Create(ep).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, ep)
+}
+
+func (s *Server) handleDeleteAlertEndpoint(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	s.db.Where("id = ? AND organization_id = ?", id, orgID).Delete(&models.AlertEndpoint{})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// --- PII lexicon (security C5) ---
+
+func (s *Server) handleGetLexicon(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	lexicon := s.security.GetLexicon(orgID)
+	if lexicon == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"version": "builtin", "patterns": map[string]string{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, lexicon)
+}
+
+func (s *Server) handleUpdateLexicon(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var req struct {
+		Version  string            `json:"version"`
+		Patterns map[string]string `json:"patterns"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	lexicon, err := s.security.SetLexicon(orgID, req.Version, getActorID(r), req.Patterns)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.security.lexicon_published",
+		ActorType:      "admin",
+		Action:         "publish_pii_lexicon",
+		ResourceType:   "pii_lexicon",
+		ResourceID:     lexicon.ID,
+		Details:        fmt.Sprintf(`{"version":"%s","patterns":%d}`, lexicon.Version, len(req.Patterns)),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
+	writeJSON(w, http.StatusOK, lexicon)
 }
 
 func (s *Server) handleSecurityCheck(w http.ResponseWriter, r *http.Request) {
