@@ -362,11 +362,7 @@ func (pl *DARIListener) handleApplicationMessages(ctx context.Context, conn *dar
 			conn.SendControl(dari.MsgPong, record.Header, []byte("pong"))
 
 		case record.Kind == dari.KindMessage && msgType == dari.MsgSessionOpen:
-			var so struct {
-				SessionID string `json:"session_id"`
-				UserID    string `json:"user_id"`
-				Model     string `json:"model"`
-			}
+			var so sessionOpenRequest
 			json.Unmarshal(record.Payload, &so)
 			if so.SessionID != "" {
 				pl.setSession(connID, so.SessionID)

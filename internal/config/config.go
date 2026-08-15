@@ -9,15 +9,15 @@ import (
 // ServerConfig holds control plane server configuration.
 type ServerConfig struct {
 	// HTTP server
-	HTTPAddr string `json:"h_t_t_p_addr"`
+	HTTPAddr string `json:"http_addr"`
 	// Database
-	DBDriver string `json:"d_b_driver"`
-	DBDSN    string `json:"d_b_d_s_n"`
+	DBDriver string `json:"db_driver"`
+	DBDSN    string `json:"db_dsn"`
 	// JWT
-	JWTSecret string `json:"j_w_t_secret"`
+	JWTSecret string `json:"jwt_secret"`
 	// Control Plane CA
-	CAKeyFile  string `json:"c_a_key_file"`
-	CACertFile string `json:"c_a_cert_file"`
+	CAKeyFile  string `json:"ca_key_file"`
+	CACertFile string `json:"ca_cert_file"`
 	// Admin bootstrap
 	AdminEmail    string `json:"admin_email"`
 	AdminPassword string `json:"admin_password"`
@@ -49,17 +49,17 @@ func LoadFromEnv() ServerConfig {
 // RelayConfig holds Relay (data plane) configuration.
 type RelayConfig struct {
 	// QUIC/TCP listen address
-	QUICAddr string `json:"q_u_i_c_addr"`
-	TCPAddr  string `json:"t_c_p_addr"`
+	QUICAddr string `json:"quic_addr"`
+	TCPAddr  string `json:"tcp_addr"`
 	// TLS
-	TLSCertFile string `json:"t_l_s_cert_file"`
-	TLSKeyFile  string `json:"t_l_s_key_file"`
+	TLSCertFile string `json:"tls_cert_file"`
+	TLSKeyFile  string `json:"tls_key_file"`
 	// Control Plane API
-	ControlPlaneURL   string `json:"control_plane_u_r_l"`
+	ControlPlaneURL   string `json:"control_plane_url"`
 	ControlPlaneToken string `json:"control_plane_token"`
 	// Database (shared or relay-local)
-	DBDriver string `json:"d_b_driver"`
-	DBDSN    string `json:"d_b_d_s_n"`
+	DBDriver string `json:"db_driver"`
+	DBDSN    string `json:"db_dsn"`
 	// Evidence storage
 	EvidenceDir string `json:"evidence_dir"`
 }
@@ -86,11 +86,11 @@ type PIAConfig struct {
 	// Relay endpoint
 	RelayAddr string `json:"relay_addr"`
 	// TLS
-	TLSCertFile string `json:"t_l_s_cert_file"`
-	TLSKeyFile  string `json:"t_l_s_key_file"`
+	TLSCertFile string `json:"tls_cert_file"`
+	TLSKeyFile  string `json:"tls_key_file"`
 	// Local serving engine
 	ServingEngineType string `json:"serving_engine_type"`  // vllm, sglang, mock
-	ServingEngineURL  string `json:"serving_engine_u_r_l"` // localhost URL
+	ServingEngineURL  string `json:"serving_engine_url"` // localhost URL
 	// Model
 	ModelPackageID   string `json:"model_package_id"`
 	ModelWeightsPath string `json:"model_weights_path"`
@@ -98,8 +98,8 @@ type PIAConfig struct {
 	AssuranceLevel      string `json:"assurance_level"`
 	AttestationInterval string `json:"attestation_interval"` // duration string
 	// Database
-	DBDriver string `json:"d_b_driver"`
-	DBDSN    string `json:"d_b_d_s_n"`
+	DBDriver string `json:"db_driver"`
+	DBDSN    string `json:"db_dsn"`
 }
 
 // LoadPIAFromEnv loads PIA config from env.

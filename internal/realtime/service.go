@@ -21,7 +21,7 @@ type Service struct {
 
 // Client represents a connected WebSocket client.
 type Client struct {
-	ID            string          `json:"i_d"`
+	ID            string          `json:"id"`
 	UserID        string          `json:"user_id"`
 	OrgID         string          `json:"org_id"`
 	Conn          *websocket.Conn `json:"conn"`

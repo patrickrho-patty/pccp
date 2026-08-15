@@ -78,6 +78,9 @@ type ModelRecall struct {
 	InitiatedBy    string   `json:"initiated_by"`
 	InitiatedAt    string   `json:"initiated_at"`
 	AffectedOrgs   []string `json:"affected_organizations"`
+	// Replacement (D6 §33.9): the declared substitute model package
+	// offered to affected sessions.
+	Replacement string `json:"replacement,omitempty"`
 }
 
 // DetectShadowAI checks for patterns indicating unauthorized AI tool usage.

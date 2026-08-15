@@ -6,21 +6,21 @@ type DeploymentProfile struct {
 	DefaultLocale   string `json:"default_locale"`
 	DefaultTimezone string `json:"default_timezone"`
 	// Security defaults
-	RequireMDM         bool   `json:"require_m_d_m"`
-	RequireMFA         bool   `json:"require_m_f_a"`
+	RequireMDM         bool   `json:"require_mdm"`
+	RequireMFA         bool   `json:"require_mfa"`
 	RequireHardwareKey bool   `json:"require_hardware_key"`
 	RequireAttestation bool   `json:"require_attestation"`
 	MinAssuranceLevel  string `json:"min_assurance_level"`
 	// Network
 	AllowPublicInternet bool `json:"allow_public_internet"`
-	RequireVPN          bool `json:"require_v_p_n"`
+	RequireVPN          bool `json:"require_vpn"`
 	// Retention
 	TranscriptRetention string `json:"transcript_retention"` // metadata_only, redacted, full
 	MaxRetentionDays    int    `json:"max_retention_days"`
 	// Updates
 	UpdateMode string `json:"update_mode"` // automatic, manual, offline
 	// Compliance
-	KoreanPIIDetection bool   `json:"korean_p_i_i_detection"`
+	KoreanPIIDetection bool   `json:"korean_pii_detection"`
 	AuditLevel         string `json:"audit_level"` // standard, enhanced, maximum
 }
 

@@ -886,6 +886,32 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 		ex.RecordStage(StageTokenize, true, fmt.Sprintf("in=%d out=%d", resp.Usage["input_tokens"], resp.Usage["output_tokens"]))
 	}
 
+	// Conversation record (web/02 inspector): the session's prompt/
+	// response history persists per exchange — prompt text as the
+	// DLP-redacted form (the scanner's redaction policy applied), so
+	// the inspector never renders what policy masked.
+	promptText := combinedText
+	if redacted, _, exists := redactIfConfigured(s.security, orgID, promptText); exists {
+		promptText = redacted
+	}
+	respText := ""
+	if resp != nil && len(resp.Choices) > 0 {
+		if content, ok := resp.Choices[0]["message"].(map[string]any)["content"].(string); ok {
+			respText = content
+		}
+	}
+	inTok, outTok := 0, 0
+	if resp != nil && resp.Usage != nil {
+		inTok, outTok = resp.Usage["input_tokens"], resp.Usage["output_tokens"]
+	}
+	s.db.Create(&models.PromptExchange{
+		SessionID: ex.SessionID, ExchangeID: ex.ID,
+		PromptText: promptText, ResponseText: respText,
+		ModelPackageID: ex.ModelPackageID, EndpointID: ex.EndpointID,
+		InputTokens: inTok, OutputTokens: outTok,
+		VerdictResult: string(ex.Verdict), PolicyEpochID: ex.PolicyEpochID,
+	})
+
 	// 5. Evidence receipt.
 	receipt, err := s.CloseExchange(ctx, ex.ID)
 	if err != nil {
@@ -1044,4 +1070,21 @@ func (s *Service) securityRulesFor(orgID string) []SecurityRuleView {
 		})
 	}
 	return out
+}
+
+// redactIfConfigured applies the org's DLP redaction to inspector
+// text when the scanner carries redaction rules (best effort: a
+// scanner failure returns the input unredacted-but-flagged=false).
+func redactIfConfigured(sec *security.Service, orgID, text string) (string, bool, bool) {
+	if sec == nil || text == "" {
+		return text, false, false
+	}
+	res := sec.CheckContext(orgID, text)
+	if len(res.Findings) == 0 {
+		return text, false, true
+	}
+	if r := sec.Redact(orgID, text); r != "" {
+		return r, true, true
+	}
+	return text, false, false
 }

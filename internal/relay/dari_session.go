@@ -47,9 +47,11 @@ func (pl *DARIListener) authAckPayload() []byte {
 
 // sessionOpenRequest is the connector's SESSION_OPEN body.
 type sessionOpenRequest struct {
-	SessionID string `json:"session_id"`
-	UserID    string `json:"user_id"`
-	Model     string `json:"model"`
+	SessionID    string `json:"session_id"`
+	UserID       string `json:"user_id"`
+	Model        string `json:"model"`
+	RepositoryID string `json:"repository_id,omitempty"`
+	Branch       string `json:"branch,omitempty"`
 }
 
 // setupSession issues the session's lease and pushes the governance
@@ -169,7 +171,7 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 	// Production governance wiring (C3/C4/D1/D3-D6/E4): push the
 	// org's governance-state snapshot so the connector's governed
 	// gates fire on real tool calls.
-	govView := pl.svc.GatherGovernanceState(orgID, "", so.Model)
+	govView := pl.svc.GatherGovernanceState(orgID, so.RepositoryID, so.Model)
 	govSnap := BuildGovernanceState(govView)
 	if govBody, gerr := encodeWire(govSnap); gerr == nil {
 		if err := conn.SendMessage(dari.MsgGovernanceState, nil, govBody, 0, 2); err != nil {
@@ -506,20 +508,22 @@ func (pl *DARIListener) ingestSpan(conn *dari.TransportConn, connID, harnessID s
 	// provenance injection).
 	orgID := pl.orgForPeer(connID)
 	_, err := pl.svc.provenance.CreateProvenanceSpan(provenance.CreateSpanRequest{
-		OrganizationID:   orgID,
-		RepositoryID:     env.RepositoryID,
-		ChangeSetID:      env.ChangeSetID,
-		FilePath:         env.FilePath,
-		CommitSHA:        env.CommitSHA,
-		SymbolLang:       env.SymbolLang,
-		SymbolName:       env.SymbolName,
-		StartLine:        env.StartLine,
-		EndLine:          env.EndLine,
-		AttributionState: env.AttributionState,
-		Confidence:       env.Confidence,
-		SessionID:        env.SessionID,
-		UserID:           env.UserID,
-		HarnessID:        harnessID,
+		OrganizationID:      orgID,
+		RepositoryID:        env.RepositoryID,
+		ChangeSetID:         env.ChangeSetID,
+		FilePath:            env.FilePath,
+		CommitSHA:           env.CommitSHA,
+		ASTFingerprint:      hex.EncodeToString(env.ASTFingerprint[:]),
+		SemanticFingerprint: hex.EncodeToString(env.SemanticFingerprint[:]),
+		SymbolLang:          env.SymbolLang,
+		SymbolName:          env.SymbolName,
+		StartLine:           env.StartLine,
+		EndLine:             env.EndLine,
+		AttributionState:    env.AttributionState,
+		Confidence:          env.Confidence,
+		SessionID:           env.SessionID,
+		UserID:              env.UserID,
+		HarnessID:           harnessID,
 	})
 	if err != nil {
 		log.Printf("relay: span record from %s failed: %v", connID, err)

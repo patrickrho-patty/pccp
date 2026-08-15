@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
@@ -58,6 +59,10 @@ func (s *Service) CheckContext(orgID, text string) CheckResult {
 
 	// 4. Sensitive file paths
 	findings = append(findings, s.detectSensitivePaths(text)...)
+
+	// 5. Org custom rules (07 A1): admin-authored regex patterns —
+	// a persisted custom rule actually scans.
+	findings = append(findings, s.detectCustomRules(orgID, text)...)
 
 	// Honor per-org disabled detection rules (admin tunability, PRD §16) — a rule
 	// toggled off in the console no longer produces actionable findings.
@@ -465,4 +470,82 @@ func (s *Service) DisabledRuleIDs(orgID string) map[string]bool {
 		out[r.RuleID] = true
 	}
 	return out
+}
+
+// customRuleCacheEntry memoizes one compiled org pattern.
+type customRuleCacheEntry struct {
+	re      *regexp.Regexp
+	ruleID  string
+	action  string
+	enabled bool
+}
+
+// detectCustomRules runs the org's ENABLED custom regex rules.
+func (s *Service) detectCustomRules(orgID, text string) []SecurityFinding {
+	if s == nil || s.db == nil {
+		return nil // no store → no custom rules (built-ins still run)
+	}
+	var rules []models.SecurityRule
+	s.db.Where("organization_id = ? AND enabled = ? AND pattern != ''", orgID, true).Find(&rules)
+	var out []SecurityFinding
+	for _, r := range rules {
+		re, err := regexp.Compile(r.Pattern)
+		if err != nil {
+			// A rule that cannot compile is an admin error: it surfaces
+			// as a finding naming the rule, not a silent skip.
+			out = append(out, SecurityFinding{
+				RuleID: r.RuleID, Severity: "medium", Title: "커스텀 규칙 컴파일 실패: " + r.RuleID,
+				TitleKo: "커스텀 규칙 패턴이 잘못되었습니다: " + r.RuleID,
+			})
+			continue
+		}
+		if loc := re.FindStringIndex(text); loc != nil {
+			out = append(out, SecurityFinding{
+				RuleID: r.RuleID, Severity: r.Severity,
+				Title:   "Custom rule matched: " + r.RuleID,
+				TitleKo: "커스텀 규칙 매칭: " + r.NameKo,
+				Match:   maskRange(text, loc[0], loc[1]),
+				Type:    "custom",
+			})
+		}
+	}
+	return out
+}
+
+// Redact masks every finding's matched span (per-rule action=mask →
+// full mask; others → snippet-level masking) for inspector-safe text.
+func (s *Service) Redact(orgID, text string) string {
+	res := s.CheckContext(orgID, text)
+	out := []rune(text)
+	masked := false
+	for _, f := range res.Findings {
+		if idx := strings.Index(text, snippetPlain(f.Match)); f.Match != "" && idx >= 0 {
+			start := utf8.RuneCountInString(text[:idx])
+			end := start + utf8.RuneCountInString(snippetPlain(f.Match))
+			for i := start; i < end && i < len(out); i++ {
+				out[i] = '•'
+			}
+			masked = true
+		}
+	}
+	if !masked && len(res.Findings) > 0 {
+		// Findings without a locatable snippet: redact the whole text —
+		// never render what was flagged but cannot be surgically masked.
+		return strings.Repeat("•", utf8.RuneCountInString(text))
+	}
+	return string(out)
+}
+
+func snippetPlain(s string) string { return strings.TrimPrefix(strings.TrimPrefix(s, "…"), "…") }
+
+func maskRange(text string, start, end int) string {
+	r := []rune(text)
+	rs, re_ := utf8.RuneCountInString(text[:start]), utf8.RuneCountInString(text[:end])
+	if rs >= len(r) {
+		return ""
+	}
+	if re_ > len(r) {
+		re_ = len(r)
+	}
+	return "…" + strings.Repeat("•", max(0, re_-rs)) + "…"
 }

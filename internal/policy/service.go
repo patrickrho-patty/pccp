@@ -65,11 +65,18 @@ func (s *Service) CreatePolicyEpoch(orgID string, allowedModels []string, transi
 		EpochNumber:       nextNum,
 		OrgPolicyDigest:   s.computePolicyDigest(orgID, "org"),
 		ModelPolicyDigest: s.computePolicyDigest(orgID, "model"),
-		EngineVersion:     "1.0",
-		AllowedModelsJSON: modelsJSON,
-		TransitionMode:    transitionMode,
-		EffectiveAt:       time.Now().Format(time.RFC3339),
-		Status:            "active",
+		// Full-domain digests (06 A2): every policy domain commits its
+		// enabled rules into the epoch — a change in ANY domain moves
+		// the corresponding digest (empty domain = its zero digest).
+		DLPSecurityDigest:     s.computePolicyDigest(orgID, "data"),
+		ApprovalMatrixDigest:  s.computePolicyDigest(orgID, "tools"),
+		RetentionPolicyDigest: s.computePolicyDigest(orgID, "session"),
+		ProjectOverlayDigest:  s.computePolicyDigest(orgID, "project"),
+		EngineVersion:         "1.0",
+		AllowedModelsJSON:     modelsJSON,
+		TransitionMode:        transitionMode,
+		EffectiveAt:           time.Now().Format(time.RFC3339),
+		Status:                "active",
 	}
 
 	// Mark previous epoch as superseded

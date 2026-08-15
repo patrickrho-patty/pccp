@@ -56,8 +56,8 @@ type AnalyzeRequest struct {
 	Languages      []string `json:"languages"`
 	IsAuth         bool     `json:"is_auth"`           // touches authentication/authorization
 	IsCrypto       bool     `json:"is_crypto"`         // touches cryptography
-	IsDBMigration  bool     `json:"is_d_b_migration"`  // touches database schema/migration
-	IsAPIContract  bool     `json:"is_a_p_i_contract"` // touches external API contract
+	IsDBMigration  bool     `json:"is_db_migration"`  // touches database schema/migration
+	IsAPIContract  bool     `json:"is_api_contract"` // touches external API contract
 	IsConfig       bool     `json:"is_config"`         // touches production configuration
 	Dependencies   []string `json:"dependencies"`      // dependency changes
 }
@@ -295,8 +295,8 @@ func (s *Service) RecordImpactAnalysis(req RecordRequest) error {
 type PathSensitivity struct {
 	IsAuth   bool     `json:"is_auth"`
 	IsCrypto bool     `json:"is_crypto"`
-	IsDB     bool     `json:"is_d_b"`
-	IsAPI    bool     `json:"is_a_p_i"`
+	IsDB     bool     `json:"is_db"`
+	IsAPI    bool     `json:"is_api"`
 	IsConfig bool     `json:"is_config"`
 	Patterns []string `json:"patterns"`
 }

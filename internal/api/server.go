@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -358,6 +359,12 @@ func (s *Server) setupRouter() {
 			r.Get("/violations", s.handleListEnterpriseViolations)
 			r.Put("/violations/{id}", s.handleResolveViolation)
 			r.Post("/features/seed", s.handleSeedEnterpriseFeatures)
+			// D2 change-control review queue: pending connector
+			// submissions (governed action envelopes) + approve/reject
+			// via signed relay directives.
+			r.Get("/submissions", s.handleListChangeSubmissions)
+			r.Post("/submissions/{id}/approve", s.handleReviewChangeSubmission)
+			r.Post("/submissions/{id}/reject", s.handleReviewChangeSubmission)
 			r.Post("/demo-seed", s.handleSeedDemoData)
 		})
 
@@ -3785,4 +3792,78 @@ func (s *Server) handleSeedEnterpriseFeatures(w http.ResponseWriter, r *http.Req
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "seeded", "count": inserted, "note": "features seed by actual enforcement state; unwired capabilities are 'planned'"})
+}
+
+// handleListChangeSubmissions returns pending change-control
+// submissions surfaced by governed harnesses (ActionEnvelope rows of
+// type changeboard.submit, newest first).
+func (s *Server) handleListChangeSubmissions(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var envs []models.ActionEnvelope
+	q := s.db.Where("action_type = ?", "changeboard.submit").Order("occurred_at DESC").Limit(100)
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Find(&envs)
+	out := make([]map[string]any, 0, len(envs))
+	for _, e := range envs {
+		var payload map[string]any
+		_ = json.Unmarshal([]byte(e.ActionPayload), &payload)
+		out = append(out, map[string]any{
+			"envelope_id": e.ID, "harness_id": e.HarnessID, "session_id": e.SessionID,
+			"occurred_at": e.OccurredAt, "payload": payload,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleReviewChangeSubmission approves/rejects a pending submission by
+// delivering a SIGNED admin directive through the relay admin channel;
+// the connector's dispatcher verifies + executes against its durable
+// board. The envelope_id is echoed as the directive's correlation id.
+func (s *Server) handleReviewChangeSubmission(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	decision := "changeboard.approve"
+	if strings.HasSuffix(r.URL.Path, "/reject") {
+		decision = "changeboard.reject"
+	}
+	var env models.ActionEnvelope
+	if err := s.db.Where("id = ?", id).First(&env).Error; err != nil {
+		writeError(w, http.StatusNotFound, "submission not found")
+		return
+	}
+	base := strings.TrimSuffix(os.Getenv("PCCP_RELAY_ADMIN_URL"), "/")
+	if base == "" {
+		writeError(w, http.StatusPreconditionFailed, "live review requires PCCP_RELAY_ADMIN_URL (relay admin channel)")
+		return
+	}
+	var payload map[string]any
+	_ = json.Unmarshal([]byte(env.ActionPayload), &payload)
+	subID, _ := payload["submission_id"].(string)
+	directivePayload, _ := json.Marshal(map[string]string{"submission_id": subID})
+	body, _ := json.Marshal(map[string]any{
+		"org_id":       env.OrganizationID,
+		"target":       env.HarnessID,
+		"command_type": decision,
+		"reason":       "reviewed via console",
+		"issued_by":    "console:" + getOrgID(r),
+		"payload_b64":  base64.StdEncoding.EncodeToString(directivePayload),
+	})
+	resp, err := http.Post(base+"/v1/admin/directives", "application/json", bytes.NewReader(body))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "relay directive delivery failed: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		writeError(w, http.StatusBadGateway, "relay rejected directive: "+resp.Status)
+		return
+	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: getOrgID(r), EventType: "cp.governance.submission_reviewed",
+		ActorType: "admin", Action: decision, ResourceType: "change_submission",
+		ResourceID: subID, Details: "harness=" + env.HarnessID,
+		Result: "delivered", OccurredAt: time.Now().Format(time.RFC3339),
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "directive delivered", "submission": subID})
 }

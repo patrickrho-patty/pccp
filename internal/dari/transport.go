@@ -23,7 +23,7 @@ import (
 // TransportConfig configures the DARI transport.
 type TransportConfig struct {
 	// TLS configuration
-	TLSConfig *tls.Config `json:"t_l_s_config"`
+	TLSConfig *tls.Config `json:"tls_config"`
 	// Read/write timeouts
 	ReadTimeout  time.Duration `json:"read_timeout"`
 	WriteTimeout time.Duration `json:"write_timeout"`

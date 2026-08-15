@@ -15,4 +15,7 @@ type SecurityRule struct {
 	NameKo         string `gorm:"type:varchar(255)" json:"name_ko"`
 	Enabled        bool   `gorm:"default:true" json:"enabled"`
 	Action         string `gorm:"type:varchar(32);default:'block'" json:"action"` // block, mask, review
+	// Pattern (07 A1): a custom rule's Go regex. Empty = built-in
+	// detector class (Type field).
+	Pattern string `gorm:"type:text" json:"pattern,omitempty"`
 }

@@ -31,7 +31,7 @@ const (
 
 // KeyEntry represents a managed key.
 type KeyEntry struct {
-	ID          string    `json:"i_d"`
+	ID          string    `json:"id"`
 	Domain      KeyDomain `json:"domain"`
 	Algorithm   string    `json:"algorithm"` // ed25519, aes-256-gcm
 	PublicKey   []byte    `json:"public_key"`

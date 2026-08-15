@@ -46,7 +46,7 @@ type AdditionalServices struct {
 	Command     *command.Service     `json:"command"`
 	Incident    *incident.Service    `json:"incident"`
 	Korean      *korean.Service      `json:"korean"`
-	MCP         *mcp.Service         `json:"m_c_p"`
+	MCP         *mcp.Service         `json:"mcp"`
 	Network     *network.Service     `json:"network"`
 	Privacy     *privacy.Service     `json:"privacy"`
 	Reporting   *reporting.Service   `json:"reporting"`
@@ -57,12 +57,12 @@ type AdditionalServices struct {
 	Compliance  *compliance.Service  `json:"compliance"`
 	ConfigMgmt  *configmgmt.Service  `json:"config_mgmt"`
 	Connectors  *connectors.Service  `json:"connectors"`
-	GPUOps      *gpuops.Service      `json:"g_p_u_ops"`
+	GPUOps      *gpuops.Service      `json:"gpu_ops"`
 	KeyMgmt     *keymgmt.Service     `json:"key_mgmt"`
-	MCPMarket   *mcpmarket.Service   `json:"m_c_p_market"`
+	MCPMarket   *mcpmarket.Service   `json:"mcp_market"`
 	Realtime    *realtime.Service    `json:"realtime"`
 	Sovereign   *sovereign.Service   `json:"sovereign"`
-	SSO         *sso.Service         `json:"s_s_o"`
+	SSO         *sso.Service         `json:"sso"`
 	Catalog     *catalog.Service     `json:"catalog"`
 	PublicCloud *publiccloud.Service `json:"public_cloud"`
 }
