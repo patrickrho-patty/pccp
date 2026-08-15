@@ -214,16 +214,20 @@
     },
     {
       "profile": "dari.collab/1",
-      "status": "DEGRADED",
-      "omitted": [
-        "live-deployment-evidence (runtime vectors pass; live multi-peer deployment pending)"
-      ],
+      "status": "EXACT",
       "capabilities": [
         {
           "capability": "encrypted-ordered-delivery-tamper-rejection",
           "test": "TestRunnerWebFederationCollabMediaVectors",
           "normative_requirement": "F.13 §11 collab envelope integrity",
           "deployment_mode": "in-process",
+          "result": "PASS"
+        },
+        {
+          "capability": "two-harness-live-delivery",
+          "test": "TestRunnerWebFederationCollabMediaVectors",
+          "normative_requirement": "map §12 governed encrypted delivery between real peers (live routing, member encryption, tamper rejection, audited delivery)",
+          "deployment_mode": "LIVE (nested patty-code-pccp internal/provider/dari collab_e2e_test.go: two real connectors ↔ real relay binary)",
           "result": "PASS"
         }
       ]
