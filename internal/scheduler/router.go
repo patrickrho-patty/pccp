@@ -56,6 +56,7 @@ type RouteRequest struct {
 	CachedTokens         int
 	ExpectedOutputTokens int
 	AffinityWorker       string
+	RequestClass         string // agentic / interactive / batch (SLO scoping)
 }
 
 // RouteDecision is one placement outcome.
@@ -68,26 +69,56 @@ type RouteDecision struct {
 
 // CostRouter implements the locked cost model. Safe for concurrent use.
 type CostRouter struct {
-	mu       sync.RWMutex
-	cfg      RouterConfig
-	workers  map[string]WorkerEntry
-	state    map[string]RouterWorkerState
-	kv       *KVIndex
-	receipts *ReceiptStore
-	gang     *GangRegistry
+	mu         sync.RWMutex
+	cfg        RouterConfig
+	workers    map[string]WorkerEntry
+	state      map[string]RouterWorkerState
+	kv         *KVIndex
+	receipts   *ReceiptStore
+	gang       *GangRegistry
+	predictor  *LatencyPredictor
+	slo        *SLOResolver
+	workerCfg  map[string]string // workerID → predictor config ID
+	maxSLORisk float64           // placements above this P(SLO violation) are rejected
 }
 
 // NewCostRouter builds a router with the given config.
 func NewCostRouter(cfg RouterConfig) *CostRouter {
 	return &CostRouter{
-		cfg:     cfg,
-		workers: make(map[string]WorkerEntry),
-		state:   make(map[string]RouterWorkerState),
+		cfg:        cfg,
+		workers:    make(map[string]WorkerEntry),
+		state:      make(map[string]RouterWorkerState),
+		workerCfg:  make(map[string]string),
+		maxSLORisk: 0.5,
 	}
 }
 
 // SetKV installs the fleet KV index (S3 §13.11).
 func (r *CostRouter) SetKV(kv *KVIndex) { r.kv = kv }
+
+// SetPredictor installs the S4 latency predictor: placements whose
+// predicted TTFT violates the SLO with high probability are rejected
+// (spec §13.3 risk-aware routing).
+func (r *CostRouter) SetPredictor(p *LatencyPredictor) {
+	r.mu.Lock()
+	r.predictor = p
+	r.mu.Unlock()
+}
+
+// SetSLOResolver installs the SLO objective table (S5).
+func (r *CostRouter) SetSLOResolver(sl *SLOResolver) {
+	r.mu.Lock()
+	r.slo = sl
+	r.mu.Unlock()
+}
+
+// SetConfigForWorker maps a worker to its predictor config ID (one
+// model per serving config, spec §13.12).
+func (r *CostRouter) SetConfigForWorker(workerID, configID string) {
+	r.mu.Lock()
+	r.workerCfg[workerID] = configID
+	r.mu.Unlock()
+}
 
 // SetGang installs the gang registry: workers whose parallel group is
 // incomplete are ineligible (spec §14 row 16).
@@ -150,6 +181,29 @@ func (r *CostRouter) Route(req RouteRequest) (RouteDecision, error) {
 			continue
 		}
 		st := r.state[id]
+
+		// SLO gate (S5): reject placements whose predicted TTFT
+		// violates the objective with high probability.
+		if r.predictor != nil && r.slo != nil {
+			cfgID := r.workerCfg[id]
+			if cfgID == "" {
+				cfgID = id
+			}
+			target := r.slo.ForRequest(req.Model, req.RequestClass)
+			if target.TTFTMs > 0 {
+				f := PredictorFeatures{
+					InputTokens:          req.InputTokens,
+					CachedTokens:         req.CachedTokens,
+					ExpectedOutputTokens: req.ExpectedOutputTokens,
+					ActivePrefill:        st.PrefillActive,
+					ActiveDecodeKV:       st.DecodeKV,
+					ActiveRequests:       st.ActiveRequests,
+				}
+				if risk := r.predictor.PSLOViolation(cfgID, f, float64(target.TTFTMs)); risk > r.maxSLORisk {
+					continue
+				}
+			}
+		}
 
 		// Overload filter (spec §12.3.1): a saturated worker is
 		// ineligible regardless of how cheap its cache would be.
