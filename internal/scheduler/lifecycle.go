@@ -228,3 +228,52 @@ func (c *CostOptimizer) PickFamily(class string, available []string) string {
 	}
 	return best
 }
+
+// ModelPoolManager groups workers into named serving pools (spec §14
+// row 17: model pools). Pool-scoped requests only see pool members.
+type ModelPoolManager struct {
+	mu     sync.RWMutex
+	pools  map[string]map[string]bool // pool → workers
+	worker map[string]string          // worker → pool (single membership)
+}
+
+// NewModelPoolManager builds the pool manager.
+func NewModelPoolManager() *ModelPoolManager {
+	return &ModelPoolManager{
+		pools:  make(map[string]map[string]bool),
+		worker: make(map[string]string),
+	}
+}
+
+// Add assigns a worker to a pool.
+func (p *ModelPoolManager) Add(pool, workerID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	m, ok := p.pools[pool]
+	if !ok {
+		m = make(map[string]bool)
+		p.pools[pool] = m
+	}
+	m[workerID] = true
+	p.worker[workerID] = pool
+}
+
+// Contains reports whether the worker is in the pool (no pool = any).
+func (p *ModelPoolManager) Contains(pool, workerID string) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if pool == "" {
+		return true
+	}
+	return p.pools[pool][workerID]
+}
+
+// Remove drops a worker.
+func (p *ModelPoolManager) Remove(workerID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if pool, ok := p.worker[workerID]; ok {
+		delete(p.pools[pool], workerID)
+		delete(p.worker, workerID)
+	}
+}

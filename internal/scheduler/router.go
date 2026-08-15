@@ -57,6 +57,8 @@ type RouteRequest struct {
 	ExpectedOutputTokens int
 	AffinityWorker       string
 	RequestClass         string // agentic / interactive / batch (SLO scoping)
+	Pool                 string // model pool scope (spec §14 row 17)
+	LoRAAdapter          string // requested adapter (affinity, §14 row 18)
 }
 
 // RouteDecision is one placement outcome.
@@ -80,6 +82,8 @@ type CostRouter struct {
 	slo        *SLOResolver
 	workerCfg  map[string]string // workerID → predictor config ID
 	maxSLORisk float64           // placements above this P(SLO violation) are rejected
+	lora       *LoRaLifecycle
+	pools      *ModelPoolManager
 }
 
 // NewCostRouter builds a router with the given config.
@@ -95,6 +99,21 @@ func NewCostRouter(cfg RouterConfig) *CostRouter {
 
 // SetKV installs the fleet KV index (S3 §13.11).
 func (r *CostRouter) SetKV(kv *KVIndex) { r.kv = kv }
+
+// SetLoRA installs the adapter-residency tracker: requests for an
+// adapter prefer workers with it loaded (LoRA affinity, spec §14 row 18).
+func (r *CostRouter) SetLoRA(l *LoRaLifecycle) {
+	r.mu.Lock()
+	r.lora = l
+	r.mu.Unlock()
+}
+
+// SetPools installs the model-pool manager (spec §14 row 17).
+func (r *CostRouter) SetPools(p *ModelPoolManager) {
+	r.mu.Lock()
+	r.pools = p
+	r.mu.Unlock()
+}
 
 // SetPredictor installs the S4 latency predictor: placements whose
 // predicted TTFT violates the SLO with high probability are rejected
@@ -172,6 +191,9 @@ func (r *CostRouter) Route(req RouteRequest) (RouteDecision, error) {
 		if e.Card.ModelName != req.Model {
 			continue
 		}
+		if r.pools != nil && !r.pools.Contains(req.Pool, id) {
+			continue
+		}
 		if e.Quarantined || e.Lapsed || !e.Card.Servable() {
 			continue
 		}
@@ -231,6 +253,12 @@ func (r *CostRouter) Route(req RouteRequest) (RouteDecision, error) {
 
 		// Affinity preference: discount while healthy, break when not.
 		if id == req.AffinityWorker {
+			cost *= 1 - r.cfg.AffinityDiscount
+		}
+
+		// LoRA affinity (spec §14 row 18): a resident adapter discounts
+		// its host; cold workers must load it first.
+		if req.LoRAAdapter != "" && r.lora != nil && r.lora.Loaded(id, req.LoRAAdapter) {
 			cost *= 1 - r.cfg.AffinityDiscount
 		}
 

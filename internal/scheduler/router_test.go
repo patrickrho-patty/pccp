@@ -156,3 +156,42 @@ func TestRouterGangIncompleteWorkerExcluded(t *testing.T) {
 		t.Fatalf("routed to %s, want w3 (w1's gang incomplete)", got.WorkerID)
 	}
 }
+
+func TestRouterLoRAAffinity(t *testing.T) {
+	// Spec §14 row 18: LoRA affinity — a request for an adapter prefers
+	// the worker with it resident.
+	r := NewCostRouter(DefaultRouterConfig())
+	ll := NewLoRaLifecycle(4)
+	ll.Load("w1", "lora-x")
+	r.SetLoRA(ll)
+	r.UpsertWorker(mkWorker("w1", "model-a", 8), RouterWorkerState{})
+	r.UpsertWorker(mkWorker("w2", "model-a", 8), RouterWorkerState{})
+
+	got, err := r.Route(RouteRequest{Model: "model-a", InputTokens: 100, ExpectedOutputTokens: 50, LoRAAdapter: "lora-x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WorkerID != "w1" {
+		t.Fatalf("LoRA affinity ignored: routed to %s", got.WorkerID)
+	}
+}
+
+func TestRouterModelPoolScoping(t *testing.T) {
+	// Spec §14 row 17: model pools — pool-scoped requests only see
+	// workers in that pool.
+	r := NewCostRouter(DefaultRouterConfig())
+	pm := NewModelPoolManager()
+	pm.Add("pool-blue", "w1")
+	pm.Add("pool-green", "w2")
+	r.SetPools(pm)
+	r.UpsertWorker(mkWorker("w1", "model-a", 8), RouterWorkerState{})
+	r.UpsertWorker(mkWorker("w2", "model-a", 8), RouterWorkerState{})
+
+	got, err := r.Route(RouteRequest{Model: "model-a", InputTokens: 100, ExpectedOutputTokens: 50, Pool: "pool-blue"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WorkerID != "w1" {
+		t.Fatalf("pool scoping failed: routed to %s", got.WorkerID)
+	}
+}
