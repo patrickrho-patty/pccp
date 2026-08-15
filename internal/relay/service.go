@@ -679,6 +679,10 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 	// fleet freshness needs seconds-level resolution, not per-request
 	// write amplification.
 	s.recordHeartbeat(req.HarnessID)
+	if req.SessionID != "" {
+		s.db.Model(&models.Session{}).Where("session_id = ?", req.SessionID).
+			Update("last_activity_at", time.Now().Format(time.RFC3339))
+	}
 
 	// Session-status enforcement (web/02 B3): a session the control
 	// plane closed/paused/terminated must not keep exchanging, even

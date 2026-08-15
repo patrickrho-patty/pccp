@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
@@ -337,9 +340,41 @@ func (s *Service) CreateBaseline(orgID, repoID, branch, commitSHA, commitMsg, au
 	return baseline, nil
 }
 
+// sessionTTLOverrides reads the per-deployment TTL overrides (web/02
+// A3): unset falls back to the documented 8h/30m defaults.
+func sessionTTLOverrides() (sessionTTL, idleTTL int) {
+	sessionTTL, idleTTL = 3600*8, 1800
+	if v := os.Getenv("PCCP_SESSION_TTL_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			sessionTTL = n
+		}
+	}
+	if v := os.Getenv("PCCP_IDLE_TTL_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			idleTTL = n
+		}
+	}
+	return sessionTTL, idleTTL
+}
+
+// protectionProfileFor derives the session protection profile (web/02
+// A3): repo sensitivity classes (§19) map to P0/P1/P2; the default P0
+// applies when the repo carries no declared sensitivity.
+func protectionProfileFor(repoID string) string {
+	switch {
+	case strings.Contains(repoID, "sensitive"), strings.Contains(repoID, "pii"), strings.Contains(repoID, "payment"):
+		return "P2"
+	case strings.Contains(repoID, "internal"):
+		return "P1"
+	default:
+		return "P0"
+	}
+}
+
 // OpenSession creates a working session.
 func (s *Service) OpenSession(orgID, harnessID, userID, projectID, repoID, branch, baselineID, title, purpose, modelClass string) (*models.Session, error) {
 	sessionID := dari.GenerateID("ses")
+	sessionTTL, idleTTL := sessionTTLOverrides()
 	sess := &models.Session{
 		AuditBase: models.AuditBase{
 			OrganizationID: orgID,
@@ -355,10 +390,11 @@ func (s *Service) OpenSession(orgID, harnessID, userID, projectID, repoID, branc
 		Title:             title,
 		Status:            "active",
 		ModelClass:        modelClass,
-		ProtectionProfile: "P0",
-		SessionTTL:        3600 * 8, // 8 hours
-		IdleTTL:           1800,     // 30 minutes
+		ProtectionProfile: protectionProfileFor(repoID),
+		SessionTTL:        sessionTTL,
+		IdleTTL:           idleTTL,
 		OpenedAt:          time.Now().Format(time.RFC3339),
+		LastActivityAt:    time.Now().Format(time.RFC3339),
 	}
 	if err := s.db.Create(sess).Error; err != nil {
 		return nil, fmt.Errorf("identity: open session: %w", err)

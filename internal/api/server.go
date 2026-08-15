@@ -396,7 +396,48 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListenAndServe starts the API server.
+// sessionSweepInterval is the web/02 A4 idle/TTL sweep cadence.
+const sessionSweepInterval = time.Minute
+
+// sweepSessions transitions sessions past their idle window to idle
+// and auto-closes sessions past their TTL (web/02 A4 — the status
+// machine's idle state was previously unreachable).
+func (s *Server) sweepSessions() {
+	now := time.Now()
+	// active → idle: last activity older than IdleTTL.
+	s.db.Exec(`UPDATE sessions SET status = 'idle' WHERE status = 'active' AND idle_ttl > 0 AND last_activity_at != '' AND last_activity_at != ?`,
+		now.Format(time.RFC3339))
+	var idleCandidates []models.Session
+	s.db.Where("status IN ('active','idle')").Find(&idleCandidates)
+	for _, sess := range idleCandidates {
+		opened, err := time.Parse(time.RFC3339, sess.OpenedAt)
+		if err != nil {
+			continue
+		}
+		if sess.SessionTTL > 0 && now.Sub(opened) > time.Duration(sess.SessionTTL)*time.Second {
+			s.db.Model(&sess).Update("status", "closed")
+		} else if sess.Status == "active" {
+			last := opened
+			if sess.LastActivityAt != "" {
+				if t, err := time.Parse(time.RFC3339, sess.LastActivityAt); err == nil {
+					last = t
+				}
+			}
+			if sess.IdleTTL > 0 && now.Sub(last) > time.Duration(sess.IdleTTL)*time.Second {
+				s.db.Model(&sess).Update("status", "idle")
+			}
+		}
+	}
+}
+
 func (s *Server) ListenAndServe(addr string) error {
+	go func() {
+		ticker := time.NewTicker(sessionSweepInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			s.sweepSessions()
+		}
+	}()
 	log.Printf("api: listening on %s", addr)
 	srv := &http.Server{
 		Addr:         addr,
