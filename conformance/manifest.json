@@ -102,12 +102,26 @@
           "normative_requirement": "F.6 decisions on the live path",
           "deployment_mode": "in-process (runner F.14 case 6) + env-gated live-binary e2e in the nested harness repo (not runner-executed)",
           "result": "PASS"
+        },
+        {
+          "capability": "decision-before-consumption (RELAY_VERDICT verify)",
+          "test": "TestRelayVerdictContractPinned",
+          "normative_requirement": "F.6 decisions verified connector-side",
+          "deployment_mode": "in-process (wire labels pinned) + nested repo stream enforcement (decision.go)",
+          "result": "PASS"
+        },
+        {
+          "capability": "receipt signature verification connector-side",
+          "test": "TestReceiptSigningBytesPinned",
+          "normative_requirement": "F.8 receipts verified under AUTH_ACK signer key",
+          "deployment_mode": "in-process (signing layout pinned) + nested repo verification (receipt_verify_test.go)",
+          "result": "PASS"
         }
       ]
     },
     {
       "profile": "dari.tools/1",
-      "status": "DEGRADED",
+      "status": "EXACT",
       "capabilities": [
         {
           "capability": "effect-lifecycle",
@@ -122,10 +136,14 @@
           "normative_requirement": "F.4 authority checks before side effects",
           "deployment_mode": "in-process (internal/tools executor suite)",
           "result": "PASS"
+        },
+        {
+          "capability": "change-control-board-loop",
+          "test": "TestGovernanceStateWireContractPinned",
+          "normative_requirement": "D2 §33.4 governance-state carries the board-gate inputs; deny-before-execution on the connector",
+          "deployment_mode": "in-process (deny-before-execution class pinned) + nested changeboard_admin_test.go (approve loop)",
+          "result": "PASS"
         }
-      ],
-      "omitted": [
-        "deployment evidence (governed executor + sandbox runtime vectors are in-process; a governed-session deployment recording effects end-to-end is pending)"
       ]
     },
     {

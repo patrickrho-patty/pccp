@@ -471,10 +471,19 @@ type ProvenanceChain struct {
 	Receipts   []models.EvidenceReceipt `json:"receipts"`
 }
 
+// buildReceiptSigningData is the CANONICAL receipt signing layout
+// (connector mirrors it byte-for-byte in provenancewire):
+// exchangeID|finalState|chainRootHex|relayIdentity|policyEpochID|modelPackageID|issuedAtUnixMs.
+// The timestamp is the unix-ms INTEGER — RFC3339 strings are zone-
+// dependent and lossy to reconstruct; the integer round-trips exactly.
 func (s *Service) buildReceiptSigningData(receipt *models.EvidenceReceipt) []byte {
-	data := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", receipt.ExchangeID, receipt.FinalState,
+	issuedMs := int64(0)
+	if t, err := time.Parse(time.RFC3339, receipt.IssuedAt); err == nil {
+		issuedMs = t.UnixMilli()
+	}
+	data := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%d", receipt.ExchangeID, receipt.FinalState,
 		receipt.ChainRoot, receipt.RelayIdentity, receipt.PolicyEpochID,
-		receipt.ModelPackageID, receipt.IssuedAt)
+		receipt.ModelPackageID, issuedMs)
 	return []byte(data)
 }
 
