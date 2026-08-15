@@ -116,6 +116,7 @@ const (
 // policy-epoch push bound to a session setup.
 const (
 	MsgPolicyEpochPush MessageType = 0x0D10
+	MsgDLPRulePack     MessageType = 0x0D11
 )
 
 // Telemetry / metering (0x0C00–0x0CFF)
@@ -237,6 +238,8 @@ func (mt MessageType) String() string {
 		return "ADMIN_COMMAND_RESULT"
 	case MsgPolicyEpochPush:
 		return "POLICY_EPOCH"
+	case MsgDLPRulePack:
+		return "DLP_RULE_PACK"
 	case MsgModelCatalogRequest:
 		return "MODEL_CATALOG_REQUEST"
 	case MsgModelCatalogSnapshot:

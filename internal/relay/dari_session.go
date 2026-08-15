@@ -146,7 +146,7 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 	if secRules := pl.svc.securityRulesFor(orgID); len(secRules) > 0 {
 		pack := BuildDLPRulePack(epoch.EpochID, orgID, secRules, time.Now())
 		if body, derr := encodeWire(pack); derr == nil {
-			if err := conn.SendMessage(dari.MsgPolicyEpochPush, nil, body, 0, 2); err != nil {
+			if err := conn.SendMessage(dari.MsgDLPRulePack, nil, body, 0, 2); err != nil {
 				log.Printf("relay: DLP rule pack push to %s failed: %v", connID, err)
 			}
 		}

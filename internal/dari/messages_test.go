@@ -23,7 +23,7 @@ func TestMessageStringRegistryComplete(t *testing.T) {
 		MsgModelCatalogRequest, MsgModelCatalogSnapshot, MsgModelCatalogDelta,
 		MsgModelAnnounce, MsgModelWithdraw, MsgModelDefaultChanged,
 		MsgModelAvailability, MsgModelCapabilityChanged, MsgModelUpgradeRequired,
-		MsgCatalogAck, MsgPolicyEpochPush,
+		MsgCatalogAck, MsgPolicyEpochPush, MsgDLPRulePack,
 	}
 	for _, m := range named {
 		if s := m.String(); s == "UNKNOWN" {

@@ -70,3 +70,4 @@ code,name,family,description
 0x0D08,MODEL_UPGRADE_REQUIRED,models,Model upgrade required
 0x0D09,CATALOG_ACK,models,Catalog acknowledgment
 0x0D10,POLICY_EPOCH,models,Policy-epoch push (session governance)
+0x0D11,DLP_RULE_PACK,models,Org DLP rule-pack sync (harness C1.3)
