@@ -49,8 +49,11 @@ type WorkerCard struct {
 	// v2 dispatch fields (S2): the DARI address the scheduler dials to
 	// send inference work, and the live sequence load for the layer-2
 	// signal. Absent on v1 cards.
-	DariAddr            string `json:"dari_addr,omitempty"`
-	ActiveSeqs          uint64 `json:"active_seqs,omitempty"`
+	DariAddr   string `json:"dari_addr,omitempty"`
+	ActiveSeqs uint64 `json:"active_seqs,omitempty"`
+	// PDRole declares the worker's prefill/decode role (S6 §14 row 15).
+	// Empty = aggregated (the default; spec §12.3.10 aggregated first).
+	PDRole              string `json:"pd_role,omitempty"`
 	Status              string `json:"status"`
 	LastHeartbeatUnixMs int64  `json:"last_heartbeat_unix_ms"`
 	LeaseExpiryUnixMs   int64  `json:"lease_expiry_unix_ms"`
@@ -93,6 +96,7 @@ func (c *WorkerCard) SigningBytes() []byte {
 	if c.CardVersion >= 2 {
 		dst = lpString(dst, c.DariAddr)
 		dst = lpU64(dst, c.ActiveSeqs)
+		dst = lpString(dst, c.PDRole)
 	}
 	dst = lpString(dst, c.Status)
 	dst = lpU64(dst, uint64(c.LastHeartbeatUnixMs))
@@ -170,4 +174,20 @@ func (c *WorkerCard) Servable() bool {
 		return false
 	}
 	return c.DariAddr != ""
+}
+
+// PDRole constants (S6).
+const (
+	PDRoleAggregated = "aggregated"
+	PDRolePrefill    = "prefill"
+	PDRoleDecode     = "decode"
+)
+
+// EffectivePDRole returns the card's serving role, defaulting to
+// aggregated (spec §12.3.10: aggregated first).
+func (c *WorkerCard) EffectivePDRole() string {
+	if c.PDRole == "" {
+		return PDRoleAggregated
+	}
+	return c.PDRole
 }
