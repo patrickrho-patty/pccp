@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/patrickrho-patty/pccp/internal/scheduler"
 	"io"
 	"log"
 	"net/http"
@@ -60,6 +61,9 @@ type Service struct {
 	grantRevocations revokedGrants
 	// exchangeGate bounds governed-exchange concurrency (Task 15).
 	exchangeGate *ConcurrencyGate
+	// fairSched queues overload requests per-account (org) with
+	// weighted priority (§10C.7) instead of shedding them.
+	fairSched *scheduler.Service
 }
 
 // inferenceForwarder forwards a governed inference request to a PIA.
@@ -137,6 +141,7 @@ func New(db *gorm.DB, cpURL, relayID string) (*Service, error) {
 	s.hotState = NewHotStateCache(30 * time.Second)
 	s.grantRevocations.m = map[dari.Digest]bool{}
 	s.exchangeGate = NewConcurrencyGate(128)
+	s.fairSched = scheduler.New()
 	return s, nil
 }
 
@@ -647,12 +652,14 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 	if len(stream) > 0 {
 		onDelta = stream[0]
 	}
-	// Task 15 backpressure: bounded exchange concurrency; over-limit
-	// requests shed with a fail-closed error rather than queueing.
-	if err := s.exchangeGate.Acquire(); err != nil {
-		return nil, nil, err
+	// Task 15 backpressure + fair admission: bounded exchange
+	// concurrency; on saturation requests queue in the per-account
+	// fair scheduler (bounded wait, weighted priority §10C.7) instead
+	// of shedding immediately. The queue drains as slots release.
+	if !s.admitGoverned(req.HarnessID, req.SessionID) {
+		return nil, nil, ErrLoadShed
 	}
-	defer s.exchangeGate.Release()
+	defer s.releaseGoverned(req.HarnessID)
 	// 1. Resolve org + standing from the enrolled harness (hot-state
 	// snapshot re-resolves the full chain on the cold path below).
 	var harness models.Harness

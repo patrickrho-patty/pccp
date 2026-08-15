@@ -3,6 +3,7 @@ package relay
 import (
 	"errors"
 	"fmt"
+	"github.com/patrickrho-patty/pccp/internal/scheduler"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -170,6 +171,13 @@ func (g *ConcurrencyGate) Release() {
 	}
 }
 
+// Limit reports the gate's concurrency bound.
+func (g *ConcurrencyGate) Limit() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.limit
+}
+
 // Do runs fn under the gate.
 func (g *ConcurrencyGate) Do(fn func() error) error {
 	if err := g.Acquire(); err != nil {
@@ -241,4 +249,41 @@ func (s *Service) recordHeartbeat(harnessID string) {
 
 	s.db.Model(&models.Harness{}).Where("harness_id = ?", harnessID).
 		Update("last_heartbeat", time.Now().Format(time.RFC3339))
+}
+
+// fairAdmitWait bounds how long a saturated governed request waits in
+// the fair scheduler before failing closed.
+const fairAdmitWait = 750 * time.Millisecond
+
+// admitGoverned takes an exchange slot, queueing fairly on saturation.
+// Saturated requests enter the per-account fair scheduler and wait
+// (bounded) to be admitted by ITS weighted priority (§10C.7) — the
+// winning request proceeds; the rest keep queuing per account so one
+// hot harness cannot starve the fleet.
+func (s *Service) admitGoverned(accountID, _ string) bool {
+	if err := s.exchangeGate.Acquire(); err == nil {
+		return true
+	}
+	s.fairSched.Enqueue(scheduler.QueuedRequest{
+		AccountID:    accountID,
+		Class:        "INTERACTIVE",
+		CatalogModel: "governed-exchange",
+	})
+	defer s.fairSched.Release(accountID)
+	deadline := time.Now().Add(fairAdmitWait)
+	for time.Now().Before(deadline) {
+		if won := s.fairSched.Admit(s.exchangeGate.Limit()); won != nil && won.AccountID == accountID {
+			if err := s.exchangeGate.Acquire(); err == nil {
+				return true
+			}
+			// The slot vanished before we took it — keep waiting.
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	return false
+}
+
+// releaseGoverned returns a slot; the scheduler's accounting follows.
+func (s *Service) releaseGoverned(accountID string) {
+	s.exchangeGate.Release()
 }
