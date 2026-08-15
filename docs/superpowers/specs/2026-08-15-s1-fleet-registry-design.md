@@ -22,16 +22,17 @@ spec → plan → implementation cycle:
 | # | Sub-project | Depends on |
 |---|---|---|
 | S1 | Fleet registry + worker capability cards + signed worker config | — |
-| S2 | Global admission + late-binding queue (fair priority classes, weighted DRR, tenant QoS, SLO ordering, two-layer overload protection) | S1 |
-| S3 | Cost-model router (uncached prefill + projected decode KV + active requests − KV credits) + exact KV index + media-hash routing + breakable session affinity | S1, S2 |
-| S4 | Online-learned latency prediction (TTFT/TPOT per serving config) | S1, S3 |
-| S5 | SLO- and MTP-aware scheduling | S2, S3 |
-| S6 | P/D disaggregation + tiered KV fabric + NIXL/RDMA transfer (aggregated-first; conditional P/D only after telemetry — SGLang caveat) | S3 |
-| S7 | Dual-loop autoscaling (forecast floor + burst fast-loop; MTP-aware; warm spare) + heterogeneous/WVA + fast model actuation + engine lifecycle | S1, S5 |
+| S2 | Unified gateway (OpenAI/Anthropic ingress, model rewriting/A-B/canary, media controls, embeddings, model discovery) + global admission + late-binding queue (fair priority classes, token-debited DRR, tenant QoS, SLO ordering, two-layer overload protection, fail-closed) | S1 |
+| S3 | Cost-model router (uncached prefill + projected decode KV + active requests − KV credits) + exact KV index (engine-restart-safe) + media-hash routing + breakable session affinity + LoRA affinity + EP/DP-rank/gang awareness + topology inventory | S1, S2 |
+| S4 | Online Bayesian latency prediction (per serving config, heterogeneous fleet, zero-hop, variance → P(SLO violation)) | S1, S3 |
+| S5 | SLO- and MTP-aware scheduling (TTFT/ITL objectives, agent priority) | S2, S3, S4 |
+| S6 | Aggregated-first serving + conditional P/D (SGLang caveat) + tiered KV fabric + encoder cache + NIXL/RDMA transfer | S3 |
+| S7 | Dual-loop autoscaling (forecast floor + burst fast-loop; MTP-aware; warm spare) + heterogeneous/WVA + fast model actuation (residency, snapshots) + engine lifecycle + LoRA lifecycle + power/cost + RL weight updates | S1, S4, S5 (+S6 for P/D scaling) |
 | S8 | Resilience: request migration, cancellation propagation, shadow failover, health probing | S2–S6 |
-| S9 | Batch/async gateway with slack-capacity filling | S2 |
-| S10 | Observability, routing explainability, admin dashboards | all |
-| S11 | Digital-twin simulation + benchmark autotuning | S1, S5 |
+| S9 | Batch/async gateway with slack-capacity filling + pause/resume | S2, S8 |
+| S10 | Observability, routing explainability, admin control plane (fleet/models/traffic/cache/perf/routing/scaling views) | all |
+| S11 | Digital-twin simulation + benchmark autotuning (queue/KV/P-D/autoscaler simulation — increments as S3/S6/S7 land) | S1, S5 |
+| S12 | Kubernetes-native adapter: InferencePool/Gateway API (GAIE v1.5 conformance), CRDs (ModelDeployment, ServingVariant, RoutingPolicy, KVCachePolicy, InferenceSLO, ScalingPolicy, MediaPolicy), HPA/KEDA | S2, S7 |
 
 **This spec covers S1 only.**
 
@@ -65,7 +66,7 @@ review time: Dynamo 1.3.1, llm-d 0.8, Gateway API Inference Extension (GAIE) v1.
 | 5 | SLO-aware routing | S5 | Dynamo Planner TTFT/ITL objectives (`dynamo/components/src`, `examples/global_planner`) |
 | 6 | MTP-aware capacity modeling | S5 | Dynamo Planner MTP acceptance-length |
 | 7 | Tiered KV fabric + P2P transfer | S6 | `dynamo/lib/kvbm-*` (engine/physical/logical), `kv-hashing`; llm-d tiered-cache docs |
-| 8 | Media/encoder-aware caching + routing | S6 | Dynamo multimodal KV routing (Qwen3.6/SGLang path) |
+| 8 | Media/encoder-aware caching + routing | S3 (routing) + S6 (encoder cache) | Dynamo multimodal KV routing (Qwen3.6/SGLang path) |
 | 9 | Aggregated + P/D disaggregated serving | S6 | Dynamo P/D via NIXL (`dynamo/deploy/pre-deployment/nixl`); llm-d P/D routing |
 | 10 | NIXL/RDMA-aware state movement | S6 | Dynamo NIXL integration |
 | 11 | Heterogeneous cost/SLO-aware autoscaling | S7 | `llm-d/proposals/autoscaler.md` (WVA); Dynamo Planner |
@@ -160,7 +161,7 @@ Signed with COSE-Sign1 over canonical bytes (same pattern as
 | host | node ID, hostname, IP, region/zone | region/zone optional |
 | engine | kind (vllm/sglang/trt-llm), version, endpoint URL, reachability mode (configured) + measured grade | required |
 | model | name, version, precision, context length, max concurrent seqs, modalities, TP/DP/EP; MTP, LoRA list, P/D role optional | optional fields reserved for S3–S8 |
-| gpu | SKU, count, HBM per GPU; NVLink/topology deferred to S3 | required SKU/count |
+| gpu | accelerator family (nvidia/amd/intel/tpu), SKU, count, HBM per GPU; NVLink/topology deferred to S3 | family required — multi-accelerator neutrality from day one (§31) |
 | health | status, last heartbeat, lease expiry | required |
 | signature | COSE-Sign1 over canonical card | required |
 
@@ -236,7 +237,7 @@ deliberately human-in-the-loop. DARI push is a later option.
 | Topology/NVLink/IB inventory | S3 (router needs it) |
 | Active health probing | S8 |
 | Registry persistence, HA scheduler | later |
-| K8s/CRD adapter (llm-d style) | later (non-K8s first — gov/bare-metal market) |
+| K8s/CRD adapter (llm-d style) | S12 (GAIE v1.5 + CRDs + HPA/KEDA; non-K8s core first — gov/bare-metal market) |
 | DARI push of signed configs | later |
 | Queue, routing, KV, autoscaling — everything else | S2–S11 |
 
@@ -497,4 +498,56 @@ scheduler down = DARI handshake fails = requests are rejected with retry signali
 governance never silently disappears.
 **Go application:** architectural (single ingress path); overload responses reuse the
 existing DARI error envelope with retry metadata.
+
+## 14. Full Coverage Matrix (original 40 sections → sub-projects)
+
+Every section of the original feature list is assigned. This matrix is the
+completeness gate: a feature with no row is a gap; a row with no S is a gap.
+
+| Original § | Feature | S |
+|---|---|---|
+| 1 | Unified gateway (OpenAI/Anthropic ingress, streaming, tool calling, structured outputs, reasoning, embeddings, multimodal, model discovery/readiness, cancellation, correlation IDs, routing/tenant/priority/SLO/session metadata) + model rewriting (aliases, remap, version migration, traffic split, canary, A/B, fallback) | S2 |
+| 2 | Global admission + late-binding queue | S2 |
+| 3 | Multi-tenant QoS & fairness (priority bands, weighted fairness, DRR, ordering policies) | S2 |
+| 4 | Intelligent GPU router (full routing-input set) | S3 |
+| 5 | Exact KV-aware routing (event-driven, global/sharded index, dedup) | S3 |
+| 6 | Session affinity ((worker, dp_rank), breakable) | S3 |
+| 7 | Predicted-latency routing (online learned, per-config, variance) | S4 |
+| 8 | SLO-aware scheduling (per-model/tenant/request, TTFT/ITL targets, latency/availability tiers) | S5 |
+| 9 | MTP/speculative awareness (draft count, acceptance rate, capacity modeling) | S5 |
+| 10 | Global KV cache fabric (L1–L4 tiers, promotion/demotion, prefetch, retention) | S6 |
+| 11 | High-speed KV transport (NVLink/RDMA/IB/RoCE/EFA/UCX, topology-aware cost) | S6 |
+| 12 | Multimodal: media-hash routing (S3), encoder cache (S6), media controls/SSRF/limits (S2) | S2, S3, S6 |
+| 13 | Multi-engine runtime (capability cards, normalized capabilities) | S1 |
+| 14 | Aggregated serving (default mode) | S6 (baseline from day one) |
+| 15 | P/D disaggregation (aggregated-first; conditional P/D; SGLang caveat) | S6 |
+| 16 | Expert/parallelism-aware routing (TP/DP/EP, WideEP, DP-rank, gang scheduling, worker-group readiness) | S3 |
+| 17 | Multi-model serving (aliases, per-tenant access, A/B, canary, model pools) | S2 (rewrite) + S3 (pools) |
+| 18 | LoRA management (affinity routing, residency/popularity tracking, dynamic load/unload, capacity prediction) | S3 (affinity) + S7 (lifecycle) |
+| 19 | Fleet-wide autoscaling (reactive + predictive, heterogeneous, scale-to-zero, warm floor, P/D independent) | S7 |
+| 20 | Fast model actuation (GMS-style residency, snapshots, weight caching/prefetch) | S7 |
+| 21 | Engine lifecycle (start/readiness/drain/sleep/wake/pause/resume/memory release/reload/weight update/termination) | S7 |
+| 22 | Request migration (failure- and load-triggered, budgeted) | S8 |
+| 23 | Request cancellation (disconnect detection, propagation, KV reservation cleanup) | S8 |
+| 24 | Failure management (worker/process/GPU/network/control-plane) | S8 |
+| 25 | Shadow engine / rapid failover (optional HA tier) | S8 |
+| 26 | Batch inference (submit/upload/status/cancel/retries/deadlines/quotas) | S9 |
+| 27 | Asynchronous inference (Redis/PubSub, dispatch gating, backpressure) | S9 |
+| 28 | Agentic workloads (long sessions, tool-call-heavy, branching, context-block identity, agent SLOs, cache-retention hints) | S3 + S5 |
+| 29 | Post-training / RL serving (rollouts, in-place weight updates, scheduler hooks, pool separation) | S7 (optional tier) |
+| 30 | Hardware & topology intelligence (NVLink/PCIe/NUMA/IB/rack/zone, placement constraints) | S3 |
+| 31 | Multi-accelerator (CUDA/ROCm/XPU/TPU/CPU) | S1 (card) + S7 (pools) |
+| 32 | K8s-native control plane (Gateway API, InferencePool, CRDs, HPA/KEDA, Prometheus) | S12 |
+| 33 | Non-Kubernetes mode (bare metal, Slurm, static nodes) | S1 (core) + S12 (adapter) |
+| 34 | Service discovery (registration, capability, health leases, topology, stale removal) | S1 |
+| 35 | Observability (metrics, distributed traces, routing explainability) | S10 + S3 (receipts §13.6) |
+| 36 | Capacity simulation / digital twin | S11 |
+| 37 | Benchmark & autotuning (model×GPU×engine×quant×context×MTP profiles) | S11 |
+| 38 | Load shedding & overload protection (multi-level, priority shedding, retryable overload) | S2 |
+| 39 | Power & cost optimization (cost/token, power caps, scale-to-zero, cheaper HW for background) | S7 |
+| 40 | Administrative control plane (fleet/models/traffic/cache/perf/routing/scaling views) | S10 (+S1 workers page) |
+
+All 15 core capabilities: §2.2 matrix (capability → S). All 10 locked decisions: §12.3
+(decision → S). All 15 differentiation items: §13 (item → S). No unassigned features
+remain.
 
