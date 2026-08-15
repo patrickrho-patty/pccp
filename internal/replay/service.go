@@ -31,8 +31,8 @@ type IdempotencyEntry struct {
 	Class      IdempotencyClass `json:"class"`
 	Result     interface{}      `json:"result"`
 	SeenAt     time.Time        `json:"seen_at"`
-	ExchangeID string           `json:"exchange_i_d"`
-	SessionID  string           `json:"session_i_d"`
+	ExchangeID string           `json:"exchange_id"`
+	SessionID  string           `json:"session_id"`
 }
 
 // New creates a new replay protection service.

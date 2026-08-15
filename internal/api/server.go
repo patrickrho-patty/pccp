@@ -2110,6 +2110,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	// Org attribution from the authenticated context only.
+	req.OrganizationID = getOrgID(r)
 	sb, err := s.sandbox.CreateSandbox(req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

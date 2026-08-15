@@ -94,6 +94,11 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 		// Bootstrap: the FIRST epoch for a fresh organization allows the
 		// bootstrapped package. Never widens an existing epoch.
 		epoch, err = pl.svc.Policy().CreatePolicyEpoch(orgID, []string{pkg.PackageID}, "immediate")
+		if err == nil {
+			// A new epoch invalidates every cached governance snapshot
+			// immediately (bounded staleness never outlives the epoch).
+			pl.svc.hotState.InvalidateAll()
+		}
 		if err != nil {
 			pl.sendJSONError(conn, connID, "bootstrap epoch creation failed: "+err.Error())
 			return

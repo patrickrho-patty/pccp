@@ -75,7 +75,7 @@ type Record struct {
 	MessageType  uint16     `json:"message_type"`
 	Header       []byte     `json:"header"`
 	Payload      []byte     `json:"payload"`
-	LaneID       uint64     `json:"lane_i_d"`
+	LaneID       uint64     `json:"lane_id"`
 	LaneSequence uint64     `json:"lane_sequence"`
 }
 

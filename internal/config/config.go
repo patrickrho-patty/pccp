@@ -82,7 +82,7 @@ func LoadRelayFromEnv() RelayConfig {
 // PIAConfig holds PIA (Patty Inference Agent) configuration.
 type PIAConfig struct {
 	// DARI peer
-	PeerID string `json:"peer_i_d"`
+	PeerID string `json:"peer_id"`
 	// Relay endpoint
 	RelayAddr string `json:"relay_addr"`
 	// TLS
@@ -92,7 +92,7 @@ type PIAConfig struct {
 	ServingEngineType string `json:"serving_engine_type"`  // vllm, sglang, mock
 	ServingEngineURL  string `json:"serving_engine_u_r_l"` // localhost URL
 	// Model
-	ModelPackageID   string `json:"model_package_i_d"`
+	ModelPackageID   string `json:"model_package_id"`
 	ModelWeightsPath string `json:"model_weights_path"`
 	// Attestation
 	AssuranceLevel      string `json:"assurance_level"`

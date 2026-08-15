@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/patrickrho-patty/pccp/internal/events"
 	"github.com/patrickrho-patty/pccp/internal/scheduler"
 	"io"
 	"log"
@@ -64,6 +65,8 @@ type Service struct {
 	// fairSched queues overload requests per-account (org) with
 	// weighted priority (§10C.7) instead of shedding them.
 	fairSched *scheduler.Service
+	// spine is the durable governed-event record (PRD §39).
+	spine *events.Service
 }
 
 // inferenceForwarder forwards a governed inference request to a PIA.
@@ -102,6 +105,19 @@ type Exchange struct {
 	Decision *dari.DecisionEnvelope `json:"-"`
 	// GrantDigest is the signed-object digest of the governing grant.
 	GrantDigest dari.Digest `json:"grant_digest,omitempty"`
+	// Trace is the §10.2 stage trace recorded on the live path.
+	Trace *PipelineTrace `json:"-"`
+}
+
+// RecordStage appends one stage outcome to the exchange's trace.
+func (ex *Exchange) RecordStage(stage string, ok bool, note string) {
+	if ex == nil {
+		return
+	}
+	if ex.Trace == nil {
+		ex.Trace = &PipelineTrace{}
+	}
+	ex.Trace.Record(stage, ok, note)
 }
 
 // New creates a new Relay service.
@@ -142,6 +158,11 @@ func New(db *gorm.DB, cpURL, relayID string) (*Service, error) {
 	s.grantRevocations.m = map[dari.Digest]bool{}
 	s.exchangeGate = NewConcurrencyGate(128)
 	s.fairSched = scheduler.New()
+	if spine, serr := events.New(db); serr == nil {
+		s.spine = spine
+	} else {
+		log.Printf("relay: durable event spine unavailable: %v", serr)
+	}
 	return s, nil
 }
 
@@ -536,6 +557,21 @@ func (s *Service) CloseExchange(ctx context.Context, exchangeID string) (*models
 	// chain yields the deterministic chain-start root bound to the
 	// exchange identity) — never a fabricated random identifier
 	// (Task 10 Step 3 audit finding).
+	exchange.RecordStage(StageMeter, true, "")
+	exchange.RecordStage(StageEvidence, true, exchange.ID)
+	// The durable event spine (PRD §39): every closed governed
+	// exchange emits its ordered event record — telemetry and audit
+	// reconstruction consume this, not in-memory rings.
+	s.emitSpine(exchange, "exchange_closed", map[string]any{
+		"state": string(exchange.State), "evidence_events": len(exchange.EvidenceChain),
+	})
+	if exchange.Trace != nil {
+		for _, st := range exchange.Trace.Stages() {
+			s.emitSpine(exchange, "pipeline_stage", map[string]any{
+				"stage": st.Stage, "ok": st.OK, "note": st.Detail,
+			})
+		}
+	}
 	root := s.evidenceChainRoot(exchange)
 	receipt, err := s.provenance.IssueEvidenceReceipt(provenance.IssueReceiptRequest{
 		OrganizationID: exchange.OrganizationID,
@@ -770,6 +806,8 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 	}
 
 	// 4. Authorize → forward → meter via the governed exchange flow.
+	// F.4: bind the verified grant's signed-object digest to the
+	// exchange so the F.6 decision's LeafGrantDigest is real.
 	ex, verdict, err := s.OpenExchange(ctx, OpenExchangeRequest{
 		OrganizationID: orgID,
 		SessionID:      req.SessionID,
@@ -782,6 +820,16 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 	if err != nil || verdict != dari.VerdictAllow {
 		return nil, nil, fmt.Errorf("relay: exchange denied for harness %s (verdict=%s): %w", req.HarnessID, verdict, err)
 	}
+	if req.Grant != nil {
+		ex.GrantDigest = req.Grant.SignedDigest
+	}
+	appendEvidence(ex, "exchange_open|"+ex.ID)
+
+	// §10.2/DARI: record the REAL admission trace on the exchange —
+	// the same stages EnforceStages pins, run against the snapshot
+	// this request actually resolved (hot-state), not a parallel
+	// re-resolution.
+	ex.Trace, _ = s.enforceStagesForSnapshot(&PipelineTrace{}, ex, snap, req)
 
 	// Inline DLP/PII/injection scan (§16) — populates Security findings from real
 	// traffic. Blocks on DENY (critical/high); logs REQUIRE_REVIEW (medium).
@@ -791,7 +839,10 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 		combined.WriteByte('\n')
 	}
 	combinedText := combined.String()
-	if secResult := s.security.CheckContext(orgID, combinedText); len(secResult.Findings) > 0 {
+	secResult := s.security.CheckContext(orgID, combinedText)
+	appendEvidence(ex, "dlp_scan|"+secResult.Verdict)
+	ex.RecordStage(StageDLPScan, secResult.Verdict != "DENY", fmt.Sprintf("%d findings", len(secResult.Findings)))
+	if len(secResult.Findings) > 0 {
 		for _, f := range secResult.Findings {
 			s.security.RecordFinding(orgID, req.SessionID, ex.ID, f)
 			s.realtime.NotifySecurityFinding(orgID, f.Severity, f.TitleKo)
@@ -826,12 +877,52 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 		return nil, nil, fmt.Errorf("relay: governed inference failed: %w", err)
 	}
 
+	appendEvidence(ex, "forward|"+pkg.PackageID)
+	ex.RecordStage(StageForward, true, pkg.PackageID)
+	if resp != nil && resp.Usage != nil {
+		ex.RecordStage(StageTokenize, true, fmt.Sprintf("in=%d out=%d", resp.Usage["input_tokens"], resp.Usage["output_tokens"]))
+	}
+
 	// 5. Evidence receipt.
 	receipt, err := s.CloseExchange(ctx, ex.ID)
 	if err != nil {
 		log.Printf("relay: warning: close exchange %s: %v", ex.ID, err)
 	}
+	// F.6: carry the signed decision so the transport pushes the
+	// RELAY_VERDICT to the connector (verify + aggregate there).
+	if ex.Decision != nil && ex.Decision.COSEBytes != nil {
+		resp.DecisionCOSE = ex.Decision.COSEBytes
+	}
 	return resp, receipt, nil
+}
+
+// emitSpine writes one durable governed event for an exchange. The
+// spine is best-effort per event: a spine write failure logs but never
+// fails the exchange (the receipt chain is the authoritative record).
+func (s *Service) emitSpine(ex *Exchange, eventType string, payload map[string]any) {
+	if s.spine == nil || ex == nil {
+		return
+	}
+	if _, err := s.spine.Emit(events.EmitRequest{
+		EventType:      "cp.exchange." + eventType,
+		OrganizationID: ex.OrganizationID,
+		SessionID:      ex.SessionID,
+		HarnessID:      ex.HarnessID,
+		ActorType:      "relay",
+		Payload:        payload,
+	}); err != nil {
+		log.Printf("relay: spine emit %s for %s failed: %v", eventType, ex.ID, err)
+	}
+}
+
+// appendEvidence records one evidence event on the exchange's chain.
+// The receipt's F.9 root commits to these refs (decision/scan/forward/
+// meter), making the chain non-empty on every governed exchange.
+func appendEvidence(ex *Exchange, ref string) {
+	if ex == nil {
+		return
+	}
+	ex.EvidenceChain = append(ex.EvidenceChain, ref)
 }
 
 // InferenceResponse mirrors the PIA/OpenAI completion response.
@@ -842,10 +933,16 @@ type InferenceResponse struct {
 	Model   string                   `json:"model"`
 	Choices []map[string]interface{} `json:"choices"`
 	Usage   map[string]int           `json:"usage"`
+	// DecisionCOSE carries the signed F.6 Authorization Decision (the
+	// relay→connector RELAY_VERDICT payload); never serialized onward.
+	DecisionCOSE []byte `json:"-"`
 }
 
 // recordUsage meters token usage for a completed governed inference (§10.2 stage 13).
 func (s *Service) recordUsage(ex *Exchange, req InferenceRequest, resp *InferenceResponse) {
+	if resp != nil && resp.Usage != nil {
+		appendEvidence(ex, fmt.Sprintf("meter|in=%d out=%d", resp.Usage["input_tokens"], resp.Usage["output_tokens"]))
+	}
 	if resp == nil || resp.Usage == nil || s.workintel == nil {
 		return
 	}

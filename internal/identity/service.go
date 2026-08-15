@@ -31,7 +31,7 @@ func New(db *gorm.DB) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("identity: init CA: %w", err)
 	}
-	return &Service{db: db, ca: ca, revocations: newCredentialRevocations()}, nil
+	return &Service{db: db, ca: ca, revocations: newCredentialRevocations(db)}, nil
 }
 
 // CACAPublicKey returns the CA's public key (hex-encoded).
@@ -240,7 +240,7 @@ func (s *Service) RevokeHarness(orgID, harnessID, reason string) error {
 	if err != nil {
 		return fmt.Errorf("identity: revoke harness: %w", err)
 	}
-	s.revocations.revoke(serial)
+	s.revocations.revoke(serial, reason)
 	s.recordAudit(orgID, "harness.revoked", "admin", "harness", harnessID, reason)
 	return nil
 }

@@ -587,6 +587,16 @@ func (pl *DARIListener) governAIOpen(ctx context.Context, conn *dari.TransportCo
 		"output_tokens": outTok,
 		"total_tokens":  inTok + outTok,
 	})
+	// F.6: push the signed Authorization Decision (RELAY_VERDICT)
+	// before completion — the connector verifies it under the AUTH_ACK
+	// policy issuer key and refuses the stream on a DENY/expired
+	// decision (decision-before-consumption).
+	if len(resp.DecisionCOSE) > 0 {
+		if err := conn.SendMessage(dari.MsgRelayVerdict, nil, resp.DecisionCOSE, reqRecord.LaneID, reqRecord.LaneSequence+1); err != nil {
+			log.Printf("relay: verdict push to %s failed: %v", connID, err)
+		}
+	}
+
 	// B3: push the evidence receipt BEFORE AI_COMPLETE — the
 	// connector's stream reader terminates on AI_COMPLETE, so the
 	// receipt must already be in flight for the ack to happen.

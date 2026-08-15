@@ -73,7 +73,7 @@ func (s *Service) GenerateSAMLRedirect(relayState string) (string, error) {
 }
 
 type SAMLResponse struct {
-	UserID       string            `json:"user_i_d"`
+	UserID       string            `json:"user_id"`
 	Email        string            `json:"email"`
 	Name         string            `json:"name"`
 	NameKo       string            `json:"name_ko"`

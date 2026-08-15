@@ -150,3 +150,41 @@ type EnrollmentCode struct {
 func HarnessStatusPermitted(status string) bool {
 	return status == "enrolled" || status == "active"
 }
+
+// CredentialRevocationRecord is the durable revocation ledger: the
+// monotonic epoch and every revoked credential serial. The relay
+// rebuilds its in-process view from this table at boot so revocation
+// survives restarts (DARI §F.7).
+type CredentialRevocationRecord struct {
+	Base
+	Serial       string `gorm:"type:varchar(128);uniqueIndex;not null" json:"serial"`
+	RevokedEpoch uint64 `json:"revoked_epoch"`
+	Reason       string `gorm:"type:text" json:"reason,omitempty"`
+	RevokedAtRFC string `gorm:"type:timestamp" json:"revoked_at"`
+}
+
+// TableName overrides the table name.
+func (CredentialRevocationRecord) TableName() string { return "credential_revocations" }
+
+// SandboxRecord is the durable sandbox definition + lifecycle state
+// (PRD §31). The governance snapshot's sandbox rows (E4) and the
+// admin UI read THIS table — not audit-event reconstruction.
+type SandboxRecord struct {
+	Base
+	OrganizationID  string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
+	SessionID       string `gorm:"type:varchar(64);index" json:"session_id,omitempty"`
+	UserID          string `gorm:"type:varchar(64)" json:"user_id,omitempty"`
+	Mode            string `gorm:"type:varchar(32)" json:"mode"`
+	BaseImage       string `gorm:"type:varchar(255)" json:"base_image"`
+	ImageDigest     string `gorm:"type:varchar(128)" json:"image_digest,omitempty"`
+	CPULimit        string `gorm:"type:varchar(32)" json:"cpu_limit,omitempty"`
+	MemoryLimitMB   int    `json:"memory_limit_mb,omitempty"`
+	NetworkPolicy   string `gorm:"type:varchar(64)" json:"network_policy,omitempty"`
+	Status          string `gorm:"type:varchar(32);index" json:"status"`
+	RuntimeProvider string `gorm:"type:varchar(128)" json:"runtime_provider,omitempty"`
+	// ResourceLimitsJSON carries the full limits map when set.
+	ResourceLimitsJSON string `gorm:"type:text" json:"resource_limits_json,omitempty"`
+}
+
+// TableName overrides the table name.
+func (SandboxRecord) TableName() string { return "sandbox_records" }

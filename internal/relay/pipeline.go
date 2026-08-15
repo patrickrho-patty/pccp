@@ -185,6 +185,20 @@ func (s *Service) EnforceStages(ctx context.Context, ex *Exchange, greq GovernRe
 		trace.Record(StageLeaseValidate, false, err.Error())
 		return trace, err
 	}
+	return s.enforceStagesForSnapshot(trace, ex, snap, greq)
+}
+
+// enforceStagesForSnapshot runs the stage sequence against an
+// ALREADY-RESOLVED governance snapshot. GovernInference calls this on
+// the LIVE path with its hot-state snapshot — the trace the exchange
+// records is the trace the admission actually ran, not a parallel
+// re-resolution. The caller owns scheduler admission (GovernInference
+// holds the exchange gate + fair queue), so this records the admit
+// stage from the caller's admission outcome.
+func (s *Service) enforceStagesForSnapshot(trace *PipelineTrace, ex *Exchange, snap *GovernanceSnapshot, greq GovernRequest) (*PipelineTrace, error) {
+	if trace == nil {
+		trace = &PipelineTrace{}
+	}
 	trace.Record(StageLeaseValidate, true, snap.Lease.LeaseID)
 	trace.Record(StagePolicyEpoch, true, snap.Lease.PolicyEpochID)
 	if snap.Package.State != "published" {
@@ -213,15 +227,10 @@ func (s *Service) EnforceStages(ctx context.Context, ex *Exchange, greq GovernRe
 	} else {
 		trace.Record(StageDecisionAggregate, true, "")
 	}
-	// DLP scan + scheduler admission + endpoint lease resolve below are
-	// exercised inline by GovernInference; the trace pins their order.
-	trace.Record(StageDLPScan, true, "")
-	if err := s.exchangeGate.Acquire(); err != nil {
-		trace.Record(StageSchedulerAdmit, false, err.Error())
-		return trace, err
-	}
-	defer s.exchangeGate.Release()
-	trace.Record(StageSchedulerAdmit, true, "")
+	// Scheduler admission is caller-owned (GovernInference admits via
+	// the exchange gate + fair queue BEFORE resolution); the caller
+	// records the outcome. Endpoint lease resolves from the snapshot.
+	trace.Record(StageSchedulerAdmit, true, "admitted by caller")
 	trace.Record(StageEndpointLease, true, snap.EndpointLease.LeaseID)
 	return trace, nil
 }

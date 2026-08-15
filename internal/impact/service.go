@@ -49,8 +49,8 @@ type ImpactEdge struct {
 
 // AnalyzeChange analyzes the potential impact of a code change.
 type AnalyzeRequest struct {
-	OrganizationID string   `json:"organization_i_d"`
-	RepositoryID   string   `json:"repository_i_d"`
+	OrganizationID string   `json:"organization_id"`
+	RepositoryID   string   `json:"repository_id"`
 	FilePath       string   `json:"file_path"`
 	SymbolsChanged []string `json:"symbols_changed"`
 	Languages      []string `json:"languages"`
@@ -261,10 +261,10 @@ func (s *Service) findReviewers(orgID, repoID, filePath string) []string {
 
 // RecordImpactAnalysis persists an impact analysis for a change set.
 type RecordRequest struct {
-	OrganizationID string       `json:"organization_i_d"`
-	RepositoryID   string       `json:"repository_i_d"`
-	ChangeSetID    string       `json:"change_set_i_d"`
-	SessionID      string       `json:"session_i_d"`
+	OrganizationID string       `json:"organization_id"`
+	RepositoryID   string       `json:"repository_id"`
+	ChangeSetID    string       `json:"change_set_id"`
+	SessionID      string       `json:"session_id"`
 	RiskScore      *RiskScore   `json:"risk_score"`
 	ImpactGraph    *ImpactGraph `json:"impact_graph"`
 }

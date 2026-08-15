@@ -300,12 +300,26 @@ func (s *Service) issueDecision(ex *Exchange, req OpenExchangeRequest, outcome d
 		return
 	}
 	ex.Decision = env
+	appendEvidence(ex, "decision|"+hex.EncodeToString(env.SignedDigest[:]))
 	s.mu.Lock()
 	s.decisionLog = append(s.decisionLog, env)
 	if len(s.decisionLog) > 256 {
 		s.decisionLog = s.decisionLog[len(s.decisionLog)-256:]
 	}
 	s.mu.Unlock()
+	// Durable decision record (F.6): the in-memory ring is bounded and
+	// lost on restart — the audit trail is the durable log, and it
+	// doubles as relay-path audit ingestion (web/17).
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: ex.OrganizationID,
+		ActorType:      "relay",
+		Action:         "issue_decision",
+		ResourceType:   "governed_exchange",
+		ResourceID:     ex.ID,
+		Details:        fmt.Sprintf("outcome=%s decision=%s exchange=%s", string(outcome), env.Body.DecisionID, ex.ID),
+		Result:         string(outcome),
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 }
 
 // RecentDecisions returns the bounded log of signed decisions.

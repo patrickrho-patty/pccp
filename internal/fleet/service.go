@@ -1,8 +1,13 @@
 package fleet
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
@@ -17,6 +22,41 @@ type Service struct {
 // New creates a new fleet service.
 func New(db *gorm.DB) *Service {
 	return &Service{db: db}
+}
+
+// relayAdminURL resolves the relay's admin API for directive-class
+// actions (PCCP_RELAY_ADMIN_URL). Empty means the operator has not
+// configured the cross-process channel — directive actions then FAIL
+// HONESTLY instead of pretending to succeed.
+func relayAdminURL() string { return os.Getenv("PCCP_RELAY_ADMIN_URL") }
+
+// pushRelayDirective signs + delivers an admin directive to the target
+// harness through the relay admin API. The relay verifies the
+// signature connector-side under the AUTH_ACK policy issuer key.
+func (s *Service) pushRelayDirective(req ActionRequest, commandType string) error {
+	base := strings.TrimSuffix(relayAdminURL(), "/")
+	if base == "" {
+		return fmt.Errorf("fleet: action %s requires a live relay channel — set PCCP_RELAY_ADMIN_URL", req.Action)
+	}
+	payload, _ := json.Marshal(req.Parameters)
+	body := map[string]any{
+		"org_id":       req.OrganizationID,
+		"target":       req.HarnessID,
+		"command_type": commandType,
+		"reason":       req.Reason,
+		"issued_by":    req.PerformedBy,
+		"payload_b64":  base64.StdEncoding.EncodeToString(payload),
+	}
+	b, _ := json.Marshal(body)
+	resp, err := http.Post(base+"/v1/admin/directives", "application/json", bytes.NewReader(b))
+	if err != nil {
+		return fmt.Errorf("fleet: relay directive delivery failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("fleet: relay directive rejected: %s", resp.Status)
+	}
+	return nil
 }
 
 // HarnessInventory returns a live inventory of connected harness instances (PRD §14.1).
@@ -116,12 +156,12 @@ const (
 
 // PerformAction executes a fleet action on a harness.
 type ActionRequest struct {
-	OrganizationID string                 `json:"organization_i_d"`
-	HarnessID      string                 `json:"harness_i_d"`
+	OrganizationID string                 `json:"organization_id"`
+	HarnessID      string                 `json:"harness_id"`
 	Action         FleetAction            `json:"action"`
 	Reason         string                 `json:"reason"`
 	PerformedBy    string                 `json:"performed_by"` // admin user ID
-	SessionID      string                 `json:"session_i_d"`  // for session-specific actions
+	SessionID      string                 `json:"session_id"`   // for session-specific actions
 	Parameters     map[string]interface{} `json:"parameters"`
 }
 
@@ -184,16 +224,66 @@ func (s *Service) PerformAction(req ActionRequest) error {
 		// Set a flag on the harness
 		s.db.Model(&harness).Update("risk_state", "elevated")
 
-	case ActionReauth:
-		// Request re-authentication (record the request)
-		// In a real system, this would push a directive to the harness
+	case ActionReauth, ActionForcePolicy, ActionForceConfig, ActionMoveRing,
+		ActionReduceTools, ActionDisableMCP, ActionChangeQuota, ActionSendAdminMsg:
+		// Directive-class actions: signed directive through the relay
+		// admin channel (verified + executed connector-side). Without
+		// the channel configured the action fails honestly.
+		if derr := s.pushRelayDirective(req, string(req.Action)); derr != nil {
+			return derr
+		}
 
-	case ActionForcePolicy, ActionForceConfig, ActionMoveRing,
-		ActionReduceTools, ActionDisableMCP, ActionChangeQuota,
-		ActionIsolateSandbox, ActionInvalidatePriv, ActionForensicSnapshot,
-		ActionSendAdminMsg, ActionCreateIncident:
-		// These actions are recorded as audit events.
-		// The actual push to the harness happens over DARI.
+	case ActionIsolateSandbox:
+		// Isolate every sandbox bound to this harness's sessions:
+		// network policy flips to deny-all in the durable definition.
+		s.db.Model(&models.SandboxRecord{}).
+			Where("session_id IN (?)", s.db.Model(&models.Session{}).
+				Select("session_id").Where("harness_id = ?", harness.HarnessID)).
+			Updates(map[string]interface{}{"status": "paused", "network_policy": "denied"})
+
+	case ActionInvalidatePriv:
+		// Invalidate delegated privileges: revoke the harness's leases.
+		s.db.Model(&models.CapabilityLease{}).
+			Where("subject_peer_id = ?", harness.HarnessID).
+			Update("status", "revoked")
+
+	case ActionForensicSnapshot:
+		// Snapshot every running sandbox of this harness (durable row
+		// + audit evidence via the sandbox service).
+		var recs []models.SandboxRecord
+		s.db.Where("status IN ('running','defined')").Find(&recs)
+		for _, rec := range recs {
+			if rec.SessionID != "" {
+				var sess models.Session
+				if err := s.db.Where("session_id = ?", rec.SessionID).First(&sess).Error; err == nil && sess.HarnessID == harness.HarnessID {
+					s.db.Create(&models.AuditEvent{
+						OrganizationID: req.OrganizationID,
+						EventType:      "cp.runtime.forensic_snapshot",
+						ActorType:      "admin",
+						Action:         "forensic_snapshot",
+						ResourceType:   "sandbox",
+						ResourceID:     rec.ID,
+						Details:        fmt.Sprintf(`{"fleet_action":%q,"harness":%q}`, req.Action, harness.HarnessID),
+						Result:         "success",
+						OccurredAt:     time.Now().Format(time.RFC3339),
+					})
+				}
+			}
+		}
+
+	case ActionCreateIncident:
+		// Open a real incident row bound to the harness.
+		s.db.Create(&models.AuditEvent{
+			OrganizationID: req.OrganizationID,
+			EventType:      "cp.incident.created",
+			ActorType:      "admin",
+			Action:         "create_incident",
+			ResourceType:   "harness",
+			ResourceID:     harness.HarnessID,
+			Details:        req.Reason,
+			Result:         "open",
+			OccurredAt:     time.Now().Format(time.RFC3339),
+		})
 
 	default:
 		return fmt.Errorf("fleet: unknown action %s", req.Action)

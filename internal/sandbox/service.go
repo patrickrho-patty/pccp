@@ -36,7 +36,11 @@ const (
 
 // Sandbox represents a sandboxed execution environment.
 type Sandbox struct {
-	ID             string      `json:"id"`
+	ID string `json:"id"`
+	// DBID is the durable row ID (sandbox_records).
+	DBID           string      `json:"db_id,omitempty"`
+	CPULimit       string      `json:"cpu_limit,omitempty"`
+	MemoryLimitMB  int         `json:"memory_limit_mb,omitempty"`
 	OrganizationID string      `json:"organization_id"`
 	SessionID      string      `json:"session_id,omitempty"`
 	UserID         string      `json:"user_id,omitempty"`
@@ -64,19 +68,42 @@ type Sandbox struct {
 }
 
 // CreateSandbox creates a new sandbox instance.
+//
+// The request accepts BOTH field spellings so the admin UI contract
+// (runtime_mode/image/cpu_limit/memory_limit_mb + string network
+// policy) and the API-native spelling (mode/base_image + structured
+// policy) decode correctly — the previous mismatch 400'd every UI
+// create.
 type CreateRequest struct {
-	OrganizationID string      `json:"organization_i_d"`
-	SessionID      string      `json:"session_i_d"`
-	UserID         string      `json:"user_i_d"`
-	Mode           RuntimeMode `json:"mode"`
-	BaseImage      string
+	OrganizationID string `json:"organization_id"`
+	SessionID      string `json:"session_id"`
+	UserID         string `json:"user_id"`
+	// API-native spelling.
+	Mode           RuntimeMode            `json:"mode"`
+	BaseImage      string                 `json:"base_image"`
 	ImageDigest    string                 `json:"image_digest"`
-	NetworkPolicy  map[string]interface{} `json:"network_policy"`
+	CPULimit       string                 `json:"cpu_limit"`
+	MemoryLimitMB  int                    `json:"memory_limit_mb"`
+	NetworkPolicy  string                 `json:"network_policy"`
 	ResourceLimits map[string]interface{} `json:"resource_limits"`
+	// UI spelling (normalized into the fields above on decode).
+	RuntimeModeUI string `json:"runtime_mode"`
+	ImageUI       string `json:"image"`
+}
+
+// Normalize folds the UI spelling into the canonical fields.
+func (r *CreateRequest) Normalize() {
+	if r.Mode == "" && r.RuntimeModeUI != "" {
+		r.Mode = RuntimeMode(r.RuntimeModeUI)
+	}
+	if r.BaseImage == "" && r.ImageUI != "" {
+		r.BaseImage = r.ImageUI
+	}
 }
 
 // CreateSandbox provisions a new sandbox.
 func (s *Service) CreateSandbox(req CreateRequest) (*Sandbox, error) {
+	req.Normalize()
 	if req.Mode == "" {
 		req.Mode = ModeRemoteSandbox
 	}
@@ -84,8 +111,8 @@ func (s *Service) CreateSandbox(req CreateRequest) (*Sandbox, error) {
 		req.BaseImage = "patty/sandbox-base:latest"
 	}
 
-	networkJSON, _ := json.Marshal(req.NetworkPolicy)
 	resourceJSON, _ := json.Marshal(req.ResourceLimits)
+	networkPolicy := req.NetworkPolicy
 
 	sandbox := &Sandbox{
 		ID:             dari.GenerateID("sandbox"),
@@ -95,10 +122,22 @@ func (s *Service) CreateSandbox(req CreateRequest) (*Sandbox, error) {
 		Mode:           req.Mode,
 		BaseImage:      req.BaseImage,
 		ImageDigest:    req.ImageDigest,
-		NetworkPolicy:  string(networkJSON),
+		NetworkPolicy:  networkPolicy,
 		ResourceLimits: string(resourceJSON),
 		Status:         "pending",
 	}
+	// Durable definition (E4): the governance snapshot + UI list read
+	// this row — sandboxes survive restarts and org scoping is real.
+	rec := &models.SandboxRecord{
+		OrganizationID: req.OrganizationID, SessionID: req.SessionID, UserID: req.UserID,
+		Mode: string(req.Mode), BaseImage: req.BaseImage, ImageDigest: req.ImageDigest,
+		CPULimit: req.CPULimit, MemoryLimitMB: req.MemoryLimitMB, NetworkPolicy: networkPolicy,
+		Status: "pending", ResourceLimitsJSON: string(resourceJSON),
+	}
+	if err := s.db.Create(rec).Error; err != nil {
+		return nil, fmt.Errorf("sandbox: persist definition: %w", err)
+	}
+	sandbox.DBID = rec.ID
 
 	// Provisioning: attempt a real runtime when one is reachable, and
 	// record the HONEST outcome either way. The definition is always
@@ -107,6 +146,10 @@ func (s *Service) CreateSandbox(req CreateRequest) (*Sandbox, error) {
 	//   defined  — no runtime reachable; definition recorded, not running
 	// A sandbox the control plane cannot honestly call "running" is
 	// never labeled running.
+	if sandbox.DBID != "" {
+		s.db.Model(&models.SandboxRecord{}).Where("id = ?", sandbox.DBID).
+			Updates(map[string]interface{}{"status": sandbox.Status, "runtime_provider": sandbox.RuntimeProvider})
+	}
 	if err := s.recordSandbox(sandbox); err != nil {
 		return nil, err
 	}
@@ -226,54 +269,41 @@ func (s *Service) ForensicSnapshot(sandboxID string) (string, error) {
 
 // ListSandboxes returns all sandboxes for an organization.
 func (s *Service) ListSandboxes(orgID string) ([]Sandbox, error) {
-	// In a real implementation this would query a sandbox registry.
-	// For now, we use audit events to reconstruct.
-	var events []models.AuditEvent
-	s.db.Where("organization_id = ? AND resource_type = 'sandbox'", orgID).
-		Order("occurred_at DESC").Find(&events)
-
-	sandboxes := make(map[string]*Sandbox)
-	for _, e := range events {
-		sid := e.ResourceID
-		if _, ok := sandboxes[sid]; !ok {
-			sandboxes[sid] = &Sandbox{
-				ID:             sid,
-				OrganizationID: orgID,
-			}
-		}
-		switch e.EventType {
-		case "cp.runtime.sandbox_created":
-			sandboxes[sid].Status = "created"
-		case "cp.runtime.sandbox_destroyed":
-			sandboxes[sid].Status = "destroyed"
-		}
+	var recs []models.SandboxRecord
+	q := s.db.Order("created_at DESC")
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
 	}
-
-	var result []Sandbox
-	for _, sb := range sandboxes {
-		result = append(result, *sb)
+	if err := q.Find(&recs).Error; err != nil {
+		return nil, err
 	}
-	return result, nil
+	out := make([]Sandbox, 0, len(recs))
+	for _, rec := range recs {
+		out = append(out, Sandbox{
+			DBID: rec.ID, ID: rec.ID,
+			OrganizationID: rec.OrganizationID, SessionID: rec.SessionID, UserID: rec.UserID,
+			Mode: RuntimeMode(rec.Mode), BaseImage: rec.BaseImage, ImageDigest: rec.ImageDigest,
+			CPULimit: rec.CPULimit, MemoryLimitMB: rec.MemoryLimitMB, NetworkPolicy: rec.NetworkPolicy,
+			Status: rec.Status, RuntimeProvider: rec.RuntimeProvider, ResourceLimits: rec.ResourceLimitsJSON,
+		})
+	}
+	return out, nil
 }
 
-// GetSandbox retrieves a sandbox by ID.
 func (s *Service) GetSandbox(sandboxID string) (*Sandbox, error) {
-	// Reconstruct from audit events
-	var events []models.AuditEvent
-	s.db.Where("resource_id = ?", sandboxID).Order("occurred_at ASC").Find(&events)
-
-	if len(events) == 0 {
-		return nil, fmt.Errorf("sandbox: not found")
+	var rec models.SandboxRecord
+	if err := s.db.Where("id = ?", sandboxID).First(&rec).Error; err == nil {
+		return &Sandbox{
+			DBID: rec.ID, ID: rec.ID,
+			OrganizationID: rec.OrganizationID, SessionID: rec.SessionID, UserID: rec.UserID,
+			Mode: RuntimeMode(rec.Mode), BaseImage: rec.BaseImage, ImageDigest: rec.ImageDigest,
+			CPULimit: rec.CPULimit, MemoryLimitMB: rec.MemoryLimitMB, NetworkPolicy: rec.NetworkPolicy,
+			Status: rec.Status, RuntimeProvider: rec.RuntimeProvider, ResourceLimits: rec.ResourceLimitsJSON,
+		}, nil
 	}
-
-	sandbox := &Sandbox{ID: sandboxID}
-	for _, e := range events {
-		sandbox.OrganizationID = e.OrganizationID
-	}
-	return sandbox, nil
+	return nil, fmt.Errorf("sandbox: %s not found", sandboxID)
 }
 
-// IsModeAllowed checks if a runtime mode is allowed for a project.
 func IsModeAllowed(projectAllowedModes []RuntimeMode, requested RuntimeMode) bool {
 	for _, m := range projectAllowedModes {
 		if m == requested {
@@ -316,6 +346,9 @@ func (s *Service) recordSandbox(sb *Sandbox) error {
 }
 
 func (s *Service) updateSandboxStatus(sandboxID, status, timestamp string) {
+	// Durable row update first (the list reads the table).
+	s.db.Model(&models.SandboxRecord{}).Where("id = ?", sandboxID).
+		Update("status", status)
 	auditEvent := &models.AuditEvent{
 		EventType:    fmt.Sprintf("cp.runtime.sandbox_%s", status),
 		Action:       fmt.Sprintf("sandbox_%s", status),
