@@ -7,7 +7,7 @@ build compatibility.
 
 ## Build
 
-Requirements: a standard TeX Live installation with `latexmk`, `pdflatex`, and BibTeX. The build requires no network access, proprietary fonts, or shell escape.
+Requirements: a standard TeX Live installation with `latexmk`, `pdflatex`, `xelatex`, and BibTeX. The English edition builds with pdfLaTeX; the Korean edition builds with XeLaTeX and kotex. The build requires no network access, proprietary fonts, or shell escape.
 
 ```sh
 make clean
@@ -50,11 +50,12 @@ work, and from browser and federation extension profiles. Primitive benchmark
 values must not be interpreted as measurements of those unimplemented or
 extension-profile behaviors.
 
-The overview PNG is Qwen-generated conceptual artwork. The lifecycle PNG is
-YOLO AUTO-generated and rendered with ImageMagick from model-produced SVG.
-They contain no empirical measurements or implementation-coverage claims. The
-model-identity chain and primitive-latency plot are LaTeX-native figures; the
-latter reads the checked-in benchmark TSV directly.
+The overview PNG is Qwen-generated conceptual artwork and the only generated
+raster image in the package. It contains no empirical measurements or
+implementation-coverage claims. The governed-exchange lifecycle and
+model-identity chain are LaTeX-native TikZ protocol-design diagrams; the
+primitive-latency plot is a LaTeX-native PGFPlots chart that reads the
+checked-in benchmark TSV directly.
 
 ## Create the source archive
 

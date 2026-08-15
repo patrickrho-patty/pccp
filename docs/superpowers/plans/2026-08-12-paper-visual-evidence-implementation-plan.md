@@ -32,11 +32,11 @@
 - Consumes: lifecycle and model-resolution semantics already stated in `main.tex`.
 - Produces: `fig:lifecycle` and `fig:model-identity`, rendered by `\input{...}` with shared TikZ libraries and no external conversion step.
 
-- [ ] Add `tikz`, the `arrows.meta`, `positioning`, `fit`, and `calc` libraries, and shared blue-gray/amber colors to the LaTeX preamble.
-- [ ] Draw the six required lifecycle states in order, annotate the authority gate beneath each state, and mark tool/approval as optional without making authorization optional.
-- [ ] Draw the five-node model chain and label Catalog Model, PMP, and Endpoint Lease as product, artifact, and deployment identity respectively.
-- [ ] Insert each diagram next to its defining prose with a caption that labels it a protocol-design figure rather than an implementation result.
-- [ ] Run `make clean && make && make check`; require zero undefined references and zero overfull boxes.
+- [x] Add `tikz`, the `arrows.meta`, `positioning`, `fit`, and `calc` libraries, and shared blue-gray/amber colors to the LaTeX preamble.
+- [x] Draw the six required lifecycle states in order, annotate the authority gate beneath each state, and mark tool/approval as optional without making authorization optional.
+- [x] Draw the five-node model chain and label Catalog Model, PMP, and Endpoint Lease as product, artifact, and deployment identity respectively.
+- [x] Insert each diagram next to its defining prose with a caption that labels it a protocol-design figure rather than an implementation result.
+- [x] Run `make clean && make && make check`; require zero undefined references and zero overfull boxes.
 
 ### Task 2: Data-Derived Benchmark Plot
 
@@ -49,11 +49,11 @@
 - Consumes: columns `benchmark` and `median_ns_per_op` from `benchmark-data/core-primitives.tsv`.
 - Produces: `fig:primitive-latency`, a log-scale bar plot whose y-values are read at LaTeX build time from the TSV.
 
-- [ ] Add `pgfplots` and `pgfplotstable` with `compat=1.18` to the preamble.
-- [ ] Build a seven-bar log-scale plot in ns/op with readable abbreviated operation labels and a caption that excludes network, policy, storage, model, GPU, and token-generation costs.
-- [ ] Reference the plot in the results prose while retaining Table `tab:microbench` as the exact-value record.
-- [ ] Add the three `.tex` figure sources and TSV as explicit PDF dependencies in the Makefile.
-- [ ] Compare the seven plotted coordinates in the LaTeX source/data path against the seven TSV medians and require exact correspondence.
+- [x] Add `pgfplots` and `pgfplotstable` with `compat=1.18` to the preamble.
+- [x] Build a seven-bar log-scale plot in ns/op with readable abbreviated operation labels and a caption that excludes network, policy, storage, model, GPU, and token-generation costs.
+- [x] Reference the plot in the results prose while retaining Table `tab:microbench` as the exact-value record.
+- [x] Add the three `.tex` figure sources and TSV as explicit PDF dependencies in the Makefile.
+- [x] Compare the seven plotted coordinates in the LaTeX source/data path against the seven TSV medians and require exact correspondence.
 
 ### Task 3: Related Work and Reproducibility Corrections
 
@@ -66,10 +66,10 @@
 - Consumes: RFC 9943, evaluated commit `0234034b51fb6f1a5127280ce1e9c209b8198004`, and existing benchmark metadata.
 - Produces: resolved `rfc9943` citation and self-contained artifact instructions that disclose the missing raw per-run capture.
 
-- [ ] Add the official RFC 9943 BibTeX record and position SCITT as complementary transparency for signed artifact statements, not live exchange authority.
-- [ ] Update the figure disclosure: Qwen is generated conceptual artwork; TikZ figures are protocol-design diagrams; PGFPlots is data-derived empirical visualization.
-- [ ] Document the evaluated commit, Apple M4 Pro/14 logical CPUs/48 GiB/macOS 27.0/arm64/Go 1.26.5 environment, exact commands, median-only dataset, and absent raw five-run output in README.
-- [ ] Run BibTeX through `make`; require the SCITT citation to resolve and all reproduction claims to match the TSV/manuscript.
+- [x] Add the official RFC 9943 BibTeX record and position SCITT as complementary transparency for signed artifact statements, not live exchange authority.
+- [x] Update the figure disclosure: Qwen is generated conceptual artwork; TikZ figures are protocol-design diagrams; PGFPlots is data-derived empirical visualization.
+- [x] Document the evaluated commit, Apple M4 Pro/14 logical CPUs/48 GiB/macOS 27.0/arm64/Go 1.26.5 environment, exact commands, median-only dataset, and absent raw five-run output in README.
+- [x] Run BibTeX through `make`; require the SCITT citation to resolve and all reproduction claims to match the TSV/manuscript.
 
 ### Task 4: Publication-Plan Reconciliation
 
@@ -80,10 +80,10 @@
 - Consumes: verified artifacts from Tasks 1--3.
 - Produces: an accurate completed checklist with scientific limitations kept separate from publication deliverables.
 
-- [ ] Replace the stale two-column requirement with the approved readable single-column, one-inch-margin, embedded Times-compatible typography.
-- [ ] Change the visual checklist to name the conceptual overview, lifecycle, model identity, benchmark plot, and evidence tables explicitly.
-- [ ] Mark only verified publication tasks complete.
-- [ ] Add a concise remaining-scientific-work note for B0--B4, production authentication, adversarial enforcement, scale/TTFT, interoperability, and provenance fidelity.
+- [x] Replace the stale two-column requirement with the approved readable single-column, one-inch-margin, embedded Times-compatible typography.
+- [x] Change the visual checklist to name the conceptual overview, lifecycle, model identity, benchmark plot, and evidence tables explicitly.
+- [x] Mark only verified publication tasks complete.
+- [x] Add a concise remaining-scientific-work note for B0--B4, production authentication, adversarial enforcement, scale/TTFT, interoperability, and provenance fidelity.
 
 ### Task 5: PDF and Archive Verification
 
