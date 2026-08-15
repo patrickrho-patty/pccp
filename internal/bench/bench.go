@@ -270,11 +270,8 @@ func runDARIArm(ctx context.Context, turns int, sched Schedule) (Result, error) 
 		if err := client.conn.SendMessage(dari.MsgAIOpen, nil, payload, 1, 1); err != nil {
 			return res, err
 		}
-		if turn > 0 {
-			// Warm turn-start: reused-connection send→first-record.
-			warms = append(warms, float64(time.Since(warmSend).Microseconds())/1000.0)
-		}
 		wireBytes += int64(len(payload)) + 16
+		firstRecord := true
 
 		var ttft time.Duration
 		var last time.Time
@@ -282,6 +279,13 @@ func runDARIArm(ctx context.Context, turns int, sched Schedule) (Result, error) 
 		done := false
 		for !done {
 			rec, err := client.conn.RecvRecord()
+			if firstRecord {
+				// Warm turn-start: reused-connection send→first-record.
+				if turn > 0 {
+					warms = append(warms, float64(time.Since(warmSend).Microseconds())/1000.0)
+				}
+				firstRecord = false
+			}
 			if err != nil {
 				return res, err
 			}
@@ -458,7 +462,7 @@ func runSSEArm(ctx context.Context, turns int, sched Schedule) (Result, error) {
 	base := fmt.Sprintf("http://%s", pia.addr)
 
 	client := &http.Client{}
-	var ttfts, itls, totals, colds []float64
+	var ttfts, itls, totals, colds, warms []float64
 	var wireBytes int64
 	chunks := 0
 
@@ -472,14 +476,22 @@ func runSSEArm(ctx context.Context, turns int, sched Schedule) (Result, error) {
 		if err != nil {
 			return res, err
 		}
+		// SSE reconnects every turn by design: the full connect+send is
+		// recorded as the per-turn (cold) overhead each turn.
 		colds = append(colds, float64(time.Since(turnStart).Microseconds())/1000.0)
 
 		reader := bufio.NewReader(resp.Body)
 		var ttft time.Duration
 		var last time.Time
 		itlThis := []float64{}
+		sseFirstLine := true
 		for {
 			line, err := reader.ReadString('\n')
+			if sseFirstLine {
+				// Warm-equivalent: request-send→first-SSE-byte.
+				warms = append(warms, float64(time.Since(t0).Microseconds())/1000.0)
+				sseFirstLine = false
+			}
 			wireBytes += int64(len(line))
 			if len(line) > 6 && line[:6] == "data: " {
 				payload := line[6:]
@@ -521,6 +533,7 @@ func runSSEArm(ctx context.Context, turns int, sched Schedule) (Result, error) {
 	res.ITLp95ms = pct(itls, 0.95)
 	res.TotalMs = median(totals)
 	res.ColdStartMs = median(colds)
+	res.WarmTurnMs = median(warms)
 	res.BytesPerTurn = wireBytes / int64(turns)
 	res.ChunksObserved = chunks
 	return res, nil
@@ -621,16 +634,21 @@ func runWSArm(ctx context.Context, turns int, sched Schedule) (Result, error) {
 		if err := conn.WriteMessage(websocket.TextMessage, reqBody); err != nil {
 			return res, err
 		}
-		if turn > 0 {
-			warms = append(warms, float64(time.Since(warmSend).Microseconds())/1000.0)
-		}
 		wireBytes += int64(len(reqBody)) + 8
+		firstRecord := true
 
 		var ttft time.Duration
 		var last time.Time
 		itlThis := []float64{}
 		for {
 			mt, msg, err := conn.ReadMessage()
+			if firstRecord {
+				// Warm turn-start: reused-connection send→first-record.
+				if turn > 0 {
+					warms = append(warms, float64(time.Since(warmSend).Microseconds())/1000.0)
+				}
+				firstRecord = false
+			}
 			if err != nil {
 				return res, err
 			}
