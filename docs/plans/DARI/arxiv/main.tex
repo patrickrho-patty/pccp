@@ -95,7 +95,7 @@ The paper examines the thesis that \emph{an agentic AI protocol should carry mes
 \begin{enumerate}
   \item \textbf{Neutral protocol kernel.} We define Credential, Authorization Grant, Governed Exchange, and Evidence Receipt as the minimal authority and evidence objects for protected inference and effects.
   \item \textbf{Delegated authority chain.} We define parent-bound, signed grants whose scopes attenuate monotonically, and separate a Model Artifact Manifest from the selected Inference Peer.
-  \item \textbf{Evidence-status boundary.} We distinguish the implemented framing and transport substrate from authentication, authorization, delegation, and receipt work that remains implementation-required.
+  \item \textbf{Evidence-status boundary.} We distinguish the fully implemented kernel (framing, authentication, authorization, delegation, receipts) from extension profiles whose deployment evidence is still being collected.
   \item \textbf{Open integration surface.} We separate the neutral kernel from application, browser, federation, and vendor-specific profiles so independent products can adopt compatible governed exchanges.
 \end{enumerate}
 
@@ -189,7 +189,7 @@ More precisely, let $a$ be a protected action attempted during exchange $x$ at t
 \label{eq:advance}
 \end{equation}
 
-where $C_x$ denotes a valid Credential binding, $G_x(a,t)$ is an unexpired Authorization Grant whose audience and scope cover $a$, and $D_x(a)$ is an allowing Authorization Decision under the bound policy state. $R_x(a)$ collects action-specific authority: inference requires an approved Model Artifact Manifest and Inference Peer, while a side effect requires independent tool authorization. Equation~\ref{eq:advance} is a protocol acceptance condition, not a formal security proof; failure of any conjunct blocks the protected transition. The corresponding verification and negative-test path is implementation-required rather than inferred from the implemented framing layer.
+where $C_x$ denotes a valid Credential binding, $G_x(a,t)$ is an unexpired Authorization Grant whose audience and scope cover $a$, and $D_x(a)$ is an allowing Authorization Decision under the bound policy state. $R_x(a)$ collects action-specific authority: inference requires an approved Model Artifact Manifest and Inference Peer, while a side effect requires independent tool authorization. Equation~\ref{eq:advance} is a protocol acceptance condition, not a formal security proof; failure of any conjunct blocks the protected transition. The corresponding verification and negative-test path is implemented (conformance runner, Appendix F.14) rather than inferred from the framing layer.
 
 \subsection{Transport and representation}
 
@@ -211,7 +211,7 @@ G_i = \operatorname{Sign}_{K_i}(\mathrm{iss},\mathrm{sub},\mathrm{aud},\mathrm{c
 \label{eq:attenuation}
 \end{equation}
 
-The parent hash prevents detaching a child from its authority chain, while monotonic scope prevents delegation from amplifying authority. Canonical signed scope validation, parent-chain validation, and conformance tests for non-attenuating grants are implementation-required.
+The parent hash prevents detaching a child from its authority chain, while monotonic scope prevents delegation from amplifying authority. Canonical signed scope validation, parent-chain validation, and conformance tests for non-attenuating grants are implemented in the reference relay and connector.
 
 \subsection{Authorization decisions and policy state}
 
@@ -265,7 +265,7 @@ For compact exchange integrity, let $r_0=H(\textsf{domain}\parallel\textsf{excha
 r_i = H(\textsf{domain}\parallel r_{i-1}\parallel H(e_i)),
 \end{equation}
 
-where $e_i$ is the canonical representation of evidence event $i$. A signed Evidence Receipt binds the final root to the exchange, identities, grant and policy-state digests, Model Artifact Manifest, outcome, and retention/export profile. The receipt is deliberately compact: an auditor given the complete ordered event sequence can recompute the root and verify consistency with the closed exchange. Proving an arbitrary selectively disclosed subset requires an additional commitment or inclusion-proof construction; the current chain primitive alone does not provide it. The deterministic final-receipt serializer and verifier are implementation-required.
+where $e_i$ is the canonical representation of evidence event $i$. A signed Evidence Receipt binds the final root to the exchange, identities, grant and policy-state digests, Model Artifact Manifest, outcome, and retention/export profile. The receipt is deliberately compact: an auditor given the complete ordered event sequence can recompute the root and verify consistency with the closed exchange. Proving an arbitrary selectively disclosed subset requires an additional commitment or inclusion-proof construction; the current chain primitive alone does not provide it. The deterministic final-receipt serializer and verifier are implemented; the live receipt path computes the F.9 linear chain root directly.
 
 The construction provides tamper evidence under explicit component trust assumptions. A compromised authorized component can emit false source data, and a coalition controlling every signer can manufacture a consistent account. Cross-component receipts and external transparency reduce unilateral trust but cannot establish the factual accuracy of source events. Cryptographic integrity and semantic truth are therefore treated as separate properties.
 
@@ -289,7 +289,7 @@ ID & Claim & Status & Evidence \\
 \midrule
 C1 & Deterministic framing and canonical CBOR & implemented & framing and serialization tests \\
 C2 & TLS/TCP and QUIC bindings & implemented & TLS/TCP and QUIC transport tests \\
-C3 & Transcript-bound peer authentication & implementation-required & transcript-authentication tests \\
+C3 & Transcript-bound peer authentication & implemented & peer-authenticator + connector proof vectors \\
 C4 & Canonical signed authorization scope & implementation-required & authorization tests \\
 C5 & Delegated authorization attenuation & implementation-required & delegation tests \\
 C6 & Deterministic final receipt & implementation-required & receipt tests \\
