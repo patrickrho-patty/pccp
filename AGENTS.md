@@ -1,6 +1,6 @@
 # Rules
 
-**Do not create worktrees. Work directly within the forge branch. Do not create new branches.**
+**Work within forge branches. Feature tracks may run in nested worktrees under `.worktrees/` (gitignored in the parent checkout). Do not create new branches or worktrees without explicit user direction.**
 
 ## Preserve Environment & Secrets Files — Company Policy
 
