@@ -36,13 +36,14 @@ type GPUInfo struct {
 }
 
 // introspectEngine queries the engine's OpenAI-compatible /v1/models and
-// Prometheus /metrics endpoints. The engine is local; timeouts are short.
+// Prometheus /metrics endpoints (root base URL, matching VLLMAdapter). The
+// engine is local; timeouts are short.
 func introspectEngine(baseURL string) (EngineInfo, error) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	base := strings.TrimSuffix(baseURL, "/")
 
 	info := EngineInfo{}
-	resp, err := client.Get(base + "/models")
+	resp, err := client.Get(base + "/v1/models")
 	if err != nil {
 		return info, fmt.Errorf("pia: engine /models: %w", err)
 	}

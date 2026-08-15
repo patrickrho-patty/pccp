@@ -83,7 +83,7 @@ func TestIntrospectEngineModels(t *testing.T) {
 	}))
 	defer engine.Close()
 
-	info, err := introspectEngine(engine.URL + "/v1")
+	info, err := introspectEngine(engine.URL)
 	if err != nil {
 		t.Fatalf("introspect: %v", err)
 	}
