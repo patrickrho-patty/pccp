@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/patrickrho-patty/pccp/internal/config"
@@ -114,6 +115,25 @@ func main() {
 
 	// HTTP admin API (for control-plane operations, NOT for protocol traffic)
 	server := relay.NewServer(svc)
+
+	// dari.web/1 browser carrier (Task 13): constrained WebSocket
+	// fallback on the admin listener; origins from env (never inline
+	// credentials).
+	if origins := os.Getenv("DARI_WEB_ORIGIN_ALLOWLIST"); origins != "" {
+		var allowed []string
+		for _, o := range strings.Split(origins, ",") {
+			if o = strings.TrimSpace(o); o != "" {
+				allowed = append(allowed, o)
+			}
+		}
+		wb, err := svc.NewWebBindingServer(allowed)
+		if err != nil {
+			log.Printf("DARI web carrier disabled: %v", err)
+		} else {
+			server.SetWebBinding(wb)
+			log.Printf("DARI web carrier mounted (/dari.web/1, %d allowed origins)", len(allowed))
+		}
+	}
 	if err := server.ListenAndServe(httpAddr); err != nil {
 		log.Fatalf("relay server error: %v", err)
 	}

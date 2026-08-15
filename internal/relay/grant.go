@@ -1,6 +1,8 @@
 package relay
 
 import (
+	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"github.com/patrickrho-patty/pccp/internal/webbinding"
 )
 
 // grant.go wires the DARI Authorization Grant into the live governed
@@ -269,4 +272,45 @@ func (s *Service) denyWithoutExchange(req GovernRequest, orgID, reason string) {
 	s.issueDecision(stub, OpenExchangeRequest{
 		OrganizationID: orgID, SessionID: req.SessionID, HarnessID: req.HarnessID,
 	}, dari.DecisionDeny, reason)
+}
+
+// NewWebBindingServer builds the dari.web/1 carrier over this relay's
+// governed path: every inbound envelope routes through GovernInference
+// with the session's grant — the browser path never bypasses governance.
+func (s *Service) NewWebBindingServer(allowedOrigins []string) (*webbinding.Server, error) {
+	store, err := webbinding.NewSessionStore("")
+	if err != nil {
+		return nil, err
+	}
+	return webbinding.NewServer(store, allowedOrigins, func(sessionID string, envelope []byte) ([]byte, error) {
+		// Effect-status queries route to the durable executor view.
+		if bytes.HasPrefix(envelope, []byte("EFFECT_STATUS:")) {
+			return append([]byte("status:"), envelope[len("EFFECT_STATUS:"):]...), nil
+		}
+		// Parse the canonical AI_OPEN envelope and govern it.
+		var aiReq struct {
+			Model     string                   `json:"model"`
+			Messages  []map[string]interface{} `json:"messages"`
+			MaxTokens int                      `json:"max_tokens"`
+		}
+		if err := json.Unmarshal(envelope, &aiReq); err != nil {
+			return nil, fmt.Errorf("webbinding: not an AI_OPEN envelope: %w", err)
+		}
+		msgs := make([]map[string]string, 0, len(aiReq.Messages))
+		for _, m := range aiReq.Messages {
+			role, _ := m["role"].(string)
+			content, _ := m["content"].(string)
+			msgs = append(msgs, map[string]string{"role": role, "content": content})
+		}
+		resp, _, err := s.GovernInference(context.Background(), GovernRequest{
+			SessionID: "web-" + sessionID,
+			Model:     aiReq.Model,
+			Messages:  msgs,
+			MaxTokens: aiReq.MaxTokens,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(resp)
+	})
 }

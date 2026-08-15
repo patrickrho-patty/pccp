@@ -21,6 +21,10 @@ spec:
           command: ["relay"]
           ports:
             - containerPort: 8090
+            - containerPort: 8444
+              name: dari-native
+            - containerPort: 8445
+              name: dari-web
               name: relay-http
           env:
             - name: PCCP_RELAY_HTTP_ADDR
@@ -52,3 +56,9 @@ spec:
     - port: 8090
       targetPort: 8090
       name: relay
+  # dari.web/1 browser carrier (Task 13): WebTransport/HTTP-3 on 8445
+  # with the constrained WebSocket fallback on the same listener.
+  # Origin allowlist is explicit; credentials never appear in manifests.
+  # Env (set via the secret/system references above, not inline):
+  #   DARI_WEB_ORIGIN_ALLOWLIST=https://app.example
+  #   PCCP_RELAY_TLS_CERT / PCCP_RELAY_TLS_KEY (H3 certificate)

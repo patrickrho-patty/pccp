@@ -60,3 +60,14 @@ services:
 
 volumes:
   pccp-data:
+
+  # DARI web carrier (dari.web/1): WT/H3 + WS fallback for browsers.
+  dari-web:
+    build: .
+    command: ["pccp-relay", "-dari-addr", ":8445"]
+    ports:
+      - "8445:8445/udp"
+      - "8445:8445/tcp"
+    environment:
+      - PCCP_RELAY_DARI_ADDR=:8445
+      - DARI_WEB_ORIGIN_ALLOWLIST=${DARI_WEB_ORIGIN_ALLOWLIST:-}

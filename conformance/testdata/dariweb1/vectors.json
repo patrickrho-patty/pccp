@@ -1,0 +1,31 @@
+{
+  "profile": "dari.web/1",
+  "comment": "Browser-binding conformance vectors. Runtime execution lives in internal/webbinding (Go): TestWebBindingRejectsCookieWithoutProofOfPossession, TestWebBindingOriginAndSiteBinding, TestWebBindingChannelAndChallengeBinding, TestWebBindingReconnectSafety, TestWebBindingStatusQueryDoesNotReExecute, TestWebSocketFallbackCarrier, TestWTCarrierEndToEnd.",
+  "domains": {
+    "proof": "DARI-WEB-PROOF-v1\\u0000",
+    "channel_binding": "DARI-CHANNEL-BINDING-v1\\u0000",
+    "subject_key_thumbprint": "DARI-SUBJECT-KEY-v1\\u0000"
+  },
+  "carriers": {
+    "primary": "webtransport-h3",
+    "fallback": "websocket",
+    "envelope": "identical canonical DARI record framing on both (transport parity vector)"
+  },
+  "negative_cases": [
+    "cookie_only_open",
+    "bearer_only_open",
+    "cross_site_proof",
+    "wrong_channel_binding",
+    "replayed_challenge",
+    "expired_challenge",
+    "subject_key_thumbprint_mismatch",
+    "reconnect_with_swapped_key",
+    "sequence_regression",
+    "rate_limited_origin",
+    "status_query_reexecutes_forbidden"
+  ],
+  "handshake": {
+    "both_carriers": ["server hello (challenge + binding token)", "client open (proof)", "server open_ack"],
+    "wt_native": ["ready byte 0x00", "hello (binding token only)", "challenge_request(origin)", "challenge", "open", "open_ack"]
+  }
+}

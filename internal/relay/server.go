@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gorilla/websocket"
+
 	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"github.com/patrickrho-patty/pccp/internal/webbinding"
 )
 
 // Server is the Relay HTTP API server.
@@ -17,7 +20,12 @@ import (
 // CBOR framing), but provides the same governance semantics for initial integration.
 type Server struct {
 	svc *Service
+	// webBinding mounts the dari.web/1 carrier when configured.
+	webBinding *webbinding.Server
 }
+
+// SetWebBinding installs the dari.web/1 browser carrier.
+func (s *Server) SetWebBinding(w *webbinding.Server) { s.webBinding = w }
 
 // NewServer creates a new Relay HTTP server.
 func NewServer(svc *Service) *Server {
@@ -35,6 +43,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/inference", s.handleInference)
 	mux.HandleFunc("/v1/provenance/changesets", s.handleListChangeSets)
 	mux.HandleFunc("/v1/harnesses/revoke", s.handleRevokeHarness)
+	// dari.web/1 constrained WebSocket fallback carrier (Task 13). The
+	// governance handler routes AI_OPEN envelopes through the SAME
+	// GovernInference path as the native transport.
+	if s.webBinding != nil {
+		upgrader := websocket.Upgrader{
+			CheckOrigin:     func(r *http.Request) bool { return true }, // origin policy enforced inside
+			ReadBufferSize:  4096,
+			WriteBufferSize: 4096,
+		}
+		mux.Handle("/dari.web/1", s.webBinding.HTTPHandler(upgrader))
+	}
 
 	return mux
 }

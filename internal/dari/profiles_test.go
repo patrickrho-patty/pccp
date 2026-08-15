@@ -22,14 +22,22 @@ func TestProfileNegotiationMatrix(t *testing.T) {
 		t.Fatal("dari.tools/1 must be registered as passed")
 	}
 
-	// dari.web/1 is UNSUPPORTED with the recorded reason.
-	res, err = reg.Negotiate([]ProfileOffer{{Profile: "dari.web/1"}})
-	if err != nil || res[0].Status != ProfileUnsupported || res[0].ReasonCode == "" {
-		t.Fatalf("web must be UNSUPPORTED with reason: %+v %v", res[0], err)
+	// dari.web/1 (Task 13): runtime implemented + in-process vectors
+	// passing; negotiated EXACT for implemented capabilities, DEGRADED
+	// when a capability outside the implemented set is requested.
+	res, err = reg.Negotiate([]ProfileOffer{{Profile: "dari.web/1", Capabilities: []CapabilityOffer{{ID: "origin-binding", Critical: 1}}}})
+	if err != nil || res[0].Status != ProfileExact {
+		t.Fatalf("web core capability must be EXACT: %+v %v", res[0], err)
+	}
+	res, err = reg.Negotiate([]ProfileOffer{{Profile: "dari.web/1", Capabilities: []CapabilityOffer{{ID: "browser-deployment-evidence", Critical: 0}}}})
+	if err != nil || res[0].Status != ProfileDegraded {
+		t.Fatalf("web deployment evidence must be DEGRADED (non-critical omission): %+v %v", res[0], err)
 	}
 
-	// CRITICAL web offer fails negotiation entirely (F.14 case 10).
-	_, err = reg.Negotiate([]ProfileOffer{{Profile: "dari.web/1", Capabilities: []CapabilityOffer{{ID: "origin-binding", Critical: 1}}}})
+	// CRITICAL web capability the runtime does NOT implement fails
+	// negotiation entirely (F.14 case 10: an unimplemented critical
+	// capability on a critical offer).
+	_, err = reg.Negotiate([]ProfileOffer{{Profile: "dari.web/1", Capabilities: []CapabilityOffer{{ID: "not-implemented-critical", Critical: 1}}}})
 	if !errors.Is(err, ErrNegotiationFailed) {
 		t.Fatalf("critical UNSUPPORTED must fail negotiation, got %v", err)
 	}

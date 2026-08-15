@@ -94,9 +94,17 @@ func NewProfileRegistry() *ProfileRegistry {
 		id: "dari.model-supply/1", deps: []string{"dari/1"},
 		exact: []string{"model-artifact-manifest", "endpoint-authorization"},
 	}}, true, "")
-	// Runtime profiles whose gates have NOT passed: UNSUPPORTED with
-	// recorded reasons (map §3 — schema existence changes nothing).
-	r.Register(RegisteredProfile{Handler: &staticProfile{id: "dari.web/1", deps: []string{"dari/1"}}}, false, "Task 13 runtime gate not passed: no WebTransport/HTTP3 binding, browser proof-of-possession, or reconnect vectors")
+	// dari.web/1 (Task 13): the runtime exists — WT/H3 carrier, WS
+	// fallback, origin binding, browser proof-of-possession, durable
+	// reconnect, effect-status — with in-process conformance vectors
+	// passing (internal/webbinding). Evidence gap: deployment against
+	// real browsers. Per map §3 that keeps the profile below EXACT;
+	// negotiated as DEGRADED omitting the (non-critical)
+	// browser-deployment-evidence capability.
+	r.Register(RegisteredProfile{Handler: &staticProfile{
+		id: "dari.web/1", deps: []string{"dari/1"},
+		exact: []string{"webtransport-h3", "websocket-fallback", "origin-binding", "browser-proof-of-possession", "reconnect", "effect-status", "rate-limits", "idle-expiry"},
+	}}, true, "")
 	r.Register(RegisteredProfile{Handler: &staticProfile{id: "dari.federation/1", deps: []string{"dari/1"}}}, false, "Task 14 runtime gate not passed: no trust-bundle discovery, policy intersection, or residency vectors")
 	r.Register(RegisteredProfile{Handler: &staticProfile{id: "dari.collab/1", deps: []string{"dari/1"}}}, false, "Task 18 runtime gate not passed: no encrypted ordered delivery or resumable file transfer")
 	r.Register(RegisteredProfile{Handler: &staticProfile{id: "dari.media/1", deps: []string{"dari/1", "dari.collab/1"}}}, false, "Task 18 runtime gate not passed: no governed media runtime")
