@@ -105,7 +105,16 @@ func NewProfileRegistry() *ProfileRegistry {
 		id: "dari.web/1", deps: []string{"dari/1"},
 		exact: []string{"webtransport-h3", "websocket-fallback", "origin-binding", "browser-proof-of-possession", "reconnect", "effect-status", "rate-limits", "idle-expiry"},
 	}}, true, "")
-	r.Register(RegisteredProfile{Handler: &staticProfile{id: "dari.federation/1", deps: []string{"dari/1"}}}, false, "Task 14 runtime gate not passed: no trust-bundle discovery, policy intersection, or residency vectors")
+	// dari.federation/1 (Task 14): runtime implemented in
+	// internal/darifederation with in-process vectors passing (trust
+	// bundle ledger, bilateral issuer/audience, policy intersection,
+	// residency, cross-domain receipts). Deployment evidence
+	// (a real partner domain interconnect) remains open — negotiated
+	// DEGRADED omitting the non-critical partner-deployment-evidence.
+	r.Register(RegisteredProfile{Handler: &staticProfile{
+		id: "dari.federation/1", deps: []string{"dari/1"},
+		exact: []string{"trust-bundle-import", "rollback-protection", "quarantine", "issuer-audience-validation", "policy-intersection", "residency", "cross-domain-receipts", "staleness"},
+	}}, true, "")
 	r.Register(RegisteredProfile{Handler: &staticProfile{id: "dari.collab/1", deps: []string{"dari/1"}}}, false, "Task 18 runtime gate not passed: no encrypted ordered delivery or resumable file transfer")
 	r.Register(RegisteredProfile{Handler: &staticProfile{id: "dari.media/1", deps: []string{"dari/1", "dari.collab/1"}}}, false, "Task 18 runtime gate not passed: no governed media runtime")
 	return r
