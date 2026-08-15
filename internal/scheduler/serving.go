@@ -32,7 +32,8 @@ func (s *Serving) Start(ctx context.Context) {
 }
 
 // NewServingHandler returns the combined HTTP handler: the admin
-// read-through API (S1.5) plus the unified gateway ingress (S2).
+// read-through API (S1.5), the unified gateway ingress (S2), and the
+// S10 observability views.
 func NewServingHandler(svc *Scheduler, adminToken string) http.Handler {
 	admin := NewHTTPHandler(svc, adminToken)
 	serving := svc.Serving
@@ -44,6 +45,16 @@ func NewServingHandler(svc *Scheduler, adminToken string) http.Handler {
 	mux.HandleFunc("/v1/messages", serving.Gateway.HandleAnthropicMessages)
 	mux.HandleFunc("/v1/models", serving.Gateway.HandleModelDiscovery)
 	mux.HandleFunc("/v1/embeddings", serving.Gateway.HandleEmbeddings)
+
+	// S10 observability views (fleet/queue/cache/perf/routing/scaling).
+	obs := NewObservability(svc)
+	views := obs.AdminViews("")
+	mux.Handle("/api/v1/fleet", views)
+	mux.Handle("/api/v1/queue", views)
+	mux.Handle("/api/v1/cache", views)
+	mux.Handle("/api/v1/perf", views)
+	mux.Handle("/api/v1/routing", views)
+	mux.Handle("/api/v1/scaling", views)
 	return mux
 }
 
