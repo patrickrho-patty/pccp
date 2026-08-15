@@ -69,6 +69,7 @@ func TestS2GatewayDispatchEndToEnd(t *testing.T) {
 
 	// 5. Gateway request: alias resolves, queues, dispatches, completes.
 	svc.Serving.Gateway.Rewriter().SetAlias("ko-coder", "Qwen3.6-27B-FP8")
+	svc.Serving.Gateway.Rewriter().SetTenantModels("tenant-a", []string{"Qwen3.6-27B-FP8"})
 	body := `{"model":"ko-coder","messages":[{"role":"user","content":"안녕하세요"}],"max_tokens":20}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "tenant-a")
@@ -122,6 +123,7 @@ func TestS2GatewayNoWorkerFailsClosed(t *testing.T) {
 	}
 	envJSON, _ := json.Marshal(env)
 
+	svc.Serving.Gateway.Rewriter().SetTenantModels("t1", []string{"nowhere-model"})
 	body := `{"model":"any-model","messages":[{"role":"user","content":"hi"}],"max_tokens":10}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "t1")

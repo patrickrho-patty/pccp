@@ -117,3 +117,31 @@ func TestRewriteAbSplitEven(t *testing.T) {
 		t.Fatalf("a+b = %d, want 1000 (no other targets)", a+b)
 	}
 }
+
+func TestTenantModelAccess(t *testing.T) {
+	rw := NewModelRewriter(nil)
+	rw.SetAlias("shared-model", "catalog-shared")
+	// tenant-a may use it; tenant-b may not.
+	rw.SetTenantModels("tenant-a", []string{"catalog-shared", "catalog-a-only"})
+	rw.SetTenantModels("tenant-b", []string{"catalog-b-only"})
+
+	if err := rw.CheckTenantAccess("tenant-a", "catalog-shared"); err != nil {
+		t.Fatalf("tenant-a access denied: %v", err)
+	}
+	if err := rw.CheckTenantAccess("tenant-b", "catalog-shared"); err == nil {
+		t.Fatal("tenant-b must not access catalog-shared")
+	}
+	if err := rw.CheckTenantAccess("tenant-b", "catalog-b-only"); err != nil {
+		t.Fatalf("tenant-b own model denied: %v", err)
+	}
+}
+
+func TestTenantModelAccessUnconfiguredDenies(t *testing.T) {
+	// Fail closed: a tenant with no configured allow-list can access
+	// nothing.
+	rw := NewModelRewriter(nil)
+	rw.SetAlias("m", "catalog-m")
+	if err := rw.CheckTenantAccess("unknown-tenant", "catalog-m"); err == nil {
+		t.Fatal("unconfigured tenant must be denied (fail closed)")
+	}
+}

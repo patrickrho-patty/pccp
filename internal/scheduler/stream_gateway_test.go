@@ -16,6 +16,7 @@ func TestGatewayStreamingSSE(t *testing.T) {
 	d.SetSelector(sel)
 	startLoop(t, d)
 	g.Rewriter().SetAlias("m", "model-a")
+	g.Rewriter().SetTenantModels("t1", []string{"model-a"})
 
 	body := `{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":10,"stream":true}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))

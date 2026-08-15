@@ -151,6 +151,13 @@ func (g *Gateway) handleIngress(w http.ResponseWriter, r *http.Request, anthropi
 	if tenant == "" {
 		tenant = "default"
 	}
+	// Per-tenant model access: the resolved catalog ID must be in the
+	// tenant's allow-list (spec §14 row 17; fail closed for tenants with
+	// no configured access).
+	if err := g.rewriter.CheckTenantAccess(tenant, resolved); err != nil {
+		writeGatewayError(w, http.StatusForbidden, err.Error())
+		return
+	}
 	// The traffic class is resolved from the signed envelope only.
 	// X-Traffic-Class headers are ignored entirely — a client cannot
 	// self-assert priority (spec §13.14). No envelope = batch.

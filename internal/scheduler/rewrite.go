@@ -28,13 +28,15 @@ type RewriteRule struct {
 	Strategy    RewriteStrategy
 }
 
-// ModelRewriter resolves external model names to serving catalog IDs. All
-// methods are safe for concurrent use (the live path resolves on every
-// request).
+// ModelRewriter resolves external model names to serving catalog IDs and
+// enforces per-tenant model access (spec §14 row 17: per-tenant access).
+// All methods are safe for concurrent use (the live path resolves on
+// every request).
 type ModelRewriter struct {
 	mu      sync.RWMutex
 	aliases map[string]string
 	rules   map[string]RewriteRule
+	tenants map[string]map[string]bool // tenant → allowed catalog IDs
 }
 
 // NewModelRewriter builds an empty rewriter. Rules may be seeded and then
@@ -43,6 +45,7 @@ func NewModelRewriter(seed map[string]RewriteRule) *ModelRewriter {
 	rw := &ModelRewriter{
 		aliases: make(map[string]string),
 		rules:   make(map[string]RewriteRule),
+		tenants: make(map[string]map[string]bool),
 	}
 	for name, rule := range seed {
 		rw.rules[name] = rule
@@ -140,4 +143,32 @@ func (rw *ModelRewriter) Resolve(name string, correlationID int64) (string, erro
 	default:
 		return "", fmt.Errorf("scheduler: unknown rewrite strategy %q for %q", rule.Strategy, name)
 	}
+}
+
+// SetTenantModels replaces a tenant's allowed catalog-ID set. An empty
+// list removes the tenant entirely (deny all — fail closed).
+func (rw *ModelRewriter) SetTenantModels(tenant string, allowed []string) {
+	rw.mu.Lock()
+	defer rw.mu.Unlock()
+	if len(allowed) == 0 {
+		delete(rw.tenants, tenant)
+		return
+	}
+	set := make(map[string]bool, len(allowed))
+	for _, m := range allowed {
+		set[m] = true
+	}
+	rw.tenants[tenant] = set
+}
+
+// CheckTenantAccess reports whether the tenant may use the resolved
+// catalog model. Unconfigured tenants are denied (fail closed).
+func (rw *ModelRewriter) CheckTenantAccess(tenant, catalogID string) error {
+	rw.mu.RLock()
+	defer rw.mu.RUnlock()
+	set, ok := rw.tenants[tenant]
+	if !ok || !set[catalogID] {
+		return fmt.Errorf("scheduler: tenant %q has no access to model %q", tenant, catalogID)
+	}
+	return nil
 }

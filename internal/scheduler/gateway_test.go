@@ -18,7 +18,9 @@ func newTestGateway() (*Gateway, *Dispatcher) {
 	return g, d
 }
 
-// setTestTraffic attaches a signed traffic envelope for the given class.
+// setTestTraffic attaches a signed traffic envelope for the given class
+// and grants the tenant access to the resolved model (production tenants
+// get their allow-list from policy config).
 func setTestTraffic(t *testing.T, g *Gateway, req *http.Request, tenant, class string) {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -50,6 +52,7 @@ func newServingGateway(t *testing.T) (*Gateway, *Dispatcher) {
 func TestGatewayChatCompletionsCompletes(t *testing.T) {
 	g, _ := newServingGateway(t)
 	g.Rewriter().SetAlias("ko-coder", "model-a")
+	g.Rewriter().SetTenantModels("tenant-1", []string{"model-a"})
 	body := `{"model":"ko-coder","messages":[{"role":"user","content":"안녕하세요"}],"max_tokens":100}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "tenant-1")
@@ -99,6 +102,7 @@ func TestGatewayModelRewriteApplied(t *testing.T) {
 	d.SetSelector(sel)
 	startLoop(t, d)
 	g.Rewriter().SetAlias("ko-coder", "patty-kocoder-v1")
+	g.Rewriter().SetTenantModels("t1", []string{"patty-kocoder-v1"})
 
 	body := `{"model":"ko-coder","messages":[{"role":"user","content":"hi"}],"max_tokens":10}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
@@ -125,6 +129,7 @@ func TestGatewayCorrelationIDDeterminism(t *testing.T) {
 	d.SetSelector(sel)
 	startLoop(t, d)
 	g.Rewriter().SetSplit("ab", map[string]int{"a": 50, "b": 50})
+	g.Rewriter().SetTenantModels("t1", []string{"a", "b"})
 	mk := func(corr string) string {
 		body := `{"model":"ab","messages":[{"role":"user","content":"x"}],"max_tokens":5}`
 		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
@@ -202,6 +207,7 @@ func TestGatewayModelDiscovery(t *testing.T) {
 func TestGatewayAnthropicFormatAccepted(t *testing.T) {
 	g, _ := newServingGateway(t)
 	g.Rewriter().SetAlias("ko-coder", "model-a")
+	g.Rewriter().SetTenantModels("t1", []string{"model-a"})
 	body := `{"model":"ko-coder","max_tokens":50,"messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "t1")
@@ -218,6 +224,7 @@ func TestGatewayCancellationPropagates(t *testing.T) {
 	// No worker at all: the request parks in the queue; the client's
 	// disconnect must pull it out (no zombie work; spec §14 row 1).
 	g.Rewriter().SetAlias("m", "model-a")
+	g.Rewriter().SetTenantModels("t1", []string{"model-a"})
 	body := `{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":10}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "t1")
