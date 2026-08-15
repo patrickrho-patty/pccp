@@ -158,3 +158,37 @@ func TestRegistryHeartbeatResurrectsLapsedWorker(t *testing.T) {
 		t.Fatal("heartbeat should restore lapsed worker to leased state")
 	}
 }
+
+func TestRegistryQuarantineFlagLifecycle(t *testing.T) {
+	r := newTestRegistry(t)
+	card, pub, priv := signedTestCard(t)
+	now := time.Now()
+	if _, err := r.Register(card, pub, now); err != nil {
+		t.Fatal(err)
+	}
+
+	r.MarkQuarantined(card.WorkerID, "below reachability")
+	entry, ok := r.Get(card.WorkerID)
+	if !ok || !entry.Quarantined {
+		t.Fatal("quarantine flag not set")
+	}
+
+	// Heartbeats preserve the flag until a full re-register passes.
+	card.Sign(priv)
+	renewed, err := r.Heartbeat(card, pub, now.Add(5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !renewed.Quarantined {
+		t.Fatal("heartbeat must preserve quarantine")
+	}
+
+	// A fresh admission clears it.
+	reRegistered, err := r.Register(card, pub, now.Add(10*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reRegistered.Quarantined {
+		t.Fatal("full re-register must clear quarantine")
+	}
+}

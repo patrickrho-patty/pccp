@@ -13,12 +13,14 @@ import (
 // died fails its next heartbeat's introspection and arrives with a degraded
 // card; the lease tracks liveness independently.
 type WorkerEntry struct {
-	Card        WorkerCard
-	PPCPubKey   ed25519.PublicKey
-	AdmittedAt  time.Time
-	LastSeen    time.Time
-	LeasedUntil time.Time
-	Lapsed      bool
+	Card             WorkerCard
+	PPCPubKey        ed25519.PublicKey
+	AdmittedAt       time.Time
+	LastSeen         time.Time
+	LeasedUntil      time.Time
+	Lapsed           bool
+	Quarantined      bool
+	QuarantineReason string
 }
 
 // Registry is the in-memory fleet registry. State is ephemeral by design:
@@ -109,6 +111,17 @@ func (r *Registry) List() []WorkerEntry {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Card.WorkerID < out[j].Card.WorkerID })
 	return out
+}
+
+// MarkQuarantined flags a worker as admitted-but-non-compliant. The flag
+// persists across heartbeats and clears on the next full registration.
+func (r *Registry) MarkQuarantined(workerID, reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if entry, ok := r.workers[workerID]; ok {
+		entry.Quarantined = true
+		entry.QuarantineReason = reason
+	}
 }
 
 // Sweep marks workers past their lease as lapsed and evicts those past the
