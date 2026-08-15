@@ -248,7 +248,7 @@ func TestInvariant11_ProfileIsolation(t *testing.T) {
 
 // Invariant 12: Administrative communication and enforcement are separate message classes.
 func TestInvariant12_AdminSeparation(t *testing.T) {
-	// MsgAdminDirective (administrative enforcement) and 
+	// MsgAdminDirective (administrative enforcement) and
 	// MsgBroadcast (administrative communication) are different message types
 	if dari.MsgAdminDirective == dari.MsgBroadcast {
 		t.Fatal("INVARIANT VIOLATION: admin directive and broadcast share the same message type")
