@@ -227,8 +227,8 @@ Figure~\ref{fig:lifecycle} makes the ordering explicit. The optional branch is w
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=\textwidth]{figures/governed-exchange-lifecycle.png}
-  \caption{Conceptual protocol-design view of a Governed Exchange. Protected work advances through ordered authority gates; a model-generated tool proposal requires an independent authorization transition before execution. This figure specifies intended semantics, not measured implementation coverage.}
+  \input{figures/governed-exchange-lifecycle.tex}
+  \caption{Protocol-design view of a Governed Exchange. Protected work advances through ordered authority gates; a model-generated tool proposal requires an independent authorization transition before execution. This figure specifies intended semantics, not measured implementation coverage.}
   \label{fig:lifecycle}
 \end{figure}
 
@@ -398,7 +398,7 @@ Figure~\ref{fig:primitive-latency} makes the four-order-of-magnitude range visib
 \begin{figure}[H]
   \centering
   \input{figures/primitive-latency-plot.tex}
-  \caption{Empirical median latency of the seven measured in-memory primitives, read directly from the checked-in TSV and shown on a logarithmic axis. The isolated view makes the protocol's CPU-side cost directly comparable with the interactive latency budget in Equation~\ref{eq:budget-ratio}.}
+  \caption{Empirical median latency of the seven measured in-memory primitives, read directly from the checked-in TSV and shown on a logarithmic axis; network, policy, storage, model, GPU, and token-generation costs are excluded. The isolated view makes the protocol's CPU-side cost directly comparable with the interactive latency budget in Equation~\ref{eq:budget-ratio}.}
   \label{fig:primitive-latency}
 \end{figure}
 
@@ -472,7 +472,7 @@ The state machine and invariants are candidates for formal modeling. This paper 
 
 Evidence about prompts, files, tool use, edits, and human decisions can improve incident response and accountability while also enabling disproportionate monitoring. The protocol therefore supports retention and export profiles, but technical configurability is insufficient. Deployments should establish lawful purpose, employee notice, access review, appeal, data-subject handling, and a separation between security investigations and performance management. Public deployments should default to operationally minimal traces; regulated deployments should justify deeper retention per policy domain.
 
-Generated conceptual artwork is used for Figures~\ref{fig:overview} and~\ref{fig:lifecycle}; both communicate protocol architecture and contain no measurement or factual comparison. Figure~\ref{fig:model-identity} is a LaTeX-native protocol-design diagram. Figure~\ref{fig:primitive-latency} and the empirical tables are derived from the checked-in benchmark dataset; the retained medians are reproducible from the benchmark harness, while new statistical claims would require publication of raw per-run output.
+Figure~\ref{fig:overview} is Qwen-generated conceptual artwork and contains no measurement or factual comparison. Figures~\ref{fig:lifecycle} and~\ref{fig:model-identity} are LaTeX-native protocol-design diagrams that specify intended semantics rather than implementation coverage. Figure~\ref{fig:primitive-latency} is a data-derived empirical visualization of the checked-in benchmark dataset; the retained medians are reproducible from the benchmark harness, while new statistical claims would require publication of raw per-run output.
 
 \section{Reproducibility}
 

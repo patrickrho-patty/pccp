@@ -1,24 +1,26 @@
 \begin{tikzpicture}[
   font=\small,
   state/.style={draw=paperink, fill=paperblue, rounded corners=2pt,
-    minimum width=1.95cm, minimum height=0.95cm, align=center,
+    minimum width=1.9cm, minimum height=0.95cm, align=center,
     text=paperink, font=\small\bfseries},
   gate/.style={draw=paperamber, fill=paperamberlight, rounded corners=2pt,
     align=center, text=paperink, font=\scriptsize, inner sep=3pt,
-    minimum width=1.85cm, minimum height=0.95cm},
+    text width=1.55cm, minimum height=0.7cm},
   optnode/.style={draw=paperblueedge, dashed, thick, fill=paperblue,
     rounded corners=2pt, align=center, text=paperink, font=\scriptsize\bfseries,
-    minimum width=2.05cm, minimum height=0.8cm},
+    minimum width=1.7cm, minimum height=0.7cm},
   required/.style={-{Latex[length=2.2mm]}, very thick, draw=paperink},
   optional/.style={-{Latex[length=2.2mm]}, thick, dashed, draw=paperblueedge},
-  note/.style={font=\scriptsize, text=paperblueedge, align=center}
+  note/.style={font=\scriptsize, text=paperblueedge, align=center, text width=6cm}
 ]
+  \path[use as bounding box] (-1.0cm,-5.2cm) rectangle (12.0cm,0.6cm);
+
   \node[state] (open) {\textsc{Open}};
-  \node[state, right=0.28cm of open] (auth) {\textsc{Authorize}};
-  \node[state, right=0.28cm of auth] (route) {\textsc{Route}};
-  \node[state, right=0.28cm of route] (stream) {\textsc{Stream}};
-  \node[state, right=0.28cm of stream] (final) {\textsc{Finalize}};
-  \node[state, right=0.28cm of final] (close) {\textsc{Close}};
+  \node[state, right=0.3cm of open] (auth) {\textsc{Authorize}};
+  \node[state, right=0.3cm of auth] (route) {\textsc{Route}};
+  \node[state, right=0.3cm of route] (stream) {\textsc{Stream}};
+  \node[state, right=0.3cm of stream] (final) {\textsc{Finalize}};
+  \node[state, right=0.3cm of final] (close) {\textsc{Close}};
 
   \draw[required] (open) -- (auth);
   \draw[required] (auth) -- (route);
@@ -26,21 +28,21 @@
   \draw[required] (stream) -- (final);
   \draw[required] (final) -- (close);
 
-  \node[gate, below=0.45cm of open] {Credential binding\\peer + session};
-  \node[gate, below=0.45cm of auth] {Authorization Grant\\decision + policy state};
-  \node[gate, below=0.45cm of route] {Model Artifact Manifest\\+ Inference Peer};
-  \node[gate, below=0.45cm of stream] {ordered lanes\\tokens + data};
-  \node[gate, below=0.45cm of final] {effect authorization\\idempotency class};
-  \node[gate, below=0.45cm of close] {Evidence Receipt\\signed root};
+  \node[gate, below=0.5cm of open] {Credential\\binding\\peer/session};
+  \node[gate, below=0.5cm of auth] {Authorization\\Grant\\decision\\policy state};
+  \node[gate, below=0.5cm of route, text width=1.7cm] {Model Artifact\\Manifest\\+ Inference\\Peer};
+  \node[gate, below=0.5cm of stream] {ordered lanes\\tokens + data};
+  \node[gate, below=0.5cm of final] {effect\\authorization\\idempotency\\class};
+  \node[gate, below=0.5cm of close] {Evidence\\Receipt\\signed root};
 
-  \node[optnode, below=2.6cm of stream, xshift=-1.05cm] (toolprop) {Tool proposed\\(optional)};
-  \node[gate, right=2.25cm of toolprop] (toolauth) {Tool authorization\\(required if proposed)};
-  \node[optnode, right=2.25cm of toolauth] (exec) {Effect\\executed};
+  \node[optnode, below=2.95cm of stream, xshift=-1.4cm] (toolprop) {Tool proposed\\(optional)};
+  \node[gate, below=2.95cm of stream, xshift=0.8cm] (toolauth) {Tool\\authorization\\(required)};
+  \node[optnode, below=2.95cm of stream, xshift=3.3cm] (exec) {Effect\\executed};
 
   \draw[optional] ([yshift=-0.18cm]stream.south) -| (toolprop.north);
   \draw[required] (toolprop) -- (toolauth);
   \draw[required] (toolauth) -- (exec);
   \draw[optional] (exec.north) |- ([yshift=-0.3cm]final.east);
 
-  \node[note, below=0.35cm of toolauth] {Tool proposal is optional;\\authorization of a proposed tool is never optional.};
+  \node[note, below=0.45cm of toolauth] {Tool proposal is optional;\\authorization of a proposed tool is never optional.};
 \end{tikzpicture}

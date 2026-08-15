@@ -242,8 +242,8 @@ G_i = \operatorname{Sign}_{K_i}(\mathrm{iss},\mathrm{sub},\mathrm{aud},\mathrm{c
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=\textwidth]{figures/governed-exchange-lifecycle.png}
-  \caption{거버넌스 적용 교환의 개념적 프로토콜 설계. 보호 대상 작업은 정해진 순서에 따라 권한을 검증한 뒤 진행된다. 모델이 생성한 도구 제안은 실행 전에 독립적인 인가 전이를 거쳐야 한다. 본 그림은 의도한 의미론을 설명하며 구현 범위를 측정한 결과가 아니다.}
+  \input{figures/governed-exchange-lifecycle-ko.tex}
+  \caption{거버넌스 적용 교환의 프로토콜 설계도. 보호 대상 작업은 정해진 순서에 따라 권한을 검증한 뒤 진행된다. 모델이 생성한 도구 제안은 실행 전에 독립적인 인가 전이를 거쳐야 한다. 본 그림은 의도한 의미론을 설명하며 구현 범위를 측정한 결과가 아니다.}
   \label{fig:lifecycle}
 \end{figure}
 
@@ -413,7 +413,7 @@ $A(s)$는 1~KiB에서 2.33, 1~MiB에서 2.01로 감소한다. 매 반복에서 �
 \begin{figure}[H]
   \centering
   \input{figures/primitive-latency-plot-ko.tex}
-  \caption{저장소의 TSV 데이터에서 산출한 일곱 가지 메모리 내 핵심 연산의 중앙값 지연시간. 로그 척도를 사용하였으며, 분리 측정한 CPU 비용을 식~\ref{eq:budget-ratio}의 상호작용 지연 예산과 직접 비교할 수 있다.}
+  \caption{저장소의 TSV 데이터에서 산출한 일곱 가지 메모리 내 핵심 연산의 중앙값 지연시간. 네트워크, 정책, 저장소, 모델, GPU, 토큰 생성 비용은 제외하며, 로그 척도를 사용하여 분리 측정한 CPU 비용을 식~\ref{eq:budget-ratio}의 상호작용 지연 예산과 직접 비교할 수 있다.}
   \label{fig:primitive-latency}
 \end{figure}
 
@@ -487,7 +487,7 @@ DARI는 인접 표준을 대체하지 않고 보완한다. 적용 기준은 응�
 
 프롬프트, 파일, 도구 사용, 편집, 인간 판단에 관한 증거는 사고 대응과 책임성을 향상시키지만 과도한 모니터링을 가능하게 할 수 있다. 프로토콜이 보존 및 반출 프로파일을 지원하더라도 기술적 설정만으로는 충분하지 않다. 배포자는 적법한 목적, 직원 고지, 접근 검토, 이의 제기, 정보주체 처리, 보안 조사와 성과 관리의 분리를 마련해야 한다. 공개 배포는 운영에 필요한 최소 추적을 기본값으로 삼고, 규제 배포는 정책 영역별로 더 깊은 보존의 필요성을 입증해야 한다.
 
-그림~\ref{fig:overview}과 그림~\ref{fig:lifecycle}에는 생성형 개념 이미지를 사용했으며, 두 그림은 프로토콜 구조를 설명할 뿐 측정이나 사실 비교를 포함하지 않는다. 그림~\ref{fig:model-identity}는 LaTeX 기반 프로토콜 설계도이다. 그림~\ref{fig:primitive-latency}와 경험적 표는 체크인된 벤치마크 데이터셋에서 생성한다. 보존된 중앙값은 벤치마크 하네스로 재현할 수 있으며, 새로운 통계적 주장을 위해서는 개별 실행 원자료를 별도로 공개해야 한다.
+그림~\ref{fig:overview}은 Qwen으로 생성한 개념 이미지이며, 측정이나 사실 비교를 포함하지 않는다. 그림~\ref{fig:lifecycle}과 그림~\ref{fig:model-identity}는 LaTeX 기반 프로토콜 설계도로, 구현 범위가 아니라 의도한 의미론을 나타낸다. 그림~\ref{fig:primitive-latency}는 체크인된 벤치마크 데이터셋에서 생성한 데이터 기반 실증 시각화이다. 보존된 중앙값은 벤치마크 하네스로 재현할 수 있으며, 새로운 통계적 주장을 위해서는 개별 실행 원자료를 별도로 공개해야 한다.
 
 \section{재현 가능성}
 

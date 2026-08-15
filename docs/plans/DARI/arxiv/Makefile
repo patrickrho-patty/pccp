@@ -2,7 +2,9 @@ LATEXMK := latexmk
 EN_TARGET := DARI_arXiv
 KO_TARGET := DARI_arXiv_KO
 ARCHIVE := DARI-arXiv-source.tar.gz
-COMMON_DEPS := references.bib $(wildcard figures/*) benchmark-data/core-primitives.tsv
+FIG_TEX := figures/governed-exchange-lifecycle.tex figures/governed-exchange-lifecycle-ko.tex figures/model-identity-chain.tex figures/model-identity-chain-ko.tex figures/primitive-latency-plot.tex figures/primitive-latency-plot-ko.tex
+BENCH_TSV := benchmark-data/core-primitives.tsv
+COMMON_DEPS := references.bib $(FIG_TEX) $(BENCH_TSV) $(wildcard figures/*.png)
 
 .PHONY: all verify check clean archive
 
