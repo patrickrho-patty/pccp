@@ -122,19 +122,35 @@ func (s *Service) RebuildEpochFromRules(orgID, transitionMode string, requiresAc
 					}
 				}
 				if len(ids) > 0 {
-					modelSets[r.ScopeName] = ids
+					// Same-scope model rules also only strengthen:
+					// their allow-lists intersect, they never widen.
+					if cur, ok := modelSets[r.ScopeName]; ok {
+						seen := map[string]bool{}
+						for _, id := range cur {
+							seen[id] = true
+						}
+						next := []string{}
+						for _, id := range ids {
+							if seen[id] {
+								next = append(next, id)
+							}
+						}
+						modelSets[r.ScopeName] = next
+					} else {
+						modelSets[r.ScopeName] = ids
+					}
 				}
 			}
 		case "tools":
-			req.ToolPolicy[r.ScopeName] = cfg
+			mergeConfig(req.ToolPolicy, r.ScopeName, cfg)
 		case "data":
-			req.DLPPolicy[r.ScopeName] = cfg
+			mergeConfig(req.DLPPolicy, r.ScopeName, cfg)
 		case "network":
-			req.NetworkPolicy[r.ScopeName] = cfg
+			mergeConfig(req.NetworkPolicy, r.ScopeName, cfg)
 		case "scm":
-			req.SCMPolicy[r.ScopeName] = cfg
+			mergeConfig(req.SCMPolicy, r.ScopeName, cfg)
 		case "session":
-			req.SessionPolicy[r.ScopeName] = cfg
+			mergeConfig(req.SessionPolicy, r.ScopeName, cfg)
 		}
 	}
 
@@ -339,4 +355,18 @@ func HashPolicies(v interface{}) string {
 	}
 	h := sha256.Sum256(b)
 	return "sha256:" + hex.EncodeToString(h[:])
+}
+
+// mergeConfig folds a rule config into a scope bucket: overlapping
+// keys are taken from the later rule; a scope's restrictions are never
+// dropped by a sibling rule.
+func mergeConfig(bucket map[string]interface{}, scopeName string, cfg map[string]interface{}) {
+	existing, ok := bucket[scopeName].(map[string]interface{})
+	if !ok || existing == nil {
+		existing = map[string]interface{}{}
+	}
+	for k, v := range cfg {
+		existing[k] = v
+	}
+	bucket[scopeName] = existing
 }
