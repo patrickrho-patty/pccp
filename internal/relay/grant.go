@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
@@ -208,4 +209,64 @@ func GrantHexForWire(env *dari.GrantEnvelope) string {
 		return ""
 	}
 	return hex.EncodeToString(env.COSEBytes)
+}
+
+// issueDecision signs and attaches the F.6 Authorization Decision for
+// an exchange outcome (Task 9). The decision is immutable once signed;
+// denial carries a stable reason code and no obligations.
+func (s *Service) issueDecision(ex *Exchange, req OpenExchangeRequest, outcome dari.DecisionOutcome, reason string) {
+	actionDigest := dari.Digest{}
+	if h := dari.KernelObjectDigestRaw("DARI-ACTION-v1\x00", []byte(req.ModelPackageID+"|"+ex.ID)); true {
+		actionDigest = h
+	}
+	body := &dari.AuthorizationDecisionBody{
+		Version:                1,
+		DecisionID:             "dec-" + ex.ID,
+		ExchangeID:             ex.ID,
+		GovernedExchangeDigest: dari.KernelObjectDigestRaw("DARI-EXCHANGE-v1\x00", []byte(ex.ID)),
+		ActionDigest:           actionDigest,
+		LeafGrantDigest:        ex.GrantDigest,
+		PolicyCheckpointDigest: dari.KernelObjectDigestRaw("DARI-POLICY-CHECKPOINT-v1\x00", []byte(ex.PolicyEpochID)),
+		EvaluatorPeerID:        s.relayID,
+		Outcome:                outcome,
+		IssuedAtMs:             time.Now().UnixMilli(),
+		ExpiresAtMs:            time.Now().Add(time.Hour).UnixMilli(),
+	}
+	if reason != "" {
+		body.ReasonCodes = []string{reason}
+	}
+	env, err := dari.SignAuthorizationDecision(body, s.policy.SigningPrivateKey())
+	if err != nil {
+		log.Printf("relay: warning: sign decision for %s: %v", ex.ID, err)
+		return
+	}
+	ex.Decision = env
+	s.mu.Lock()
+	s.decisionLog = append(s.decisionLog, env)
+	if len(s.decisionLog) > 256 {
+		s.decisionLog = s.decisionLog[len(s.decisionLog)-256:]
+	}
+	s.mu.Unlock()
+}
+
+// RecentDecisions returns the bounded log of signed decisions.
+func (s *Service) RecentDecisions() []*dari.DecisionEnvelope {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]*dari.DecisionEnvelope(nil), s.decisionLog...)
+}
+
+// denyWithoutExchange signs a DENY decision for a refusal that occurs
+// before a governed exchange exists (unknown model, closed session).
+// The stub exchange carries the request's binding fields so the
+// decision is still attributable and evidenced (F.6).
+func (s *Service) denyWithoutExchange(req GovernRequest, orgID, reason string) {
+	stub := &Exchange{
+		ID: dari.GenerateID("exch"), SessionID: req.SessionID,
+		OrganizationID: orgID, HarnessID: req.HarnessID,
+		State: dari.ExchangeDenied, Verdict: dari.VerdictDeny,
+	}
+	s.issueDecision(stub, OpenExchangeRequest{
+		OrganizationID: orgID, SessionID: req.SessionID, HarnessID: req.HarnessID,
+	}, dari.DecisionDeny, reason)
 }

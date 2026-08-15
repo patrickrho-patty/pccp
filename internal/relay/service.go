@@ -48,6 +48,10 @@ type Service struct {
 	exchanges map[string]*Exchange
 	// listeners receive revocation propagation (Task 6).
 	listeners []*DARIListener
+	// decisionLog is a bounded ring of recently issued F.6 decisions
+	// (exchanges are removed at close; the log preserves the signed
+	// decisions for operational inspection).
+	decisionLog []*dari.DecisionEnvelope
 }
 
 // inferenceForwarder forwards a governed inference request to a PIA.
@@ -80,6 +84,12 @@ type Exchange struct {
 	Verdict         dari.VerdictResult `json:"verdict"`
 	OpenedAt        time.Time          `json:"opened_at"`
 	EvidenceChain   []string           `json:"evidence_chain,omitempty"`
+	// Decision is the F.6 signed Authorization Decision issued for
+	// this exchange (Task 9): immutable, bound to the exchange, the
+	// leaf grant, and the policy checkpoint digests.
+	Decision *dari.DecisionEnvelope `json:"-"`
+	// GrantDigest is the signed-object digest of the governing grant.
+	GrantDigest dari.Digest `json:"grant_digest,omitempty"`
 }
 
 // New creates a new Relay service.
@@ -167,10 +177,15 @@ func (s *Service) OpenExchange(ctx context.Context, req OpenExchangeRequest) (*E
 	if err != nil {
 		exchange.State = dari.ExchangeDenied
 		exchange.Verdict = dari.VerdictDeny
+		s.issueDecision(exchange, req, dari.DecisionDeny, "authorization_failed")
 		s.recordExchange(exchange)
 		return exchange, dari.VerdictDeny, fmt.Errorf("relay: authorization failed: %w", err)
 	}
 	exchange.Verdict = verdict
+	if verdict == dari.VerdictAllow {
+		// F.6: an unqualified ALLOW for a plain authorized exchange.
+		s.issueDecision(exchange, req, dari.DecisionAllow, "")
+	}
 	exchange.EndpointID = resolution.EndpointID
 	exchange.EndpointLeaseID = resolution.EpLeaseID
 
@@ -585,8 +600,10 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 		if err := s.db.Where("session_id = ?", req.SessionID).First(&session).Error; err == nil {
 			switch session.Status {
 			case "closed", "terminated":
+				s.denyWithoutExchange(req, orgID, "session_"+session.Status)
 				return nil, nil, fmt.Errorf("relay: session %s is %s — inference refused", req.SessionID, session.Status)
 			case "paused", "idle":
+				s.denyWithoutExchange(req, orgID, "session_"+session.Status)
 				return nil, nil, fmt.Errorf("relay: session %s is %s — resume the session before inference", req.SessionID, session.Status)
 			}
 		}
@@ -616,6 +633,7 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 	// 3. Resolve model_id → published ModelPackage (reject recalled).
 	var pkg models.ModelPackage
 	if err := s.db.Where("model_id = ?", req.Model).First(&pkg).Error; err != nil {
+		s.denyWithoutExchange(req, orgID, "model_not_registered")
 		return nil, nil, fmt.Errorf("relay: model %s not in registry: %w", req.Model, err)
 	}
 	if pkg.State == "recalled" {
