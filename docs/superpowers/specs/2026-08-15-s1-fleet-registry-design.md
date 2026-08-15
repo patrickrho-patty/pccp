@@ -22,12 +22,12 @@ spec → plan → implementation cycle:
 | # | Sub-project | Depends on |
 |---|---|---|
 | S1 | Fleet registry + worker capability cards + signed worker config | — |
-| S2 | Global admission + late-binding queue (tenant QoS, fairness, SLO ordering) | S1 |
-| S3 | Capability/load/KV-aware router + exact KV index + session affinity | S1, S2 |
+| S2 | Global admission + late-binding queue (fair priority classes, weighted DRR, tenant QoS, SLO ordering, two-layer overload protection) | S1 |
+| S3 | Cost-model router (uncached prefill + projected decode KV + active requests − KV credits) + exact KV index + media-hash routing + breakable session affinity | S1, S2 |
 | S4 | Online-learned latency prediction (TTFT/TPOT per serving config) | S1, S3 |
 | S5 | SLO- and MTP-aware scheduling | S2, S3 |
-| S6 | P/D disaggregation + tiered KV fabric + NIXL/RDMA transfer | S3 |
-| S7 | Autoscaling (reactive/predictive/heterogeneous) + fast model actuation + engine lifecycle | S1, S5 |
+| S6 | P/D disaggregation + tiered KV fabric + NIXL/RDMA transfer (aggregated-first; conditional P/D only after telemetry — SGLang caveat) | S3 |
+| S7 | Dual-loop autoscaling (forecast floor + burst fast-loop; MTP-aware; warm spare) + heterogeneous/WVA + fast model actuation + engine lifecycle | S1, S5 |
 | S8 | Resilience: request migration, cancellation propagation, shadow failover, health probing | S2–S6 |
 | S9 | Batch/async gateway with slack-capacity filling | S2 |
 | S10 | Observability, routing explainability, admin dashboards | all |
@@ -40,7 +40,8 @@ spec → plan → implementation cycle:
 Reference codebases are vendored in `tools/` (this worktree). We study their logic and
 designs and re-implement the ideas in Go/DARI — never copy source. `tools/dynamo` is the
 Rust source tree; `tools/llm-d` is a docs/proposals-only checkout (no Go tree — consult
-upstream `kubernetes-sigs/llm-d` for source when needed).
+upstream `kubernetes-sigs/llm-d` for source when needed). Versioned reference points at
+review time: Dynamo 1.3.1, llm-d 0.8, Gateway API Inference Extension (GAIE) v1.5.0 (GA).
 
 ### 2.1 S1 direct references
 
@@ -238,3 +239,87 @@ deliberately human-in-the-loop. DARI push is a later option.
 | K8s/CRD adapter (llm-d style) | later (non-K8s first — gov/bare-metal market) |
 | DARI push of signed configs | later |
 | Queue, routing, KV, autoscaling — everything else | S2–S11 |
+
+## 12. Cross-Sub-Project Requirements Register (plan-review 2026-08-15)
+
+Locked requirements for later sub-projects, captured from the revised production-design
+review. Design inputs for S2–S11, not S1 implementation targets. Each numbered decision
+below is binding on its sub-project's future spec.
+
+### 12.1 Routing inputs (S3/S4 — every placement decision consumes these)
+
+KV-prefix locality · active prefill tokens · active decode KV · expected output length ·
+active request count · GPU pressure · image/media cache affinity · session affinity ·
+topology.
+
+### 12.2 Scaling inputs (S5/S7)
+
+TTFT target · ITL target · queue pressure · KV utilization · traffic forecast ·
+autoscaling.
+
+### 12.3 Locked decisions
+
+1. **No user-count balancing (S3).** Cost model:
+   `cost = prefillScale × max(activePrefill + newPrompt − KVOverlapCredits, 0) +
+   projectedDecodeKV + w × activeRequests`; pick the lowest-cost eligible worker.
+   Add model-based prefill-duration estimation, output-length hints, overload filters,
+   queue-class scheduling.
+2. **Affinity is a preference, never a pin (S3).** `(worker, dp_rank)` affinity is used
+   while warm; the router breaks it when worker load (KV%, queue depth) is unacceptable —
+   sacrificing a cache hit beats overloading a hot worker.
+3. **Expected-output-length hints (S2/S3).** Per request, internally expose:
+   `input_tokens, cached_input_tokens, expected_output_tokens, max_output_tokens,
+   media_tokens, request_class, tenant_priority`. Remaining expected length decays a
+   request's projected future load as it nears completion.
+4. **Fair queues, not FIFO (S2).** Priority classes (interactive / standard / batch, plus
+   agentic/background from the original list) scheduled by weighted Deficit Round Robin
+   with tenant fairness within each class. Reference weights: interactive-paid 10,
+   interactive-normal 6, background-agent 2, batch 1.
+5. **Classify by workload, don't pre-partition GPUs (S2/S7).** Request classes
+   S 0–8K / M 8–32K / L 32–64K / XL 64–128K / IMAGE. Start with a unified fleet;
+   create separate pools only when production telemetry shows XL requests degrading
+   interactive latency (an idle long-context pool wastes GPUs).
+6. **Media-hash-aware KV routing (S3).** Media hash joins the cache key
+   (Qwen3.6/SGLang verified); repeated-image conversations route back to warm media
+   state; encoder cache lands in S6.
+7. **Two-layer overload protection (S2).** Edge admission on fleet signals — total
+   queued tokens, P95 TTFT, P95 ITL, fleet KV utilization, active prefill tokens,
+   active decode KV, available replicas — with a short bounded wait budget, then
+   reject/retry. Plus small worker-local queues to keep continuous batching saturated.
+8. **Dual-loop autoscaling from tokens + latency, never GPU utilization (S7).** Long
+   loop (~minutes): traffic forecast, historical ISL/OSL, time-of-day/MAU patterns,
+   TTFT/ITL targets → warm capacity floor. Fast loop (~seconds): queue tokens, KV%,
+   TTFT, ITL, active prefills → burst scale-up. Always maintain warm spare capacity —
+   GPU cold starts are not Lambda cold starts.
+9. **MTP-aware capacity (S5/S7).** Planner decode-latency estimates must use MTP
+   accepted-token length (e.g. ~1.8 accepted tokens per verification; real deployment
+   ~30 tok/s with MTP), otherwise decode-GPU count is badly overestimated.
+10. **Aggregated serving first; no P/D at start (S6).** Qwen3.6-27B FP8 fits one H100 →
+    all replicas aggregated. Evaluate P/D only when traces show long prefills hurting
+    decode. Conditional disaggregation is the target design but is **not yet supported
+    with SGLang** (Dynamo docs) — do not architect around it yet.
+
+### 12.4 Reference-status updates (llm-d v0.8, GAIE GA)
+
+- llm-d v0.8: precise prefix-cache routing, event-driven KV indexing, CPU/SSD tiered KV,
+  P/D disaggregation, predicted TTFT/ITL routing, flow control + fairness, multimodal
+  serving, HPA/KEDA integration, Workload Variant Autoscaler.
+- Gateway API Inference Extension (GAIE) is GA at v1.5.0; richer endpoint-picker logic
+  lives in llm-d; InferencePool remains the K8s-standard API — our later K8s adapter
+  must target InferencePool.
+- llm-d's online XGBoost TTFT/TPOT prediction (learned per request×worker from live
+  traffic; matches or beats hand-weighted scores when request costs vary widely) is the
+  S4 design baseline.
+
+### 12.5 One scheduler rule (S2–S7)
+
+PCCP builds exactly ONE placement path combining the strongest attributes of both
+systems — never parallel Dynamo-style and llm-d-style implementations of KV routing,
+P/D, autoscaling, or load balancing. (The advisor's "deploy Dynamo as the fleet brain"
+is superseded by the product premise: PCCP *is* the brain. We adopt the formulas and
+insights, not the deployment.)
+
+### 12.6 Deployment assumptions (inform S5/S7 tuning)
+
+FP8 model (+ experimentally validated FP8 KV), MTP on, 128K hard context, images
+yes / video no, ~25–35% fleet headroom rather than running at theoretical saturation.
