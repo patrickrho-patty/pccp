@@ -2,10 +2,14 @@ package api
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -149,6 +153,11 @@ func (s *Server) setupRouter() {
 	// Realtime SSE (no middleware — HandleSSE does its own JWT check via query param)
 	r.Get("/api/realtime/sse", s.ext().Realtime.HandleSSE(s.jwtSecret))
 
+	// SCM webhook ingestion (repositories C1) — unauthenticated like
+	// real SCM webhooks; each delivery is verified against the repo's
+	// HMAC secret before any state is touched.
+	r.Post("/webhooks/scm/{repoId}", s.handleScmWebhook)
+
 	// Authenticated API routes
 	r.Route("/api", func(r chi.Router) {
 		r.Use(s.authMiddleware)
@@ -220,6 +229,13 @@ func (s *Server) setupRouter() {
 			r.Put("/{id}", s.handleUpdateRepository)
 			r.Delete("/{id}", s.handleDeleteRepository)
 			r.Post("/{id}/baselines", s.handleCreateBaseline)
+			r.Get("/{id}/baselines", s.handleListRepoBaselines)
+			r.Post("/{id}/sync", s.handleSyncRepository)
+			r.Get("/{id}/tree", s.handleRepoTree)
+			r.Get("/{id}/file", s.handleRepoFile)
+			r.Get("/{id}/branches", s.handleListRepoBranches)
+			r.Get("/{id}/webhook", s.handleGetRepoWebhook)
+			r.Post("/{id}/webhook/rotate", s.handleRotateRepoWebhookSecret)
 		})
 
 		// Sessions
@@ -1297,6 +1313,13 @@ func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) 
 	if orgID != "" {
 		q = q.Where("organization_id = ?", orgID)
 	}
+	// Server-side filters (repositories C4/UX10): project, sensitivity,
+	// status.
+	for _, key := range []string{"project_id", "sensitivity", "status"} {
+		if v := r.URL.Query().Get(key); v != "" {
+			q = q.Where(key+" = ?", v)
+		}
+	}
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 		page, _ := strconv.Atoi(pageStr)
 		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
@@ -1346,6 +1369,12 @@ func (s *Server) handleRegisterRepository(w http.ResponseWriter, r *http.Request
 	}
 	if req.Sensitivity == "" {
 		req.Sensitivity = "internal"
+	}
+	// Clone URL validation (repositories UX8): reject garbage before
+	// it reaches the sync pipeline.
+	if req.CloneURL != "" && !strings.HasPrefix(req.CloneURL, "http") && !strings.HasPrefix(req.CloneURL, "git@") && !strings.HasPrefix(req.CloneURL, "file://") && !strings.HasPrefix(req.CloneURL, "/") {
+		writeError(w, http.StatusBadRequest, "clone_url must be an https/ssh/file URL")
+		return
 	}
 	repo, err := s.identity.RegisterRepository(orgID, req.ProjectID, req.Name, req.FullName, req.DefaultBranch, req.Sensitivity)
 	if err != nil {
@@ -1405,6 +1434,185 @@ func (s *Server) handleCreateBaseline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, baseline)
+}
+
+// handleListRepoBaselines lists the immutable task baselines recorded
+// for a repository (repositories B1, §18.3).
+func (s *Server) handleListRepoBaselines(w http.ResponseWriter, r *http.Request) {
+	repoID := chi.URLParam(r, "id")
+	var baselines []models.RepoBaseline
+	s.db.Where("repository_id = ?", repoID).Order("created_at DESC").Find(&baselines)
+	writeJSON(w, http.StatusOK, baselines)
+}
+
+// handleSyncRepository runs the SCM connector sync (repositories C1):
+// clones the repo and records HEAD + sync status, feeding the file
+// browser.
+func (s *Server) handleSyncRepository(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var repo models.Repository
+	if err := s.db.First(&repo, "id = ?", id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "저장소를 찾을 수 없습니다")
+		return
+	}
+	if repo.CloneURL == "" {
+		writeError(w, http.StatusBadRequest, "clone_url이 없습니다 · Repository has no clone URL")
+		return
+	}
+	head, err := s.gitscm.SyncRepository(r.Context(), &repo)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "synced", "head": head, "sync_status": "synced",
+	})
+}
+
+// handleRepoTree lists a directory in the synced clone (repositories
+// C2 file browser).
+func (s *Server) handleRepoTree(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	path := r.URL.Query().Get("path")
+	entries, err := s.gitscm.ListTree(id, path)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
+// handleRepoFile returns file content from the synced clone
+// (repositories C2 file browser).
+func (s *Server) handleRepoFile(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	path := r.URL.Query().Get("path")
+	content, err := s.gitscm.ReadFile(id, path)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"path": path, "content": string(content)})
+}
+
+// handleListRepoBranches lists the repo's governed branches with their
+// protection rules (repositories A4/C3).
+func (s *Server) handleListRepoBranches(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var repo models.Repository
+	if s.db.First(&repo, "id = ?", id).Error != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var branches []models.Branch
+	s.db.Where("repository_id = ?", id).Find(&branches)
+	// Default branch exists implicitly even before the first rule row.
+	found := false
+	for _, b := range branches {
+		if b.Name == repo.DefaultBranch {
+			found = true
+		}
+	}
+	if !found {
+		branches = append([]models.Branch{{
+			RepositoryID:    id,
+			Name:            repo.DefaultBranch,
+			ProtectionLevel: "standard",
+			Status:          "active",
+		}}, branches...)
+	}
+	writeJSON(w, http.StatusOK, branches)
+}
+
+// handleGetRepoWebhook returns the webhook ingest URL + secret for the
+// repository (repositories UX13): SCM systems POST push events here.
+func (s *Server) handleGetRepoWebhook(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var repo models.Repository
+	if err := s.db.First(&repo, "id = ?", id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if repo.WebhookSecret == "" {
+		if err := s.rotateRepoWebhookSecret(&repo); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"url":    scheme + "://" + r.Host + "/webhooks/scm/" + id,
+		"secret": repo.WebhookSecret,
+	})
+}
+
+// handleRotateRepoWebhookSecret issues a fresh webhook secret.
+func (s *Server) handleRotateRepoWebhookSecret(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var repo models.Repository
+	if err := s.db.First(&repo, "id = ?", id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err := s.rotateRepoWebhookSecret(&repo); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "rotated", "secret": repo.WebhookSecret})
+}
+
+func (s *Server) rotateRepoWebhookSecret(repo *models.Repository) error {
+	secretBytes := make([]byte, 32)
+	if _, err := rand.Read(secretBytes); err != nil {
+		return err
+	}
+	repo.WebhookSecret = hex.EncodeToString(secretBytes)
+	return s.db.Save(repo).Error
+}
+
+// handleScmWebhook ingests an SCM webhook delivery (repositories C1):
+// HMAC-verified against the repo secret; records the event for
+// provenance (§18.6) and refreshes sync state on push.
+func (s *Server) handleScmWebhook(w http.ResponseWriter, r *http.Request) {
+	repoID := chi.URLParam(r, "repoId")
+	var repo models.Repository
+	if err := s.db.First(&repo, "id = ?", repoID).Error; err != nil {
+		writeError(w, http.StatusNotFound, "unknown repository")
+		return
+	}
+	payload, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "unreadable body")
+		return
+	}
+	// HMAC verification: X-PCCP-Signature = hex(sha256(secret, body)).
+	sig := r.Header.Get("X-PCCP-Signature")
+	if repo.WebhookSecret == "" || sig == "" {
+		writeError(w, http.StatusUnauthorized, "missing webhook signature")
+		return
+	}
+	mac := hmac.New(sha256.New, []byte(repo.WebhookSecret))
+	mac.Write(payload)
+	expected := hex.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(expected), []byte(sig)) {
+		writeError(w, http.StatusUnauthorized, "invalid webhook signature")
+		return
+	}
+	eventType := r.Header.Get("X-GitHub-Event")
+	if eventType == "" {
+		eventType = r.Header.Get("X-Gitlab-Event")
+	}
+	if eventType == "" {
+		eventType = "push"
+	}
+	if err := s.gitscm.IngestWebhook(&repo, eventType, payload); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "received", "event": eventType})
 }
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
@@ -3313,10 +3521,30 @@ func (s *Server) handleUpdateRepository(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var updates struct {
-		Sensitivity *string `json:"sensitivity,omitempty"`
-		Status      *string `json:"status,omitempty"`
+		Name          *string `json:"name,omitempty"`
+		ProjectID     *string `json:"project_id,omitempty"`
+		CloneURL      *string `json:"clone_url,omitempty"`
+		SCMProvider   *string `json:"scm_provider,omitempty"`
+		DefaultBranch *string `json:"default_branch,omitempty"`
+		Sensitivity   *string `json:"sensitivity,omitempty"`
+		Status        *string `json:"status,omitempty"`
 	}
 	decodeJSON(r, &updates)
+	if updates.Name != nil {
+		repo.Name = *updates.Name
+	}
+	if updates.ProjectID != nil {
+		repo.ProjectID = *updates.ProjectID
+	}
+	if updates.CloneURL != nil {
+		repo.CloneURL = *updates.CloneURL
+	}
+	if updates.SCMProvider != nil {
+		repo.SCMProvider = *updates.SCMProvider
+	}
+	if updates.DefaultBranch != nil {
+		repo.DefaultBranch = *updates.DefaultBranch
+	}
 	if updates.Sensitivity != nil {
 		repo.Sensitivity = *updates.Sensitivity
 	}

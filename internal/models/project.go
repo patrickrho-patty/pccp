@@ -27,6 +27,12 @@ type Repository struct {
 	DefaultBranch string `gorm:"type:varchar(128);default:'main'" json:"default_branch"`
 	Sensitivity   string `gorm:"type:varchar(32);default:'internal'" json:"sensitivity"` // public, internal, confidential, restricted
 	Status        string `gorm:"type:varchar(32);default:'active'" json:"status"`
+	// SCM integration state (repositories C1/UX9): populated by the
+	// sync pipeline, not enroll-time metadata.
+	LastSyncAt   string `gorm:"type:timestamp" json:"last_sync_at,omitempty"`
+	LastCommitAt string `gorm:"type:timestamp" json:"last_commit_at,omitempty"`
+	SyncStatus   string `gorm:"type:varchar(32)" json:"sync_status,omitempty"` // never, syncing, synced, failed
+	WebhookSecret string `gorm:"type:varchar(128)" json:"-"`
 }
 
 // Branch tracks a repository branch for governance (PRD §18.5).
