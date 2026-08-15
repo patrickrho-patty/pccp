@@ -98,6 +98,13 @@ type PIAConfig struct {
 	// Attestation
 	AssuranceLevel      string `json:"assurance_level"`
 	AttestationInterval string `json:"attestation_interval"` // duration string
+	// Worker-agent mode (DARI scheduler S1)
+	WorkerMode          bool   `json:"worker_mode"`
+	SchedulerAddr       string `json:"scheduler_addr"`
+	CredentialFile      string `json:"credential_file"`
+	SubjectKeyFile      string `json:"subject_key_file"`
+	ConfigEnvelopeFile  string `json:"config_envelope_file"`
+	ConfigPublicKeyHex  string `json:"config_public_key_hex"`
 	// Database
 	DBDriver string `json:"d_b_driver"`
 	DBDSN    string `json:"d_b_d_s_n"`
@@ -116,6 +123,12 @@ func LoadPIAFromEnv() PIAConfig {
 		ModelWeightsPath:    os.Getenv("PCCP_PIA_MODEL_PATH"),
 		AssuranceLevel:      getenvDefault("PCCP_PIA_ASSURANCE", "L1"),
 		AttestationInterval: getenvDefault("PCCP_PIA_ATTEST_INTERVAL", "5m"),
+		WorkerMode:          getenvBool("PCCP_PIA_WORKER_MODE", false),
+		SchedulerAddr:       getenvDefault("PCCP_PIA_SCHED_ADDR", "localhost:8445"),
+		CredentialFile:      os.Getenv("PCCP_PIA_CREDENTIAL_FILE"),
+		SubjectKeyFile:      os.Getenv("PCCP_PIA_SUBJECT_KEY_FILE"),
+		ConfigEnvelopeFile:  os.Getenv("PCCP_PIA_CONFIG_FILE"),
+		ConfigPublicKeyHex:  os.Getenv("PCCP_PIA_CONFIG_PUBKEY_HEX"),
 		DBDriver:            getenvDefault("PCCP_DB_DRIVER", "sqlite"),
 		DBDSN:               os.Getenv("PCCP_DB_DSN"),
 	}
@@ -184,4 +197,16 @@ func getenvInt(key string, defaultVal int) int {
 		return defaultVal
 	}
 	return n
+}
+
+func getenvBool(key string, defaultVal bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return defaultVal
+	}
 }

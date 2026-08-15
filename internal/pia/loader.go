@@ -75,3 +75,63 @@ func LoadSignedConfig(path string, configPubKey ed25519.PublicKey, requireSignat
 	}
 	return &envelope, nil
 }
+
+// WorkerAgentLoad is the file/env-backed input set for building a worker
+// agent (used by the PIA binary's worker mode).
+type WorkerAgentLoad struct {
+	SchedulerAddr      string
+	CredentialFile     string
+	SubjectKeyFile     string
+	ConfigEnvelopeFile string
+	ConfigPublicKeyHex string
+	EngineURL          string
+	EngineKind         string
+	DeploymentProfile  string
+}
+
+// BuildWorkerAgentConfig loads credential, subject key, and the signed
+// config envelope from disk and assembles a WorkerAgentConfig. The
+// production profile fails closed without a valid signed envelope.
+func BuildWorkerAgentConfig(in WorkerAgentLoad) (WorkerAgentConfig, error) {
+	cred, err := LoadWorkerCredential(in.CredentialFile)
+	if err != nil {
+		return WorkerAgentConfig{}, err
+	}
+	subjectPriv, err := LoadSubjectKey(in.SubjectKeyFile)
+	if err != nil {
+		return WorkerAgentConfig{}, err
+	}
+	if len(cred.PublicKey) == 0 {
+		return WorkerAgentConfig{}, fmt.Errorf("pia: credential has no subject public key")
+	}
+	if !ed25519.PublicKey(cred.PublicKey).Equal(subjectPriv.Public().(ed25519.PublicKey)) {
+		return WorkerAgentConfig{}, fmt.Errorf("pia: subject key does not match the credential")
+	}
+
+	requireSignature := in.DeploymentProfile == "production" || in.DeploymentProfile == "sovereign"
+	envelope, err := LoadSignedConfig(in.ConfigEnvelopeFile, configPubKeyFromHex(in.ConfigPublicKeyHex), requireSignature)
+	if err != nil {
+		return WorkerAgentConfig{}, err
+	}
+	if envelope != nil && envelope.Config.WorkerID != cred.SubjectPeerID {
+		return WorkerAgentConfig{}, fmt.Errorf("pia: config worker_id %q does not match credential subject %q",
+			envelope.Config.WorkerID, cred.SubjectPeerID)
+	}
+
+	return WorkerAgentConfig{
+		SchedulerAddr: in.SchedulerAddr,
+		Credential:    cred,
+		SubjectPriv:   subjectPriv,
+		EngineURL:     in.EngineURL,
+		EngineKind:    in.EngineKind,
+		SignedConfig:  envelope,
+	}, nil
+}
+
+func configPubKeyFromHex(pubHex string) ed25519.PublicKey {
+	raw, err := hex.DecodeString(strings.TrimSpace(pubHex))
+	if err != nil || len(raw) != ed25519.PublicKeySize {
+		return nil
+	}
+	return ed25519.PublicKey(raw)
+}

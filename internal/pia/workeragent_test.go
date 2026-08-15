@@ -212,3 +212,64 @@ func TestLoadSignedConfigMissingFileDevOnly(t *testing.T) {
 		t.Fatalf("dev mode must allow missing envelope: %v", err)
 	}
 }
+
+func TestBuildWorkerAgentConfigLoadsAllFiles(t *testing.T) {
+	cfg, _, _ := agentFixture(t)
+	dir := t.TempDir()
+	credPath := filepath.Join(dir, "cred.hex")
+	keyPath := filepath.Join(dir, "subject.key")
+	cfgPath := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(credPath, []byte(hex.EncodeToString(cfg.Credential.SignedCredential)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, []byte(hex.EncodeToString(cfg.SubjectPriv)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	envelopeJSON, err := json.Marshal(cfg.SignedConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, envelopeJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	built, err := BuildWorkerAgentConfig(WorkerAgentLoad{
+		SchedulerAddr:      "127.0.0.1:8445",
+		CredentialFile:     credPath,
+		SubjectKeyFile:     keyPath,
+		ConfigEnvelopeFile: cfgPath,
+		EngineURL:          cfg.EngineURL,
+		EngineKind:         cfg.EngineKind,
+		DeploymentProfile:  "dev",
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if built.Credential == nil || built.SignedConfig == nil || len(built.SubjectPriv) == 0 {
+		t.Fatal("loaded config missing fields")
+	}
+	if built.SignedConfig.Config.WorkerID != "wkr-agent-001" {
+		t.Fatalf("worker id %q", built.SignedConfig.Config.WorkerID)
+	}
+}
+
+func TestBuildWorkerAgentConfigProductionRequiresEnvelope(t *testing.T) {
+	cfg, _, _ := agentFixture(t)
+	dir := t.TempDir()
+	credPath := filepath.Join(dir, "cred.hex")
+	keyPath := filepath.Join(dir, "subject.key")
+	os.WriteFile(credPath, []byte(hex.EncodeToString(cfg.Credential.SignedCredential)), 0o600)
+	os.WriteFile(keyPath, []byte(hex.EncodeToString(cfg.SubjectPriv)), 0o600)
+
+	if _, err := BuildWorkerAgentConfig(WorkerAgentLoad{
+		SchedulerAddr:      "127.0.0.1:8445",
+		CredentialFile:     credPath,
+		SubjectKeyFile:     keyPath,
+		ConfigEnvelopeFile: filepath.Join(dir, "missing.json"),
+		EngineURL:          cfg.EngineURL,
+		EngineKind:         cfg.EngineKind,
+		DeploymentProfile:  "production",
+	}); err == nil {
+		t.Fatal("production must fail closed without a config envelope")
+	}
+}

@@ -82,6 +82,32 @@ func main() {
 		log.Printf("Re-attestation loop started (interval: %v)", interval)
 	}
 
+	// Worker-agent mode (DARI scheduler S1): PIA registers with the fleet
+	// scheduler as a trusted worker identity alongside its proxy role.
+	if cfg.WorkerMode {
+		workerCfg, err := pia.BuildWorkerAgentConfig(pia.WorkerAgentLoad{
+			SchedulerAddr:      cfg.SchedulerAddr,
+			CredentialFile:     cfg.CredentialFile,
+			SubjectKeyFile:     cfg.SubjectKeyFile,
+			ConfigEnvelopeFile: cfg.ConfigEnvelopeFile,
+			ConfigPublicKeyHex: cfg.ConfigPublicKeyHex,
+			EngineURL:          cfg.ServingEngineURL,
+			EngineKind:         cfg.ServingEngineType,
+			DeploymentProfile:  config.LoadFromEnv().DeploymentProfile,
+		})
+		if err != nil {
+			log.Fatalf("worker agent setup failed: %v", err)
+		}
+		agent, err := pia.NewWorkerAgent(workerCfg)
+		if err != nil {
+			log.Fatalf("worker agent init failed: %v", err)
+		}
+		go func() {
+			log.Printf("Worker mode: registering with scheduler at %s", cfg.SchedulerAddr)
+			agent.Run(ctx)
+		}()
+	}
+
 	go func() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
