@@ -234,6 +234,7 @@ func (d *Dispatcher) assignLocked(workerID string) *Dispatch {
 			InputTokens:          out.Request.InputTokens,
 			CachedTokens:         out.Request.CachedInputTokens,
 			ExpectedOutputTokens: out.Request.ExpectedOutputTokens,
+			RequestClass:         requestClassFor(out.Request.Class),
 		})
 		if err != nil {
 			// No eligible worker for the head request: requeue and wait
@@ -357,4 +358,17 @@ func (s *WorkerSelector) ReleaseLoad(workerID string) {
 	s.load[workerID] = l
 	s.mu.Unlock()
 	dispatchWake <- struct{}{}
+}
+
+// requestClassFor maps the queue traffic class to the SLO-scoping class
+// (agentic requests carry tighter objectives, spec §14 row 28).
+func requestClassFor(c queue.Class) string {
+	switch c {
+	case queue.ClassBackgroundAgent:
+		return "agentic"
+	case queue.ClassBatch:
+		return "batch"
+	default:
+		return "interactive"
+	}
 }
