@@ -171,16 +171,13 @@
     },
     {
       "profile": "dari.web/1",
-      "status": "DEGRADED",
-      "omitted": [
-        "browser-deployment-evidence (in-process + carrier vectors pass; real-browser deployment evidence pending)"
-      ],
+      "status": "EXACT",
       "capabilities": [
         {
           "capability": "proof-of-possession-required",
           "test": "TestRunnerWebFederationCollabMediaVectors",
           "normative_requirement": "F.13 §10 no cookie/bearer-only auth",
-          "deployment_mode": "in-process + WS/WT carriers",
+          "deployment_mode": "in-process vectors + LIVE browser deployment (real relay + real Chromium, WS carrier; docs/evidence/) + patty-webui client (kernel COSE thumbprint pinned)",
           "result": "PASS"
         },
         {
@@ -188,6 +185,13 @@
           "test": "TestRunnerCase10ProfileNegotiation",
           "normative_requirement": "F.13 §3 negotiation; F.14-10/12",
           "deployment_mode": "in-process",
+          "result": "PASS"
+        },
+        {
+          "capability": "browser-deployment-evidence",
+          "test": "TestRunnerWebFederationCollabMediaVectors",
+          "normative_requirement": "map §10 deployment vectors — live browser round-trip: origin-bound connect, PoP, governed exchange, receipt footer, reconnect-resume",
+          "deployment_mode": "LIVE (patty-webui ↔ relay binary ↔ mock-PIA on loopback; Chromium headless; evidence screenshots committed)",
           "result": "PASS"
         }
       ]
@@ -228,7 +232,7 @@
       "profile": "dari.media/1",
       "status": "DEGRADED",
       "omitted": [
-        "live-deployment-evidence (runtime vectors pass; live media deployment pending)"
+        "live-voice deferred by product decision: STT (/voice) rides the governed dari.ai/1 text path; dari.media/1 activates with omni-model live voice (runtime vectors pass)"
       ],
       "capabilities": [
         {
