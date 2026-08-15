@@ -543,3 +543,44 @@ var _ = ed25519.PublicKeySize
 // candidateKeySets flattens the JWKS into per-key candidate sets: one
 // set per (kid-slot) with each individual key, so x-only EC keys with
 // two y roots are each tried.
+
+// ProvisionOIDCUser finds or creates the console user for a verified
+// OIDC identity (mirrors ProvisionUserFromSSO for the OIDC flow).
+func (s *Service) ProvisionOIDCUser(orgID string, info *OIDCUserInfo) (*models.User, error) {
+	externalID := info.Sub
+	if externalID == "" {
+		externalID = info.Email
+	}
+	if externalID == "" {
+		return nil, fmt.Errorf("sso: oidc identity carries no sub or email")
+	}
+	var user models.User
+	err := s.db.Where("organization_id = ? AND external_id = ?", orgID, externalID).First(&user).Error
+	if err == gorm.ErrRecordNotFound {
+		user = models.User{
+			AuditBase:  models.AuditBase{OrganizationID: orgID},
+			Email:      info.Email,
+			Name:       info.Name,
+			Status:     "active",
+			AuthMethod: "oidc",
+			ExternalID: externalID,
+			Locale:     "ko-KR",
+			Timezone:   "Asia/Seoul",
+		}
+		if cerr := s.db.Create(&user).Error; cerr != nil {
+			return nil, fmt.Errorf("sso: create user: %w", cerr)
+		}
+		return &user, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("sso: lookup user: %w", err)
+	}
+	if info.Name != "" {
+		user.Name = info.Name
+	}
+	if info.Email != "" {
+		user.Email = info.Email
+	}
+	s.db.Save(&user)
+	return &user, nil
+}

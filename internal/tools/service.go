@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
@@ -65,16 +66,91 @@ func (s *Service) RequestApproval(orgID, sessionID, exchangeID, actionID, approv
 	return approval, nil
 }
 
-// DecideApproval records an approval decision.
-func (s *Service) DecideApproval(approvalID, reviewerID, decision, reason string) error {
-	result := s.db.Model(&models.Approval{}).Where("id = ?", approvalID).
+// UpdateTool updates a registered tool's mutable fields (org-scoped).
+// Nil pointers leave the corresponding field unchanged.
+func (s *Service) UpdateTool(orgID, id string, name, nameKo, category, toolClass, dangerLevel *string, requiresApproval *bool, status *string) (*models.Tool, error) {
+	var tool models.Tool
+	if err := s.db.Where("organization_id = ? AND (id = ? OR name = ?)", orgID, id, id).First(&tool).Error; err != nil {
+		return nil, fmt.Errorf("tools: tool not found: %w", err)
+	}
+	updates := map[string]interface{}{}
+	if name != nil {
+		updates["name"] = *name
+	}
+	if nameKo != nil {
+		updates["name_ko"] = *nameKo
+	}
+	if category != nil {
+		updates["category"] = *category
+	}
+	if toolClass != nil {
+		updates["tool_class"] = *toolClass
+	}
+	if dangerLevel != nil {
+		updates["danger_level"] = *dangerLevel
+	}
+	if requiresApproval != nil {
+		updates["requires_approval"] = *requiresApproval
+	}
+	if status != nil {
+		updates["status"] = *status
+	}
+	if len(updates) > 0 {
+		if err := s.db.Model(&tool).Updates(updates).Error; err != nil {
+			return nil, fmt.Errorf("tools: update tool: %w", err)
+		}
+	}
+	return &tool, nil
+}
+
+// DeleteTool removes a tool from the registry. Un-registering a tool
+// removes its authorization: CheckToolAuthorization reports "tool not
+// registered in organization" afterwards.
+func (s *Service) DeleteTool(orgID, id string) (*models.Tool, error) {
+	var tool models.Tool
+	if err := s.db.Where("organization_id = ? AND (id = ? OR name = ?)", orgID, id, id).First(&tool).Error; err != nil {
+		return nil, fmt.Errorf("tools: tool not found: %w", err)
+	}
+	if err := s.db.Delete(&tool).Error; err != nil {
+		return nil, fmt.Errorf("tools: delete tool: %w", err)
+	}
+	return &tool, nil
+}
+
+// DecideApproval records an approval decision and reflects it on the
+// linked Tool row: approving clears the tool's requires_approval flag
+// (the reviewer has granted it), any other decision keeps the flag so
+// the tool remains gated. Audit recording happens at the API layer.
+func (s *Service) DecideApproval(approvalID, reviewerID, decision, reason string) (*models.Approval, error) {
+	var approval models.Approval
+	if err := s.db.First(&approval, "id = ?", approvalID).Error; err != nil {
+		return nil, fmt.Errorf("tools: approval not found: %w", err)
+	}
+	if err := s.db.Model(&models.Approval{}).Where("id = ?", approvalID).
 		Updates(map[string]interface{}{
 			"decision":        decision,
 			"decision_reason": reason,
 			"decided_by":      reviewerID,
 			"decided_at":      time.Now().Format(time.RFC3339),
-		})
-	return result.Error
+		}).Error; err != nil {
+		return nil, fmt.Errorf("tools: decide approval: %w", err)
+	}
+
+	// Reflect the decision on the Tool row. Registry-fed approvals carry
+	// the tool's ID in ActionID; legacy runtime rows encode the tool name
+	// in ApprovalType ("<tool>_approval").
+	toolRef := approval.ActionID
+	if toolRef == "" {
+		toolRef = strings.TrimSuffix(approval.ApprovalType, "_approval")
+	}
+	if toolRef != "" && decision == "approved" {
+		if err := s.db.Model(&models.Tool{}).
+			Where("organization_id = ? AND (id = ? OR name = ?)", approval.OrganizationID, toolRef, toolRef).
+			Update("requires_approval", false).Error; err != nil {
+			return nil, fmt.Errorf("tools: clear tool approval flag: %w", err)
+		}
+	}
+	return &approval, nil
 }
 
 // CheckToolAuthorization determines if a tool use is allowed.
@@ -155,8 +231,28 @@ func (s *Service) ListTools(orgID string) ([]models.Tool, error) {
 	return tools, nil
 }
 
-// ListPendingApprovals returns pending approvals.
+// ListPendingApprovals returns pending approvals. The reviewer queue is
+// fed from the tool registry itself: every active tool still flagged
+// requires_approval gets an idempotent pending Approval row, so the
+// queue reflects reality even before a runtime caller requests one
+// (CheckToolAuthorization remains the runtime entry point).
 func (s *Service) ListPendingApprovals(orgID string) ([]models.Approval, error) {
+	var gatedTools []models.Tool
+	s.db.Where("organization_id = ? AND requires_approval = ? AND status = 'active'", orgID, true).Find(&gatedTools)
+	for _, t := range gatedTools {
+		var existing models.Approval
+		err := s.db.Where("organization_id = ? AND action_id = ? AND decision = 'pending'", orgID, t.ID).
+			First(&existing).Error
+		if err != nil {
+			s.db.Create(&models.Approval{
+				OrganizationID: orgID,
+				ActionID:       t.ID,
+				ApprovalType:   "tool_use",
+				Decision:       "pending",
+				ExpiresAt:      time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+			})
+		}
+	}
 	var approvals []models.Approval
 	s.db.Where("organization_id = ? AND decision = 'pending'", orgID).
 		Order("created_at DESC").Find(&approvals)

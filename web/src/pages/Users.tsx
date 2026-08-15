@@ -82,7 +82,7 @@ export default function Users() {
     e.preventDefault()
     try {
       await api.createUser({ ...form, business_unit_id: form.business_unit_id })
-      setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local' })
+      setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local', business_unit_id: '' })
       setShowForm(false)
       showToast('사용자 생성됨', 'success')
       load()
@@ -105,7 +105,7 @@ export default function Users() {
     try {
       await api.updateUser(editingId, { ...form, business_unit_id: form.business_unit_id })
       setEditingId(null)
-      setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local' })
+      setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local', business_unit_id: '' })
       setShowForm(false)
       showToast('수정 완료', 'success')
       load()
@@ -182,7 +182,7 @@ export default function Users() {
         <h1 className="text-2xl font-bold">사용자 <span className="text-gray-400 text-lg font-normal">Users</span></h1>
           {org && <span className="text-xs text-gray-400 ml-4">{users.filter(u => u.status !== 'offboarded').length}/{org.max_user_seats || '∞'} 좌석</span>}
         <button onClick={() => {
-          if (editingId) { setEditingId(null); setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local' }) }
+          if (editingId) { setEditingId(null); setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local', business_unit_id: '' }) }
           setShowForm(!showForm)
         }} className="btn-primary">
           {showForm ? '취소' : '+ 사용자 추가'}

@@ -45,6 +45,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/provenance/changesets", s.handleListChangeSets)
 	mux.HandleFunc("/v1/harnesses/revoke", s.handleRevokeHarness)
 	mux.HandleFunc("/v1/broadcasts", s.handleBroadcast)
+	mux.HandleFunc("/v1/catalog/broadcast", s.handleCatalogBroadcast)
 	mux.HandleFunc("/v1/admin/directives", s.handleAdminDirective)
 	mux.HandleFunc("/v1/sovereign/advisories", s.handleSovereignAdvisory)
 	// dari.web/1 constrained WebSocket fallback carrier (Task 13). The
@@ -362,4 +363,17 @@ func (s *Server) handleSovereignAdvisory(w http.ResponseWriter, r *http.Request)
 	}
 	sent := s.svc.DeliverSovereignAdvisoryToAll([]byte(req.Body))
 	writeJSON(w, http.StatusOK, map[string]any{"delivered": sent})
+}
+
+// handleCatalogBroadcast fans the current catalog snapshot out to all
+// connected sessions (web/18 B: the control plane's publish flow
+// triggers the push through this endpoint — same code path as the
+// relay-internal publish hook).
+func (s *Server) handleCatalogBroadcast(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	s.svc.OnModelPublished()
+	writeJSON(w, http.StatusOK, map[string]any{"broadcast": true})
 }

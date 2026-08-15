@@ -33,6 +33,10 @@ type ModelPackage struct {
 	ManifestDigest string `gorm:"type:varchar(128)" json:"manifest_digest"` // digest of the full manifest
 	SignatureKeyID string `gorm:"type:varchar(128)" json:"signature_key_id,omitempty"`
 	Signature      string `gorm:"type:text" json:"signature,omitempty"` // COSE-Sign1 (hex)
+	// Pricing: KRW per 1K tokens. 0 means no price is configured —
+	// cost endpoints must report "unpriced" rather than fabricate.
+	PriceInputPer1K  float64 `gorm:"default:0" json:"price_input_per_1k,omitempty"`
+	PriceOutputPer1K float64 `gorm:"default:0" json:"price_output_per_1k,omitempty"`
 	// State
 	State       string `gorm:"type:varchar(32);default:'draft'" json:"state"` // draft, published, deprecated, recalled
 	PublishedAt string `gorm:"type:timestamp" json:"published_at,omitempty"`

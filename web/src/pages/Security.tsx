@@ -48,7 +48,7 @@ const PATTERN_PRESETS = {
   ],
 }
 
-const CATEGORY_INFO = {
+const CATEGORY_INFO: Record<string, any> = {
   pii: { ko: '개인정보', en: 'PII Detection', icon: '🆔', desc: '한국 개인정보(주민번호, 사업자번호 등) 감지' },
   secret: { ko: '비밀정보', en: 'Secret Scanning', icon: '🔑', desc: 'API 키, 토큰, 개인키 등 민감 정보 감지' },
   injection: { ko: '프롬프트 인젝션', en: 'Prompt Injection', icon: '🧪', desc: '명령어 재정의, 탈옥, 제어 우회 시도' },
@@ -57,14 +57,14 @@ const CATEGORY_INFO = {
   infra: { ko: '인프라 보안', en: 'Infrastructure', icon: '🏗️', desc: '샌드박스, 엔드포인트, 프로토콜 공격' },
 }
 
-const SEVERITY_INFO = {
+const SEVERITY_INFO: Record<string, any> = {
   critical: { ko: '치명적', color: 'badge-red', desc: '즉시 차단 필요' },
   high: { ko: '높음', color: 'badge-red', desc: '빠른 대응 필요' },
   medium: { ko: '중간', color: 'badge-yellow', desc: '검토 후 대응' },
   low: { ko: '낮음', color: 'badge-blue', desc: '기록 및 모니터링' },
 }
 
-const ACTION_INFO = {
+const ACTION_INFO: Record<string, any> = {
   block: { ko: '차단', color: 'badge-red', desc: '요청 즉시 거부' },
   mask: { ko: '마스킹', color: 'badge-yellow', desc: '민감 정보 마스킹 후 허용' },
   throttle: { ko: '속도 제한', color: 'badge-blue', desc: '요청 빈도 제한' },
@@ -552,7 +552,7 @@ function RuleBuilder({ rule, onSave, onCancel }: { rule: Rule | null; onSave: (r
   )
 }
 
-function authHeaders() {
+function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('pccp_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }

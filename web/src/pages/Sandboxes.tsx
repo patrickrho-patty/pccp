@@ -183,4 +183,4 @@ export default function Sandboxes() {
   )
 }
 
-function authHeaders() { const token = localStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }
+function authHeaders(): Record<string, string> { const token = localStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }

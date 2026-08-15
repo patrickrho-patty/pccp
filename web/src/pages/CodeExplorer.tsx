@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 
+const repoIcons = { github: '🐙', gitlab: '🦊', bitbucket: '🪣', gitea: '🍵', git: '📦' }
+
 export default function CodeExplorer() {
   const [repos, setRepos] = useState<any[]>([])
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
@@ -13,7 +15,7 @@ export default function CodeExplorer() {
   const [loading, setLoading] = useState(false)
   const [tab, setTab] = useState<'changes' | 'spans' | 'files'>('changes')
 
-  const authHeaders = () => { const t = localStorage.getItem('pccp_token'); return t ? { Authorization: `Bearer ${t}` } : {} }
+  const authHeaders = (): Record<string, string> => { const t = localStorage.getItem('pccp_token'); return t ? { Authorization: `Bearer ${t}` } : {} }
 
   useEffect(() => {
     Promise.all([
@@ -104,12 +106,12 @@ export default function CodeExplorer() {
           <h3 className="text-sm font-semibold mb-2">저장소 · Repositories</h3>
           <div className="space-y-1 max-h-[600px] overflow-y-auto">
             {repos.map(r => {
-              const repoIcon = { github: '🐙', gitlab: '🦊', bitbucket: '🪣', gitea: '🍵', git: '📦' }[r.scm_provider] || '📦'
+              { ({ github: '🐙', gitlab: '🦊', bitbucket: '🪣', gitea: '🍵', git: '📦' } as Record<string, string>)[r.scm_provider] || '📦' }
               return (
                 <div key={r.id} onClick={() => loadRepoData(r.id)}
                   className={`p-2 rounded cursor-pointer ${selectedRepo === r.id ? 'bg-blue-50 border-l-2 border-blue-400' : 'hover:bg-gray-50'}`}>
                   <div className="flex items-center gap-2">
-                    <span>{repoIcon}</span>
+                    <span>{{ github: '🐙', gitlab: '🦊', bitbucket: '🪣', gitea: '🍵', git: '📦' }[r.scm_provider as keyof typeof repoIcons] || '📦'}</span>
                     <span className="text-sm font-medium">{r.name}</span>
                   </div>
                   <div className="text-xs text-gray-400 ml-5">{r.default_branch || 'main'}</div>

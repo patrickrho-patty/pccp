@@ -8,7 +8,7 @@ type SessionActivity = {
   userEmail: string
   userId: string
   model: string
-  riskScore: number
+  riskState: string
   status: string
   lastActivity: string
   tokenIn: number
@@ -25,6 +25,7 @@ export default function LiveView() {
   const [allUsers, setAllUsers] = useState<any[]>([])
   const [allHarnesses, setAllHarnesses] = useState<any[]>([])
   const pollRef = useRef<number | null>(null)
+  const [feed, setFeed] = useState<{ time: string; exchangeId?: string; sessionId?: string; state: string }[]>([])
 
   // Load base data
   const loadBaseData = useCallback(() => {
@@ -51,9 +52,14 @@ export default function LiveView() {
       sse = new EventSource(`/api/realtime/sse?token=${encodeURIComponent(token || '')}`)
       sse.onopen = () => setConnected(true)
       sse.onerror = () => { setConnected(false); sse?.close() }
-      sse.addEventListener('session.update', (e) => {
-        try { const data = JSON.parse(e.data); loadBaseData() } catch {}
+      sse.addEventListener('session.update', () => { loadBaseData() })
+      sse.addEventListener('exchange.update', (e) => {
+        try {
+          const d = JSON.parse((e as MessageEvent).data)
+          setFeed(prev => [{ time: new Date().toLocaleTimeString('ko-KR'), exchangeId: d.exchange_id, sessionId: d.session_id, state: d.state }, ...prev].slice(0, 50))
+        } catch {}
       })
+      sse.addEventListener('security.finding', () => { loadBaseData() })
       setSseSource(sse)
     } catch {
       // SSE not available, use polling
@@ -83,7 +89,7 @@ export default function LiveView() {
         userEmail: user?.email || '-',
         userId: s.user_id || '',
         model: s.model_class || '-',
-        riskScore: harness?.risk_state === 'high' ? 0.9 : harness?.risk_state === 'elevated' ? 0.6 : 0.1,
+        riskState: harness?.risk_state || 'normal',
         status: s.status,
         lastActivity: s.last_activity || s.opened_at || '',
         tokenIn: 0,
@@ -92,6 +98,16 @@ export default function LiveView() {
       }
     })
     setSessions(cards)
+    // Real token counts per active session (usage endpoint).
+    active.forEach(s => {
+      fetch(`/api/sessions/${s.session_id || s.id}/usage`, { headers: authHeaders() })
+        .then(r => r.ok ? r.json() : null)
+        .then(u => {
+          if (!u) return
+          setSessions(prev => prev.map(c => c.id === s.id ? { ...c, tokenIn: u.input_tokens ?? 0, tokenOut: u.output_tokens ?? 0 } : c))
+        })
+        .catch(() => {})
+    })
   }, [allSessions, allUsers, allHarnesses])
 
   return (
@@ -116,6 +132,7 @@ export default function LiveView() {
         <LiveDetail
           session={sessions.find(s => s.id === selectedId)}
           onBack={() => setSelectedId(null)}
+          feed={feed}
         />
       ) : (
         <div className="grid grid-cols-3 gap-4">
@@ -130,8 +147,8 @@ export default function LiveView() {
                     {s.title}
                   </Link>
                 </div>
-                <span className={`text-xs ${s.riskScore >= 0.8 ? 'text-red-600' : s.riskScore >= 0.5 ? 'text-yellow-600' : 'text-green-600'}`}>
-                  위험도 {(s.riskScore * 100).toFixed(0)}%
+                <span className={`text-xs ${s.riskState === 'high' ? 'text-red-600' : s.riskState === 'elevated' ? 'text-yellow-600' : 'text-green-600'}`}>
+                  위험 {s.riskState === 'high' ? '높음' : s.riskState === 'elevated' ? '상승' : '정상'}
                 </span>
               </div>
               {/* User info */}
@@ -160,7 +177,7 @@ export default function LiveView() {
   )
 }
 
-function LiveDetail({ session, onBack }: { session: SessionActivity | undefined; onBack: () => void }) {
+function LiveDetail({ session, onBack, feed }: { session: SessionActivity | undefined; onBack: () => void; feed: { time: string; exchangeId?: string; sessionId?: string; state: string }[] }) {
   if (!session) return null
   return (
     <div>
@@ -177,8 +194,8 @@ function LiveDetail({ session, onBack }: { session: SessionActivity | undefined;
           </div>
           <div className="flex items-center gap-3">
             <span className={`badge ${session.status === 'active' ? 'badge-green' : 'badge-yellow'}`}>{session.status}</span>
-            <span className={`text-sm ${session.riskScore >= 0.8 ? 'text-red-600' : session.riskScore >= 0.5 ? 'text-yellow-600' : 'text-green-600'}`}>
-              위험도 {(session.riskScore * 100).toFixed(0)}%
+            <span className={`text-sm ${session.riskState === 'high' ? 'text-red-600' : session.riskState === 'elevated' ? 'text-yellow-600' : 'text-green-600'}`}>
+              위험 {session.riskState === 'high' ? '높음' : session.riskState === 'elevated' ? '상승' : '정상'}
             </span>
           </div>
         </div>
@@ -197,8 +214,14 @@ function LiveDetail({ session, onBack }: { session: SessionActivity | undefined;
           <div className="text-gray-500">모델: {session.model}</div>
           <div className="text-gray-500">마지막 활동: {session.lastActivity?.slice(0, 19) || 'N/A'}</div>
           <div className="mt-3 text-gray-600 border-t border-gray-800 pt-3">
-            실시간 활동 스트림은 SSE/WebSocket 연결을 통해 표시됩니다.
-            <br />연결 상태를 확인하려면 페이지 상단을 참조하세요.
+            <div className="text-gray-400 mb-1">▸ 실시간 교환 이벤트 (governed exchanges)</div>
+            {feed.length === 0
+              ? <div className="text-gray-600">아직 이번 연결에서 교환 이벤트가 없습니다 — 하네스가 교환을 시작하면 여기에 표시됩니다.</div>
+              : feed.map((f, i) => (
+                <div key={i} className={f.sessionId === session.id ? 'text-green-300' : 'text-gray-500'}>
+                  [{f.time}] {f.state} {f.exchangeId ? `· ${f.exchangeId.slice(0, 18)}` : ''}
+                </div>
+              ))}
           </div>
         </div>
       </div>
@@ -211,7 +234,7 @@ function LiveDetail({ session, onBack }: { session: SessionActivity | undefined;
   )
 }
 
-function authHeaders() {
+function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('pccp_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }

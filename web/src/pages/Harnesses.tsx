@@ -7,6 +7,7 @@ import { formatRelative } from '../utils/format'
 import { exportCSV } from '../utils/csv'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
+import { useAuth } from '../hooks/useAuth'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['harness_id', 'binary_version', 'device_id'],
@@ -24,6 +25,7 @@ const FILTER_CONFIG: FilterConfig = {
 
 export default function Harnesses() {
   const confirm = useConfirm()
+  const { orgId: authOrgId } = useAuth()
   const [harnesses, setHarnesses] = useState<any[]>([])
   const [users, setUsers] = useState<any[]>([])
   const [sessions, setSessions] = useState<any[]>([])
@@ -37,6 +39,8 @@ export default function Harnesses() {
   const [page, setPage] = useState(1)
   const pageSize = 25
   const [form, setForm] = useState({ user_id: '', harness_id: '', public_key_hex: '', binary_version: '1.0.0' })
+  // Enrollment credential — shown once at enrollment time; never retrievable again.
+  const [enrollCredential, setEnrollCredential] = useState<any>(null)
 
   const load = () => {
     api.listHarnesses().then(data => setHarnesses(Array.isArray(data) ? data : []))
@@ -63,10 +67,15 @@ export default function Harnesses() {
 
   const handleEnroll = async (e: React.FormEvent) => {
     e.preventDefault()
-    const orgId = harnesses[0]?.organization_id || users[0]?.organization_id || ''
+    // Org comes from the authenticated session (JWT claims); fall back
+    // to loaded records only when claims carry none. Device facts
+    // (hostname/OS/arch) are omitted — the server stores what the real
+    // harness would attest, not browser-side guesses.
+    const orgId = authOrgId || harnesses[0]?.organization_id || users[0]?.organization_id || ''
     try {
-      await api.enrollHarness({ ...form, organization_id: orgId, enrollment_mode: 'sso', device_hostname: 'dev-machine', device_os: 'darwin', device_arch: 'arm64' })
+      const res = await api.enrollHarness({ ...form, organization_id: orgId, enrollment_mode: 'sso' })
       setShowForm(false); setForm({ user_id: '', harness_id: '', public_key_hex: '', binary_version: '1.0.0' }); load()
+      if (res?.credential) setEnrollCredential(res.credential)
     } catch (err: any) { showToast('등록 실패: ' + err.message) }
   }
   const handleRevoke = async (id: string) => { if (await confirm({ title: '확인', message: '폐기하시겠습니까?', danger: true })) { try { await api.revokeHarness(id, 'manual revoke'); load() } catch {} } }
@@ -128,7 +137,7 @@ export default function Harnesses() {
               const activeSessions = getActiveSessions(h.harness_id)
               const allSessions = getHarnessSessions(h.harness_id)
               return (
-                <Fragment key={h.id || h.key || i}>
+                <Fragment key={h.id || h.harness_id}>
                   <tr key={h.id} className={`border-b border-gray-100 last:border-0 cursor-pointer ${expandedId === h.id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
                     onClick={() => setExpandedId(expandedId === h.id ? null : h.id)}>
                     <td className="py-3" onClick={e => e.stopPropagation()}><input type="checkbox" checked={selectedHarnesses.has(h.id)} onChange={() => { const next = new Set(selectedHarnesses); if (next.has(h.id)) next.delete(h.id); else next.add(h.id); setSelectedHarnesses(next) }} /></td>
@@ -170,8 +179,8 @@ export default function Harnesses() {
                           <div className="text-xs font-semibold text-gray-600 mb-2">하네스 정보</div>
                           <div className="space-y-1 text-xs text-gray-500">
                             <div>하네스 ID: <span className="font-mono">{h.harness_id?.slice(0, 30)}</span></div>
-                            <div>빌드 해시: <span className="font-mono">{h.build_hash?.slice(0, 16) || '-'}</span></div>
-                            <div>릴리스 채널: {h.release_channel || 'stable'}</div>
+                            <div>빌드 해시: <span className="font-mono">{h.binary_hash?.slice(0, 16) || '-'}</span></div>
+                            <div>릴리스 채널: {h.build_channel || 'stable'}</div>
                             <div>등록일: {formatRelative(h.enrolled_at)}</div>
                             <div>등록 모드: {h.enrollment_mode || 'sso'}</div>
                           </div>
@@ -226,6 +235,38 @@ export default function Harnesses() {
         </table>
         <Pagination total={filtered.length} page={page} pageSize={pageSize} onPageChange={setPage} />
       </div>
+
+      {/* One-time enrollment credential — the PPC is never retrievable again */}
+      {enrollCredential && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setEnrollCredential(null)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100">
+              <h3 className="font-semibold">하네스 자격증명 · Harness Credential</h3>
+              <p className="text-xs text-red-600 mt-1 font-medium">
+                ⚠ 이 자격증명은 지금 한 번만 표시됩니다. 닫으면 다시 조회할 수 없습니다 — 복사하여 안전하게 보관하세요.
+                <br />
+                This credential is shown once and can never be retrieved again. Copy it now.
+              </p>
+            </div>
+            <div className="p-5">
+              <pre className="text-xs font-mono whitespace-pre-wrap break-all bg-gray-50 rounded-lg p-4 border border-gray-100">
+                {JSON.stringify(enrollCredential, null, 2)}
+              </pre>
+              <div className="flex gap-2 mt-4 justify-end">
+                <button
+                  onClick={() => navigator.clipboard.writeText(JSON.stringify(enrollCredential, null, 2))
+                    .then(() => showToast('자격증명이 클립보드에 복사되었습니다', 'success'))
+                    .catch(() => showToast('복사 실패 — 직접 선택하여 복사하세요', 'error'))}
+                  className="btn-primary text-sm"
+                >
+                  📋 복사
+                </button>
+                <button onClick={() => setEnrollCredential(null)} className="btn-secondary text-sm">닫기</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmDialog
         open={!!revokeTarget}

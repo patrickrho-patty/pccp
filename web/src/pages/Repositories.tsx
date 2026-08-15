@@ -52,7 +52,7 @@ export default function Repositories() {
 
   const handleEdit = (r: any) => {
     setEditingId(r.id)
-    setForm({ name: r.name || '', slug: r.slug || '', project_id: r.project_id || '', scm_provider: r.scm_provider || 'github', clone_url: r.clone_url || '', default_branch: r.default_branch || 'main' })
+    setForm({ name: r.name || '', slug: r.slug || '', project_id: r.project_id || '', scm_provider: r.scm_provider || 'github', clone_url: r.clone_url || '', default_branch: r.default_branch || 'main', sensitivity: r.sensitivity || 'standard' })
     setShowForm(true)
   }
 
@@ -271,4 +271,4 @@ export default function Repositories() {
   )
 }
 
-function authHeaders() { const token = localStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }
+function authHeaders(): Record<string, string> { const token = localStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }

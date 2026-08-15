@@ -106,19 +106,31 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Governance brief */}
+          {/* Governance brief — fields match /api/korean/governance-brief */}
           {brief && (
             <div className="card">
               <h3 className="text-sm font-semibold mb-2">거버넌스 브리프</h3>
               <div className="text-xs text-gray-500 space-y-1">
-                {brief.ai_adoption_rate !== undefined && (
-                  <div className="flex justify-between"><span>AI 채택률</span><span className="font-medium">{(brief.ai_adoption_rate * 100).toFixed(0)}%</span></div>
+                {brief.total_sessions !== undefined && (
+                  <div className="flex justify-between"><span>총 세션</span><span className="font-medium">{brief.total_sessions}</span></div>
                 )}
-                {brief.total_developers !== undefined && (
-                  <div className="flex justify-between"><span>개발자 수</span><span className="font-medium">{brief.total_developers}</span></div>
+                {brief.active_harnesses !== undefined && (
+                  <div className="flex justify-between"><span>활성 하네스</span><span className="font-medium">{brief.active_harnesses}</span></div>
                 )}
-                {brief.active_projects !== undefined && (
-                  <div className="flex justify-between"><span>활성 프로젝트</span><span className="font-medium">{brief.active_projects}</span></div>
+                {brief.security_findings !== undefined && (
+                  <div className="flex justify-between"><span>보안 발견</span><span className={`font-medium ${(brief.security_findings || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>{brief.security_findings}</span></div>
+                )}
+                {brief.model_invocations !== undefined && (
+                  <div className="flex justify-between"><span>AI 추론</span><span className="font-medium">{brief.model_invocations}</span></div>
+                )}
+                {brief.code_changes !== undefined && (
+                  <div className="flex justify-between"><span>코드 변경</span><span className="font-medium">{brief.code_changes}</span></div>
+                )}
+                {brief.approval_rate !== undefined && (
+                  <div className="flex justify-between"><span>승인율</span><span className="font-medium">{(brief.approval_rate * 100).toFixed(0)}%</span></div>
+                )}
+                {brief.compliance_status && (
+                  <div className="flex justify-between"><span>컴플라이언스</span><span className="font-medium">{brief.compliance_status}</span></div>
                 )}
               </div>
             </div>
@@ -142,7 +154,7 @@ export default function Dashboard() {
   )
 }
 
-function authHeaders() {
+function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('pccp_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }

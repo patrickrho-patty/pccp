@@ -9,12 +9,15 @@ export default function Analytics() {
   const [engineering, setEngineering] = useState<any>(null)
   const [security, setSecurity] = useState<any>(null)
   const [brief, setBrief] = useState<any>(null)
+  const [cost, setCost] = useState<any>(null)
 
   useEffect(() => {
     fetch('/api/analytics/usage', { headers: authHeaders() }).then(r => r.json()).then(setUsage).catch(() => {})
     fetch('/api/analytics/engineering', { headers: authHeaders() }).then(r => r.json()).then(setEngineering).catch(() => {})
     fetch('/api/analytics/security', { headers: authHeaders() }).then(r => r.json()).then(setSecurity).catch(() => {})
     fetch('/api/korean/governance-brief', { headers: authHeaders() }).then(r => r.json()).then(setBrief).catch(() => {})
+    // Server-side cost (real pricing from ModelPackage unit prices)
+    fetch('/api/analytics/cost?days=30', { headers: authHeaders() as Record<string, string> }).then(r => r.json()).then(setCost).catch(() => setCost(null))
   }, [])
 
   const fmt = (n: number) => n?.toLocaleString() || '0'
@@ -131,7 +134,7 @@ export default function Analytics() {
         </div>
       </div>
 
-      {/* Human finalization notice */}
+      {/* Cost analysis — server-computed from ModelPackage unit prices */}
       <div className="card mb-6">
         <h3 className="text-sm font-semibold mb-4">비용 분석 · Cost Analysis</h3>
         <div className="grid grid-cols-3 gap-4 mb-4">
@@ -145,27 +148,30 @@ export default function Analytics() {
           </div>
           <div className="text-center p-3 bg-gray-50 rounded-lg">
             <div className="text-2xl font-bold text-purple-600">
-              {(((usage?.total_tokens_in || 0) + (usage?.total_tokens_out || 0)) / 1000000 * 5000).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              {cost?.any_priced
+                ? Math.round(cost.total_cost_krw).toLocaleString() + ' KRW'
+                : '단가 미설정'}
             </div>
-            <div className="text-xs text-gray-500">예상 비용 (KRW)</div>
+            <div className="text-xs text-gray-500">예상 비용 (KRW, 최근 30일)</div>
           </div>
         </div>
-        {usage?.model_breakdown && Object.keys(usage.model_breakdown).length > 0 && (
+        {cost?.models && cost.models.length > 0 && (
           <div className="mt-4 pt-3 border-t border-gray-100">
             <div className="text-xs font-semibold text-gray-600 mb-2">모델별 비용 · Cost by Model</div>
             <div className="space-y-2">
-              {Object.entries(usage.model_breakdown).map(([model, tokens]: [string, any]) => (
-                <div key={model} className="flex justify-between items-center text-xs">
-                  <span className="font-mono text-gray-600">{model}</span>
+              {cost.models.map((m: any) => (
+                <div key={m.model_package_id} className="flex justify-between items-center text-xs">
+                  <span className="font-mono text-gray-600">{m.model_name || m.model_package_id}</span>
                   <div className="flex gap-4">
-                    <span className="text-gray-500">{fmt(tokens)} 토큰</span>
+                    <span className="text-gray-500">{fmt((m.tokens_in || 0) + (m.tokens_out || 0))} 토큰</span>
                     <span className="font-medium text-gray-700">
-                      {(tokens / 1000000 * 5000).toLocaleString(undefined, { maximumFractionDigits: 0 })} KRW
+                      {m.priced ? Math.round(m.cost_krw).toLocaleString() + ' KRW' : '단가 미설정'}
                     </span>
                   </div>
                 </div>
               ))}
             </div>
+            <p className="text-[10px] text-gray-400 mt-2">단가는 모델 패키지의 KRW/1K토큰 설정값 기반 · 가격이 없는 모델은 단가 미설정으로 표시</p>
           </div>
         )}
       </div>
@@ -187,4 +193,4 @@ export default function Analytics() {
   )
 }
 
-function authHeaders() { const token = localStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }
+function authHeaders(): Record<string, string> { const token = localStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }

@@ -46,6 +46,7 @@ const FILTER_CONFIG: FilterConfig = {
 
 export default function Audit() {
   const [events, setEvents] = useState<any[]>([])
+  const [totalCount, setTotalCount] = useState(0)
   const [filters, setFilters] = useState({
     search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string>,
   })
@@ -65,29 +66,65 @@ export default function Audit() {
       .finally(() => setVerifying(false))
   }
 
+  // Server-side pagination (mirrors Sessions.tsx): the API returns the
+  // active page + the authoritative total; local filters refine within
+  // the loaded page slice.
   useEffect(() => {
-    fetch('/api/audit', { headers: authHeaders() })
+    const params = new URLSearchParams({ page: String(page), size: String(pageSize) })
+    if (filters.search) params.set('search', filters.search)
+    fetch(`/api/audit?${params.toString()}`, { headers: authHeaders() })
       .then(r => r.json())
-      .then(data => setEvents(Array.isArray(data) ? data : []))
-      .catch(() => setEvents([]))
-  }, [])
+      .then(data => {
+        setEvents(Array.isArray(data?.data) ? data.data : [])
+        setTotalCount(typeof data?.total === 'number' ? data.total : (data?.data?.length ?? 0))
+      })
+      .catch(() => { setEvents([]); setTotalCount(0) })
+  }, [page, filters.search])
 
   const filtered = useFilteredData(events, filters, FILTER_CONFIG)
-  const paged = filtered.slice((page - 1) * pageSize, page * pageSize)
+  const paged = filtered
+
+  // CSV export: streamed server-side (org-scoped, up to 10k events) so
+  // the file reflects the full trail, not just the loaded page.
+  const exportCSV = async () => {
+    try {
+      const params = new URLSearchParams()
+      if (filters.search) params.set('search', filters.search)
+      const res = await fetch(`/api/audit/export?${params.toString()}`, { headers: authHeaders() })
+      if (!res.ok) throw new Error(res.statusText)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `audit_export_${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('audit export failed:', e)
+    }
+  }
 
   const resultBadge = (r: string) => r === 'success' ? 'badge-green' : r === 'denied' || r === 'failure' ? 'badge-red' : 'badge-yellow'
 
-  // Stats from filtered set
+  // Stats: total is the server-side count; success/denied/filtered are
+  // computed within the loaded page slice.
   const stats = {
-    total: events.length,
+    total: totalCount,
     success: events.filter(e => e.result === 'success').length,
     denied: events.filter(e => e.result === 'denied' || e.result === 'failure').length,
     filtered: filtered.length,
   }
 
+  const onFiltersChange = (f: any) => { setFilters(f); setPage(1) }
+
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">감사 로그 <span className="text-gray-400 text-lg font-normal">Audit Trail</span></h1>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold">감사 로그 <span className="text-gray-400 text-lg font-normal">Audit Trail</span></h1>
+        <button onClick={exportCSV} className="btn-sm btn-secondary">📥 CSV 내보내기</button>
+      </div>
 
       {/* Chain verification (tamper evidence) */}
       <div className="card p-4 mb-4 flex items-center justify-between">
@@ -173,7 +210,7 @@ export default function Audit() {
         </button>
       </div>
 
-      <FilterBar config={FILTER_CONFIG} onChange={setFilters} />
+      <FilterBar config={FILTER_CONFIG} onChange={onFiltersChange} />
 
       {/* Table */}
       <div className="card">
@@ -222,7 +259,7 @@ export default function Audit() {
       </div>
 
       <Pagination
-        total={filtered.length}
+        total={Math.max(totalCount, filtered.length)}
         page={page}
         pageSize={pageSize}
         onPageChange={setPage}

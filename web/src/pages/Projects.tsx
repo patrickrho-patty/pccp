@@ -30,7 +30,7 @@ export default function Projects() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [archiveTarget, setArchiveTarget] = useState<string | null>(null)
   const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
-  const [form, setForm] = useState({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard', description: '' })
+  const [form, setForm] = useState({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard', description: '', project_code: '', group_affiliate: '' })
   const [catalogModels, setCatalogModels] = useState<any[]>([])
 
   const load = () => {
@@ -51,7 +51,7 @@ export default function Projects() {
         ...form,
         allowed_models: form.allowed_models.split(',').map(s => s.trim()),
       })
-      setForm({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard', description: '' })
+      setForm({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard', description: '', project_code: '', group_affiliate: '' })
       setShowForm(false)
       showToast('프로젝트 생성됨', 'success')
       load()
@@ -64,6 +64,8 @@ export default function Projects() {
       name: proj.name || '', name_ko: proj.name_ko || '', slug: proj.slug || '',
       allowed_models: Array.isArray(proj.allowed_model_classes) ? proj.allowed_model_classes.join(',') : (proj.allowed_model_classes || 'patty-code-standard'),
       description: proj.description || '',
+      project_code: proj.project_code || '',
+      group_affiliate: proj.group_affiliate || '',
     })
     setShowForm(true)
   }
@@ -72,9 +74,16 @@ export default function Projects() {
     e.preventDefault()
     if (!editingId) return
     try {
-      await api.updateProject(editingId, { name: form.name, name_ko: form.name_ko, description: form.description })
+      await api.updateProject(editingId, {
+        name: form.name,
+        name_ko: form.name_ko,
+        description: form.description,
+        allowed_models: form.allowed_models.split(',').map(s => s.trim()).filter(Boolean),
+        project_code: form.project_code,
+        group_affiliate: form.group_affiliate,
+      })
       setEditingId(null)
-      setForm({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard', description: '' })
+      setForm({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard', description: '', project_code: '', group_affiliate: '' })
       setShowForm(false)
       showToast('수정 완료', 'success')
       load()
@@ -98,7 +107,7 @@ export default function Projects() {
           <h1 className="text-2xl font-bold">프로젝트 <span className="text-gray-400 text-lg font-normal">Projects</span></h1>
           <p className="text-xs text-gray-400 mt-1">프로젝트별 저장소, 세션, 멤버 관리 · 프로젝트를 클릭하여 상세 보기</p>
         </div>
-        <button onClick={() => { if (editingId) { setEditingId(null); setForm({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard', description: '' }) } setShowForm(!showForm) }} className="btn-primary">
+        <button onClick={() => { if (editingId) { setEditingId(null); setForm({ name: '', name_ko: '', slug: '', allowed_models: 'patty-code-standard', description: '', project_code: '', group_affiliate: '' }) } setShowForm(!showForm) }} className="btn-primary">
           {showForm ? '취소' : '+ 프로젝트 생성'}
         </button>
         <button onClick={() => exportCSV(`projects_${new Date().toISOString().slice(0,10)}.csv`, ['프로젝트명', '한글명', '슬러그', '상태', '생성일'], filtered.map(p => [p.name, p.name_ko, p.slug, p.status, p.created_at?.slice(0,10)]))} className="btn-sm btn-secondary ml-2">📥 CSV</button>
@@ -128,6 +137,8 @@ export default function Projects() {
               <input className="input" value={form.allowed_models} onChange={e => setForm({ ...form, allowed_models: e.target.value })} placeholder="patty-code-standard, patty-code-fast" />
             )}</div>
             <div className="col-span-2"><label className="label">설명 · Description</label><input className="input" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="프로젝트 설명" /></div>
+            <div><label className="label">프로젝트 코드 · Project Code</label><input className="input font-mono" value={form.project_code} onChange={e => setForm({ ...form, project_code: e.target.value })} placeholder="PRJ-001" /></div>
+            <div><label className="label">계열사 · Group Affiliate</label><input className="input" value={form.group_affiliate} onChange={e => setForm({ ...form, group_affiliate: e.target.value })} placeholder="그룹/계열사명" /></div>
           </div>
           <button type="submit" className="btn-primary">{editingId ? '수정 저장' : '생성'}</button>
         </form>

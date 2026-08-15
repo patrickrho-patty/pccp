@@ -225,6 +225,19 @@ func (s *Service) NotifyChatMessage(orgID, conversationID, senderName, content s
 	})
 }
 
+// NotifyExchangeEvent pushes a governed-exchange lifecycle event
+// (open/decision/dlp/forward/complete) to the org's live consoles.
+// Payload carries counts + statuses only — never token content
+// (payload protection: admin visibility does not exempt P0).
+func (s *Service) NotifyExchangeEvent(orgID, sessionID, exchangeID, state string, evidenceEvents int) {
+	s.BroadcastToOrg(orgID, "exchange.update", map[string]any{
+		"session_id":      sessionID,
+		"exchange_id":     exchangeID,
+		"state":           state,
+		"evidence_events": evidenceEvents,
+	})
+}
+
 // NotifyFleetAction pushes a fleet action result.
 func (s *Service) NotifyFleetAction(orgID, action, harnessID string) {
 	s.BroadcastToOrg(orgID, "fleet.action", map[string]string{

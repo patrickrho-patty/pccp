@@ -10,6 +10,7 @@ export default function Communications() {
   const [messages, setMessages] = useState<any[]>([])
   const [selectedConv, setSelectedConv] = useState<string | null>(null)
   const [newMessage, setNewMessage] = useState('')
+  const [replyTo, setReplyTo] = useState<string | null>(null)
   const [broadcasts, setBroadcasts] = useState<any[]>([])
   const [showBroadcast, setShowBroadcast] = useState(false)
   const [showNewConv, setShowNewConv] = useState(false)
@@ -22,7 +23,7 @@ export default function Communications() {
   const [fileForm, setFileForm] = useState({ recipient_id: '', file_name: '', classification: 'internal' })
   const msgEndRef = useRef<HTMLDivElement>(null)
 
-  const authHeaders = () => { const t = localStorage.getItem('pccp_token'); return t ? { Authorization: `Bearer ${t}` } : {} }
+  const authHeaders = (): Record<string, string> => { const t = localStorage.getItem('pccp_token'); return t ? { Authorization: `Bearer ${t}` } : {} }
 
   const load = () => {
     fetch('/api/communications/conversations', { headers: authHeaders() })
@@ -32,6 +33,8 @@ export default function Communications() {
       .then(r => r.json()).then(data => setPresence(Array.isArray(data) ? data : [])).catch(() => {})
     fetch('/api/communications/broadcasts', { headers: authHeaders() })
       .then(r => r.json()).then(data => setBroadcasts(Array.isArray(data) ? data : [])).catch(() => {})
+    fetch('/api/communications/file-transfers', { headers: authHeaders() as Record<string, string> })
+      .then(r => r.json()).then(data => setFiles(Array.isArray(data) ? data : [])).catch(() => {})
   }
 
   useEffect(() => {
@@ -62,12 +65,13 @@ export default function Communications() {
     try {
       await fetch(`/api/communications/conversations/${selectedConv}/messages`, {
         method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sender_id: 'admin', sender_type: 'user', content_type: 'text', content: newMessage }),
+        body: JSON.stringify({ sender_id: 'admin', sender_type: 'user', content_type: 'text', content: newMessage, parent_id: replyTo || undefined }),
       })
       setNewMessage('')
+      setReplyTo(null)
       showToast('메시지 전송됨', 'success')
       loadMessages(selectedConv)
-    } catch {}
+    } catch (e) { console.error('message send failed:', e); showToast('메시지 전송 실패', 'error') }
   }
 
   const createConversation = async (e: React.FormEvent) => {
@@ -122,7 +126,7 @@ export default function Communications() {
         {[
           { id: 'chat', label: '채팅', en: 'Chat', count: conversations.length },
           { id: 'broadcast', label: '방송', en: 'Broadcast', count: broadcasts.length },
-          { id: 'files', label: '파일 전송', en: 'File Transfer' },
+          { id: 'files', label: '파일 전송', en: 'File Transfer', count: files.length },
           { id: 'presence', label: '프레전스', en: 'Presence', count: presence.length },
         ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id as any)}
@@ -183,25 +187,58 @@ export default function Communications() {
                   <h3 className="text-sm font-semibold">{conversations.find(c => c.id === selectedConv)?.title || '대화'}</h3>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                  {messages.map(m => (
-                    <div key={m.id} className={`flex ${m.sender_type === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  {/* Threaded view: roots first, replies grouped + indented under their parent */}
+                  {(() => {
+                    const byParent = new Map<string, any[]>()
+                    for (const m of messages) {
+                      const key = m.parent_message_id && messages.some(x => x.id === m.parent_message_id) ? m.parent_message_id : ''
+                      if (!byParent.has(key)) byParent.set(key, [])
+                      byParent.get(key)!.push(m)
+                    }
+                    const ordered: { msg: any; depth: number }[] = []
+                    for (const root of byParent.get('') || []) {
+                      ordered.push({ msg: root, depth: 0 })
+                      for (const child of byParent.get(root.id) || []) {
+                        ordered.push({ msg: child, depth: 1 })
+                      }
+                    }
+                    // orphans whose parent is outside the loaded window render as roots
+                    const rootsSeen = new Set(ordered.map(o => o.msg.id))
+                    for (const m of messages) if (!rootsSeen.has(m.id)) ordered.push({ msg: m, depth: 0 })
+                    return ordered.map(({ msg: m, depth }) => (
+                    <div key={m.id} className={`flex ${m.sender_type === 'user' ? 'justify-end' : 'justify-start'}`} style={depth > 0 ? { marginLeft: '2.5rem' } : undefined}>
                       <div className={`max-w-[70%] rounded-lg px-3 py-2 ${m.sender_type === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}>
-                        <div className="text-xs opacity-70 mb-0.5">{getUserName(m.sender_id)} · {m.sender_type}</div>
+                        <div className="text-xs opacity-70 mb-0.5">
+                          {depth > 0 && <span className="mr-1">↳</span>}
+                          {getUserName(m.sender_id)} · {m.sender_type}
+                        </div>
                         <div className="text-sm">{m.content}</div>
-                        <div className={`text-[10px] mt-0.5 ${m.sender_type === 'user' ? 'text-blue-200' : 'text-gray-400'}`}>
-                          {m.created_at?.slice(11, 16)}
-                          {m.session_id && <Link to="/sessions" className="ml-2 underline">AI 세션 연결</Link>}
+                        <div className={`text-[10px] mt-0.5 flex items-center gap-2 ${m.sender_type === 'user' ? 'text-blue-200' : 'text-gray-400'}`}>
+                          <span>{m.created_at?.slice(11, 16)}</span>
+                          <button onClick={() => setReplyTo(m.id)} className="underline hover:no-underline">답글</button>
+                          {m.session_id && <Link to="/sessions" className="underline">AI 세션 연결</Link>}
                         </div>
                       </div>
                     </div>
-                  ))}
+                    ))
+                  })()}
                   {messages.length === 0 && <p className="text-center text-gray-400 text-sm py-8">메시지가 없습니다</p>}
                   <div ref={msgEndRef} />
                 </div>
-                <div className="p-3 border-t border-gray-100 flex gap-2">
-                  <input className="input flex-1 text-sm" value={newMessage} onChange={e => setNewMessage(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && sendMessage()} placeholder="메시지 입력..." />
-                  <button onClick={sendMessage} className="btn-primary text-sm">전송</button>
+                <div className="p-3 border-t border-gray-100">
+                  {replyTo && (
+                    <div className="flex items-center justify-between text-xs text-gray-500 mb-2 bg-gray-50 rounded px-2 py-1">
+                      <span className="truncate">
+                        ↳ 답글 대상: {messages.find(m => m.id === replyTo)?.content?.slice(0, 40) || replyTo.slice(0, 8)}
+                      </span>
+                      <button onClick={() => setReplyTo(null)} className="text-gray-400 hover:text-gray-600 ml-2">취소</button>
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <input className="input flex-1 text-sm" value={newMessage} onChange={e => setNewMessage(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && sendMessage()} placeholder="메시지 입력..." />
+                    <button onClick={sendMessage} className="btn-primary text-sm">전송</button>
+                  </div>
                 </div>
               </>
             ) : (
@@ -305,7 +342,7 @@ export default function Communications() {
               <table className="w-full overflow-x-auto block">
                 <thead><tr className="border-b text-left text-xs text-gray-500">
                   <th className="pb-2">파일</th><th className="pb-2">보낸 사람</th><th className="pb-2">받는 사람</th>
-                  <th className="pb-2">분류</th><th className="pb-2">상태</th><th className="pb-2">시간</th>
+                  <th className="pb-2">분류</th><th className="pb-2">상태</th><th className="pb-2">스캔</th><th className="pb-2">시간</th>
                 </tr></thead>
                 <tbody>
                   {files.map(f => (
@@ -315,6 +352,7 @@ export default function Communications() {
                       <td className="py-2 text-xs">{getUserName(f.recipient_id)}</td>
                       <td className="py-2"><span className="badge-gray">{f.classification}</span></td>
                       <td className="py-2"><span className={f.status === 'completed' ? 'badge-green' : 'badge-yellow'}>{f.status}</span></td>
+                      <td className="py-2"><span className={f.scan_status === 'clean' ? 'badge-green' : f.scan_status === 'blocked' || f.scan_status === 'failed' ? 'badge-red' : 'badge-yellow'}>{f.scan_status || 'pending'}</span></td>
                       <td className="py-2 text-xs text-gray-400">{f.created_at?.slice(0, 16)}</td>
                     </tr>
                   ))}

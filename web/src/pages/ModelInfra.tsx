@@ -32,7 +32,7 @@ const EP_FILTER: FilterConfig = {
 }
 
 export default function ModelInfra() {
-  const confirm = useConfirm()
+  const confirmAction = useConfirm()
   const [tab, setTab] = useState<'catalog' | 'packages' | 'endpoints'>('catalog')
 
   return (
@@ -76,6 +76,7 @@ export default function ModelInfra() {
 
 // ─── Catalog Tab ──────────────────────────────────────────────
 function CatalogTab() {
+  const confirmAction = useConfirm()
   const [models, setModels] = useState<any[]>([])
   const [epoch, setEpoch] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -90,7 +91,7 @@ function CatalogTab() {
   if (loading) return <div className="text-gray-500">로딩 중...</div>
 
   const handleSeed = async () => { await api.catalogSeed(); window.location.reload() }
-  const handleWithdraw = async (id: string) => { if (await confirm({ title: '확인', message: '이 모델을 철회하시겠습니까?', danger: true })) { await api.catalogWithdraw(id); window.location.reload() } }
+  const handleWithdraw = async (id: string) => { if (await confirmAction({ title: '확인', message: '이 모델을 철회하시겠습니까?', danger: true })) { await api.catalogWithdraw(id); window.location.reload() } }
 
   return (
     <div>
@@ -146,13 +147,14 @@ function CatalogTab() {
 
 // ─── Packages Tab (PMP) ───────────────────────────────────────
 function PackagesTab() {
+  const confirmAction = useConfirm()
   const [models, setModels] = useState<any[]>([])
   const [endpoints, setEndpoints] = useState<any[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
   const [page, setPage] = useState(1)
-  const [form, setForm] = useState({ package_id: '', model_id: '', name: '', name_ko: '', family: 'code', version: '1.0.0' })
+  const [form, setForm] = useState({ package_id: '', model_id: '', name: '', name_ko: '', family: 'code', version: '1.0.0', price_input_per_1k: '', price_output_per_1k: '' })
   const pageSize = 25
 
   const load = () => {
@@ -166,11 +168,30 @@ function PackagesTab() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
-    try { await fetch('/api/models', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, state: 'draft' }) }); setShowForm(false); showToast('모델 등록됨', 'success'); load() } catch { showToast('실패', 'error') }
+    try {
+      await fetch('/api/models', {
+        method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...form,
+          state: 'draft',
+          price_input_per_1k: form.price_input_per_1k === '' ? 0 : Number(form.price_input_per_1k),
+          price_output_per_1k: form.price_output_per_1k === '' ? 0 : Number(form.price_output_per_1k),
+        }),
+      })
+      setShowForm(false); showToast('모델 등록됨', 'success'); load()
+    } catch { showToast('실패', 'error') }
   }
   const handlePublish = async (id: string) => { try { await fetch(`/api/models/${id}/publish`, { method: 'POST', headers: authHeaders() }); load() } catch {} }
-  const handleRecall = async (id: string) => { if (await confirm({ title: '확인', message: '리콜하시겠습니까?', danger: true })) { await fetch(`/api/models/${id}/recall`, { method: 'POST', headers: authHeaders() }); load() } }
-  const handleEdit = (m: any) => { setEditingId(m.id); setForm({ package_id: m.package_id || '', model_id: m.model_id || '', name: m.name || '', name_ko: m.name_ko || '', family: m.family || 'code', version: m.version || '1.0.0' }); setShowForm(true) }
+  const handleRecall = async (id: string) => { if (await confirmAction({ title: '확인', message: '리콜하시겠습니까?', danger: true })) { await fetch(`/api/models/${id}/recall`, { method: 'POST', headers: authHeaders() }); load() } }
+  const handleEdit = (m: any) => {
+    setEditingId(m.id)
+    setForm({
+      package_id: m.package_id || '', model_id: m.model_id || '', name: m.name || '', name_ko: m.name_ko || '', family: m.family || 'code', version: m.version || '1.0.0',
+      price_input_per_1k: m.price_input_per_1k ? String(m.price_input_per_1k) : '',
+      price_output_per_1k: m.price_output_per_1k ? String(m.price_output_per_1k) : '',
+    })
+    setShowForm(true)
+  }
   const getEpCount = (pkgId: string) => endpoints.filter(e => e.model_package_id === pkgId && e.status === 'active').length
 
   const stateBadge = (s: string) => { const m: Record<string,string> = { draft:'badge-gray', published:'badge-green', deprecated:'badge-yellow', recalled:'badge-red' }; return m[s] || 'badge-gray' }
@@ -180,11 +201,22 @@ function PackagesTab() {
     <div>
       <div className="flex justify-between items-center mb-4">
         <p className="text-xs text-gray-400">서명된 모델 아티팩트 · 가중치, 토크나이저, 양자화 등 · PRD §9.4</p>
-        <button onClick={() => { setEditingId(null); setForm({ package_id: '', model_id: '', name: '', name_ko: '', family: 'code', version: '1.0.0' }); setShowForm(!showForm) }} className="btn-primary text-sm">{showForm ? '취소' : '+ 패키지 등록'}</button>
+        <button onClick={() => { setEditingId(null); setForm({ package_id: '', model_id: '', name: '', name_ko: '', family: 'code', version: '1.0.0', price_input_per_1k: '', price_output_per_1k: '' }); setShowForm(!showForm) }} className="btn-primary text-sm">{showForm ? '취소' : '+ 패키지 등록'}</button>
       </div>
 
       {showForm && (
-        <form onSubmit={editingId ? async (e) => { e.preventDefault(); await fetch(`/api/models/${editingId}`, { method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(form) }); setEditingId(null); setShowForm(false); load() } : handleCreate} className="card mb-4">
+        <form onSubmit={editingId ? async (e) => {
+          e.preventDefault()
+          await fetch(`/api/models/${editingId}`, {
+            method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: form.name, name_ko: form.name_ko,
+              price_input_per_1k: form.price_input_per_1k === '' ? 0 : Number(form.price_input_per_1k),
+              price_output_per_1k: form.price_output_per_1k === '' ? 0 : Number(form.price_output_per_1k),
+            }),
+          })
+          setEditingId(null); setShowForm(false); load()
+        } : handleCreate} className="card mb-4">
           <div className="grid grid-cols-3 gap-4">
             <div><label className="label">패키지 ID</label><input className="input" value={form.package_id} onChange={e => setForm({ ...form, package_id: e.target.value })} placeholder="pmp-qwen3-moe-v3" disabled={!!editingId} /></div>
             <div><label className="label">모델 ID</label><input className="input" value={form.model_id} onChange={e => setForm({ ...form, model_id: e.target.value })} disabled={!!editingId} /></div>
@@ -192,6 +224,8 @@ function PackagesTab() {
             <div><label className="label">이름</label><input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
             <div><label className="label">한글명</label><input className="input" value={form.name_ko} onChange={e => setForm({ ...form, name_ko: e.target.value })} /></div>
             <div><label className="label">패밀리</label><select className="input" value={form.family} onChange={e => setForm({ ...form, family: e.target.value })}><option value="code">Code</option><option value="chat">Chat</option></select></div>
+            <div><label className="label">입력 단가 (KRW/1K토큰)</label><input className="input" type="number" min="0" step="any" value={form.price_input_per_1k} onChange={e => setForm({ ...form, price_input_per_1k: e.target.value })} placeholder="미설정" /></div>
+            <div><label className="label">출력 단가 (KRW/1K토큰)</label><input className="input" type="number" min="0" step="any" value={form.price_output_per_1k} onChange={e => setForm({ ...form, price_output_per_1k: e.target.value })} placeholder="미설정" /></div>
           </div>
           <button type="submit" className="btn-primary text-sm mt-3">{editingId ? '수정' : '등록'}</button>
         </form>
@@ -242,10 +276,14 @@ function EndpointsTab() {
 
   const filtered = useFilteredData(endpoints, filters, EP_FILTER)
   const statusBadge = (s: string) => { const m: Record<string,string> = { active:'badge-green', draining:'badge-yellow', inactive:'badge-gray' }; return m[s] || 'badge-gray' }
+  // Real availability = active endpoints / total endpoints for the org.
+  // No fabricated uptime percentages — report the measured ratio.
+  const activeCount = endpoints.filter(e => e.status === 'active').length
+  const totalCount = endpoints.length
 
   return (
     <div>
-      <p className="text-xs text-gray-400 mb-4">실행 중인 PIA 배포 · 각 PIA = 1 GPU 그룹 · vLLM/SGLang 서빙 · PRD §30.2</p>
+      <p className="text-xs text-gray-400 mb-4">실행 중인 PIA 배포 · 각 PIA = 1 GPU 그룹 · vLLM/SGLang 서빙 · PRD §30.2 · 활성 {activeCount}/{totalCount}</p>
 
       <FilterBar config={EP_FILTER} onChange={setFilters} />
 
@@ -256,7 +294,7 @@ function EndpointsTab() {
           </tr></thead>
           <tbody>
             {filtered.map(e => (
-              <Fragment key={e.id || e.key || i}>
+              <Fragment key={e.id}>
                 <tr key={e.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer"
                   onClick={() => setExpandedId(expandedId === e.id ? null : e.id)}>
                   <td className="py-3">
@@ -285,7 +323,7 @@ function EndpointsTab() {
                           <div className="bg-white rounded p-2 text-center"><div className="text-sm font-bold">{e.ttft_p50 ? e.ttft_p50.toFixed(2) + 's' : '-'}</div><div className="text-[10px] text-gray-500">TTFT P50</div></div>
                           <div className="bg-white rounded p-2 text-center"><div className="text-sm font-bold">{e.ttft_p95 ? e.ttft_p95.toFixed(2) + 's' : '-'}</div><div className="text-[10px] text-gray-500">TTFT P95</div></div>
                           <div className="bg-white rounded p-2 text-center"><div className="text-sm font-bold">{e.decode_rate ? e.decode_rate.toFixed(0) + ' tok/s' : '-'}</div><div className="text-[10px] text-gray-500">출력 속도</div></div>
-                          <div className="bg-white rounded p-2 text-center"><div className={`text-sm font-bold ${e.status === 'active' ? 'text-green-600' : 'text-gray-400'}`}>{e.status === 'active' ? '99.9%' : '-'}</div><div className="text-[10px] text-gray-500">가동률</div></div>
+                          <div className="bg-white rounded p-2 text-center"><div className={`text-sm font-bold ${e.status === 'active' ? 'text-green-600' : 'text-gray-400'}`}>활성 {activeCount}/{totalCount}</div><div className="text-[10px] text-gray-500">가동률 (플릿 실측)</div></div>
                         </div>
                       </div>
                       <div><div className="text-xs font-semibold text-gray-600 mb-2">용량</div>
@@ -308,7 +346,7 @@ function EndpointsTab() {
   )
 }
 
-function authHeaders() {
+function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('pccp_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }

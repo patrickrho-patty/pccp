@@ -7,6 +7,7 @@ import { formatRelative } from '../utils/format'
 import { exportCSV } from '../utils/csv'
 import { showToast } from '../components/Toast'
 import { useRowNav } from '../hooks/useRowNav'
+import { useAuth } from '../hooks/useAuth'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['title', 'task_purpose', 'session_id', 'harness_id'],
@@ -36,6 +37,7 @@ const FILTER_CONFIG: FilterConfig = {
 }
 
 export default function Sessions() {
+  const { orgId: authOrgId } = useAuth()
   const [sessions, setSessions] = useState<any[]>([])
   const [totalCount, setTotalCount] = useState(0)
   const [users, setUsers] = useState<any[]>([])
@@ -55,7 +57,7 @@ export default function Sessions() {
   const pageSize = 25
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
   const [catalogModels, setCatalogModels] = useState<any[]>([])
-  const [form, setForm] = useState({ user_id: '', project_id: '', repository_id: '', branch: '', title: '', task_purpose: '', model_class: 'patty-code-standard' })
+  const [form, setForm] = useState({ user_id: '', harness_id: '', project_id: '', repository_id: '', branch: '', title: '', task_purpose: '', model_class: 'patty-code-standard' })
 
   const load = () => {
     // Server-side pagination (web/01 B): fetch the active page + the
@@ -85,12 +87,15 @@ export default function Sessions() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
-    const orgId = sessions[0]?.organization_id || users[0]?.organization_id || ''
-    const harnessId = harnesses[0]?.harness_id || 'hrn_dev'
+    // Org from the authenticated session (JWT claims); no fabricated
+    // harness default — a real enrolled harness is required.
+    const orgId = authOrgId || sessions[0]?.organization_id || users[0]?.organization_id || ''
+    const harnessId = form.harness_id || harnesses[0]?.harness_id || ''
+    if (!harnessId) { showToast('등록된 하네스가 없습니다 — 먼저 하네스를 등록하세요', 'error'); return }
     try {
       await api.openSession({ ...form, organization_id: orgId, harness_id: harnessId })
       setShowForm(false)
-      setForm({ user_id: '', project_id: '', repository_id: '', branch: '', title: '', task_purpose: '', model_class: 'patty-code-standard' })
+      setForm({ user_id: '', harness_id: '', project_id: '', repository_id: '', branch: '', title: '', task_purpose: '', model_class: 'patty-code-standard' })
       showToast('세션 시작됨', 'success')
       load()
     } catch (err: any) { showToast('세션 생성 실패: ' + err.message) }
@@ -162,6 +167,7 @@ export default function Sessions() {
           <h2 className="text-sm font-semibold mb-4">새 AI 코딩 세션 · New Session</h2>
           <div className="grid grid-cols-2 gap-4">
             <div><label className="label">개발자 · Developer</label><select className="input" value={form.user_id} onChange={e => setForm({ ...form, user_id: e.target.value })} required><option value="">선택...</option>{users.map(u => <option key={u.id} value={u.id}>{u.name_ko || u.name} ({u.email})</option>)}</select></div>
+            <div><label className="label">하네스 · Harness</label><select className="input" value={form.harness_id || (harnesses[0]?.harness_id || '')} onChange={e => setForm({ ...form, harness_id: e.target.value })} required><option value="">선택...</option>{harnesses.filter(h => h.status !== 'revoked').map(h => <option key={h.id} value={h.harness_id}>{h.harness_id?.slice(0, 24)} ({h.status})</option>)}</select></div>
             <div><label className="label">프로젝트 · Project</label><select className="input" value={form.project_id} onChange={e => setForm({ ...form, project_id: e.target.value })} required><option value="">선택...</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name_ko || p.name}</option>)}</select></div>
             <div><label className="label">저장소 · Repository</label><select className="input" value={form.repository_id} onChange={e => setForm({ ...form, repository_id: e.target.value })}><option value="">선택 안함</option>{repos.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></div>
             <div><label className="label">브랜치 · Branch</label><input className="input" value={form.branch} onChange={e => setForm({ ...form, branch: e.target.value })} placeholder="feature/refund" /></div>
@@ -409,4 +415,4 @@ export default function Sessions() {
   )
 }
 
-function authHeaders() { const token = localStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }
+function authHeaders(): Record<string, string> { const token = localStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }

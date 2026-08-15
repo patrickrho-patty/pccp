@@ -31,20 +31,30 @@ export default function Tools() {
   })
   const [approvals, setApprovals] = useState<any[]>([])
 
-  const authHeaders = () => {
+  const authHeaders = (): Record<string, string> => {
     const token = localStorage.getItem('pccp_token')
     return token ? { Authorization: `Bearer ${token}` } : {}
   }
 
+  // fetch wrapper that surfaces HTTP errors instead of swallowing them
+  const jsonFetch = async (url: string, options?: RequestInit) => {
+    const res = await fetch(url, options)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new Error(err.error || res.statusText)
+    }
+    return res.json().catch(() => ({}))
+  }
+
   const load = () => {
     api.listTools().then(data => setTools(Array.isArray(data) ? data : []))
-    api.listToolApprovals().then(data => setApprovals(Array.isArray(data) ? data : [])).catch(() => {})
+    api.listToolApprovals().then(data => setApprovals(Array.isArray(data) ? data : [])).catch(e => console.error('failed to load tool approvals:', e))
   }
   useEffect(() => { load() }, [])
 
   const filtered = useFilteredData(tools, filters, FILTER_CONFIG)
 
-  const seed = async () => { await api.seedTools(); load() }
+  const seed = async () => { try { await api.seedTools(); load() } catch (e: any) { showToast('시딩 실패: ' + (e.message || e)) } }
 
   const dangerBadge = (d: string) => {
     const m: Record<string,string> = { low: 'badge-green', medium: 'badge-blue', high: 'badge-yellow', critical: 'badge-red' }
@@ -63,13 +73,13 @@ export default function Tools() {
     if (!form.name || !form.tool_class) { showToast('도구명과 클래스는 필수입니다'); return }
     try {
       if (editingId) {
-        await fetch(`/api/tools/${editingId}`, {
+        await jsonFetch(`/api/tools/${editingId}`, {
           method: 'PUT',
           headers: { ...authHeaders(), 'Content-Type': 'application/json' },
           body: JSON.stringify(form),
         })
       } else {
-        await fetch('/api/tools', {
+        await jsonFetch('/api/tools', {
           method: 'POST',
           headers: { ...authHeaders(), 'Content-Type': 'application/json' },
           body: JSON.stringify(form),
@@ -79,7 +89,7 @@ export default function Tools() {
       setEditingId(null)
       setForm({ name: '', name_ko: '', category: 'read', tool_class: '', danger_level: 'low', requires_approval: false })
       load()
-    } catch (e) { showToast('오류: ' + e) }
+    } catch (e: any) { showToast('오류: ' + (e.message || e)) }
   }
 
   const startEdit = (t: any) => {
@@ -95,20 +105,20 @@ export default function Tools() {
   const handleDelete = async (t: any) => {
     if (!await confirm({ title: '확인', message: `"${t.name}" 도구를 삭제하시겠습니까?`, danger: true })) return
     try {
-      await fetch(`/api/tools/${t.id}`, { method: 'DELETE', headers: authHeaders() })
+      await jsonFetch(`/api/tools/${t.id}`, { method: 'DELETE', headers: authHeaders() })
       load()
-    } catch {}
+    } catch (e: any) { showToast('삭제 실패: ' + (e.message || e)) }
   }
 
   const toggleApproval = async (t: any) => {
     try {
-      await fetch(`/api/tools/${t.id}`, {
+      await jsonFetch(`/api/tools/${t.id}`, {
         method: 'PUT',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...t, requires_approval: !t.requires_approval }),
       })
       load()
-    } catch {}
+    } catch (e: any) { showToast('변경 실패: ' + (e.message || e)) }
   }
 
   const stats = {
@@ -255,8 +265,8 @@ export default function Tools() {
                 {a.reason && <span className="ml-2 text-xs text-gray-400">{a.reason}</span>}
               </div>
               <div className="flex gap-2">
-                <button onClick={async () => { try { await fetch(`/api/tools/approvals/${a.id}/decide`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: 'approved' }) }); load() } catch {} }} className="btn-sm btn-primary">승인</button>
-                <button onClick={async () => { try { await fetch(`/api/tools/approvals/${a.id}/decide`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: 'denied' }) }); load() } catch {} }} className="btn-sm btn-danger">거부</button>
+                <button onClick={async () => { try { await jsonFetch(`/api/tools/approvals/${a.id}/decide`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: 'approved' }) }); load() } catch (e: any) { showToast('승인 실패: ' + (e.message || e)) } }} className="btn-sm btn-primary">승인</button>
+                <button onClick={async () => { try { await jsonFetch(`/api/tools/approvals/${a.id}/decide`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: 'denied' }) }); load() } catch (e: any) { showToast('거부 실패: ' + (e.message || e)) } }} className="btn-sm btn-danger">거부</button>
               </div>
             </div>
           ))}
