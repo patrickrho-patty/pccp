@@ -154,3 +154,21 @@ func versionBelow(v, minV string) bool {
 	}
 	return false
 }
+
+// ActiveChangeFreeze reports whether the org has an active change
+// freeze (latest audit-trail event wins) and its reason.
+func (s *Service) ActiveChangeFreeze(orgID string) (bool, string, error) {
+	var events []models.AuditEvent
+	s.db.Where("organization_id = ? AND event_type IN (?, ?)", orgID,
+		"cp.korean.change_freeze_started", "cp.korean.change_freeze_ended").
+		Order("occurred_at DESC").Limit(1).Find(&events)
+	for _, e := range events {
+		if e.EventType == "cp.korean.change_freeze_started" {
+			var f koreanFreeze
+			_ = json.Unmarshal([]byte(e.Details), &f)
+			return true, f.FreezeReason, nil
+		}
+		return false, "", nil
+	}
+	return false, "", nil
+}

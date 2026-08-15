@@ -201,7 +201,18 @@ func (s *Service) EnforceStages(ctx context.Context, ex *Exchange, greq GovernRe
 		}
 	}
 	trace.Record(StageGrantVerify, true, "")
-	trace.Record(StageDecisionAggregate, true, "")
+	// Decision aggregate records the REAL org standing instead of an
+	// unconditional pass: recall already failed at model resolve; an
+	// active change freeze passes inference (reads/tests stay allowed)
+	// with the freeze noted — the connector's pushed dispatch gates
+	// block the write actions, and changeset ingestion refuses them
+	// server-side (D3 defense in depth).
+	orgID := snap.Harness.OrganizationID
+	if frozen, reason, ferr := s.ActiveChangeFreeze(orgID); ferr == nil && frozen {
+		trace.Record(StageDecisionAggregate, true, "change freeze active — write gates enforced downstream: "+reason)
+	} else {
+		trace.Record(StageDecisionAggregate, true, "")
+	}
 	// DLP scan + scheduler admission + endpoint lease resolve below are
 	// exercised inline by GovernInference; the trace pins their order.
 	trace.Record(StageDLPScan, true, "")

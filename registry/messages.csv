@@ -49,6 +49,7 @@ code,name,family,description
 0x0701,CHANGE_SET,provenance,Code change set
 0x0702,COMMIT_BIND,provenance,Commit provenance binding
 0x0703,ACTION_ENVELOPE,provenance,Connector action envelope for the audit stream
+0x0704,CHANGESET_NACK,provenance,Relay refusal of a changeset (e.g. active change freeze)
 0x0800,CHAT_MESSAGE,chat,Chat message
 0x0801,PRESENCE,chat,Presence update
 0x0A00,FILE_OFFER,files,File transfer offer

@@ -417,6 +417,17 @@ func (pl *DARIListener) ingestChangeSet(conn *dari.TransportConn, connID, harnes
 	// a client-supplied OrganizationID is never trusted (cross-tenant
 	// provenance injection).
 	orgID := pl.orgForPeer(connID)
+	// D3 defense-in-depth: an active change freeze blocks AI writes.
+	// The connector's dispatch gate already refuses them; a connector
+	// that ignores the freeze has its changesets rejected here too.
+	if frozen, reason, ferr := pl.svc.ActiveChangeFreeze(orgID); ferr == nil && frozen {
+		errPayload, _ := json.Marshal(map[string]string{
+			"error":         "change freeze active — AI changeset rejected",
+			"freeze_reason": reason,
+		})
+		conn.SendMessage(dari.MsgChangeSetNack, nil, errPayload, record.LaneID, record.LaneSequence+1)
+		return
+	}
 	_, err := pl.svc.provenance.CreateChangeSet(provenance.CreateChangeSetRequest{
 		OrganizationID: orgID,
 		SessionID:      env.SessionID,
