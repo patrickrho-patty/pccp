@@ -95,9 +95,9 @@
 - Consumes: all publication sources and data from Tasks 1--4.
 - Produces: visually reviewed PDF and independently rebuildable source archive.
 
-- [ ] Run `make clean && make && make check && make archive` from the publication directory.
-- [ ] Confirm with `pdfinfo` that the PDF is US Letter and non-empty; confirm with `pdffonts` that every font is embedded.
-- [ ] Render every page with `pdftoppm`, create a contact sheet, and inspect every page plus each new figure at original resolution for clipping, illegible labels, table overflow, orphan headings, and blank regions.
-- [ ] Extract PDF text and confirm all four figure captions, SCITT, benchmark limitations, and appendix headings are present.
-- [ ] Unpack `DARI-arXiv-source.tar.gz` into a fresh temporary directory and run `make clean all check` there with exit code 0.
-- [ ] Run `git diff --check` on authored sources and report unrelated workspace changes without modifying them.
+- [x] Run `make clean && make && make check && make archive` from the publication directory.
+- [x] Confirm with `pdfinfo` that the PDF is US Letter and non-empty; confirm with `pdffonts` that every font is embedded.
+- [x] Render every page with `pdftoppm`, create a contact sheet, and inspect every page plus each new figure at original resolution for clipping, illegible labels, table overflow, orphan headings, and blank regions.
+- [x] Extract PDF text and confirm all four figure captions, SCITT, benchmark limitations, and appendix headings are present.
+- [x] Unpack `DARI-arXiv-source.tar.gz` into a fresh temporary directory and run `make clean all check` there with exit code 0.
+- [x] Run `git diff --check` on authored sources and report unrelated workspace changes without modifying them.
