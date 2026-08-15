@@ -54,12 +54,12 @@ type AnalyzeRequest struct {
 	FilePath       string   `json:"file_path"`
 	SymbolsChanged []string `json:"symbols_changed"`
 	Languages      []string `json:"languages"`
-	IsAuth         bool     `json:"is_auth"`           // touches authentication/authorization
-	IsCrypto       bool     `json:"is_crypto"`         // touches cryptography
-	IsDBMigration  bool     `json:"is_db_migration"`  // touches database schema/migration
+	IsAuth         bool     `json:"is_auth"`         // touches authentication/authorization
+	IsCrypto       bool     `json:"is_crypto"`       // touches cryptography
+	IsDBMigration  bool     `json:"is_db_migration"` // touches database schema/migration
 	IsAPIContract  bool     `json:"is_api_contract"` // touches external API contract
-	IsConfig       bool     `json:"is_config"`         // touches production configuration
-	Dependencies   []string `json:"dependencies"`      // dependency changes
+	IsConfig       bool     `json:"is_config"`       // touches production configuration
+	Dependencies   []string `json:"dependencies"`    // dependency changes
 }
 
 // RiskScore is the AI Change Risk Score (PRD §20.2).

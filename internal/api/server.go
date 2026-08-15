@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"github.com/patrickrho-patty/pccp/internal/config"
 	"log"
 	"net"
 	"net/http"
@@ -1983,12 +1984,12 @@ func (s *Server) handleUpdatePresence(w http.ResponseWriter, r *http.Request) {
 }
 
 // deliverBroadcastToRelay pushes a broadcast to the org's live harness
-// sessions via the relay admin channel (POST {PCCP_RELAY_ADMIN_URL}/v1/broadcasts,
+// sessions via the relay admin channel (POST {relay_admin_url}/v1/broadcasts,
 // which fans out over live DARI sessions). The env is read per call;
 // when unset or unreachable it returns 0 and the broadcast stays
 // DB-recorded only.
 func deliverBroadcastToRelay(orgID, severity, body string) int {
-	base := strings.TrimSuffix(os.Getenv("PCCP_RELAY_ADMIN_URL"), "/")
+	base := strings.TrimSuffix(config.RelayAdminURL(), "/")
 	if base == "" {
 		return 0
 	}
@@ -3840,9 +3841,9 @@ func (s *Server) handleReviewChangeSubmission(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusNotFound, "submission not found")
 		return
 	}
-	base := strings.TrimSuffix(os.Getenv("PCCP_RELAY_ADMIN_URL"), "/")
+	base := strings.TrimSuffix(config.RelayAdminURL(), "/")
 	if base == "" {
-		writeError(w, http.StatusPreconditionFailed, "live review requires PCCP_RELAY_ADMIN_URL (relay admin channel)")
+		writeError(w, http.StatusPreconditionFailed, "live review requires the relay admin channel (config relay_admin_url)")
 		return
 	}
 	var payload map[string]any
@@ -3893,8 +3894,8 @@ func (s *Server) handleSREProbes(w http.ResponseWriter, r *http.Request) {
 		return map[string]any{"status": "up", "addr": addr}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"relay": probe(os.Getenv("PCCP_RELAY_PROBE_ADDR")),
-		"pia":   probe(os.Getenv("PCCP_PIA_PROBE_ADDR")),
+		"relay": probe(config.RelayProbeAddr()),
+		"pia":   probe(config.PIAProbeAddr()),
 		"cp":    map[string]any{"status": "up"}, // this handler answering IS the probe
 	})
 }

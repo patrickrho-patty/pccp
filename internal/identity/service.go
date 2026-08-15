@@ -7,8 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"strconv"
+	"github.com/patrickrho-patty/pccp/internal/config"
 	"strings"
 	"time"
 
@@ -343,18 +342,7 @@ func (s *Service) CreateBaseline(orgID, repoID, branch, commitSHA, commitMsg, au
 // sessionTTLOverrides reads the per-deployment TTL overrides (web/02
 // A3): unset falls back to the documented 8h/30m defaults.
 func sessionTTLOverrides() (sessionTTL, idleTTL int) {
-	sessionTTL, idleTTL = 3600*8, 1800
-	if v := os.Getenv("PCCP_SESSION_TTL_SECONDS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			sessionTTL = n
-		}
-	}
-	if v := os.Getenv("PCCP_IDLE_TTL_SECONDS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			idleTTL = n
-		}
-	}
-	return sessionTTL, idleTTL
+	return config.SessionTTLs()
 }
 
 // protectionProfileFor derives the session protection profile (web/02

@@ -89,8 +89,8 @@ type PIAConfig struct {
 	TLSCertFile string `json:"tls_cert_file"`
 	TLSKeyFile  string `json:"tls_key_file"`
 	// Local serving engine
-	ServingEngineType string `json:"serving_engine_type"`  // vllm, sglang, mock
-	ServingEngineURL  string `json:"serving_engine_url"` // localhost URL
+	ServingEngineType string `json:"serving_engine_type"` // vllm, sglang, mock
+	ServingEngineURL  string `json:"serving_engine_url"`  // localhost URL
 	// Model
 	ModelPackageID   string `json:"model_package_id"`
 	ModelWeightsPath string `json:"model_weights_path"`

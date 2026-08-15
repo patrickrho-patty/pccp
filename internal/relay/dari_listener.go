@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	pccpconfig "github.com/patrickrho-patty/pccp/internal/config"
 	"log"
 	"math/big"
 	"net"
@@ -179,7 +180,7 @@ func (pl *DARIListener) handleConn(ctx context.Context, netConn net.Conn) {
 		// coordinated upgrades). A connector below the floor refuses
 		// to continue the handshake; per-org floors additionally
 		// refuse at session setup.
-		MinHarnessVersion: os.Getenv("PCCP_MIN_HARNESS_VERSION"),
+		MinHarnessVersion: pccpconfig.MinHarnessVersion(),
 	}
 
 	if err := conn.SendHelloAck(ack); err != nil {

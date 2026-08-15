@@ -1,0 +1,26 @@
+# PCCP runtime configuration (TOML). Copy to pccp.toml (or set
+# PCCP_CONFIG=/path/to/this). Reload: `kill -HUP <pid>` — a malformed
+# file keeps the previous settings. Environment variables override
+# per key (PCCP_RELAY_ADMIN_URL, PCCP_MIN_HARNESS_VERSION, ...).
+
+# Cross-process channel: where the control plane reaches the relay's
+# admin API (directive delivery, broadcasts, catalog push, reviews).
+relay_admin_url = "http://127.0.0.1:8091"
+
+# SRE console component probes (TCP dial, 2s timeout).
+relay_probe_addr = "127.0.0.1:8090"
+pia_probe_addr   = "127.0.0.1:9090"
+
+# Deployment-wide minimum harness version (D5): advertised in
+# HELLO_ACK; connectors below it refuse the handshake.
+min_harness_version = ""
+
+# Session TTLs in seconds (defaults: 8h / 30m).
+session_ttl_seconds = 28800
+idle_ttl_seconds    = 1800
+
+# Browser origins allowed on the dari.web/1 carrier (relay only).
+web_origin_allowlist = [
+  "http://localhost:5173",
+  "https://ui.patty.example",
+]

@@ -5,8 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/patrickrho-patty/pccp/internal/config"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -25,10 +25,10 @@ func New(db *gorm.DB) *Service {
 }
 
 // relayAdminURL resolves the relay's admin API for directive-class
-// actions (PCCP_RELAY_ADMIN_URL). Empty means the operator has not
-// configured the cross-process channel — directive actions then FAIL
-// HONESTLY instead of pretending to succeed.
-func relayAdminURL() string { return os.Getenv("PCCP_RELAY_ADMIN_URL") }
+// actions (config: relay_admin_url, env override). Empty means the
+// operator has not configured the cross-process channel — directive
+// actions then FAIL HONESTLY instead of pretending to succeed.
+func relayAdminURL() string { return config.RelayAdminURL() }
 
 // pushRelayDirective signs + delivers an admin directive to the target
 // harness through the relay admin API. The relay verifies the

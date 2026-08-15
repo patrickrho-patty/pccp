@@ -3,6 +3,7 @@ module github.com/patrickrho-patty/pccp
 go 1.26
 
 require (
+	github.com/BurntSushi/toml v1.4.0 // indirect
 	github.com/dunglas/httpsfv v1.1.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
 	github.com/go-chi/chi/v5 v5.3.1 // indirect

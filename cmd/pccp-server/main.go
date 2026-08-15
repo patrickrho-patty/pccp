@@ -27,6 +27,8 @@ func main() {
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Println("PCCP Control Plane — starting up")
+	// Runtime config (pccp.toml) reloads on SIGHUP.
+	config.ListenForReload(make(chan struct{}))
 
 	// Initialize database
 	database, err := db.FromEnv()
@@ -48,9 +50,9 @@ func main() {
 	// Catalog push on publish (web/18 B): deliver the delta to live
 	// sessions through the relay admin channel when configured.
 	server.SetModelPublishedHook(func(packageID string) {
-		base := strings.TrimSuffix(os.Getenv("PCCP_RELAY_ADMIN_URL"), "/")
+		base := strings.TrimSuffix(config.RelayAdminURL(), "/")
 		if base == "" {
-			log.Printf("model %s published — catalog push deferred (PCCP_RELAY_ADMIN_URL not set; sessions refresh at next setup)", packageID)
+			log.Printf("model %s published — catalog push deferred (relay_admin_url not configured; sessions refresh at next setup)", packageID)
 			return
 		}
 		resp, err := http.Post(base+"/v1/catalog/broadcast", "application/json", nil)

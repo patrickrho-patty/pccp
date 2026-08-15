@@ -8,7 +8,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/patrickrho-patty/pccp/internal/config"
@@ -43,6 +42,8 @@ func main() {
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Println("DARI Relay — starting up")
+	// Runtime config (pccp.toml) reloads on SIGHUP.
+	config.ListenForReload(make(chan struct{}))
 
 	database, err := db.FromEnv()
 	if err != nil {
@@ -119,13 +120,8 @@ func main() {
 	// dari.web/1 browser carrier (Task 13): constrained WebSocket
 	// fallback on the admin listener; origins from env (never inline
 	// credentials).
-	if origins := os.Getenv("DARI_WEB_ORIGIN_ALLOWLIST"); origins != "" {
-		var allowed []string
-		for _, o := range strings.Split(origins, ",") {
-			if o = strings.TrimSpace(o); o != "" {
-				allowed = append(allowed, o)
-			}
-		}
+	if origins := config.WebOriginAllowlist(); len(origins) > 0 {
+		allowed := origins
 		wb, err := svc.NewWebBindingServer(allowed)
 		if err != nil {
 			log.Printf("DARI web carrier disabled: %v", err)
