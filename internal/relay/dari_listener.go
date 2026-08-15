@@ -375,6 +375,9 @@ func (pl *DARIListener) handleApplicationMessages(ctx context.Context, conn *dar
 			log.Printf("relay: dari AI_OPEN from %s, governing", connID)
 			pl.governAIOpen(ctx, conn, record, connID, harnessID)
 
+		case record.Kind == dari.KindMessage && msgType == dari.MsgCollabEnvelope:
+			pl.routeCollabEnvelope(conn, connID, record)
+
 		case record.Kind == dari.KindMessage && msgType == dari.MsgChangeSet:
 			pl.ingestChangeSet(conn, connID, harnessID, record)
 
@@ -661,3 +664,67 @@ func (pl *DARIListener) ApplyRevocationSnapshot(epoch uint64, serials map[string
 }
 
 // registerListener is invoked by Service.AttachDARIListener.
+
+// routeCollabEnvelope forwards a dari.collab/1 envelope between two
+// org peers (map §12: governed encrypted delivery). The relay routes
+// the member-encrypted envelope VERBATIM — it cannot read the payload
+// (AEAD under the conversation key) — and records routed-delivery
+// evidence. Cross-org routing is refused (org = the authenticated
+// credential's organization).
+func (pl *DARIListener) routeCollabEnvelope(conn *dari.TransportConn, connID string, record *dari.Record) {
+	var routed struct {
+		ToHarness      string `json:"to_harness"`
+		FromHarness    string `json:"from_harness"`
+		ConversationID string `json:"conversation_id"`
+		Envelope       []byte `json:"envelope"`
+	}
+	if err := json.Unmarshal(record.Payload, &routed); err != nil || routed.ToHarness == "" || len(routed.Envelope) == 0 {
+		log.Printf("relay: collab envelope from %s malformed: %v", connID, err)
+		return
+	}
+	from := pl.orgForPeer(connID)
+	var src, dst models.Harness
+	if err := pl.svc.db.Where("harness_id = ?", routed.FromHarness).First(&src).Error; err != nil || src.OrganizationID != from {
+		log.Printf("relay: collab envelope from %s: sender %s not in org", connID, routed.FromHarness)
+		return
+	}
+	if err := pl.svc.db.Where("harness_id = ?", routed.ToHarness).First(&dst).Error; err != nil || dst.OrganizationID != from {
+		log.Printf("relay: collab envelope from %s: target %s not in same org (cross-tenant refused)", connID, routed.ToHarness)
+		return
+	}
+
+	// Find the target's live connection by harness identity.
+	pl.mu.Lock()
+	var out credentialConnection
+	for _, state := range pl.conns {
+		if state.cred != nil && state.cred.SubjectPeerID == routed.ToHarness {
+			if c, ok := state.conn.(*dari.TransportConn); ok {
+				out = c
+			}
+		}
+	}
+	pl.mu.Unlock()
+	if out == nil {
+		log.Printf("relay: collab envelope for %s: peer not connected", routed.ToHarness)
+		return
+	}
+	tc := out.(*dari.TransportConn)
+	if err := tc.SendMessage(dari.MsgCollabEnvelope, nil, record.Payload, 0, 2); err != nil {
+		log.Printf("relay: collab envelope delivery to %s failed: %v", routed.ToHarness, err)
+		return
+	}
+	// Governed-delivery evidence (map §12: runtime emits ordered
+	// evidence) — content stays opaque; the evidence commits digests.
+	h := sha256.Sum256(routed.Envelope)
+	pl.svc.db.Create(&models.AuditEvent{
+		OrganizationID: from,
+		EventType:      "cp.collab.envelope_routed",
+		ActorType:      "relay",
+		Action:         "route_collab_envelope",
+		ResourceType:   "collab_conversation",
+		ResourceID:     routed.ConversationID,
+		Details:        fmt.Sprintf("from=%s to=%s digest=%x", routed.FromHarness, routed.ToHarness, h[:8]),
+		Result:         "delivered",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
+}

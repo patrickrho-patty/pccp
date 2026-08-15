@@ -110,6 +110,7 @@ const (
 	// reply to an admin directive (cross-repo registry).
 	MsgAdminCommandResult MessageType = 0x0B02
 	MsgSovereignAdvisory  MessageType = 0x0B03
+	MsgCollabEnvelope     MessageType = 0x0B10
 )
 
 // Session-governance extensions (0x0D00–0x0DFF) — the extension
@@ -241,6 +242,8 @@ func (mt MessageType) String() string {
 		return "ADMIN_COMMAND_RESULT"
 	case MsgSovereignAdvisory:
 		return "SOVEREIGN_ADVISORY"
+	case MsgCollabEnvelope:
+		return "COLLAB_ENVELOPE"
 	case MsgChangeSetNack:
 		return "CHANGESET_NACK"
 	case MsgPolicyEpochPush:
