@@ -70,6 +70,9 @@ func (h *HealthProber) ProbeAll(ctx context.Context) {
 	}
 }
 
+// Interval returns the probe interval (binary loop wiring).
+func (h *HealthProber) Interval() time.Duration { return h.cfg.ProbeInterval }
+
 // Healthy reports the worker's current health state.
 func (h *HealthProber) Healthy(workerID string) bool {
 	h.mu.Lock()

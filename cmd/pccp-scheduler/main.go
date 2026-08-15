@@ -107,6 +107,40 @@ func main() {
 	// S2 dispatch loop: binds queued requests to workers as slots free.
 	go svc.Serving.Start(ctx)
 
+	// S7 dual-loop autoscaling: long forecast loop (warm floor) + fast
+	// loop (fleet signals → burst scale). Directives are logged; workers
+	// execute lifecycle actions from the DARI listener.
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				svc.Serving.Autoscaler().SetFleet(svc.Serving.Dispatcher.FleetSignalsFromRegistry())
+				if dir := svc.Serving.Autoscaler().PrewarmDirective(now); dir != nil {
+					log.Printf("scheduler: lifecycle directive %+v", dir)
+				}
+			}
+		}
+	}()
+
+	// S8 health probing: workers failing consecutive probes drop out of
+	// the serving pool.
+	go func() {
+		ticker := time.NewTicker(time.Duration(svc.Serving.HealthProber().Interval()) * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				svc.Serving.HealthProber().ProbeAll(ctx)
+			}
+		}
+	}()
+
 	// Lease sweep loop.
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)

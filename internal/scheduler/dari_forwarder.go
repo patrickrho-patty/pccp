@@ -116,8 +116,12 @@ func (f *DARIForwarder) Send(workerAddr string, payload InferencePayload) (Infer
 				}
 				return result, nil
 			}
+			finish := ""
+			if len(raw.Choices) > 0 {
+				finish = raw.Choices[0].FinishReason
+			}
 			result := InferenceResult{
-				Finish: raw.Choices[0].FinishReason,
+				Finish: finish,
 				Usage: map[string]int{
 					"prompt_tokens":     raw.Usage.PromptTokens,
 					"completion_tokens": raw.Usage.CompletionTokens,

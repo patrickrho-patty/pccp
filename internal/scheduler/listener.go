@@ -55,6 +55,17 @@ func (l *DARIListener) TLSConfig() *tls.Config {
 	return l.tlsConfig
 }
 
+// Listen binds addr and serves worker connections until the listener
+// closes (convenience for tests and embedding).
+func (l *DARIListener) Listen(addr string) error {
+	ln, err := dari.ListenTCP(addr, l.tlsConfig)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+	return l.ServeTCP(ln)
+}
+
 // ServeTCP accepts worker connections until the listener closes.
 func (l *DARIListener) ServeTCP(ln net.Listener) error {
 	for {
