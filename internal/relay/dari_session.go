@@ -267,11 +267,50 @@ func ensureModelServingForDB(db *gorm.DB, orgID, model string) (*models.ModelPac
 		return nil, fmt.Errorf("no model requested")
 	}
 	var pkg models.ModelPackage
-	if err := db.Where("model_id = ?", model).First(&pkg).Error; err == nil {
-		if pkg.State != "published" {
-			return nil, fmt.Errorf("model %s is %s (not published)", model, pkg.State)
+	if err := db.Where("model_id = ?", model).First(&pkg).Error; err != nil {
+		if !devBootstrap() {
+			return nil, fmt.Errorf("model %s not registered (fail closed)", model)
 		}
-	} else if devBootstrap() {
+		provisioned, perr := provisionModelServingForDB(db, orgID, model)
+		if perr != nil {
+			return nil, perr
+		}
+		return provisioned, nil
+	}
+	if pkg.State != "published" {
+		return nil, fmt.Errorf("model %s is %s (not published)", model, pkg.State)
+	}
+	return ensureServingChainForDB(db, orgID, &pkg)
+}
+
+// ensureServingChainForDB resolves or fail-closes the endpoint +
+// endpoint-lease for an already-registered package.
+func ensureServingChainForDB(db *gorm.DB, orgID string, pkg *models.ModelPackage) (*models.ModelPackage, error) {
+	var endpoint models.InferenceEndpoint
+	if err := db.Where("organization_id = ? AND model_package_id = ? AND status = 'active'",
+		orgID, pkg.PackageID).First(&endpoint).Error; err != nil {
+		return nil, fmt.Errorf("no active endpoint for %s (fail closed)", pkg.PackageID)
+	}
+	var epLease models.EndpointLease
+	if err := db.Where("endpoint_id = ? AND status = 'active' AND not_after > ?",
+		endpoint.EndpointID, time.Now().Format(time.RFC3339)).
+		First(&epLease).Error; err != nil {
+		return nil, fmt.Errorf("no valid endpoint lease for %s (fail closed)", endpoint.EndpointID)
+	}
+	return pkg, nil
+}
+
+// provisionModelServingForDB registers the FULL serving chain for a
+// model (published package → org endpoint → endpoint lease) with no
+// dev-bootstrap env: operators, the benchmark, and first-run bring-up
+// call it explicitly through RegisterModelServing. Idempotent — every
+// step reuses an existing row.
+func provisionModelServingForDB(db *gorm.DB, orgID, model string) (*models.ModelPackage, error) {
+	if model == "" {
+		return nil, fmt.Errorf("no model requested")
+	}
+	var pkg models.ModelPackage
+	if err := db.Where("model_id = ?", model).First(&pkg).Error; err != nil {
 		pkg = models.ModelPackage{
 			PackageID: "pmp-" + model,
 			ModelID:   model,
@@ -282,16 +321,10 @@ func ensureModelServingForDB(db *gorm.DB, orgID, model string) (*models.ModelPac
 		if err := db.Create(&pkg).Error; err != nil {
 			return nil, fmt.Errorf("register model package: %w", err)
 		}
-	} else {
-		return nil, fmt.Errorf("model %s not registered (fail closed)", model)
 	}
-
 	var endpoint models.InferenceEndpoint
 	if err := db.Where("organization_id = ? AND model_package_id = ? AND status = 'active'",
 		orgID, pkg.PackageID).First(&endpoint).Error; err != nil {
-		if !devBootstrap() {
-			return nil, fmt.Errorf("no active endpoint for %s (fail closed)", pkg.PackageID)
-		}
 		endpoint = models.InferenceEndpoint{
 			OrganizationID: orgID,
 			EndpointID:     "ep-" + pkg.PackageID,
@@ -305,14 +338,10 @@ func ensureModelServingForDB(db *gorm.DB, orgID, model string) (*models.ModelPac
 			return nil, fmt.Errorf("register endpoint: %w", err)
 		}
 	}
-
 	var epLease models.EndpointLease
 	if err := db.Where("endpoint_id = ? AND status = 'active' AND not_after > ?",
 		endpoint.EndpointID, time.Now().Format(time.RFC3339)).
 		First(&epLease).Error; err != nil {
-		if !devBootstrap() {
-			return nil, fmt.Errorf("no valid endpoint lease for %s (fail closed)", endpoint.EndpointID)
-		}
 		now := time.Now()
 		epLease = models.EndpointLease{
 			EndpointID:     endpoint.EndpointID,
@@ -330,6 +359,14 @@ func ensureModelServingForDB(db *gorm.DB, orgID, model string) (*models.ModelPac
 		}
 	}
 	return &pkg, nil
+}
+
+// RegisterModelServing onboards a model's serving chain (published
+// package → active org endpoint → active endpoint lease) WITHOUT the
+// dev-bootstrap env. Operators, tests, and the benchmark call this
+// explicitly; the session path stays fail-closed for unknown models.
+func (s *Service) RegisterModelServing(orgID, model string) (*models.ModelPackage, error) {
+	return provisionModelServingForDB(s.db, orgID, model)
 }
 
 // epochAllowsPackage reports whether the epoch's allow-list contains
