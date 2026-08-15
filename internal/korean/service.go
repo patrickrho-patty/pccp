@@ -32,15 +32,15 @@ type GroupAffiliate struct {
 
 // SIContractorMode manages SI/outsourced developer mode (PRD §33.2).
 type SIContractor struct {
-	OrganizationID  string `json:"organization_id"`
-	ContractorOrgID string `json:"contractor_org_id"`
-	ContractorName  string `json:"contractor_name"`
+	OrganizationID   string `json:"organization_id"`
+	ContractorOrgID  string `json:"contractor_org_id"`
+	ContractorName   string `json:"contractor_name"`
 	ContractorNameKo string `json:"contractor_name_ko"`
-	StartDate       string `json:"start_date"`
-	EndDate         string `json:"end_date"`
-	ProjectScope    string `json:"project_scope"`
-	DataAccessLevel string `json:"data_access_level"` // limited, standard, elevated
-	RequiresEscort  bool   `json:"requires_escort"`   // supervised access
+	StartDate        string `json:"start_date"`
+	EndDate          string `json:"end_date"`
+	ProjectScope     string `json:"project_scope"`
+	DataAccessLevel  string `json:"data_access_level"` // limited, standard, elevated
+	RequiresEscort   bool   `json:"requires_escort"`   // supervised access
 }
 
 // ShadowAIDiscovery detects unauthorized AI tool usage (PRD §33.3).
@@ -71,12 +71,12 @@ type ChangeFreeze struct {
 
 // EmergencyModelRecall implements emergency model recall (PRD §33.9, DARI §65).
 type ModelRecall struct {
-	ModelPackageID string `json:"model_package_id"`
-	Reason         string `json:"reason"`
-	ReasonKo       string `json:"reason_ko"`
-	Severity       string `json:"severity"` // security, compliance, quality
-	InitiatedBy    string `json:"initiated_by"`
-	InitiatedAt    string `json:"initiated_at"`
+	ModelPackageID string   `json:"model_package_id"`
+	Reason         string   `json:"reason"`
+	ReasonKo       string   `json:"reason_ko"`
+	Severity       string   `json:"severity"` // security, compliance, quality
+	InitiatedBy    string   `json:"initiated_by"`
+	InitiatedAt    string   `json:"initiated_at"`
 	AffectedOrgs   []string `json:"affected_organizations"`
 }
 
@@ -235,14 +235,14 @@ func (s *Service) SetForcedHarnessVersion(orgID, minVersion, releaseRing, deadli
 
 // GetAISkillsMatrix returns the AI skills matrix for the organization (PRD §33.7).
 type SkillMatrixEntry struct {
-	UserID      string  `json:"user_id"`
-	UserName    string  `json:"user_name"`
-	UserNameKo  string  `json:"user_name_ko"`
-	Department  string  `json:"department"`
-	AIUsageScore float64 `json:"ai_usage_score"`
-	ToolClasses []string `json:"tool_classes_used"`
-	Sessions    int      `json:"sessions"`
-	LastActive  string   `json:"last_active"`
+	UserID       string   `json:"user_id"`
+	UserName     string   `json:"user_name"`
+	UserNameKo   string   `json:"user_name_ko"`
+	Department   string   `json:"department"`
+	AIUsageScore float64  `json:"ai_usage_score"`
+	ToolClasses  []string `json:"tool_classes_used"`
+	Sessions     int      `json:"sessions"`
+	LastActive   string   `json:"last_active"`
 }
 
 // GetAISkillsMatrix returns the organization's AI skills matrix.
@@ -271,16 +271,16 @@ func (s *Service) GetAISkillsMatrix(orgID string) ([]SkillMatrixEntry, error) {
 
 // GenerateGovernanceBrief creates an executive weekly AI governance brief (PRD §33.12).
 type GovernanceBrief struct {
-	OrganizationID    string `json:"organization_id"`
-	WeekOf            string `json:"week_of"`
-	TotalSessions     int    `json:"total_sessions"`
-	ActiveHarnesses   int    `json:"active_harnesses"`
-	SecurityFindings  int    `json:"security_findings"`
-	ModelInvocations  int    `json:"model_invocations"`
-	CodeChanges       int    `json:"code_changes"`
-	ApprovalRate      float64 `json:"approval_rate"`
-	ComplianceStatus  string  `json:"compliance_status"`
-	Recommendations   []string `json:"recommendations"`
+	OrganizationID   string   `json:"organization_id"`
+	WeekOf           string   `json:"week_of"`
+	TotalSessions    int      `json:"total_sessions"`
+	ActiveHarnesses  int      `json:"active_harnesses"`
+	SecurityFindings int      `json:"security_findings"`
+	ModelInvocations int      `json:"model_invocations"`
+	CodeChanges      int      `json:"code_changes"`
+	ApprovalRate     float64  `json:"approval_rate"`
+	ComplianceStatus string   `json:"compliance_status"`
+	Recommendations  []string `json:"recommendations"`
 }
 
 // GenerateGovernanceBrief creates the executive brief.

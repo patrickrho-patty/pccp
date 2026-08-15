@@ -437,7 +437,10 @@ func (s *Service) defaultForwarder(ctx context.Context, req InferenceRequest, en
 	} else {
 		piaURL := piaAPIBase()
 		if piaURL == "" {
-			piaURL = "http://localhost:9090"
+			// No PIA configured: fail closed. There is NO mock
+			// inference fallback — a governed exchange either reaches
+			// a real inference endpoint or errors (T15).
+			return nil, fmt.Errorf("relay: no PIA endpoint configured (PCCP_PIA_URL / YOLO_AUTO_ENDPOINT) — refusing to fabricate inference")
 		}
 		piaReq := map[string]interface{}{
 			"model":       req.Model,
