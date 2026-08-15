@@ -35,7 +35,66 @@ spec → plan → implementation cycle:
 
 **This spec covers S1 only.**
 
-## 2. Design Principles
+## 2. Reference Sources & Adoption Map
+
+Reference codebases are vendored in `tools/` (this worktree). We study their logic and
+designs and re-implement the ideas in Go/DARI — never copy source. `tools/dynamo` is the
+Rust source tree; `tools/llm-d` is a docs/proposals-only checkout (no Go tree — consult
+upstream `kubernetes-sigs/llm-d` for source when needed).
+
+### 2.1 S1 direct references
+
+| S1 feature | Reference (tools/) | What we adopt |
+|---|---|---|
+| Registry + lease/eviction semantics | `dynamo/lib/llm/src/discovery/{controller,watcher,worker_set,worker_monitor,model_manager}.rs` | Event-driven, watch-based discovery (no polling), lease expiry → eviction |
+| Capability card as registration unit | `dynamo/lib/llm/src/discovery/endpoint_card.rs`, `dynamo/lib/llm/src/model_card.rs` (`ModelDeploymentCard`: display name, model info, tokenizer, chat template, gen config, architectural context length, runtime config) | Card schema + `list_and_watch` consumption pattern (S3 router will watch the registry the same way) |
+| Worker lifecycle | `dynamo/lib/backend-common/src/worker.rs` | register → publish card → keepalive → shutdown cleanup |
+| GPU inventory | `dynamo/lib/backend-common` NVML/nvidia-smi inventory | SKU/count/HBM fields |
+| Pool concept + membership | `llm-d/docs/architecture` (InferencePool, EndpointSlices); `llm-d/proposals/non-kubernetes-mode.md` | Pool/tenant binding in the signed config; non-K8s-first sequencing confirmed |
+| Capability-matched selection | `llm-d/docs/architecture` (gateway backend selection) | Card fields designed as the match surface for S3 |
+
+### 2.2 Full adoption matrix (original 15 core capabilities → sub-projects)
+
+| # | Core capability (original list) | Sub-project | Primary reference |
+|---|---|---|---|
+| 1 | Global fair queue with late GPU binding | S2 | `llm-d/docs/architecture` Flow Control; Dynamo strict-priority tiers |
+| 2 | Exact fleet-wide KV-cache map | S3 | `dynamo/lib/kv-router`, `dynamo/lib/kv-hashing`, `kvbm-*` |
+| 3 | KV + session + topology + load-aware placement | S3 | Dynamo router; llm-d precise KV mode |
+| 4 | Online learned TTFT/TPOT prediction | S4 | llm-d latency predictor; `llm-d/proposals/llm-d-planner.md` |
+| 5 | SLO-aware routing | S5 | Dynamo Planner TTFT/ITL objectives (`dynamo/components/src`, `examples/global_planner`) |
+| 6 | MTP-aware capacity modeling | S5 | Dynamo Planner MTP acceptance-length |
+| 7 | Tiered KV fabric + P2P transfer | S6 | `dynamo/lib/kvbm-*` (engine/physical/logical), `kv-hashing`; llm-d tiered-cache docs |
+| 8 | Media/encoder-aware caching + routing | S6 | Dynamo multimodal KV routing (Qwen3.6/SGLang path) |
+| 9 | Aggregated + P/D disaggregated serving | S6 | Dynamo P/D via NIXL (`dynamo/deploy/pre-deployment/nixl`); llm-d P/D routing |
+| 10 | NIXL/RDMA-aware state movement | S6 | Dynamo NIXL integration |
+| 11 | Heterogeneous cost/SLO-aware autoscaling | S7 | `llm-d/proposals/autoscaler.md` (WVA); Dynamo Planner |
+| 12 | Fast model actuation (weight residency, snapshots) | S7 | `dynamo/lib/gpu_memory_service`, `dynamo/lib/memory`; Dynamo Snapshot |
+| 13 | Request migration + failure recovery | S8 | Dynamo request migration; `llm-d/proposals/inference-resilience-operator.md` |
+| 14 | Batch/async workload consolidation | S9 | `llm-d/proposals/batch-gateway.md`, `llm-d/proposals/llm-d-async.md` |
+| 15 | Full-fleet simulation, replay, autotuning | S11 | `dynamo/lib/mocker`, `dynamo/aisimulate`; llm-d inference simulator |
+
+### 2.3 S1 coverage of the original 40-section list
+
+S1 implements a slice of these original sections, extended by the security work
+(signed config + measured reachability) that neither reference system has:
+
+- **§34 Service Discovery (core)** — dynamic worker registration, capability
+  registration, health leases, model metadata, automatic stale-worker removal;
+  DP/TP rank and cache-capability fields reserved in the card for S3.
+- **§13 Multi-Engine Runtime (capability card v1)** — engine kind/version, GPU,
+  precision, context, modalities, TP/DP/EP; MTP/LoRA/P/D optional.
+- **§24 Failure Management (worker-level subset)** — health via heartbeat-as-card,
+  lease-expiry eviction, quarantine; full drain/probing is S8.
+- **§40 Administrative Control Plane (Fleet subset)** — Workers page: GPUs, nodes,
+  engine versions, reachability, lease status.
+- **§21 Engine Lifecycle (first operation only)** — registration is the first
+  lifecycle event; the rest of the lifecycle (sleep/wake/reload) is S7.
+- **§32/§33 (deployment modes)** — non-Kubernetes first; the card schema is shaped so
+  a K8s adapter can map pods → cards later.
+
+Everything else in the 40 sections belongs to S2–S11 per the matrix above.
+
+## 3. Design Principles
 
 1. **Security is woven through, never bolted on.** Enrollment, signed config, measured
    reachability, and evidence ride along every later capability (routing, KV fabric,
@@ -50,7 +109,7 @@ spec → plan → implementation cycle:
 5. **Every admission outcome is evidence.** register/deny/evict/degrade events land on
    the existing event spine.
 
-## 3. Components
+## 4. Components
 
 | Piece | What it is | Reuses |
 |---|---|---|
@@ -59,7 +118,7 @@ spec → plan → implementation cycle:
 | PIA worker-agent mode | New mode in existing binary: DARI registration client, engine introspection (`/v1/models`, `/metrics`), host GPU info (NVML), socket-reachability measurement, signed-config loader + verifier, lease renewer | `internal/pia` |
 | CP additions | Config-signing endpoint + new `config` key domain; worker read-through API; tenant policy field; revocation feed; events | `internal/keymgmt`, `internal/identity`, `internal/policy`, `internal/events` |
 
-## 4. Trust Model & Admission
+## 5. Trust Model & Admission
 
 **Worker identity:** PIA is the unit of trust. Engines bind to `127.0.0.1` in production
 (co-located with PIA, as Dynamo/llm-d deploy their worker frontends) and are never
@@ -89,7 +148,7 @@ The scheduler verifies PPCs **offline** against the CP public key with a periodi
 synced revocation list — the fleet keeps working during CP outages, and revocation
 propagates at sync cadence.
 
-## 5. Capability Card v1
+## 6. Capability Card v1
 
 Signed with COSE-Sign1 over canonical bytes (same pattern as
 `internal/policy/canonical.go`). Fields:
@@ -104,7 +163,7 @@ Signed with COSE-Sign1 over canonical bytes (same pattern as
 | health | status, last heartbeat, lease expiry | required |
 | signature | COSE-Sign1 over canonical card | required |
 
-## 6. Registration Protocol & Leases
+## 7. Registration Protocol & Leases
 
 ```
 PIA                                    pccp-scheduler                Control Plane
@@ -126,7 +185,7 @@ PIA                                    pccp-scheduler                Control Pla
 - **Evidence:** `worker.register` / `worker.deny` / `worker.evict` / `worker.degrade`
   events on the existing spine with receipts.
 
-## 7. Signed Config & Socket Verification
+## 8. Signed Config & Socket Verification
 
 **Envelope:** `{config, signature, cp_key_id}` — canonical JSON signed with COSE-Sign1
 under a new key domain `config` in `internal/keymgmt`. PIA verifies at boot and
@@ -144,7 +203,7 @@ mismatches — a config file cannot lie about the socket.
 **Distribution:** out-of-band (admin downloads envelope, installs on host) in S1 —
 deliberately human-in-the-loop. DARI push is a later option.
 
-## 8. CP Integration & Admin UI
+## 9. CP Integration & Admin UI
 
 - **API:** `POST /api/v1/scheduler/configs` (admin signs PIA config → envelope);
   `GET /api/v1/workers` (read-through from scheduler); tenant policy gains
@@ -157,7 +216,7 @@ deliberately human-in-the-loop. DARI push is a later option.
   tenant/policy pages. **Engine tuning** is out of scope — engines are launched
   externally until S7 lifecycle management.
 
-## 9. Testing
+## 10. Testing
 
 - **Unit:** card canonicalization + signature; each admission rung (no PPC → reject,
   bad config sig → reject, policy fail → quarantine); lease-expiry eviction.
@@ -169,7 +228,7 @@ deliberately human-in-the-loop. DARI push is a later option.
 - **Failure modes:** scheduler restart → re-registration within TTL; CP down →
   scheduler keeps admitting via offline PPC verification.
 
-## 10. Out of Scope (explicit)
+## 11. Out of Scope (explicit)
 
 | Deferred | To |
 |---|---|
