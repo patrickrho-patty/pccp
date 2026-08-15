@@ -852,6 +852,20 @@ func (s *Server) handleListHarnesses(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("user"); v != "" {
 		q = q.Where("allowed_users LIKE ?", "%"+v+"%")
 	}
+	// Column sort (harnesses UX12): server-side ordering.
+	sortBy := r.URL.Query().Get("sort")
+	switch sortBy {
+	case "binary_version":
+		q = q.Order("binary_version DESC")
+	case "risk_state":
+		q = q.Order("risk_state DESC, created_at DESC")
+	case "enrolled_at":
+		q = q.Order("created_at DESC")
+	case "":
+		q = q.Order("created_at DESC")
+	default:
+		q = q.Order("created_at DESC")
+	}
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 		page, _ := strconv.Atoi(pageStr)
 		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
@@ -868,14 +882,14 @@ func (s *Server) handleListHarnesses(w http.ResponseWriter, r *http.Request) {
 		var total int64
 		q.Count(&total)
 		var harnesses []models.Harness
-		q.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&harnesses)
+		q.Offset((page - 1) * size).Limit(size).Find(&harnesses)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"data": decorateHarnesses(harnesses), "total": total, "page": page, "size": size,
 		})
 		return
 	}
 	var harnesses []models.Harness
-	q.Order("created_at DESC").Find(&harnesses)
+	q.Find(&harnesses)
 	writeJSON(w, http.StatusOK, decorateHarnesses(harnesses))
 }
 
@@ -1234,6 +1248,17 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 		if v := r.URL.Query().Get(key); v != "" {
 			q = q.Where(key+" = ?", v)
 		}
+	}
+	// Card sort (projects UX10): server-side ordering.
+	switch r.URL.Query().Get("sort") {
+	case "name":
+		q = q.Order("name_ko ASC, name ASC")
+	case "sessions":
+		q = q.Order("(SELECT COUNT(*) FROM sessions WHERE sessions.project_id = projects.id) DESC")
+	case "created":
+		q = q.Order("created_at DESC")
+	default:
+		q = q.Order("created_at DESC")
 	}
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 		page, _ := strconv.Atoi(pageStr)

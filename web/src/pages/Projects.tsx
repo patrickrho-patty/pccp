@@ -228,6 +228,7 @@ export default function Projects() {
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <h3 className="text-base font-semibold flex items-center gap-2">
+                      <input type="checkbox" checked={selectedProjects.has(p.id)} onChange={() => { const n = new Set(selectedProjects); if (n.has(p.id)) n.delete(p.id); else n.add(p.id); setSelectedProjects(n) }} />
                       <FavoriteStar entity="projects" id={p.id} />
                       <Link to={`/projects/${p.id}`} className="text-blue-600 hover:underline">{p.name_ko || p.name}</Link>
                     </h3>

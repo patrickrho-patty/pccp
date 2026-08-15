@@ -35,6 +35,7 @@ export default function Harnesses() {
   const table = useServerTable<any>((q) =>
     api.listHarnesses({
       page: String(q.page), size: String(q.size), search: q.search,
+      sort: q.sort,
       ...q.filters,
     })
   , { size: PAGE_SIZE, initialFilters: {} })
@@ -309,6 +310,12 @@ export default function Harnesses() {
         <select className="input max-w-[150px] text-xs" value={table.filters.user || ''} onChange={e => table.setFilter('user', e.target.value)}>
           <option value="">사용자: 전체</option>
           {users.map(u => <option key={u.id} value={u.id}>{u.name_ko || u.name}</option>)}
+        </select>
+        <select className="input max-w-[130px] text-xs" value={table.sort} onChange={e => table.setSort(e.target.value)}>
+          <option value="">정렬: 등록일</option>
+          <option value="binary_version">버전</option>
+          <option value="risk_state">위험도</option>
+          <option value="enrolled_at">등록일</option>
         </select>
       </div>
 

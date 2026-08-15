@@ -27,11 +27,13 @@ export default function Repositories() {
   const [baselineRepo, setBaselineRepo] = useState<any>(null)
   const [baselineForm, setBaselineForm] = useState({ branch: '', commit_sha: '', commit_message: '', author_name: '', author_email: '' })
   const { favorites, sortPinnedFirst } = useFavorites('repositories')
+  const [selectedRepos, setSelectedRepos] = useState<Set<string>>(new Set())
   const [form, setForm] = useState({ name: '', slug: '', project_id: '', scm_provider: 'github', clone_url: '', default_branch: 'main', sensitivity: 'internal' })
 
   const table = useServerTable<any>((q) =>
     api.listRepositories({
       page: String(q.page), size: String(q.size), search: q.search,
+      sort: q.sort,
       ...q.filters,
     })
   , { size: PAGE_SIZE })
@@ -128,6 +130,12 @@ export default function Repositories() {
   const syncLabel = (s: string) => ({ synced: '동기화됨', failed: '실패', syncing: '동기화 중', never: '미동기화' } as any)[s] || (s || '미동기화')
 
   const columns: Column<any>[] = [
+    {
+      key: 'sel', header: '✓', cardLabel: '선택',
+      render: (r) => (
+        <input type="checkbox" checked={selectedRepos.has(r.id)} onClick={e => e.stopPropagation()} onChange={() => { const n = new Set(selectedRepos); if (n.has(r.id)) n.delete(r.id); else n.add(r.id); setSelectedRepos(n) }} />
+      ),
+    },
     { key: 'pin', header: '★', cardLabel: '고정', render: (r) => <FavoriteStar entity="repositories" id={r.id} /> },
     {
       key: 'name', header: '저장소', cardLabel: '저장소',
@@ -257,6 +265,20 @@ export default function Repositories() {
           <option value="">상태: 전체</option>
           <option value="active">활성</option><option value="unregistered">해제됨</option>
         </select>
+        {selectedRepos.size > 0 && (
+          <button
+            onClick={async () => {
+              if (!await confirm({ title: '일괄 등록 해제', message: `${selectedRepos.size}개 저장소를 등록 해제하시겠습니까?`, danger: true })) return
+              let ok = 0
+              for (const id of selectedRepos) { try { await api.deleteRepository(id); ok++ } catch {} }
+              showToast(`${ok}/${selectedRepos.size} 해제됨`, ok === selectedRepos.size ? 'success' : 'error')
+              setSelectedRepos(new Set()); table.reload()
+            }}
+            className="btn-sm btn-danger"
+          >
+            일괄 해제 ({selectedRepos.size})
+          </button>
+        )}
       </div>
 
       <div className="card !p-0">
