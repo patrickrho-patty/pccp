@@ -43,18 +43,33 @@ type ChainContext struct {
 	// RecordSequence records a newly accepted sequence (atomic in the
 	// durable ledger; in-memory here).
 	RecordSequence func(issuer string, sequence uint64, digest Digest)
+	// HighWater reports the issuer's recorded high-water sequence (and
+	// whether one exists). When set, an UNSEEN sequence at or below the
+	// high-water is GRANT_REPLAY (F.4: "an unseen sequence below or
+	// equal to the high-water mark is GRANT_REPLAY").
+	HighWater func(issuer string) (uint64, bool)
 }
 
 // ValidateDelegationChain validates a root-to-leaf grant chain per the
 // F.4 attenuation algorithm. envelopes[0] is the ROOT (no parent
-// digest); the last is the leaf whose authority will be used.
+// digest); the last is the leaf whose authority will be used. A zero
+// NowMs is rejected: time validation is never optional (fail-closed).
 func ValidateDelegationChain(chain []*GrantEnvelope, ctx ChainContext) error {
+	if ctx.NowMs == 0 {
+		return errors.New("dari: ChainContext.NowMs is required (time validation cannot be skipped)")
+	}
 	if len(chain) == 0 || len(chain) > MaxDelegationChainLen {
 		return fmt.Errorf("%w: chain length %d", ErrInvalidGrantChain, len(chain))
 	}
 
 	// Track repeated digests (rule 1).
 	seen := map[Digest]bool{}
+	type ledgerRecord struct {
+		issuer string
+		seq    uint64
+		digest Digest
+	}
+	var pendingLedgerRecords []ledgerRecord
 
 	// Step 2: per-grant validation, root-to-leaf.
 	for i, env := range chain {
@@ -79,21 +94,28 @@ func ValidateDelegationChain(chain []*GrantEnvelope, ctx ChainContext) error {
 			return fmt.Errorf("%w: grant %d signature: %v", ErrInvalidGrantChain, i, err)
 		}
 		// Validity window.
-		if ctx.NowMs != 0 && (ctx.NowMs < b.NotBeforeMs || ctx.NowMs >= b.NotAfterMs) {
+		if ctx.NowMs < b.NotBeforeMs || ctx.NowMs >= b.NotAfterMs {
 			return fmt.Errorf("%w: grant %d outside validity window", ErrInvalidGrantChain, i)
 		}
 		// Revocation.
 		if ctx.Revoked != nil && ctx.Revoked(env.SignedDigest) {
 			return fmt.Errorf("%w: grant %d revoked", ErrAuthorityEscalation, i)
 		}
-		// Issuer-sequence replay ledger (F.4 ledger semantics).
+		// Issuer-sequence replay ledger (F.4 ledger semantics). Records
+		// are staged and committed ONLY after the whole chain validates
+		// — a rejected chain leaves no ledger residue.
 		if ctx.SequenceSeen != nil {
 			if prev := ctx.SequenceSeen(b.Issuer, b.IssuerSequence); prev != (Digest{}) {
 				if prev != env.SignedDigest {
 					return fmt.Errorf("%w: issuer %s sequence %d reused for a different digest", ErrGrantReplay, b.Issuer, b.IssuerSequence)
 				}
-			} else if ctx.RecordSequence != nil {
-				ctx.RecordSequence(b.Issuer, b.IssuerSequence, env.SignedDigest)
+			} else if ctx.HighWater != nil {
+				if hw, exists := ctx.HighWater(b.Issuer); exists && b.IssuerSequence <= hw {
+					return fmt.Errorf("%w: issuer %s sequence %d at or below high-water %d", ErrGrantReplay, b.Issuer, b.IssuerSequence, hw)
+				}
+				pendingLedgerRecords = append(pendingLedgerRecords, ledgerRecord{b.Issuer, b.IssuerSequence, env.SignedDigest})
+			} else {
+				pendingLedgerRecords = append(pendingLedgerRecords, ledgerRecord{b.Issuer, b.IssuerSequence, env.SignedDigest})
 			}
 		}
 
@@ -112,6 +134,12 @@ func ValidateDelegationChain(chain []*GrantEnvelope, ctx ChainContext) error {
 	for i := 0; i+1 < len(chain); i++ {
 		if err := validateDelegationPair(chain[i], chain[i+1]); err != nil {
 			return fmt.Errorf("dari: chain pair %d: %w", i, err)
+		}
+	}
+	// Commit staged ledger records only on full-chain success.
+	if ctx.RecordSequence != nil {
+		for _, r := range pendingLedgerRecords {
+			ctx.RecordSequence(r.issuer, r.seq, r.digest)
 		}
 	}
 	return nil
@@ -246,7 +274,7 @@ func coveredPaths(parent, child []PathScope) bool {
 			if !subsetStrings(p.Operations, c.Operations) {
 				continue
 			}
-			if c.Prefix == p.Prefix || (len(c.Prefix) > len(p.Prefix) && c.Prefix[:len(p.Prefix)] == p.Prefix && c.Prefix[len(p.Prefix)] == '/') {
+			if PathPrefixCovers(p.Prefix, c.Prefix) {
 				covered = true
 				break
 			}

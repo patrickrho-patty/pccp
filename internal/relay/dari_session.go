@@ -8,12 +8,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/policy"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
+	"gorm.io/gorm"
 )
 
 // This file implements the session-governance and provenance flows of
@@ -66,33 +68,33 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 		userID = "user-" + connID
 	}
 
-	// Resolve or create the active policy epoch for the org. The
-	// epoch's allow-list carries MODEL PACKAGE IDs (the relay's
-	// authorize() compares against the package ID); the lease below
-	// carries MODEL IDs (the connector's AuthorizeExchange compares
-	// against the model ID). ensureModelServing returns the package
-	// so both lists stay coherent.
-	pkg, err := pl.ensureModelServing(orgID, model)
+	// Model serving (Task 15/audit finding): a peer-supplied model name
+	// NEVER self-authorizes. Outside explicit dev bootstrap
+	// (PCCP_DEV_BOOTSTRAP=1) the package, endpoint, endpoint-lease, and
+	// a policy epoch allowing the package must ALREADY exist — the
+	// session fails closed otherwise. Bootstrap mode exists for
+	// first-run/e2e bring-up only.
+	pkg, err := plEnsureModelServing(pl, orgID, model)
 	if err != nil {
 		pl.sendJSONError(conn, connID, "model serving unavailable: "+err.Error())
 		return
 	}
 	epoch, err := pl.svc.Policy().GetActiveEpoch(orgID)
-	if err == nil && !epochAllowsPackage(epoch, pkg.PackageID) {
-		// The active epoch predates this model's publication. Issue a
-		// new epoch carrying the previous models plus this package —
-		// the same transition a control plane runs on catalog publish.
-		var prev []string
-		json.Unmarshal([]byte(epoch.AllowedModelsJSON), &prev)
-		epoch, err = pl.svc.Policy().CreatePolicyEpoch(orgID, append(prev, pkg.PackageID), "immediate")
-	}
 	if err != nil {
-		allowed := []string{pkg.PackageID}
-		epoch, err = pl.svc.Policy().CreatePolicyEpoch(orgID, allowed, "immediate")
-		if err != nil {
-			pl.sendJSONError(conn, connID, "policy epoch unavailable: "+err.Error())
+		if !devBootstrap() {
+			pl.sendJSONError(conn, connID, "no active policy epoch for organization: "+err.Error())
 			return
 		}
+		// Bootstrap: the FIRST epoch for a fresh organization allows the
+		// bootstrapped package. Never widens an existing epoch.
+		epoch, err = pl.svc.Policy().CreatePolicyEpoch(orgID, []string{pkg.PackageID}, "immediate")
+		if err != nil {
+			pl.sendJSONError(conn, connID, "bootstrap epoch creation failed: "+err.Error())
+			return
+		}
+	} else if !epochAllowsPackage(epoch, pkg.PackageID) {
+		pl.sendJSONError(conn, connID, "model not allowed under the active policy epoch")
+		return
 	}
 
 	// Push POLICY_EPOCH (0x0D10).
@@ -126,7 +128,7 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 			ReleaseChannel: pkg.Version,
 		})
 	}
-	thumb := sha256.Sum256(pl.svc.Policy().SigningPublicKey())
+	thumb := policyKeyThumb(pl.svc)
 	wireCatalog := buildWireCatalogSnapshot(epoch.EpochID, thumb, descriptors, time.Now())
 	wireCatalog.Digest = wireCatalogDigest(wireCatalog)
 	catalogBody, err := encodeWire(wireCatalog)
@@ -216,21 +218,29 @@ func (pl *DARIListener) leaseRequest(connID, orgID, sessionID, userID, epochID, 
 	}
 }
 
-// ensureModelServing guarantees the governed chain a real exchange
-// needs: ModelPackage → InferenceEndpoint → EndpointLease. A relay
-// configured with an external OpenAI-compatible PIA (env PCCP_PIA_URL
-// / YOLO_AUTO_ENDPOINT, mimicking a vLLM/SGLang deployment) registers
-// its models here on first session. Returns the package for the
-// requested model.
-func (pl *DARIListener) ensureModelServing(orgID, model string) (*models.ModelPackage, error) {
+// devBootstrap reports whether explicit first-run bootstrap is on
+// (PCCP_DEV_BOOTSTRAP=1). Bootstrap auto-registers unknown models and
+// issues the first epoch; production NEVER runs in this mode — a
+// peer-supplied model cannot self-authorize.
+func devBootstrap() bool { return os.Getenv("PCCP_DEV_BOOTSTRAP") == "1" }
+
+// ensureModelServing resolves the governed chain a real exchange
+// needs. In bootstrap mode missing rows are created (first-run); in
+// production every row must already exist and the lookup fails closed.
+func plEnsureModelServing(pl *DARIListener, orgID, model string) (*models.ModelPackage, error) {
+	return ensureModelServingForDB(pl.svc.db, orgID, model)
+}
+
+func ensureModelServingForDB(db *gorm.DB, orgID, model string) (*models.ModelPackage, error) {
 	if model == "" {
 		return nil, fmt.Errorf("no model requested")
 	}
-	db := pl.svc.db
-
 	var pkg models.ModelPackage
-	err := db.Where("model_id = ?", model).First(&pkg).Error
-	if err != nil {
+	if err := db.Where("model_id = ?", model).First(&pkg).Error; err == nil {
+		if pkg.State != "published" {
+			return nil, fmt.Errorf("model %s is %s (not published)", model, pkg.State)
+		}
+	} else if devBootstrap() {
 		pkg = models.ModelPackage{
 			PackageID: "pmp-" + model,
 			ModelID:   model,
@@ -241,12 +251,16 @@ func (pl *DARIListener) ensureModelServing(orgID, model string) (*models.ModelPa
 		if err := db.Create(&pkg).Error; err != nil {
 			return nil, fmt.Errorf("register model package: %w", err)
 		}
+	} else {
+		return nil, fmt.Errorf("model %s not registered (fail closed)", model)
 	}
 
 	var endpoint models.InferenceEndpoint
-	err = db.Where("organization_id = ? AND model_package_id = ? AND status = 'active'",
-		orgID, pkg.PackageID).First(&endpoint).Error
-	if err != nil {
+	if err := db.Where("organization_id = ? AND model_package_id = ? AND status = 'active'",
+		orgID, pkg.PackageID).First(&endpoint).Error; err != nil {
+		if !devBootstrap() {
+			return nil, fmt.Errorf("no active endpoint for %s (fail closed)", pkg.PackageID)
+		}
 		endpoint = models.InferenceEndpoint{
 			OrganizationID: orgID,
 			EndpointID:     "ep-" + pkg.PackageID,
@@ -262,10 +276,12 @@ func (pl *DARIListener) ensureModelServing(orgID, model string) (*models.ModelPa
 	}
 
 	var epLease models.EndpointLease
-	err = db.Where("endpoint_id = ? AND status = 'active' AND not_after > ?",
+	if err := db.Where("endpoint_id = ? AND status = 'active' AND not_after > ?",
 		endpoint.EndpointID, time.Now().Format(time.RFC3339)).
-		First(&epLease).Error
-	if err != nil {
+		First(&epLease).Error; err != nil {
+		if !devBootstrap() {
+			return nil, fmt.Errorf("no valid endpoint lease for %s (fail closed)", endpoint.EndpointID)
+		}
 		now := time.Now()
 		epLease = models.EndpointLease{
 			EndpointID:     endpoint.EndpointID,
@@ -363,10 +379,10 @@ func (pl *DARIListener) ingestChangeSet(conn *dari.TransportConn, connID, harnes
 		log.Printf("relay: changeset decode from %s failed: %v", connID, err)
 		return
 	}
-	orgID := env.OrganizationID
-	if orgID == "" {
-		orgID = pl.orgForPeer(connID)
-	}
+	// Org attribution ALWAYS derives from the authenticated credential —
+	// a client-supplied OrganizationID is never trusted (cross-tenant
+	// provenance injection).
+	orgID := pl.orgForPeer(connID)
 	_, err := pl.svc.provenance.CreateChangeSet(provenance.CreateChangeSetRequest{
 		OrganizationID: orgID,
 		SessionID:      env.SessionID,
@@ -395,10 +411,10 @@ func (pl *DARIListener) ingestSpan(conn *dari.TransportConn, connID, harnessID s
 		log.Printf("relay: span decode from %s failed: %v", connID, err)
 		return
 	}
-	orgID := env.OrganizationID
-	if orgID == "" {
-		orgID = pl.orgForPeer(connID)
-	}
+	// Org attribution ALWAYS derives from the authenticated credential —
+	// a client-supplied OrganizationID is never trusted (cross-tenant
+	// provenance injection).
+	orgID := pl.orgForPeer(connID)
 	_, err := pl.svc.provenance.CreateProvenanceSpan(provenance.CreateSpanRequest{
 		OrganizationID:   orgID,
 		RepositoryID:     env.RepositoryID,
@@ -428,10 +444,10 @@ func (pl *DARIListener) ingestCommitBinding(conn *dari.TransportConn, connID, ha
 		log.Printf("relay: commit-binding decode from %s failed: %v", connID, err)
 		return
 	}
-	orgID := env.OrganizationID
-	if orgID == "" {
-		orgID = pl.orgForPeer(connID)
-	}
+	// Org attribution ALWAYS derives from the authenticated credential —
+	// a client-supplied OrganizationID is never trusted (cross-tenant
+	// provenance injection).
+	orgID := pl.orgForPeer(connID)
 	if _, err := pl.svc.provenance.BindCommit(orgID, env.RepositoryID, env.CommitSHA, env.ChangeSetID, env.SessionID, env.Branch); err != nil {
 		log.Printf("relay: commit-binding record from %s failed: %v", connID, err)
 		return
@@ -445,10 +461,10 @@ func (pl *DARIListener) ingestActionEnvelope(conn *dari.TransportConn, connID, h
 		log.Printf("relay: action decode from %s failed: %v", connID, err)
 		return
 	}
-	orgID := env.OrganizationID
-	if orgID == "" {
-		orgID = pl.orgForPeer(connID)
-	}
+	// Org attribution ALWAYS derives from the authenticated credential —
+	// a client-supplied OrganizationID is never trusted (cross-tenant
+	// provenance injection).
+	orgID := pl.orgForPeer(connID)
 	_, err := pl.svc.provenance.RecordAction(provenance.RecordActionRequest{
 		OrganizationID: orgID,
 		SessionID:      env.SessionID,
@@ -485,4 +501,10 @@ func (pl *DARIListener) ingestReceiptAck(conn *dari.TransportConn, connID string
 		return
 	}
 	log.Printf("relay: receipt ack recorded for %s from %s", ack.ExchangeID, connID)
+}
+
+// policyKeyThumb is the single policy-key thumbprint derivation used
+// by the epoch/catalog pushes.
+func policyKeyThumb(svc *Service) [32]byte {
+	return sha256.Sum256(svc.Policy().SigningPublicKey())
 }

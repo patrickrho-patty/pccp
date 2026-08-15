@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
@@ -39,8 +40,8 @@ type HotStateCache struct {
 	entries map[string]*GovernanceSnapshot
 	epoch   uint64 // revocation high-water at capture time
 	ttl     time.Duration
-	hits    uint64
-	misses  uint64
+	hits    atomic.Uint64
+	misses  atomic.Uint64
 }
 
 // NewHotStateCache builds a cache with the given TTL.
@@ -58,11 +59,11 @@ func (c *HotStateCache) Get(harnessID string, now time.Time, revocationEpoch uin
 	defer c.mu.RUnlock()
 	snap, ok := c.entries[harnessID]
 	if !ok {
-		c.misses++
+		c.misses.Add(1)
 		return nil, nil
 	}
 	if now.Sub(snap.ResolvedAt) > c.ttl {
-		c.misses++
+		c.misses.Add(1)
 		return nil, nil
 	}
 	if revocationEpoch > c.epoch {
@@ -70,12 +71,14 @@ func (c *HotStateCache) Get(harnessID string, now time.Time, revocationEpoch uin
 		// whole cache is invalid, fail closed.
 		return nil, ErrRevokedSnapshot
 	}
-	c.hits++
+	c.hits.Add(1)
 	out := *snap
 	return &out, nil
 }
 
-// Put stores a snapshot under the current revocation epoch.
+// Put stores a snapshot under the current revocation epoch. A
+// snapshot captured BEFORE the cache's current epoch is dropped — it
+// may predate a revocation and must never be served.
 func (c *HotStateCache) Put(harnessID string, snap *GovernanceSnapshot, revocationEpoch uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -84,6 +87,9 @@ func (c *HotStateCache) Put(harnessID string, snap *GovernanceSnapshot, revocati
 		// drop them and rebase.
 		c.entries = map[string]*GovernanceSnapshot{}
 		c.epoch = revocationEpoch
+	} else if revocationEpoch < c.epoch {
+		// Stale resolver: its snapshot predates a revocation.
+		return
 	}
 	cp := *snap
 	cp.ResolvedAt = time.Now()
@@ -108,7 +114,7 @@ func (c *HotStateCache) InvalidateAll() {
 func (c *HotStateCache) Stats() (hits, misses uint64, entries int) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.hits, c.misses, len(c.entries)
+	return c.hits.Load(), c.misses.Load(), len(c.entries)
 }
 
 // ---------------------------------------------------------------------------
@@ -207,4 +213,28 @@ func (s *Service) ResolveGovernanceSnapshot(harnessID, model string) (*Governanc
 		return nil, fmt.Errorf("relay: no valid endpoint lease for endpoint %s: %w", snap.Endpoint.EndpointID, err)
 	}
 	return &snap, nil
+}
+
+// heartbeatThrottle bounds harness heartbeat writes to one per minute.
+var heartbeatThrottle struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+func init() { heartbeatThrottle.last = map[string]time.Time{} }
+
+// recordHeartbeat stamps the harness's live-path heartbeat, throttled
+// to one write per harness per minute (fleet liveness needs
+// seconds-level freshness, not per-request write amplification).
+func (s *Service) recordHeartbeat(harnessID string) {
+	heartbeatThrottle.mu.Lock()
+	if time.Since(heartbeatThrottle.last[harnessID]) < time.Minute {
+		heartbeatThrottle.mu.Unlock()
+		return
+	}
+	heartbeatThrottle.last[harnessID] = time.Now()
+	heartbeatThrottle.mu.Unlock()
+
+	s.db.Model(&models.Harness{}).Where("harness_id = ?", harnessID).
+		Update("last_heartbeat", time.Now().Format(time.RFC3339))
 }

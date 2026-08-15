@@ -54,6 +54,8 @@ type Service struct {
 	decisionLog []*dari.DecisionEnvelope
 	// hotState caches governance resolution per harness (Task 15).
 	hotState *HotStateCache
+	// grantRevocations backs VerifySessionGrant's chain checks.
+	grantRevocations revokedGrants
 	// exchangeGate bounds governed-exchange concurrency (Task 15).
 	exchangeGate *ConcurrencyGate
 }
@@ -131,6 +133,7 @@ func New(db *gorm.DB, cpURL, relayID string) (*Service, error) {
 	}
 	s.forwarder = s.defaultForwarder
 	s.hotState = NewHotStateCache(30 * time.Second)
+	s.grantRevocations.m = map[dari.Digest]bool{}
 	s.exchangeGate = NewConcurrencyGate(128)
 	return s, nil
 }
@@ -606,7 +609,8 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 		return nil, nil, err
 	}
 	defer s.exchangeGate.Release()
-	// 1. Resolve org from the enrolled harness.
+	// 1. Resolve org + standing from the enrolled harness (hot-state
+	// snapshot re-resolves the full chain on the cold path below).
 	var harness models.Harness
 	if err := s.db.Where("harness_id = ?", req.HarnessID).First(&harness).Error; err != nil {
 		return nil, nil, fmt.Errorf("relay: harness %s not enrolled: %w", req.HarnessID, err)
@@ -619,11 +623,11 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 		return nil, nil, fmt.Errorf("relay: harness %s is %s", req.HarnessID, harness.Status)
 	}
 
-	// Live-path heartbeat (web/03 B2): every governed exchange is proof
-	// of liveness; stamp it so the fleet view reflects reality instead
-	// of a dead enrollment-time value.
-	s.db.Model(&models.Harness{}).Where("harness_id = ?", req.HarnessID).
-		Update("last_heartbeat", time.Now().Format(time.RFC3339))
+	// Live-path heartbeat (web/03 B2): governed exchanges prove
+	// liveness. The write is throttled to one per harness per minute —
+	// fleet freshness needs seconds-level resolution, not per-request
+	// write amplification.
+	s.recordHeartbeat(req.HarnessID)
 
 	// Session-status enforcement (web/02 B3): a session the control
 	// plane closed/paused/terminated must not keep exchanging, even
@@ -645,25 +649,36 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 		// authoritative gate; the Session row is the CP-side view.
 	}
 
-	// 2. Resolve the active capability lease for this harness
-	// (fail-closed), through the hot-state cache when fresh (Task 15).
+	// 2. Resolve the harness + lease (fail-closed) through the
+	// hot-state snapshot keyed harness+model (Task 15): the full chain
+	// (harness→lease→epoch→package→endpoint→endpoint-lease) resolves
+	// once and is reused per request while fresh.
 	revEpoch, _ := s.identity.RevocationSnapshot()
+	cacheKey := req.HarnessID + "|" + req.Model
 	var lease models.CapabilityLease
-	if snap, cerr := s.hotState.Get(req.HarnessID, time.Now(), revEpoch); cerr == nil && snap != nil {
-		lease = snap.Lease
+	if snap, cerr := s.hotState.Get(cacheKey, time.Now(), revEpoch); cerr == nil && snap != nil {
+		harness, lease = snap.Harness, snap.Lease
 	} else {
-		if err := s.db.Where("subject_peer_id = ? AND status = 'active'", req.HarnessID).
-			Order("not_after DESC").First(&lease).Error; err != nil {
-			return nil, nil, fmt.Errorf("relay: no active capability lease for harness %s: %w", req.HarnessID, err)
+		snap, rerr := s.ResolveGovernanceSnapshot(req.HarnessID, req.Model)
+		if rerr != nil {
+			reason := "governance_resolution_failed"
+			if strings.Contains(rerr.Error(), "not in registry") {
+				reason = "model_not_registered"
+			} else if strings.Contains(rerr.Error(), "no active capability lease") {
+				reason = "no_active_lease"
+			}
+			s.denyWithoutExchange(req, harness.OrganizationID, reason)
+			return nil, nil, rerr
 		}
-		h := models.Harness{}
-		if err := s.db.Where("harness_id = ?", req.HarnessID).First(&h).Error; err == nil {
-			s.hotState.Put(req.HarnessID, &GovernanceSnapshot{Harness: h, Lease: lease}, revEpoch)
-		}
+		s.hotState.Put(cacheKey, snap, revEpoch)
+		harness, lease = snap.Harness, snap.Lease
 	}
+	// The snapshot's harness row already resolved org+status above; a
+	// cached snapshot is only served while revocation-fresh.
+	orgID = harness.OrganizationID
 	notAfter, _ := time.Parse(time.RFC3339, lease.NotAfter)
 	if !notAfter.IsZero() && time.Now().After(notAfter) {
-		s.hotState.Invalidate(req.HarnessID)
+		s.hotState.Invalidate(cacheKey)
 		return nil, nil, fmt.Errorf("relay: capability lease expired for harness %s", req.HarnessID)
 	}
 
@@ -685,16 +700,13 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 	}
 
 	// Authorization grant (Task 7): a presented DARI grant is the
-	// authority for the exchange — verified under the policy issuer and
-	// bound to harness/session/epoch and the requested model (either
-	// the model_id or the resolved package id may appear in scope).
+	// authority for the exchange — verified ONCE under the policy
+	// issuer, bound to harness/session/audience, and authorized for
+	// either the model_id or the resolved package id.
 	if req.Grant != nil {
-		if err := s.VerifySessionGrant(req.Grant, req.HarnessID, req.SessionID, req.Model, time.Now().UnixMilli()); err != nil {
-			// Retry against the resolved package id before rejecting:
-			// grants may authorize either identifier form.
-			if err2 := s.VerifySessionGrant(req.Grant, req.HarnessID, req.SessionID, pkg.PackageID, time.Now().UnixMilli()); err2 != nil {
-				return nil, nil, fmt.Errorf("relay: authorization grant rejected: %w", err)
-			}
+		if err := s.VerifySessionGrantFor(req.Grant, req.HarnessID, req.SessionID,
+			[]string{req.Model, pkg.PackageID}, time.Now().UnixMilli()); err != nil {
+			return nil, nil, fmt.Errorf("relay: authorization grant rejected: %w", err)
 		}
 	}
 
@@ -714,10 +726,12 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 
 	// Inline DLP/PII/injection scan (§16) — populates Security findings from real
 	// traffic. Blocks on DENY (critical/high); logs REQUIRE_REVIEW (medium).
-	combinedText := ""
+	var combined strings.Builder
 	for _, m := range req.Messages {
-		combinedText += m["content"] + "\n"
+		combined.WriteString(m["content"])
+		combined.WriteByte('\n')
 	}
+	combinedText := combined.String()
 	if secResult := s.security.CheckContext(orgID, combinedText); len(secResult.Findings) > 0 {
 		for _, f := range secResult.Findings {
 			s.security.RecordFinding(orgID, req.SessionID, ex.ID, f)
@@ -745,6 +759,11 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 		resp, err = s.RouteInference(ctx, infReq)
 	}
 	if err != nil {
+		// Failed/denied exchanges are removed from the in-flight map —
+		// only exchanges that reach CloseExchange persist there.
+		s.mu.Lock()
+		delete(s.exchanges, ex.ID)
+		s.mu.Unlock()
 		return nil, nil, fmt.Errorf("relay: governed inference failed: %w", err)
 	}
 

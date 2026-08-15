@@ -1,7 +1,6 @@
 package dari
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"errors"
@@ -100,48 +99,26 @@ func SignStateCheckpoint(b *SignedStateCheckpointBody, priv ed25519.PrivateKey) 
 	if b == nil {
 		return nil, errors.New("dari: nil checkpoint body")
 	}
-	body, err := MarshalCBOR(b)
-	if err != nil {
-		return nil, err
-	}
-	kid := SubjectKeyThumbprint(priv.Public().(ed25519.PublicKey))
-	sign1, err := CreateCOSESign1WithAAD(body, []byte(CheckpointAAD), priv, kid[:])
-	if err != nil {
-		return nil, err
-	}
-	coseBytes, err := MarshalCBOR(sign1)
+	sign1, coseBytes, digest, err := SignKernelObject(b, CheckpointAAD, priv, ObjTypeSignedStateCheckpoint)
 	if err != nil {
 		return nil, err
 	}
 	return &CheckpointEnvelope{
-		Body: b, COSE: sign1, COSEBytes: coseBytes,
-		SignedDigest: KernelSignedObjectDigest(ObjTypeSignedStateCheckpoint, coseBytes),
+		Body: b, COSE: sign1, COSEBytes: coseBytes, SignedDigest: digest,
 	}, nil
 }
 
 // DecodeStateCheckpoint verifies signature + canonical body.
 func DecodeStateCheckpoint(coseBytes []byte, signer ed25519.PublicKey) (*CheckpointEnvelope, error) {
-	var sign1 COSESign1
-	if err := UnmarshalCBOR(coseBytes, &sign1); err != nil {
-		return nil, fmt.Errorf("dari: decode checkpoint COSE: %w", err)
-	}
-	var body SignedStateCheckpointBody
-	if err := UnmarshalCBOR(sign1.Payload, &body); err != nil {
-		return nil, fmt.Errorf("dari: decode checkpoint body: %w", err)
-	}
-	reencoded, err := MarshalCBOR(&body)
+	body, sign1, digest, err := DecodeKernelObject(
+		coseBytes, CheckpointAAD,
+		func(b *SignedStateCheckpointBody) ([]byte, error) { return MarshalCBOR(b) },
+		signer)
 	if err != nil {
-		return nil, err
-	}
-	if !bytes.Equal(reencoded, sign1.Payload) {
-		return nil, errors.New("dari: checkpoint body is not the canonical payload")
-	}
-	if err := VerifyCOSESign1WithAAD(&sign1, []byte(CheckpointAAD), reencoded, signer); err != nil {
-		return nil, fmt.Errorf("dari: checkpoint signature: %w", err)
+		return nil, fmt.Errorf("dari: checkpoint: %w", err)
 	}
 	return &CheckpointEnvelope{
-		Body: &body, COSE: &sign1, COSEBytes: coseBytes,
-		SignedDigest: KernelSignedObjectDigest(ObjTypeSignedStateCheckpoint, coseBytes),
+		Body: body, COSE: sign1, COSEBytes: coseBytes, SignedDigest: digest,
 	}, nil
 }
 
@@ -149,6 +126,9 @@ func DecodeStateCheckpoint(coseBytes []byte, signer ed25519.PublicKey) (*Checkpo
 // issued; nonzero max-staleness; inline content hashes to the declared
 // digest; freshness window at nowMs; audience sorted and duplicate-free.
 func ValidateCheckpoint(b *SignedStateCheckpointBody, nowMs int64) error {
+	if nowMs == 0 {
+		return errors.New("dari: checkpoint time validation requires a non-zero evaluation time")
+	}
 	if b.ExpiresAtMs <= b.IssuedAtMs {
 		return errors.New("dari: checkpoint expires_at must exceed issued_at")
 	}
@@ -167,13 +147,11 @@ func ValidateCheckpoint(b *SignedStateCheckpointBody, nowMs int64) error {
 			return errors.New("dari: checkpoint audience must be sorted without duplicates")
 		}
 	}
-	if nowMs != 0 {
-		if nowMs < b.IssuedAtMs || nowMs >= b.ExpiresAtMs {
-			return errors.New("dari: checkpoint outside its validity window")
-		}
-		if uint64(nowMs-b.IssuedAtMs) > b.MaxStalenessMs {
-			return errors.New("dari: checkpoint exceeds maximum staleness")
-		}
+	if nowMs < b.IssuedAtMs || nowMs >= b.ExpiresAtMs {
+		return errors.New("dari: checkpoint outside its validity window")
+	}
+	if uint64(nowMs-b.IssuedAtMs) > b.MaxStalenessMs {
+		return errors.New("dari: checkpoint exceeds maximum staleness")
 	}
 	return nil
 }
@@ -216,7 +194,7 @@ func (l *CheckpointLedger) ProvisionBaseline(issuer, trustDomain string, class S
 	l.baseline[streamKey(issuer, trustDomain, class)] = true
 }
 
-var ErrStateRollback = errors.New("STATE_ROLLBACK")
+var ErrCheckpointRollback = errors.New("STATE_ROLLBACK")
 
 // Accept applies the F.7 sequence/predecessor rules atomically:
 // first accepted checkpoint is a provisioned baseline or sequence 0
@@ -231,35 +209,45 @@ func (l *CheckpointLedger) Accept(env *CheckpointEnvelope) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	cur, exists := l.highWater[key]
+	next, err := AcceptHighWater(
+		exists, cur.sequence, cur.digest,
+		env.Body.Sequence, env.SignedDigest, env.Body.PreviousCheckpoint)
+	if err != nil {
+		return err
+	}
+	l.highWater[key] = struct {
+		sequence uint64
+		digest   Digest
+	}{next, env.SignedDigest}
+	return nil
+}
+
+// AcceptHighWater is the shared monotonic-ledger core (F.7 rules,
+// reused by the federation trust store): first entry must be sequence
+// 0 without a predecessor; lower sequence is rollback; equal sequence
+// is an idempotent replay only for an identical digest; a higher
+// sequence must chain to the current high-water digest. Returns the
+// new high-water sequence.
+func AcceptHighWater(exists bool, curSeq uint64, curDigest Digest, nextSeq uint64, nextDigest Digest, predecessor *Digest) (uint64, error) {
 	if !exists {
-		// First checkpoint: sequence 0 and no predecessor, unless
-		// explicitly provisioned (handled by ProvisionBaseline).
-		if env.Body.Sequence != 0 || env.Body.PreviousCheckpoint != nil {
-			return fmt.Errorf("%w: first checkpoint must be sequence 0 without a predecessor", ErrStateRollback)
+		if nextSeq != 0 || predecessor != nil {
+			return 0, fmt.Errorf("%w: first entry must be sequence 0 without a predecessor", ErrCheckpointRollback)
 		}
-		l.highWater[key] = struct {
-			sequence uint64
-			digest   Digest
-		}{env.Body.Sequence, env.SignedDigest}
-		return nil
+		return 0, nil
 	}
 	switch {
-	case env.Body.Sequence < cur.sequence:
-		return fmt.Errorf("%w: sequence %d below high-water %d", ErrStateRollback, env.Body.Sequence, cur.sequence)
-	case env.Body.Sequence == cur.sequence:
-		if env.SignedDigest == cur.digest {
-			return nil // idempotent replay
+	case nextSeq < curSeq:
+		return 0, fmt.Errorf("%w: sequence %d below high-water %d", ErrCheckpointRollback, nextSeq, curSeq)
+	case nextSeq == curSeq:
+		if nextDigest == curDigest {
+			return curSeq, nil // idempotent replay
 		}
-		return fmt.Errorf("%w: sequence %d forked", ErrStateRollback, env.Body.Sequence)
+		return 0, fmt.Errorf("%w: sequence %d forked", ErrCheckpointRollback, nextSeq)
 	default:
-		if env.Body.PreviousCheckpoint == nil || *env.Body.PreviousCheckpoint != cur.digest {
-			return fmt.Errorf("%w: missing or wrong predecessor", ErrStateRollback)
+		if predecessor == nil || *predecessor != curDigest {
+			return 0, fmt.Errorf("%w: missing or wrong predecessor", ErrCheckpointRollback)
 		}
-		l.highWater[key] = struct {
-			sequence uint64
-			digest   Digest
-		}{env.Body.Sequence, env.SignedDigest}
-		return nil
+		return nextSeq, nil
 	}
 }
 

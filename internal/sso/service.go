@@ -2,6 +2,7 @@ package sso
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -16,8 +17,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
@@ -25,7 +28,8 @@ import (
 
 // Service implements SAML 2.0 and OIDC SSO integration (PRD 8.2, 32.1).
 type Service struct {
-	oidcJWKS     map[string]interface{}
+	mu           sync.RWMutex
+	oidcJWKS     map[string][]crypto.PublicKey
 	db           *gorm.DB
 	jwtSecret    []byte
 	samlIDPID    string
@@ -34,6 +38,7 @@ type Service struct {
 	oidcIssuer   string
 	oidcClientID string
 	oidcSecret   string
+	scimToken    string
 }
 
 func New(db *gorm.DB, jwtSecret string) *Service {
@@ -200,37 +205,41 @@ func (s *Service) SetOIDCJWKS(jwksJSON []byte) error {
 	if err := json.Unmarshal(jwksJSON, &jwks); err != nil {
 		return fmt.Errorf("sso: decode JWKS: %w", err)
 	}
-	s.oidcJWKS = map[string]interface{}{}
+	parsed := map[string][]crypto.PublicKey{}
 	for _, k := range jwks.Keys {
 		switch k.Kty {
 		case "EC":
 			if k.Crv == "P-256" {
 				x, xerr := base64.RawURLEncoding.DecodeString(k.X)
-				y, yerr := base64.RawURLEncoding.DecodeString(k.Y)
 				if xerr != nil || len(x) != 32 {
 					continue
 				}
 				xInt := new(big.Int).SetBytes(x)
-				var yInt *big.Int
-				if yerr == nil && len(y) == 32 {
-					yInt = new(big.Int).SetBytes(y)
-				} else {
-					// Recover y from the curve equation (both
-					// candidates; verify the point is on the curve).
-					yy, ok := decompressP256(xInt)
-					if !ok {
-						continue
+				var candidates []*ecdsa.PublicKey
+				if y, yerr := base64.RawURLEncoding.DecodeString(k.Y); yerr == nil && len(y) == 32 {
+					// Full (x, y) published — the normal case.
+					yInt := new(big.Int).SetBytes(y)
+					if elliptic.P256().IsOnCurve(xInt, yInt) {
+						candidates = append(candidates, &ecdsa.PublicKey{Curve: elliptic.P256(), X: xInt, Y: yInt})
 					}
-					yInt = yy
+				} else {
+					// x-only: BOTH y roots are valid candidates (parity
+					// is not carried); each is on-curve by construction.
+					if yInt, ok := decompressP256(xInt); ok {
+						candidates = append(candidates, &ecdsa.PublicKey{Curve: elliptic.P256(), X: xInt, Y: yInt})
+						pMinusY := new(big.Int).Sub(elliptic.P256().Params().P, yInt)
+						candidates = append(candidates, &ecdsa.PublicKey{Curve: elliptic.P256(), X: xInt, Y: pMinusY})
+					}
 				}
-				if !elliptic.P256().IsOnCurve(xInt, yInt) {
+				if len(candidates) == 0 {
 					continue
 				}
-				pub := &ecdsa.PublicKey{Curve: elliptic.P256(), X: xInt, Y: yInt}
-				if k.Kid != "" {
-					s.oidcJWKS[k.Kid] = pub
-				} else {
-					s.oidcJWKS["default"] = pub
+				kid := k.Kid
+				if kid == "" {
+					kid = "default"
+				}
+				for _, pub := range candidates {
+					parsed[kid] = append(parsed[kid], pub)
 				}
 			}
 		case "RSA":
@@ -244,16 +253,19 @@ func (s *Service) SetOIDCJWKS(jwksJSON []byte) error {
 				exp = exp<<8 | int(b)
 			}
 			pub := &rsa.PublicKey{N: new(big.Int).SetBytes(n), E: exp}
-			if k.Kid != "" {
-				s.oidcJWKS[k.Kid] = pub
-			} else {
-				s.oidcJWKS["default"] = pub
+			kid := k.Kid
+			if kid == "" {
+				kid = "default"
 			}
+			parsed[kid] = append(parsed[kid], pub)
 		}
 	}
-	if len(s.oidcJWKS) == 0 {
+	if len(parsed) == 0 {
 		return fmt.Errorf("sso: JWKS carries no usable keys")
 	}
+	s.mu.Lock()
+	s.oidcJWKS = parsed
+	s.mu.Unlock()
 	return nil
 }
 
@@ -317,32 +329,56 @@ func decompressP256(x *big.Int) (*big.Int, bool) {
 // provisioned JWKS, the issuer, and the expiry — ParseUnverified is
 // never used for authentication.
 func (s *Service) ParseOIDCIDToken(idToken string) (*OIDCUserInfo, error) {
-	if len(s.oidcJWKS) == 0 {
+	s.mu.RLock()
+	jwks := s.oidcJWKS
+	s.mu.RUnlock()
+	if len(jwks) == 0 {
 		return nil, fmt.Errorf("sso: no OIDC JWKS provisioned (refusing to trust an unverified ID token)")
 	}
-	keyfunc := func(t *jwt.Token) (interface{}, error) {
-		switch t.Method.Alg() {
-		case "ES256", "RS256":
-		default:
-			return nil, fmt.Errorf("sso: unsupported ID token algorithm %q", t.Method.Alg())
+	// Verify by trying each JWKS candidate (x-only EC keys carry both
+	// y roots; the signature discriminates them).
+	popts := []jwt.ParserOption{jwt.WithValidMethods([]string{"ES256", "RS256"})}
+	if s.oidcIssuer != "" {
+		popts = append(popts, jwt.WithIssuer(s.oidcIssuer))
+	}
+	if s.oidcClientID != "" {
+		popts = append(popts, jwt.WithAudience(s.oidcClientID))
+	}
+	kidHint := ""
+	if parts := strings.Split(idToken, "."); len(parts) == 3 {
+		var hdr struct {
+			Kid string `json:"kid"`
 		}
-		kid, _ := t.Header["kid"].(string)
-		if kid != "" {
-			if key, ok := s.oidcJWKS[kid]; ok {
-				return key, nil
+		if raw, derr := base64.RawURLEncoding.DecodeString(parts[0]); derr == nil {
+			_ = json.Unmarshal(raw, &hdr)
+			kidHint = hdr.Kid
+		}
+	}
+	// Kid resolution: a PRESENT kid must exist in the JWKS (unknown
+	// kid = reject). Only an absent kid falls back to the default
+	// slot; the full set is never tried when a kid was named.
+	var candidates []crypto.PublicKey
+	if kidHint != "" {
+		candidates = jwks[kidHint]
+	} else {
+		candidates = jwks["default"]
+		if len(candidates) == 0 {
+			for _, ks := range jwks {
+				candidates = append(candidates, ks...)
 			}
 		}
-		if key, ok := s.oidcJWKS["default"]; ok {
-			return key, nil
+	}
+	var token *jwt.Token
+	var err error
+	for _, key := range candidates {
+		k := key
+		p := jwt.NewParser(popts...)
+		token, err = p.Parse(idToken, func(*jwt.Token) (interface{}, error) { return k, nil })
+		if err == nil && token != nil && token.Valid {
+			break
 		}
-		return nil, fmt.Errorf("sso: ID token kid not in JWKS")
 	}
-	parser := jwt.NewParser(jwt.WithValidMethods([]string{"ES256", "RS256"}))
-	if s.oidcIssuer != "" {
-		parser = jwt.NewParser(jwt.WithValidMethods([]string{"ES256", "RS256"}), jwt.WithIssuer(s.oidcIssuer))
-	}
-	token, err := parser.Parse(idToken, keyfunc)
-	if err != nil || !token.Valid {
+	if err != nil || token == nil || !token.Valid {
 		return nil, fmt.Errorf("sso: ID token verification failed: %v", err)
 	}
 	claims, ok := token.Claims.(jwt.MapClaims)
@@ -416,51 +452,78 @@ type SCIMUser struct {
 	Schemas     []string `json:"schemas"`
 	ID          string   `json:"id"`
 	UserName    string   `json:"userName"`
+	ExternalID  string   `json:"externalId"`
+	Email       string   `json:"email"`
 	Active      bool     `json:"active"`
 	DisplayName string   `json:"displayName"`
 }
 
 func (s *Service) HandleSCIMRequest(w http.ResponseWriter, r *http.Request) {
+	// SCIM is an ADMIN surface: a configured bearer token is REQUIRED
+	// (fail closed when unset — the handler is never open).
+	if s.scimToken == "" {
+		http.Error(w, "SCIM not configured", http.StatusServiceUnavailable)
+		return
+	}
+	auth := r.Header.Get("Authorization")
+	if auth != "Bearer "+s.scimToken {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// Org scope is mandatory — unscoped provisioning is refused.
+	orgID := r.URL.Query().Get("org")
+	if orgID == "" {
+		http.Error(w, "org scope required", http.StatusBadRequest)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPost:
-		var scimUser SCIMUser
-		if err := json.NewDecoder(r.Body).Decode(&scimUser); err != nil {
-			http.Error(w, "invalid SCIM request", http.StatusBadRequest)
+		var user SCIMUser
+		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+			http.Error(w, "invalid body", http.StatusBadRequest)
 			return
 		}
-		orgID := r.URL.Query().Get("org")
-		if orgID == "" {
-			orgID = "default"
-		}
-		user := models.User{
-			AuditBase:  models.AuditBase{OrganizationID: orgID},
-			Name:       scimUser.DisplayName,
-			NameKo:     scimUser.DisplayName,
-			Status:     "active",
-			AuthMethod: "scim",
-			ExternalID: scimUser.UserName,
-			Locale:     "ko-KR",
-			Timezone:   "Asia/Seoul",
-		}
-		if !scimUser.Active {
-			user.Status = "suspended"
-		}
-		if err := s.db.Create(&user).Error; err != nil {
-			http.Error(w, "failed to create user", http.StatusInternalServerError)
+		created, err := s.ProvisionUserFromSSO(orgID, &SAMLResponse{
+			UserID: user.UserName,
+			Email:  user.Email,
+			Name:   user.DisplayName,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		scimUser.ID = user.ID
-		w.Header().Set("Content-Type", "application/scim+json")
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(scimUser)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": created.ID, "email": created.Email})
 	case http.MethodDelete:
-		userID := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
-		s.db.Model(&models.User{}).Where("id = ?", userID).Update("status", "offboarded")
-		w.WriteHeader(http.StatusNoContent)
+		userID := chi.URLParam(r, "userID")
+		if userID == "" {
+			userID = r.URL.Query().Get("userID")
+		}
+		if userID == "" {
+			http.Error(w, "userID required", http.StatusBadRequest)
+			return
+		}
+		// Deletes are scoped to the caller's org.
+		var user models.User
+		if err := s.db.Where("id = ? AND organization_id = ?", userID, orgID).First(&user).Error; err != nil {
+			http.Error(w, "user not found in org", http.StatusNotFound)
+			return
+		}
+		if err := s.db.Model(&user).Update("status", "offboarded").Error; err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "offboarded"})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
+
+// ConfigureSCIMToken sets the SCIM admin bearer token.
+func (s *Service) ConfigureSCIMToken(token string) { s.scimToken = token }
 
 func (s *Service) mockSAMLResponse(raw string) *SAMLResponse {
 	return &SAMLResponse{
@@ -504,3 +567,14 @@ func generateID() string {
 }
 
 var _ = ed25519.PublicKeySize
+
+// candidateKeySets flattens the JWKS into per-key candidate sets: one
+// set per (kid-slot) with each individual key, so x-only EC keys with
+// two y roots are each tried.
+func candidateKeySets(jwks map[string][]crypto.PublicKey) []crypto.PublicKey {
+	var out []crypto.PublicKey
+	for _, keys := range jwks {
+		out = append(out, keys...)
+	}
+	return out
+}

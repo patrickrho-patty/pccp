@@ -62,19 +62,11 @@ func (l *LocalProvider) UnwrapKey(wrapped []byte) ([]byte, error) {
 }
 
 func wrap(kek, plaintext []byte) ([]byte, error) {
-	block, err := aes.NewCipher(kek)
+	nonce, ct, err := gcmEncrypt(kek, plaintext)
 	if err != nil {
 		return nil, err
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err
-	}
-	return gcm.Seal(nonce, nonce, plaintext, nil), nil
+	return append(nonce, ct...), nil
 }
 
 func unwrap(kek, sealed []byte) ([]byte, error) {
@@ -93,6 +85,23 @@ func unwrap(kek, sealed []byte) ([]byte, error) {
 	return gcm.Open(nil, nonce, ct, nil)
 }
 
+// gcmEncrypt is the shared AES-GCM seal: fresh nonce + ciphertext.
+func gcmEncrypt(key, plaintext []byte) (nonce, ciphertext []byte, err error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, nil, err
+	}
+	nonce = make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, nil, err
+	}
+	return nonce, gcm.Seal(nil, nonce, plaintext, nil), nil
+}
+
 // Envelope is one encrypted payload: the wrapped DEK + the ciphertext.
 type Envelope struct {
 	KEKID      string `json:"kek_id"`
@@ -109,29 +118,21 @@ func Seal(provider KeyProvider, plaintext []byte) (*Envelope, error) {
 	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
 		return nil, err
 	}
-	defer zero(dek)
+	defer clear(dek)
 
 	wrapped, err := provider.WrapKey(dek)
 	if err != nil {
 		return nil, fmt.Errorf("keymgmt: wrap DEK: %w", err)
 	}
-	block, err := aes.NewCipher(dek)
+	nonce, ciphertext, err := gcmEncrypt(dek, plaintext)
 	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, err
 	}
 	return &Envelope{
 		KEKID:      provider.KEKID(),
 		WrappedDEK: wrapped,
 		Nonce:      nonce,
-		Ciphertext: gcm.Seal(nil, nonce, plaintext, nil),
+		Ciphertext: ciphertext,
 	}, nil
 }
 
@@ -148,7 +149,7 @@ func Open(provider KeyProvider, env *Envelope) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("keymgmt: unwrap DEK: %w", err)
 	}
-	defer zero(dek)
+	defer clear(dek)
 	block, err := aes.NewCipher(dek)
 	if err != nil {
 		return nil, err
@@ -164,8 +165,4 @@ func Open(provider KeyProvider, env *Envelope) ([]byte, error) {
 	return plaintext, nil
 }
 
-func zero(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
-}
+func zero(b []byte) { clear(b) } // retained for API compatibility

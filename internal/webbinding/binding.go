@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/patrickrho-patty/pccp/internal/dari"
 )
 
 // Origin is a normalized web origin.
@@ -88,12 +90,7 @@ func NormalizeOrigin(raw string) (Origin, error) {
 // exported session material: the WebTransport session ID or the
 // WebSocket handshake accept token.
 func ChannelBinding(carrierValue []byte) [32]byte {
-	h := sha256.New()
-	h.Write([]byte("DARI-CHANNEL-BINDING-v1\x00"))
-	h.Write(carrierValue)
-	var d [32]byte
-	copy(d[:], h.Sum(nil))
-	return d
+	return dari.KernelObjectDigestRaw("DARI-CHANNEL-BINDING-v1\x00", carrierValue)
 }
 
 // ---------------------------------------------------------------------------
@@ -178,12 +175,7 @@ func VerifyBrowserProof(p *BrowserProof, subjectKey ed25519.PublicKey, expectOri
 
 // SubjectThumbprint mirrors dari.SubjectKeyThumbprint.
 func SubjectThumbprint(pub ed25519.PublicKey) [32]byte {
-	h := sha256.New()
-	h.Write([]byte("DARI-SUBJECT-KEY-v1\x00"))
-	h.Write([]byte(pub))
-	var d [32]byte
-	copy(d[:], h.Sum(nil))
-	return d
+	return dari.SubjectKeyThumbprint(pub)
 }
 
 // ErrMissingProofOfPossession is the cookie/bearer-only rejection.

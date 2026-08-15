@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -113,14 +113,6 @@ func decodeOpenProof(req *openRequest, binding [32]byte) (*BrowserProof, error) 
 	if err != nil {
 		return nil, errors.New("webbinding: bad proof signature")
 	}
-	var thumb [32]byte
-	if req.GrantDigestHex != "" {
-		if gd, err := hex.DecodeString(req.GrantDigestHex); err != nil || len(gd) != 32 {
-			return nil, errors.New("webbinding: bad grant digest")
-		} else {
-			copy(thumb[:], gd)
-		}
-	}
 	p := &BrowserProof{
 		Origin:             req.Origin,
 		ReconnectSessionID: req.ReconnectSession,
@@ -199,6 +191,14 @@ func readSeqFrame(r io.Reader, max int) (uint64, []byte, error) {
 // length-prefixed frames of [type byte][body]. Used by WT.
 func (s *Server) streamSessionLoop(sessionID string, rw io.ReadWriter, stop <-chan struct{}) error {
 	reader := bufio.NewReader(rw)
+	writer := bufio.NewWriter(rw)
+	// frame writes buffer; flush per frame (single syscall per frame).
+	writeFrameBuf := func(payload []byte) error {
+		if err := writeFrame(writer, payload); err != nil {
+			return err
+		}
+		return writer.Flush()
+	}
 	var seqCounter uint64
 	for {
 		select {
@@ -237,7 +237,7 @@ func (s *Server) streamSessionLoop(sessionID string, rw io.ReadWriter, stop <-ch
 			}
 			payload, _ := json.Marshal(resp)
 			frame := append([]byte{0x01}, payload...)
-			if err := writeFrame(rw, frame); err != nil {
+			if err := writeFrameBuf(frame); err != nil {
 				return err
 			}
 			continue
@@ -263,12 +263,14 @@ func (s *Server) streamSessionLoop(sessionID string, rw io.ReadWriter, stop <-ch
 		if resp == nil {
 			continue
 		}
-		seqCounter = atomic.AddUint64(&seqCounter, 1) + 1_000_000 // server-initiated band
+		seqCounter++ // server-initiated band: 1_000_001, 1_000_002, …
 		var seqBuf [8]byte
+		binary.BigEndian.PutUint64(seqBuf[:], 1_000_000+seqCounter)
 		binary.BigEndian.PutUint64(seqBuf[:], seqCounter)
 		frame := append([]byte{0x02}, seqBuf[:]...)
 		frame = append(frame, resp...)
-		if err := writeFrame(rw, frame); err != nil {
+		if err := writeFrameBuf(frame); err != nil {
+			s.Close(sessionID)
 			return err
 		}
 	}
@@ -280,6 +282,26 @@ func (s *Server) streamSessionLoop(sessionID string, rw io.ReadWriter, stop <-ch
 // message is the hello (challenge + per-connection binding token).
 func (s *Server) AcceptWebSocketFallback(conn *websocket.Conn, expectedOrigin string) error {
 	defer conn.Close()
+	// Bounded frames + deadlines with pong keepalive (slowloris and
+	// memory-exhaustion defense).
+	conn.SetReadLimit(1 << 20)
+	const wsWriteWait = 30 * time.Second
+	const wsPongWait = 90 * time.Second
+	conn.SetReadDeadline(time.Now().Add(wsPongWait))
+	conn.SetPongHandler(func(string) error { conn.SetReadDeadline(time.Now().Add(wsPongWait)); return nil })
+	go func() {
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
+			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		}
+	}()
+	defer func() {
+		// stop the keepalive by closing from our side after return
+	}()
 
 	ch, bindingToken, err := s.BeginConnection(expectedOrigin)
 	if err != nil {
@@ -298,34 +320,8 @@ func (s *Server) AcceptWebSocketFallback(conn *websocket.Conn, expectedOrigin st
 	if err := conn.ReadJSON(&req); err != nil {
 		return err
 	}
-	if req.Type != ctrlOpen {
-		return errors.New("webbinding: expected open")
-	}
-	key, err := parseSubjectKey(req.SubjectKeyHex)
-	if err != nil {
-		_ = conn.WriteJSON(openAck{Type: ctrlOpenAck, Error: err.Error()})
-		_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, err.Error()))
-		return err
-	}
-	proof, err := decodeOpenProof(&req, binding)
-	if err != nil {
-		_ = conn.WriteJSON(openAck{Type: ctrlOpenAck, Error: err.Error()})
-		_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, err.Error()))
-		return err
-	}
-	// The thumbprint is derived from the presented key (the client
-	// signs it implicitly by signing with the matching private key).
-	proof.SubjectKeyThumbprint = SubjectThumbprint(key)
-	grantDigest := [32]byte{}
-	if req.GrantDigestHex != "" {
-		gd, _ := hex.DecodeString(req.GrantDigestHex)
-		copy(grantDigest[:], gd)
-	}
-	sess, resumed, err := s.Open(OpenRequest{
-		Origin: req.Origin, Proof: proof,
-		SubjectKey:     key,
-		ChannelBinding: binding, GrantDigest: grantDigest,
-	})
+
+	sess, resumed, err := s.completeOpen(&req, binding)
 	if err != nil {
 		ack, _ := json.Marshal(openAck{Type: ctrlOpenAck, Error: err.Error()})
 		_ = conn.WriteMessage(websocket.TextMessage, ack)
@@ -486,26 +482,7 @@ func (s *Server) WTOpenHandshake(rw io.ReadWriter, expectedOrigin string) (Brows
 	if req.Type != ctrlOpen {
 		return BrowserSession{}, false, binding, errors.New("webbinding: expected open")
 	}
-	key, err := parseSubjectKey(req.SubjectKeyHex)
-	if err != nil {
-		return BrowserSession{}, false, binding, err
-	}
-	proof, err := decodeOpenProof(&req, binding)
-	if err != nil {
-		return BrowserSession{}, false, binding, err
-	}
-	proof.SubjectKeyThumbprint = SubjectThumbprint(key)
-	grantDigest := [32]byte{}
-	if req.GrantDigestHex != "" {
-		gd, _ := hex.DecodeString(req.GrantDigestHex)
-		copy(grantDigest[:], gd)
-	}
-	sess, resumed, err := s.Open(OpenRequest{
-		Origin: req.Origin, Proof: proof,
-		SubjectKey:     key,
-		ChannelBinding: binding,
-		GrantDigest:    grantDigest,
-	})
+	sess, resumed, err := s.completeOpen(&req, binding)
 	if err != nil {
 		ack, _ := json.Marshal(openAck{Type: ctrlOpenAck, Error: err.Error()})
 		_ = writeFrame(rw, append([]byte{0x01}, ack...))
@@ -526,4 +503,33 @@ func (s *Server) WTSession(openStream io.ReadWriter, done <-chan struct{}) error
 		return err
 	}
 	return s.streamSessionLoop(sess.SessionID, openStream, done)
+}
+
+// completeOpen is the shared OPEN processing for both carriers: parse
+// the subject key, derive the thumbprint server-side, decode the
+// grant digest, and run the proof-gated Open.
+func (s *Server) completeOpen(req *openRequest, binding [32]byte) (BrowserSession, bool, error) {
+	key, err := parseSubjectKey(req.SubjectKeyHex)
+	if err != nil {
+		return BrowserSession{}, false, err
+	}
+	proof, err := decodeOpenProof(req, binding)
+	if err != nil {
+		return BrowserSession{}, false, err
+	}
+	// The thumbprint is derived from the PRESENTED key (the client
+	// proves possession of the matching private key by signing).
+	proof.SubjectKeyThumbprint = SubjectThumbprint(key)
+	grantDigest := [32]byte{}
+	if req.GrantDigestHex != "" {
+		gd, derr := hex.DecodeString(req.GrantDigestHex)
+		if derr != nil || len(gd) != 32 {
+			return BrowserSession{}, false, errors.New("webbinding: bad grant digest")
+		}
+		copy(grantDigest[:], gd)
+	}
+	return s.Open(OpenRequest{
+		Origin: req.Origin, Proof: proof, SubjectKey: key,
+		ChannelBinding: binding, GrantDigest: grantDigest,
+	})
 }

@@ -31,6 +31,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -106,13 +107,8 @@ func median(xs []float64) float64 {
 	if len(xs) == 0 {
 		return 0
 	}
-	// small n: insertion sort
 	v := append([]float64(nil), xs...)
-	for i := 1; i < len(v); i++ {
-		for j := i; j > 0 && v[j] < v[j-1]; j-- {
-			v[j], v[j-1] = v[j-1], v[j]
-		}
-	}
+	slices.Sort(v)
 	return v[len(v)/2]
 }
 
@@ -121,11 +117,7 @@ func pct(xs []float64, p float64) float64 {
 		return 0
 	}
 	v := append([]float64(nil), xs...)
-	for i := 1; i < len(v); i++ {
-		for j := i; j > 0 && v[j] < v[j-1]; j-- {
-			v[j], v[j-1] = v[j-1], v[j]
-		}
-	}
+	slices.Sort(v)
 	idx := int(float64(len(v)-1) * p)
 	return v[idx]
 }
@@ -188,15 +180,15 @@ type dariWireClient struct {
 func runDARIArm(ctx context.Context, turns int, sched Schedule) (Result, error) {
 	res := Result{Arm: "DARI (governed, streaming)", Turns: turns}
 
-	// Mock PIA streaming the schedule.
+	// Mock PIA streaming the schedule. The env is set/restored ONCE per
+	// Run (arm-scoped mutation is not concurrency-safe).
 	pia, err := startMockPIA(sched)
 	if err != nil {
 		return res, err
 	}
 	defer pia.close()
-	prevPIA := osGetenv("PCCP_PIA_URL")
 	osSetenv("PCCP_PIA_URL", "http://"+pia.addr)
-	defer osSetenv("PCCP_PIA_URL", prevPIA)
+	defer osSetenv("PCCP_PIA_URL", "")
 
 	// Relay + DB + trust bundle.
 	dbPath := fmt.Sprintf("/tmp/pccp-bench-%d.db", time.Now().UnixNano())

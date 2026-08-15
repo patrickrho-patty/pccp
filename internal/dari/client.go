@@ -104,8 +104,8 @@ func (c *Client) handshake(ctx context.Context, cfg ClientConfig) error {
 	// Compute auth proof
 	// auth_context = HASH("DARI-AUTH-v1" || canonical(HELLO) || canonical(HELLO_ACK) ||
 	//                     client_nonce || server_nonce || channel_binding || peer_credential_digest)
-	helloCBOR, _ := MarshalCBOR(hello)
-	ackCBOR, _ := MarshalCBOR(ack)
+	helloCBOR, _ := CanonicalHelloCBOR(hello)
+	ackCBOR, _ := CanonicalAckCBOR(ack)
 	credDigest := ComputeObjectDigest(ObjTypePeerCredential, c.signedCredential)
 	authContext := AuthContext(helloCBOR, ackCBOR, clientNonce, challenge.ServerNonce, []byte("tcp-exporter"), credDigest.Bytes())
 

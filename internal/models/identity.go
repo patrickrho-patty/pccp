@@ -143,3 +143,10 @@ type EnrollmentCode struct {
 	Used           bool   `gorm:"default:false" json:"used"`
 	UsedBy         string `gorm:"type:varchar(64)" json:"used_by,omitempty"` // harness ID
 }
+
+// HarnessStatusPermitted is the single predicate for harness standing
+// on live paths (connect, governed exchange). Any status outside this
+// set fails closed.
+func HarnessStatusPermitted(status string) bool {
+	return status == "enrolled" || status == "active"
+}

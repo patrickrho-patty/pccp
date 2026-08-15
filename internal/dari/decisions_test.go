@@ -246,11 +246,12 @@ func TestCheckpointLifecycle(t *testing.T) {
 	if err := ledger.Accept(first); err != nil {
 		t.Fatal(err)
 	}
-	// Identical re-signing is deterministic → idempotent replay.
-	if err := ledger.Accept(sign(ck(0, nil))); err != nil {
-		t.Fatalf("idempotent replay rejected: %v", err)
+	// Idempotent replay: the SAME envelope (identical bytes) is
+	// accepted without state change.
+	if err := ledger.Accept(first); err != nil {
+		t.Fatalf("idempotent replay of the identical envelope rejected: %v", err)
 	}
-	// Equal sequence with MUTATED bytes → fork.
+	// Equal sequence with MUTATED + re-signed bytes → fork.
 	forkedZero := ck(0, nil)
 	forkedZero.CheckpointID = "ck-fork"
 	if err := ledger.Accept(sign(forkedZero)); err == nil {

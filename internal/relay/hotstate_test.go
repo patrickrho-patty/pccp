@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -128,4 +129,25 @@ func TestResolveGovernanceSnapshotFailClosed(t *testing.T) {
 		t.Fatalf("snapshot: %+v", snap)
 	}
 	_ = context.Background()
+}
+
+// TestEnsureModelServingFailsClosedOutsideBootstrap (Task 15/audit): in
+// production mode a peer-supplied unregistered model NEVER
+// self-authorizes — no auto-publish, no endpoint, no lease.
+func TestEnsureModelServingFailsClosedOutsideBootstrap(t *testing.T) {
+	db := setupGovernedTestDB(t)
+	t.Setenv("PCCP_DEV_BOOTSTRAP", "")
+	if _, err := ensureModelServingForDB(db, "org-any", "rogue-model"); err == nil ||
+		!strings.Contains(err.Error(), "not registered") {
+		t.Fatalf("expected fail-closed not-registered, got %v", err)
+	}
+	// Bootstrap mode registers it.
+	t.Setenv("PCCP_DEV_BOOTSTRAP", "1")
+	pkg, err := ensureModelServingForDB(db, "org-any", "rogue-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkg.State != "published" {
+		t.Fatalf("bootstrap should publish: %s", pkg.State)
+	}
 }

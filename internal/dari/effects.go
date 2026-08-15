@@ -1,7 +1,6 @@
 package dari
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
@@ -95,43 +94,6 @@ const (
 // ErrReplayConflict is the F.10 replay binding failure.
 var ErrReplayConflict = errors.New("REPLAY_CONFLICT")
 
-// signKernelObject is the shared canonical-sign helper for effect
-// objects (body → canonical CBOR → COSE with the object AAD).
-func signKernelObject(body interface{}, aad string, priv ed25519.PrivateKey, objType ObjectType) (*COSESign1, []byte, Digest, error) {
-	payload, err := MarshalCBOR(body)
-	if err != nil {
-		return nil, nil, Digest{}, err
-	}
-	kid := SubjectKeyThumbprint(priv.Public().(ed25519.PublicKey))
-	sign1, err := CreateCOSESign1WithAAD(payload, []byte(aad), priv, kid[:])
-	if err != nil {
-		return nil, nil, Digest{}, err
-	}
-	coseBytes, err := MarshalCBOR(sign1)
-	if err != nil {
-		return nil, nil, Digest{}, err
-	}
-	return sign1, coseBytes, KernelSignedObjectDigest(objType, coseBytes), nil
-}
-
-// verifyKernelObject verifies an effect-family envelope: canonical
-// body/payload equality + signature under the AAD.
-func verifyKernelObject(coseBytes []byte, aad string, into interface{}, pub ed25519.PublicKey) ([]byte, error) {
-	var sign1 COSESign1
-	if err := UnmarshalCBOR(coseBytes, &sign1); err != nil {
-		return nil, fmt.Errorf("dari: decode effect COSE: %w", err)
-	}
-	payload, err := MarshalCBOR(into)
-	if err != nil {
-		return nil, err
-	}
-	_ = payload
-	if err := VerifyCOSESign1WithAAD(&sign1, []byte(aad), nil, pub); err != nil {
-		return nil, err
-	}
-	return sign1.Payload, nil
-}
-
 // EffectPrepareEnvelope carries the signed prepare.
 type EffectPrepareEnvelope struct {
 	Body         *EffectPrepareBody
@@ -142,7 +104,7 @@ type EffectPrepareEnvelope struct {
 
 // SignEffectPrepare signs a prepare.
 func SignEffectPrepare(b *EffectPrepareBody, priv ed25519.PrivateKey) (*EffectPrepareEnvelope, error) {
-	sign1, coseBytes, digest, err := signKernelObject(b, EffectPrepareAAD, priv, ObjTypeEffectPrepare)
+	sign1, coseBytes, digest, err := SignKernelObject(b, EffectPrepareAAD, priv, ObjTypeEffectPrepare)
 	if err != nil {
 		return nil, err
 	}
@@ -151,28 +113,13 @@ func SignEffectPrepare(b *EffectPrepareBody, priv ed25519.PrivateKey) (*EffectPr
 
 // DecodeEffectPrepare verifies + decodes a prepare under the signer.
 func DecodeEffectPrepare(coseBytes []byte, signer ed25519.PublicKey) (*EffectPrepareEnvelope, error) {
-	var sign1 COSESign1
-	if err := UnmarshalCBOR(coseBytes, &sign1); err != nil {
-		return nil, err
-	}
-	var body EffectPrepareBody
-	if err := UnmarshalCBOR(sign1.Payload, &body); err != nil {
-		return nil, err
-	}
-	reencoded, err := MarshalCBOR(&body)
+	body, sign1, digest, err := DecodeKernelObject(
+		coseBytes, EffectPrepareAAD,
+		func(b *EffectPrepareBody) ([]byte, error) { return MarshalCBOR(b) }, signer)
 	if err != nil {
 		return nil, err
 	}
-	if !bytes.Equal(reencoded, sign1.Payload) {
-		return nil, errors.New("dari: prepare body is not canonical")
-	}
-	if err := VerifyCOSESign1WithAAD(&sign1, []byte(EffectPrepareAAD), reencoded, signer); err != nil {
-		return nil, err
-	}
-	return &EffectPrepareEnvelope{
-		Body: &body, COSE: &sign1, COSEBytes: coseBytes,
-		SignedDigest: KernelSignedObjectDigest(ObjTypeEffectPrepare, coseBytes),
-	}, nil
+	return &EffectPrepareEnvelope{Body: body, COSE: sign1, COSEBytes: coseBytes, SignedDigest: digest}, nil
 }
 
 // EffectAuthorizationEnvelope carries the signed authorization.
@@ -185,7 +132,7 @@ type EffectAuthorizationEnvelope struct {
 
 // SignEffectAuthorization signs an authorization.
 func SignEffectAuthorization(b *EffectAuthorizationBody, priv ed25519.PrivateKey) (*EffectAuthorizationEnvelope, error) {
-	sign1, coseBytes, digest, err := signKernelObject(b, EffectAuthorizationAAD, priv, ObjTypeEffectAuthorize)
+	sign1, coseBytes, digest, err := SignKernelObject(b, EffectAuthorizationAAD, priv, ObjTypeEffectAuthorize)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +149,7 @@ type EffectResultEnvelope struct {
 
 // SignEffectResult signs a terminal result.
 func SignEffectResult(b *EffectResultBody, priv ed25519.PrivateKey) (*EffectResultEnvelope, error) {
-	sign1, coseBytes, digest, err := signKernelObject(b, EffectResultAAD, priv, ObjTypeEffectResult)
+	sign1, coseBytes, digest, err := SignKernelObject(b, EffectResultAAD, priv, ObjTypeEffectResult)
 	if err != nil {
 		return nil, err
 	}
@@ -211,28 +158,13 @@ func SignEffectResult(b *EffectResultBody, priv ed25519.PrivateKey) (*EffectResu
 
 // DecodeEffectResult verifies + decodes a terminal result.
 func DecodeEffectResult(coseBytes []byte, signer ed25519.PublicKey) (*EffectResultEnvelope, error) {
-	var sign1 COSESign1
-	if err := UnmarshalCBOR(coseBytes, &sign1); err != nil {
-		return nil, err
-	}
-	var body EffectResultBody
-	if err := UnmarshalCBOR(sign1.Payload, &body); err != nil {
-		return nil, err
-	}
-	reencoded, err := MarshalCBOR(&body)
+	body, sign1, digest, err := DecodeKernelObject(
+		coseBytes, EffectResultAAD,
+		func(b *EffectResultBody) ([]byte, error) { return MarshalCBOR(b) }, signer)
 	if err != nil {
 		return nil, err
 	}
-	if !bytes.Equal(reencoded, sign1.Payload) {
-		return nil, errors.New("dari: result body is not canonical")
-	}
-	if err := VerifyCOSESign1WithAAD(&sign1, []byte(EffectResultAAD), reencoded, signer); err != nil {
-		return nil, err
-	}
-	return &EffectResultEnvelope{
-		Body: &body, COSE: &sign1, COSEBytes: coseBytes,
-		SignedDigest: KernelSignedObjectDigest(ObjTypeEffectResult, coseBytes),
-	}, nil
+	return &EffectResultEnvelope{Body: body, COSE: sign1, COSEBytes: coseBytes, SignedDigest: digest}, nil
 }
 
 // ValidateEffectStatusShape enforces the F.10 status shapes: a request
@@ -266,6 +198,7 @@ type effectRecord struct {
 	prepareDigest Digest
 	grantDigest   Digest
 	inputDigest   Digest
+	authDigest    Digest
 	executor      string
 	retryOwner    string
 	result        *EffectResultEnvelope
@@ -317,8 +250,8 @@ func (e *EffectExecutor) AckPrepare(p *EffectPrepareEnvelope) error {
 }
 
 // AckAuthorize is the AUTHORIZED transition: the authorization must
-// bind the recorded prepare and decision; the digest persists before
-// acknowledgement.
+// bind the recorded prepare; its signed-object digest is persisted
+// BEFORE the state acknowledges AUTHORIZED.
 func (e *EffectExecutor) AckAuthorize(opID string, auth *EffectAuthorizationEnvelope) error {
 	if auth == nil || auth.Body == nil {
 		return errors.New("dari: nil authorization")
@@ -339,6 +272,7 @@ func (e *EffectExecutor) AckAuthorize(opID string, auth *EffectAuthorizationEnve
 		return errors.New("dari: authorization does not bind the recorded prepare")
 	}
 	// Persist the authorization digest, then transition.
+	rec.authDigest = auth.SignedDigest
 	rec.state = EffectStateAuthorized
 	return nil
 }
@@ -381,12 +315,12 @@ func (e *EffectExecutor) Finish(opID string, terminal EffectTerminalState, resul
 	body := &EffectResultBody{
 		Version: 1, OperationID: opID,
 		PrepareDigest:       rec.prepareDigest,
-		AuthorizationDigest: decisionDigest,
+		AuthorizationDigest: rec.authDigest,
 		ExecutorPeerID:      e.executorID,
 		State:               terminal,
 		InputDigest:         rec.inputDigest,
 		ResultDigest:        resultDigest,
-		TerminalTimeMs:      nowMsFunc()(),
+		TerminalTimeMs:      time.Now().UnixMilli(),
 	}
 	env, err := SignEffectResult(body, e.executorKey)
 	if err != nil {
@@ -395,7 +329,20 @@ func (e *EffectExecutor) Finish(opID string, terminal EffectTerminalState, resul
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	// Atomic: persist terminal state + result before returning.
+	// Atomic: persist terminal state + result before returning. The
+	// state is RE-CHECKED after re-acquiring the lock — a concurrent
+	// Finish that won the race returns ITS durable result.
+	if rec.state == EffectStateCommitted || rec.state == EffectStateAborted {
+		return rec.result, nil
+	}
+	if rec.state != EffectStateExecuting {
+		return nil, fmt.Errorf("dari: illegal terminal transition from %d", rec.state)
+	}
+	// The terminal result MUST bind the authorization accepted at
+	// AUTHORIZED — a caller-supplied digest cannot substitute it.
+	if body.AuthorizationDigest != rec.authDigest {
+		return nil, errors.New("dari: terminal result does not bind the recorded authorization")
+	}
 	if terminal == EffectCommitted {
 		rec.state = EffectStateCommitted
 	} else {
@@ -439,9 +386,4 @@ func NewOperationNonce() [32]byte {
 		panic("dari: rand: " + err.Error())
 	}
 	return n
-}
-
-// nowMsFunc indirection for tests.
-var nowMsFunc = func() func() int64 {
-	return func() int64 { return time.Now().UnixMilli() }
 }

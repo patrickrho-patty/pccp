@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -165,6 +166,17 @@ func (e *AuditEvent) ComputeAuditDigest() string {
 // BeforeCreate computes the event digest and links the per-org chain.
 // Running as a GORM hook means EVERY creation path — API handlers,
 // services, seeds — produces chained, verifiable events.
+// auditChain is the in-process per-org chain allocator. The relay is
+// the sole writer of audit events (single-process deployment), so a
+// monotonic in-memory high-water seeded once from the DB removes the
+// SELECT-then-INSERT race entirely: a DB re-read between concurrent
+// creates could observe only committed rows and fork the chain.
+var auditChain struct {
+	mu         sync.Mutex
+	highSeq    map[string]uint64
+	prevDigest map[string]string
+}
+
 func (e *AuditEvent) BeforeCreate(tx *gorm.DB) error {
 	// Chain after the embedded Base hook (ID generation) — defining
 	// this method shadows it for GORM.
@@ -174,25 +186,35 @@ func (e *AuditEvent) BeforeCreate(tx *gorm.DB) error {
 	if e.OccurredAt == "" {
 		e.OccurredAt = time.Now().Format(time.RFC3339)
 	}
-	// Per-org insertion sequence.
-	var last AuditEvent
-	if err := tx.Where("organization_id = ?", e.OrganizationID).Order("chain_seq DESC").First(&last).Error; err == nil {
-		e.ChainSeq = last.ChainSeq + 1
-	} else {
-		e.ChainSeq = 1
-	}
 	// Column defaults must be applied BEFORE digesting so the stored
 	// row matches the digested content exactly.
 	if e.Result == "" {
 		e.Result = "success"
 	}
-	var prev AuditEvent
-	if err := tx.Where("organization_id = ? AND chain_seq = ?", e.OrganizationID, e.ChainSeq-1).First(&prev).Error; err == nil && e.ChainSeq > 1 {
-		e.PrevEventDigest = prev.EventDigest
+	auditChain.mu.Lock()
+	defer auditChain.mu.Unlock()
+	if auditChain.highSeq == nil {
+		auditChain.highSeq = map[string]uint64{}
+		auditChain.prevDigest = map[string]string{}
+	}
+	seq, seeded := auditChain.highSeq[e.OrganizationID]
+	if !seeded {
+		// First event for this org in this process: seed from the DB.
+		var last AuditEvent
+		if err := tx.Where("organization_id = ?", e.OrganizationID).Order("chain_seq DESC").First(&last).Error; err == nil {
+			seq = uint64(last.ChainSeq)
+			auditChain.prevDigest[e.OrganizationID] = last.EventDigest
+		} else {
+			seq = 0
+		}
 	}
 	if e.EventDigest == "" {
 		e.EventDigest = e.ComputeAuditDigest()
 	}
+	e.ChainSeq = int64(seq + 1)
+	e.PrevEventDigest = auditChain.prevDigest[e.OrganizationID]
+	auditChain.highSeq[e.OrganizationID] = seq + 1
+	auditChain.prevDigest[e.OrganizationID] = e.EventDigest
 	return nil
 }
 

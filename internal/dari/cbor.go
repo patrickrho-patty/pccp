@@ -6,11 +6,6 @@ import (
 	"github.com/fxamacker/cbor/v2"
 )
 
-// cborEncoderMode is the deterministic encoding mode for DARI objects.
-// Per DARI §10.1, objects that are hashed, signed, or content-addressed MUST
-// use deterministic encoding.
-var cborEncoderMode func(opts cbor.EncOptions) (cbor.EncMode, error)
-
 func init() {
 	opts := cbor.EncOptions{
 		Sort:        cbor.SortCoreDeterministic, // RFC 8949 Core Deterministic
@@ -22,18 +17,36 @@ func init() {
 		panic(fmt.Sprintf("dari: init cbor encoder mode: %v", err))
 	}
 	defaultEncMode = mode
+
+	// Strict decoding (F.2: finite depth/item-count limits; duplicate
+	// map keys rejected — a required F.14-1 negative case).
+	decMode, err := cbor.DecOptions{
+		DupMapKey:        cbor.DupMapKeyEnforcedAPF,
+		MaxNestedLevels:  32,
+		MaxArrayElements: 1 << 20,
+		MaxMapPairs:      1 << 20,
+		IndefLength:      cbor.IndefLengthForbidden,
+	}.DecMode()
+	if err != nil {
+		panic(fmt.Sprintf("dari: init cbor decoder mode: %v", err))
+	}
+	defaultDecMode = decMode
 }
 
-var defaultEncMode cbor.EncMode
+var (
+	defaultEncMode cbor.EncMode
+	defaultDecMode cbor.DecMode
+)
 
 // MarshalCBOR encodes a value to deterministic CBOR bytes.
 func MarshalCBOR(v interface{}) ([]byte, error) {
 	return defaultEncMode.Marshal(v)
 }
 
-// UnmarshalCBOR decodes CBOR bytes into a value.
+// UnmarshalCBOR decodes CBOR bytes into a value under the strict
+// decoder (duplicate keys and indefinite lengths rejected).
 func UnmarshalCBOR(data []byte, v interface{}) error {
-	return cbor.Unmarshal(data, v)
+	return defaultDecMode.Unmarshal(data, v)
 }
 
 // CanonicalCBOR returns the deterministic CBOR encoding of a map.

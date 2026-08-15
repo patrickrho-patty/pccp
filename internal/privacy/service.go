@@ -117,14 +117,16 @@ func (s *Service) CheckLegalHold(orgID, userID string) (bool, error) {
 
 // SetLegalHold places a legal hold on an organization's data.
 func (s *Service) SetLegalHold(orgID, reason, placedBy string) error {
+	details, _ := json.Marshal(map[string]string{"reason": reason})
 	audit := &models.AuditEvent{
 		OrganizationID: orgID,
 		EventType:      "cp.legal.hold_activated",
 		ActorID:        placedBy,
 		ActorType:      "admin",
 		Action:         "legal_hold_activate",
-		Details:        fmt.Sprintf(`{"reason":"%s"}`, reason),
+		Details:        string(details),
 		Result:         "success",
+		LegalHold:      true, // the hold marker itself is held — spoliation guard
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	}
 	return s.db.Create(audit).Error
@@ -132,13 +134,14 @@ func (s *Service) SetLegalHold(orgID, reason, placedBy string) error {
 
 // ReleaseLegalHold releases a legal hold.
 func (s *Service) ReleaseLegalHold(orgID, reason, releasedBy string) error {
+	details, _ := json.Marshal(map[string]string{"reason": reason})
 	audit := &models.AuditEvent{
 		OrganizationID: orgID,
 		EventType:      "cp.legal.hold_released",
 		ActorID:        releasedBy,
 		ActorType:      "admin",
 		Action:         "legal_hold_release",
-		Details:        fmt.Sprintf(`{"reason":"%s"}`, reason),
+		Details:        string(details),
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	}
@@ -225,7 +228,9 @@ type RetentionResult struct {
 
 // EnforceAuditRetention enforces retention for audit events (the
 // highest-volume governed record). Legal hold blocks deletion: held
-// rows are counted, not removed.
+// rows are counted, not removed. Cutoffs compare PARSED timestamps —
+// lexicographic RFC3339 comparison misorders across timezone offsets
+// and fractional seconds.
 func (s *Service) EnforceAuditRetention(policies []RetentionPolicy, now time.Time) ([]RetentionResult, error) {
 	var out []RetentionResult
 	for _, p := range policies {
@@ -234,55 +239,79 @@ func (s *Service) EnforceAuditRetention(policies []RetentionPolicy, now time.Tim
 		}
 		cutoff := now.AddDate(0, 0, -p.RetentionDays)
 
-		// Rows under legal hold are immutable.
-		var held int64
-		if err := s.db.Model(&models.AuditEvent{}).
-			Where("legal_hold = ? AND occurred_at < ?", true, cutoff.Format(time.RFC3339)).
-			Count(&held).Error; err != nil {
+		// Fetch candidates with a GENEROUS string bound (cutoff minus
+		// 48h covers every timezone offset), then filter precisely by
+		// parsed timestamps.
+		loose := cutoff.Add(-48 * time.Hour).UTC().Format(time.RFC3339)
+		var candidates []models.AuditEvent
+		if err := s.db.Where("occurred_at < ?", loose).Find(&candidates).Error; err != nil {
 			return nil, err
 		}
-
-		var deleted int64
-		switch p.Action {
-		case "delete":
-			res := s.db.Where("legal_hold = ? AND occurred_at < ?", false, cutoff.Format(time.RFC3339)).
-				Delete(&models.AuditEvent{})
-			if res.Error != nil {
-				return nil, res.Error
+		var expiredIDs []string
+		held := int64(0)
+		for _, ev := range candidates {
+			ts, err := time.Parse(time.RFC3339, ev.OccurredAt)
+			if err != nil {
+				continue // unparseable timestamps are retained (safe)
 			}
-			deleted = res.RowsAffected
-		case "archive", "anonymize":
-			// Archive/anonymize mark the rows; content redaction for
-			// anonymize is applied by the record's owning service.
-			updates := map[string]interface{}{"archive_state": "archived"}
-			if p.Action == "anonymize" {
-				updates["details"] = "{}"
+			if !ts.Before(cutoff) {
+				continue
 			}
-			res := s.db.Model(&models.AuditEvent{}).
-				Where("legal_hold = ? AND occurred_at < ? AND archive_state = ?", false,
-					cutoff.Format(time.RFC3339), "active").
-				Updates(updates)
-			if res.Error != nil {
-				return nil, res.Error
+			if ev.LegalHold {
+				held++
+				continue
 			}
-			deleted = res.RowsAffected
+			expiredIDs = append(expiredIDs, ev.ID)
 		}
-		out = append(out, RetentionResult{DataType: p.DataType, Deleted: deleted, Held: held})
+
+		var acted int64
+		if len(expiredIDs) > 0 {
+			switch p.Action {
+			case "delete":
+				res := s.db.Where("id IN ?", expiredIDs).Delete(&models.AuditEvent{})
+				if res.Error != nil {
+					return nil, res.Error
+				}
+				acted = res.RowsAffected
+			case "archive", "anonymize":
+				res := s.db.Model(&models.AuditEvent{}).Where("id IN ?", expiredIDs).
+					Update("archive_state", "archived")
+				if res.Error != nil {
+					return nil, res.Error
+				}
+				acted = res.RowsAffected
+				if p.Action == "anonymize" {
+					anonDetails, _ := json.Marshal(map[string]interface{}{"data_type": p.DataType, "rows": acted})
+					_ = s.db.Create(&models.AuditEvent{
+						OrganizationID: "system",
+						EventType:      "cp.retention.anonymized",
+						ActorType:      "system",
+						Action:         "retention_anonymize",
+						ResourceType:   "audit_events",
+						Details:        string(anonDetails),
+						Result:         "success",
+						LegalHold:      true,
+						OccurredAt:     now.Format(time.RFC3339),
+					}).Error
+				}
+			}
+		}
+		out = append(out, RetentionResult{DataType: p.DataType, Deleted: acted, Held: held})
 	}
 	return out, nil
 }
 
-// EnsureDeleteRespectsLegalHold is the deletion gate (§33.14): any
-// hard-delete of a held record fails closed.
-func (s *Service) EnsureDeleteRespectsLegalHold(resourceType, resourceID string) error {
-	if resourceType != "audit" && resourceType != "user" && resourceType != "session" {
-		return nil // hold inventory covers the governed record types
+// EnsureDeleteRespectsLegalHold is the deletion gate (§33.14): a
+// hard-delete of an org's governed record is refused while that org
+// has an activated hold without a matching release.
+func (s *Service) EnsureDeleteRespectsLegalHold(orgID, resourceType, resourceID string) error {
+	if orgID == "" {
+		return fmt.Errorf("retention: deletion gate requires an organization scope")
 	}
-	// Hold inventory = activation events without matching release
-	// events in the audit trail. A conservative spoliation guard.
 	var activated int64
 	if err := s.db.Model(&models.AuditEvent{}).
-		Where("event_type = ?", "cp.legal.hold_activated").Count(&activated).Error; err != nil {
+		Where("organization_id = ? AND event_type = ?", orgID, "cp.legal.hold_activated").
+		Count(&activated).Error; err != nil {
 		return nil
 	}
 	if activated == 0 {
@@ -290,11 +319,12 @@ func (s *Service) EnsureDeleteRespectsLegalHold(resourceType, resourceID string)
 	}
 	var released int64
 	if err := s.db.Model(&models.AuditEvent{}).
-		Where("event_type = ?", "cp.legal.hold_released").Count(&released).Error; err != nil {
+		Where("organization_id = ? AND event_type = ?", orgID, "cp.legal.hold_released").
+		Count(&released).Error; err != nil {
 		return nil
 	}
 	if activated > released {
-		return fmt.Errorf("retention: delete refused — an active legal hold exists (spoliation guard)")
+		return fmt.Errorf("retention: delete refused — an active legal hold exists for org %s (spoliation guard)", orgID)
 	}
 	return nil
 }

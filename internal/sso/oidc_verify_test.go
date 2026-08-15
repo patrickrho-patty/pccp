@@ -48,6 +48,7 @@ func TestOIDCIDTokenVerification(t *testing.T) {
 	}
 	validClaims := jwt.MapClaims{
 		"iss": "https://idp.example", "sub": "user-1", "email": "u@example.com",
+		"aud": "client",
 		"exp": time.Now().Add(time.Hour).Unix(),
 	}
 
@@ -60,7 +61,7 @@ func TestOIDCIDTokenVerification(t *testing.T) {
 
 	// Wrong issuer rejected.
 	badIss := mint(jwt.MapClaims{
-		"iss": "https://evil.example", "sub": "user-1",
+		"iss": "https://evil.example", "sub": "user-1", "aud": "client",
 		"exp": time.Now().Add(time.Hour).Unix(),
 	}, "ES256", priv, "k1")
 	if _, err := svc.ParseOIDCIDToken(badIss); err == nil {
@@ -69,7 +70,7 @@ func TestOIDCIDTokenVerification(t *testing.T) {
 
 	// Expired rejected.
 	expired := mint(jwt.MapClaims{
-		"iss": "https://idp.example", "sub": "user-1",
+		"iss": "https://idp.example", "sub": "user-1", "aud": "client",
 		"exp": time.Now().Add(-time.Hour).Unix(),
 	}, "ES256", priv, "k1")
 	if _, err := svc.ParseOIDCIDToken(expired); err == nil {
@@ -89,8 +90,20 @@ func TestOIDCIDTokenVerification(t *testing.T) {
 		t.Fatal("unverified ID token accepted without JWKS")
 	}
 
+	// Token-substitution: token for a different client rejected.
+	substituted := mint(jwt.MapClaims{
+		"iss": "https://idp.example", "sub": "user-1", "aud": "other-client",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	}, "ES256", priv, "k1")
+	if _, err := svc.ParseOIDCIDToken(substituted); err == nil {
+		t.Fatal("ID token for a different audience accepted")
+	}
+
 	// Garbage JWKS rejected at provisioning.
 	if err := svc.SetOIDCJWKS([]byte(`{"keys":[]}`)); err == nil {
 		t.Fatal("empty JWKS accepted")
 	}
 }
+
+// Token-substitution attack: an ID token minted for a DIFFERENT
+// client must be rejected by the audience check.

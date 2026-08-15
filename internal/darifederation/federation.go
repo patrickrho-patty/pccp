@@ -15,7 +15,6 @@ package darifederation
 import (
 	"bytes"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"sort"
@@ -47,12 +46,7 @@ const TrustBundleAAD = "DARI-FEDERATION-TRUST-BUNDLE-v1\x00"
 // IssuerKeyDigest computes the trust-bundle issuer-key digest form:
 // SHA-256 over the domain-separated public key bytes.
 func IssuerKeyDigest(pub ed25519.PublicKey) dari.Digest {
-	h := sha256.New()
-	h.Write([]byte("DARI-FEDERATION-ISSUER-KEY-v1\x00"))
-	h.Write([]byte(pub))
-	var d dari.Digest
-	copy(d[:], h.Sum(nil))
-	return d
+	return dari.KernelObjectDigestRaw("DARI-FEDERATION-ISSUER-KEY-v1\x00", []byte(pub))
 }
 
 // TrustBundleEnvelope is a signed bundle.
@@ -70,29 +64,43 @@ func SignTrustBundle(b *TrustBundleBody, priv ed25519.PrivateKey) (*TrustBundleE
 	}
 	sort.Strings(b.Issuers)
 	sort.Strings(b.Audiences)
-	payload, err := dari.MarshalCBOR(b)
+	sign1, coseBytes, _, err := dari.SignKernelObject(b, TrustBundleAAD, priv, dari.ObjectType(0xFF01))
 	if err != nil {
 		return nil, err
 	}
-	kid := dari.SubjectKeyThumbprint(priv.Public().(ed25519.PublicKey))
-	sign1, err := dari.CreateCOSESign1WithAAD(payload, []byte(TrustBundleAAD), priv, kid[:])
-	if err != nil {
-		return nil, err
-	}
-	coseBytes, err := dari.MarshalCBOR(sign1)
-	if err != nil {
-		return nil, err
-	}
-	var dec dari.Digest
-	copy(dec[:], coseBytes)
-	return &TrustBundleEnvelope{Body: b, COSE: sign1, COSEBytes: coseBytes, Digest: dec}, nil
+	return &TrustBundleEnvelope{
+		Body: b, COSE: sign1, COSEBytes: coseBytes,
+		Digest: TrustBundleDigest(coseBytes),
+	}, nil
 }
 
-// VerifyTrustBundle verifies a bundle under the bootstrap key set.
+// TrustBundleDigest is the domain-separated signed-object digest for
+// federation bundles (fork/rollback detection compares these).
+func TrustBundleDigest(coseBytes []byte) dari.Digest {
+	return dari.KernelObjectDigestRaw("DARI-FEDERATION-BUNDLE-SIGNED-v1\x00", coseBytes)
+}
+
+// VerifyTrustBundle verifies a bundle under the bootstrap key set:
+// canonical body/payload equality, then the signature under the AAD.
 func VerifyTrustBundle(env *TrustBundleEnvelope, bootstrapKeys []ed25519.PublicKey) error {
 	if env == nil || env.COSE == nil {
 		return errors.New("federation: nil trust bundle")
 	}
+	var body TrustBundleBody
+	if err := dari.UnmarshalCBOR(env.COSE.Payload, &body); err != nil {
+		return fmt.Errorf("federation: decode bundle body: %w", err)
+	}
+	sort.Strings(body.Issuers)
+	sort.Strings(body.Audiences)
+	canonical, err := dari.MarshalCBOR(&body)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(canonical, env.COSE.Payload) {
+		return errors.New("federation: bundle body is not canonical")
+	}
+	env.Body = &body
+	env.Digest = TrustBundleDigest(env.COSEBytes)
 	var lastErr error
 	for _, k := range bootstrapKeys {
 		if err := dari.VerifyCOSESign1WithAAD(env.COSE, []byte(TrustBundleAAD), env.COSE.Payload, k); err == nil {
@@ -150,10 +158,20 @@ func (t *TrustStore) Quarantine(domain string) {
 	t.quarantine[domain] = true
 }
 
-// Import accepts a verified bundle into the store with the F.7-style
-// rules: strictly increasing sequence per domain; equal sequence is an
-// idempotent replay only for identical bytes; rollback is rejected;
-// stale bundles rejected; quarantined domains rejected.
+// ProvisionBaseline pins an operator-approved starting digest for a
+// domain (offline import); the first accepted bundle otherwise MUST
+// be sequence 0.
+func (t *TrustStore) ProvisionBaseline(domain string, sequence uint64, digest dari.Digest) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.highWater[domain] = sequence
+	t.highDigest[domain] = digest
+}
+
+// Import accepts a verified bundle into the store with the shared
+// monotonic-ledger rules (dari.AcceptHighWater): first import must be
+// sequence 0 (or follow an operator-provisioned baseline); rollback,
+// forks, stale, and quarantined domains fail closed.
 func (t *TrustStore) Import(env *TrustBundleEnvelope, nowMs int64) error {
 	if env == nil || env.Body == nil {
 		return errors.New("federation: nil bundle")
@@ -171,25 +189,14 @@ func (t *TrustStore) Import(env *TrustBundleEnvelope, nowMs int64) error {
 	if age := nowMs - env.Body.IssuedAtMs; age < 0 || uint64(age) > uint64(t.maxStale.Milliseconds()) {
 		return fmt.Errorf("%w: bundle age %dms exceeds bound %dms", ErrStaleBundle, age, t.maxStale.Milliseconds())
 	}
-	cur, seen := t.highWater[domain]
-	if !seen {
-		t.highWater[domain] = env.Body.Sequence
-		t.highDigest[domain] = env.Digest
-		return nil
+	curSeq, seen := t.highWater[domain]
+	next, err := dari.AcceptHighWater(seen, curSeq, t.highDigest[domain], env.Body.Sequence, env.Digest, nil)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrStateRollback, err)
 	}
-	switch {
-	case env.Body.Sequence < cur:
-		return fmt.Errorf("%w: sequence %d below high-water %d", ErrStateRollback, env.Body.Sequence, cur)
-	case env.Body.Sequence == cur:
-		if env.Digest == t.highDigest[domain] {
-			return nil // idempotent replay
-		}
-		return fmt.Errorf("%w: sequence %d forked", ErrStateRollback, env.Body.Sequence)
-	default:
-		t.highWater[domain] = env.Body.Sequence
-		t.highDigest[domain] = env.Digest
-		return nil
-	}
+	t.highWater[domain] = next
+	t.highDigest[domain] = env.Digest
+	return nil
 }
 
 // HighWater reports the current sequence for a domain.
@@ -343,39 +350,17 @@ func intersectPaths(a, b []dari.PathScope) []dari.PathScope {
 }
 
 // narrowerPrefix returns the narrower (longer) prefix when one covers
-// the other, else the longest common segment boundary — never wider
-// than both inputs.
+// the other; UNCOVERED siblings return "" (the pair is dropped) — an
+// ancestor of both would WIDEN the intersection (F.13: the narrower
+// authority wins).
 func narrowerPrefix(a, b string) string {
 	if len(a) > len(b) {
 		a, b = b, a
 	}
-	// a is the shorter. If a is a prefix-ancestor of b, b is narrower.
 	if a == b || (len(b) > len(a) && b[:len(a)] == a && b[len(a)] == '/') {
 		return b
 	}
-	// Otherwise the longest common segment boundary.
-	n := 0
-	for n < len(a) && n < len(b) && a[n] == b[n] {
-		n++
-	}
-	p := a[:n]
-	for len(p) > 0 && p[len(p)-1] != '/' {
-		p = p[:len(p)-1]
-	}
-	if len(p) > 0 && p[len(p)-1] == '/' {
-		p = p[:len(p)-1]
-	}
-	if p == "" || p == "." {
-		return ""
-	}
-	return p
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+	return ""
 }
 
 func intersectNetworks(a, b []dari.NetworkScope) []dari.NetworkScope {

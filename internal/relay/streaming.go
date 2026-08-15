@@ -96,7 +96,7 @@ func consumeSSE(r io.Reader, onDelta DeltaSender) (*InferenceResponse, error) {
 	message := out.Choices[0]["message"].(map[string]interface{})
 	var content strings.Builder
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 0, 8*1024), 1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if !strings.HasPrefix(line, "data:") {
@@ -154,11 +154,8 @@ func consumeSSE(r io.Reader, onDelta DeltaSender) (*InferenceResponse, error) {
 	if message["finish_reason"] == nil && content.Len() > 0 {
 		message["finish_reason"] = "stop"
 	}
-	if out.Usage["total_tokens"] == 0 {
-		out.Usage["prompt_tokens"] = 0
-		out.Usage["completion_tokens"] = len(content.String()) / 4 // conservative estimate
-		out.Usage["total_tokens"] = out.Usage["prompt_tokens"] + out.Usage["completion_tokens"]
-	}
+	// A PIA that omits usage yields ZEROS — governed metering never
+	// fabricates numbers (F.8: fields derive from committed data only).
 	return out, nil
 }
 

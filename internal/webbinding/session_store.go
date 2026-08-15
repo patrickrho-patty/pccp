@@ -30,12 +30,15 @@ type BrowserSession struct {
 }
 
 // SessionStore is the durable session store. In-memory map with an
-// optional JSON snapshot path (the deployments mount a volume there);
-// every mutation snapshots so a restart resumes sessions.
+// optional JSON snapshot path (the deployments mount a volume there).
+// Persistence is atomic (temp+rename) and debounced: lifecycle events
+// (create/expire) flush immediately; high-frequency updates (per
+// message sequence) mark dirty and flush on Flush()/Close.
 type SessionStore struct {
 	mu       sync.Mutex
 	sessions map[string]*BrowserSession
 	path     string // "" = memory only
+	dirty    bool
 }
 
 // NewSessionStore builds a store; path "" keeps it in memory.
@@ -44,7 +47,10 @@ func NewSessionStore(path string) (*SessionStore, error) {
 	if path != "" {
 		if data, err := os.ReadFile(path); err == nil {
 			if err := json.Unmarshal(data, &s.sessions); err != nil {
-				return nil, fmt.Errorf("webbinding: corrupt session store %s: %w", path, err)
+				// Quarantine the corrupt snapshot and start empty — a
+				// corrupt file must not brick the carrier.
+				_ = os.Rename(path, path+".corrupt")
+				s.sessions = map[string]*BrowserSession{}
 			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
@@ -57,11 +63,21 @@ func (s *SessionStore) persistLocked() {
 	if s.path == "" {
 		return
 	}
+	if !s.dirty {
+		return // debounced: only flush when marked
+	}
+	s.dirty = false
 	data, err := json.Marshal(s.sessions)
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(s.path, data, 0o600)
+	// Atomic write: temp file + rename so a crash never corrupts the
+	// snapshot.
+	tmp := s.path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, s.path)
 }
 
 // Create registers a new session.
@@ -76,8 +92,16 @@ func (s *SessionStore) Create(sess *BrowserSession) error {
 	}
 	cp := *sess
 	s.sessions[sess.SessionID] = &cp
+	s.dirty = true // lifecycle event: flush immediately
 	s.persistLocked()
 	return nil
+}
+
+// Flush persists pending dirty state.
+func (s *SessionStore) Flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.persistLocked()
 }
 
 // Get returns a copy of the session state.
@@ -102,6 +126,7 @@ func (s *SessionStore) Update(sessionID string, fn func(*BrowserSession) error) 
 	if err := fn(sess); err != nil {
 		return err
 	}
+	s.dirty = true
 	s.persistLocked()
 	return nil
 }

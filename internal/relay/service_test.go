@@ -52,7 +52,8 @@ func TestGovernedExchange_AuthorizesMetersAndEvidences(t *testing.T) {
 	if err := db.Create(&models.CapabilityLease{
 		OrganizationID: orgID, LeaseID: leaseID, SubjectPeerID: harnessID,
 		UserID: userID, SessionID: sessionID, PolicyEpochID: epochID,
-		NotBefore: past, NotAfter: future, Status: "active",
+		AllowedModelPackages: `["` + modelPkgID + `"]`,
+		NotBefore:            past, NotAfter: future, Status: "active",
 	}).Error; err != nil {
 		t.Fatalf("seed lease: %v", err)
 	}
@@ -153,7 +154,8 @@ func TestGovernInference_ResolvesFromHarnessID(t *testing.T) {
 	db.Create(&models.CapabilityLease{
 		OrganizationID: orgID, LeaseID: leaseID, SubjectPeerID: harnessID,
 		UserID: userID, SessionID: sessionID, PolicyEpochID: epochID,
-		NotBefore: past, NotAfter: future, Status: "active",
+		AllowedModelPackages: `["` + modelPkg + `"]`,
+		NotBefore:            past, NotAfter: future, Status: "active",
 	})
 	allowedJSON, _ := json.Marshal([]string{modelPkg})
 	db.Create(&models.PolicyEpoch{OrganizationID: orgID, EpochID: epochID, AllowedModelsJSON: string(allowedJSON), Status: "active"})
@@ -264,8 +266,8 @@ func TestGovernInference_BlocksOnSecurityDeny(t *testing.T) {
 	future := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 	past := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
 	db.Create(&models.Harness{OrganizationID: orgID, HarnessID: harnessID, Status: "enrolled"})
-	db.Create(&models.CapabilityLease{OrganizationID: orgID, LeaseID: leaseID, SubjectPeerID: harnessID, UserID: userID, SessionID: sessionID, PolicyEpochID: epochID, NotBefore: past, NotAfter: future, Status: "active"})
 	allowed, _ := json.Marshal([]string{modelPkg})
+	db.Create(&models.CapabilityLease{OrganizationID: orgID, LeaseID: leaseID, SubjectPeerID: harnessID, UserID: userID, SessionID: sessionID, PolicyEpochID: epochID, AllowedModelPackages: string(allowed), NotBefore: past, NotAfter: future, Status: "active"})
 	db.Create(&models.PolicyEpoch{OrganizationID: orgID, EpochID: epochID, AllowedModelsJSON: string(allowed), Status: "active"})
 	db.Create(&models.ModelPackage{PackageID: modelPkg, ModelID: modelID, Name: "Sec", State: "published"})
 	db.Create(&models.InferenceEndpoint{OrganizationID: orgID, EndpointID: endpoint, ModelPackageID: modelPkg, Status: "active"})

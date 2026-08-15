@@ -2,6 +2,7 @@ package secret
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"sync"
@@ -24,29 +25,29 @@ type Service struct {
 
 // ScopedCredential is a short-lived, purpose-bound credential.
 type ScopedCredential struct {
-	ID            string    `json:"id"`
-	OrganizationID string   `json:"organization_id"`
-	SessionID     string    `json:"session_id"`
-	HarnessID     string    `json:"harness_id"`
+	ID             string `json:"id"`
+	OrganizationID string `json:"organization_id"`
+	SessionID      string `json:"session_id"`
+	HarnessID      string `json:"harness_id"`
 	// Target
-	SecretRef     string    `json:"secret_ref"`     // reference to the source secret (e.g. "vault://path/to/secret")
-	TargetService string    `json:"target_service"`  // e.g. "postgres", "github-api"
-	Operation     string    `json:"operation"`       // e.g. "migrate", "deploy"
+	SecretRef     string `json:"secret_ref"`     // reference to the source secret (e.g. "vault://path/to/secret")
+	TargetService string `json:"target_service"` // e.g. "postgres", "github-api"
+	Operation     string `json:"operation"`      // e.g. "migrate", "deploy"
 	// Credential
-	CredentialType string   `json:"credential_type"` // token, password, key
-	CredentialValue string  `json:"-"`               // NEVER serialized to JSON/logs
-	CredentialHash string   `json:"credential_hash"`  // hash for audit
+	CredentialType  string `json:"credential_type"` // token, password, key
+	CredentialValue string `json:"-"`               // NEVER serialized to JSON/logs
+	CredentialHash  string `json:"credential_hash"` // hash for audit
 	// Scoping
-	Scopes        []string  `json:"scopes"`          // e.g. ["repo:read", "db:migrate"]
-	AllowedFromIP string    `json:"allowed_from_ip,omitempty"`
+	Scopes        []string `json:"scopes"` // e.g. ["repo:read", "db:migrate"]
+	AllowedFromIP string   `json:"allowed_from_ip,omitempty"`
 	// Lifecycle
-	IssuedAt      time.Time `json:"issued_at"`
-	ExpiresAt     time.Time `json:"expires_at"`
-	Revoked       bool      `json:"revoked"`
-	UsedAt        *time.Time `json:"used_at,omitempty"`
+	IssuedAt  time.Time  `json:"issued_at"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	Revoked   bool       `json:"revoked"`
+	UsedAt    *time.Time `json:"used_at,omitempty"`
 	// Audit
-	IssuedBy      string    `json:"issued_by"`
-	PurposeRecord string    `json:"purpose_record"`
+	IssuedBy      string `json:"issued_by"`
+	PurposeRecord string `json:"purpose_record"`
 }
 
 // New creates a new secret broker service.
@@ -189,8 +190,8 @@ func (s *Service) CleanupExpired() {
 // This should ONLY be called when injecting into an approved process/connection.
 // It must NEVER be logged or included in prompt/context.
 func (s *Service) GetCredentialValue(credID string) (string, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	cred, ok := s.activeCredentials[credID]
 	if !ok {
@@ -232,12 +233,10 @@ func generateScopedToken() string {
 }
 
 func hashCredential(cred string) string {
-	// Simple hash for audit (never reversible)
-	h := make([]byte, 16)
-	for i := 0; i < len(cred) && i < 32; i++ {
-		h[i%16] ^= cred[i]
-	}
-	return "h:" + hex.EncodeToString(h)
+	// Domain-separated SHA-256 fingerprint for the audit trail (the
+	// old 16-byte XOR fold was trivially collidable).
+	sum := sha256.Sum256([]byte("DARI-SECRET-CRED-v1\x00" + cred))
+	return "h:" + hex.EncodeToString(sum[:])
 }
 
 func generateCredID() string {

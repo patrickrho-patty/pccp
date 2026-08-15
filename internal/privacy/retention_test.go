@@ -51,19 +51,34 @@ func TestRetentionRespectsLegalHold(t *testing.T) {
 		t.Fatalf("held + recent rows must survive: %d", len(remaining))
 	}
 
-	// Spoliation guard: with an ACTIVE hold, audit deletes refuse.
+	// Spoliation guard: with an ACTIVE hold, the org's deletes refuse;
+	// an UNRELATED org is unaffected (org-scoped).
 	if err := svc.SetLegalHold("o", "litigation", "counsel"); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.EnsureDeleteRespectsLegalHold("audit", "any"); err == nil ||
+	if err := svc.EnsureDeleteRespectsLegalHold("o", "audit", "any"); err == nil ||
 		!strings.Contains(err.Error(), "legal hold") {
 		t.Fatalf("expected spoliation guard, got %v", err)
+	}
+	if err := svc.EnsureDeleteRespectsLegalHold("other-org", "audit", "any"); err != nil {
+		t.Fatalf("unrelated org blocked by another org's hold: %v", err)
+	}
+	if err := svc.EnsureDeleteRespectsLegalHold("", "audit", "any"); err == nil {
+		t.Fatal("unscoped deletion gate must refuse")
 	}
 	// After release, deletes proceed.
 	if err := svc.ReleaseLegalHold("o", "settled", "counsel"); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.EnsureDeleteRespectsLegalHold("audit", "any"); err != nil {
+	if err := svc.EnsureDeleteRespectsLegalHold("o", "audit", "any"); err != nil {
 		t.Fatalf("delete still refused after release: %v", err)
+	}
+	// Hold markers themselves are LegalHold-flagged (survive retention).
+	var marker models.AuditEvent
+	if err := db.Where("event_type = ?", "cp.legal.hold_activated").First(&marker).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !marker.LegalHold {
+		t.Fatal("hold marker must carry LegalHold=true (spoliation guard)")
 	}
 }

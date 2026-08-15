@@ -1,7 +1,9 @@
 package audit
 
 import (
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/driver/sqlite"
@@ -58,5 +60,34 @@ func TestChainVerifiesAndDetectsTampering(t *testing.T) {
 	rep, _ = VerifyChain(db2, "o2")
 	if rep.Verified {
 		t.Fatal("deleted row must break the chain")
+	}
+}
+
+// TestChainAllocatesSequentiallyUnderConcurrency guards the ChainSeq
+// allocation race: concurrent audit creates must produce a contiguous,
+// correctly linked chain that verifies.
+func TestChainAllocatesSequentiallyUnderConcurrency(t *testing.T) {
+	db := testDB(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// sqlite file DBs serialize writes; retry transient locks.
+			for attempt := 0; attempt < 8; attempt++ {
+				if err := db.Create(&models.AuditEvent{OrganizationID: "race", EventType: "t", Action: "a"}).Error; err == nil {
+					return
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		}()
+	}
+	wg.Wait()
+	rep, err := VerifyChain(db, "race")
+	if err != nil || !rep.Verified {
+		t.Fatalf("concurrent chain must verify: %+v err=%v", rep, err)
+	}
+	if rep.Events != 32 {
+		t.Fatalf("events = %d, want 32", rep.Events)
 	}
 }

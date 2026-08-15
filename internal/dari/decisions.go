@@ -1,11 +1,11 @@
 package dari
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 )
 
 // decisions.go implements the Authorization Decision, obligation
@@ -94,48 +94,26 @@ func EncodeDecisionBody(b *AuthorizationDecisionBody) ([]byte, error) {
 
 // SignAuthorizationDecision signs the canonical body.
 func SignAuthorizationDecision(b *AuthorizationDecisionBody, priv ed25519.PrivateKey) (*DecisionEnvelope, error) {
-	body, err := EncodeDecisionBody(b)
-	if err != nil {
+	if _, err := EncodeDecisionBody(b); err != nil {
 		return nil, err
 	}
-	kid := SubjectKeyThumbprint(priv.Public().(ed25519.PublicKey))
-	sign1, err := CreateCOSESign1WithAAD(body, []byte(DecisionAAD), priv, kid[:])
-	if err != nil {
-		return nil, err
-	}
-	coseBytes, err := MarshalCBOR(sign1)
+	sign1, coseBytes, digest, err := SignKernelObject(b, DecisionAAD, priv, ObjTypeAuthorizationDecision)
 	if err != nil {
 		return nil, err
 	}
 	return &DecisionEnvelope{
-		Body: b, COSE: sign1, COSEBytes: coseBytes,
-		SignedDigest: KernelSignedObjectDigest(ObjTypeAuthorizationDecision, coseBytes),
+		Body: b, COSE: sign1, COSEBytes: coseBytes, SignedDigest: digest,
 	}, nil
 }
 
-// DecodeAuthorizationGrant-style verifier for decisions.
+// DecodeAuthorizationDecision verifies + decodes a signed decision.
 func DecodeAuthorizationDecision(coseBytes []byte, signer ed25519.PublicKey) (*DecisionEnvelope, error) {
-	var sign1 COSESign1
-	if err := UnmarshalCBOR(coseBytes, &sign1); err != nil {
-		return nil, fmt.Errorf("dari: decode decision COSE: %w", err)
-	}
-	var body AuthorizationDecisionBody
-	if err := UnmarshalCBOR(sign1.Payload, &body); err != nil {
-		return nil, fmt.Errorf("dari: decode decision body: %w", err)
-	}
-	reencoded, err := EncodeDecisionBody(&body)
+	body, sign1, digest, err := DecodeKernelObject(coseBytes, DecisionAAD, EncodeDecisionBody, signer)
 	if err != nil {
-		return nil, err
-	}
-	if !bytes.Equal(reencoded, sign1.Payload) {
-		return nil, errors.New("dari: decision body is not the canonical payload")
-	}
-	if err := VerifyCOSESign1WithAAD(&sign1, []byte(DecisionAAD), reencoded, signer); err != nil {
-		return nil, fmt.Errorf("dari: decision signature: %w", err)
+		return nil, fmt.Errorf("dari: decision: %w", err)
 	}
 	return &DecisionEnvelope{
-		Body: &body, COSE: &sign1, COSEBytes: coseBytes,
-		SignedDigest: KernelSignedObjectDigest(ObjTypeAuthorizationDecision, coseBytes),
+		Body: body, COSE: sign1, COSEBytes: coseBytes, SignedDigest: digest,
 	}, nil
 }
 
@@ -144,6 +122,9 @@ func DecodeAuthorizationDecision(coseBytes []byte, signer ed25519.PublicKey) (*D
 // at least one PENDING obligation (a pre-satisfied one MUST carry its
 // bound evidence digest); time window at nowMs.
 func ValidateDecision(b *AuthorizationDecisionBody, nowMs int64) error {
+	if nowMs == 0 {
+		return errors.New("dari: decision time validation requires a non-zero evaluation time")
+	}
 	if b.ExpiresAtMs <= b.IssuedAtMs {
 		return errors.New("dari: decision expires_at must exceed issued_at")
 	}
@@ -172,7 +153,7 @@ func ValidateDecision(b *AuthorizationDecisionBody, nowMs int64) error {
 	default:
 		return errors.New("dari: unknown decision outcome")
 	}
-	if nowMs != 0 && (nowMs < b.IssuedAtMs || nowMs >= b.ExpiresAtMs) {
+	if nowMs < b.IssuedAtMs || nowMs >= b.ExpiresAtMs {
 		return errors.New("dari: decision outside its validity window")
 	}
 	return nil
@@ -249,7 +230,10 @@ type ObligationUpdate struct {
 const ObligationUpdateAAD = "DARI-OBLIGATION-UPDATE-v1\x00"
 
 // ObligationLedger is the append-only obligation state machine.
+// Guarded by a mutex: obligation updates arrive from concurrent
+// governed exchanges.
 type ObligationLedger struct {
+	mu sync.Mutex
 	// state[(decisionDigest, obligationID)] → current state.
 	state map[string]ObligationState
 	// lastSeq[(decisionDigest, obligationID)] → highest update seq.
@@ -276,6 +260,8 @@ func (l *ObligationLedger) Register(decision *AuthorizationDecisionBody, decisio
 	if decision == nil {
 		return
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.responsible[string(decisionDigest[:])] == nil {
 		l.responsible[string(decisionDigest[:])] = map[string]string{}
 	}
@@ -296,6 +282,8 @@ func (l *ObligationLedger) Apply(u *ObligationUpdate) error {
 	if u == nil {
 		return errors.New("dari: nil obligation update")
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	key := obligationKey(u.DecisionDigest, u.ObligationID)
 	current, exists := l.state[key]
 	if !exists {
@@ -322,6 +310,8 @@ func (l *ObligationLedger) Apply(u *ObligationUpdate) error {
 
 // State returns the current state of an obligation.
 func (l *ObligationLedger) State(decisionDigest Digest, obligationID string) (ObligationState, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	s, ok := l.state[obligationKey(decisionDigest, obligationID)]
 	return s, ok
 }
@@ -330,6 +320,8 @@ func (l *ObligationLedger) State(decisionDigest Digest, obligationID string) (Ob
 // F.6: an expired deadline changes PENDING to FAILED. Returns the IDs
 // transitioned.
 func (l *ObligationLedger) ExpirePending(nowMs int64, deadlines map[string]int64) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	var expired []string
 	for key, state := range l.state {
 		if state != ObligationPending {
@@ -347,11 +339,13 @@ func (l *ObligationLedger) ExpirePending(nowMs int64, deadlines map[string]int64
 // PreActionSatisfied reports whether every PRE_ACTION obligation of a
 // decision is SATISFIED (required before a protected action starts).
 func (l *ObligationLedger) PreActionSatisfied(decision *AuthorizationDecisionBody, decisionDigest Digest) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	for _, o := range decision.Obligations {
 		if o.Phase != ObligationPreAction {
 			continue
 		}
-		if s, ok := l.State(decisionDigest, o.ObligationID); !ok || s != ObligationSatisfied {
+		if s, ok := l.state[obligationKey(decisionDigest, o.ObligationID)]; !ok || s != ObligationSatisfied {
 			return false
 		}
 	}

@@ -43,13 +43,20 @@ type Server struct {
 	idleTTL    time.Duration
 	metrics    Metrics
 	now        func() time.Time
+	// challengeSeq / sessionSeq disambiguate same-nanosecond IDs.
+	challengeSeq uint64
+	sessionSeq   uint64
 }
 
-// NewServer builds a server. origins is the exact allowlist; empty
-// means deny-all (callers must configure explicitly).
+// NewServer builds a server. origins is the exact allowlist and MUST
+// be non-empty — an unconfigured carrier fails closed (deny-all), it
+// never defaults to allow-every-origin.
 func NewServer(store *SessionStore, origins []string, handler GovernanceHandler) (*Server, error) {
 	if store == nil {
 		return nil, errors.New("webbinding: nil session store")
+	}
+	if len(origins) == 0 {
+		return nil, errors.New("webbinding: origin allowlist must not be empty (fail-closed)")
 	}
 	allowed := map[string]bool{}
 	for _, o := range origins {
@@ -119,15 +126,23 @@ func (s *Server) IssueChallenge(origin string) (*Challenge, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.origins) > 0 && !s.origins[norm.String()] {
+	if !s.origins[norm.String()] {
 		return nil, fmt.Errorf("webbinding: origin %q not allowed by policy", norm.String())
+	}
+	now := s.now()
+	// Prune expired challenges (abandoned tabs / floods must not leak).
+	for id, ch := range s.challenges {
+		if now.After(ch.ExpiresAt) {
+			delete(s.challenges, id)
+		}
 	}
 	var nonce [32]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, err
 	}
+	s.challengeSeq++
 	ch := &Challenge{
-		ID:        fmt.Sprintf("ch-%d", s.now().UnixNano()),
+		ID:        fmt.Sprintf("ch-%d-%d", s.now().UnixNano(), s.challengeSeq),
 		Nonce:     nonce,
 		Origin:    norm.String(),
 		ExpiresAt: s.now().Add(2 * time.Minute),
@@ -167,8 +182,14 @@ func (s *Server) Open(req OpenRequest) (BrowserSession, bool, error) {
 		s.mu.Unlock()
 		return BrowserSession{}, false, ErrMissingProofOfPossession
 	}
+	// Pop the challenge ATOMICALLY before verification: a concurrent
+	// replay of the same captured proof finds it already gone (the
+	// one-use guarantee holds under race).
 	s.mu.Lock()
 	ch := s.challenges[req.Proof.ChallengeID]
+	if ch != nil {
+		delete(s.challenges, ch.ID)
+	}
 	s.mu.Unlock()
 	if err := VerifyBrowserProof(req.Proof, req.SubjectKey, norm.String(), req.ChannelBinding, ch); err != nil {
 		s.mu.Lock()
@@ -176,10 +197,6 @@ func (s *Server) Open(req OpenRequest) (BrowserSession, bool, error) {
 		s.mu.Unlock()
 		return BrowserSession{}, false, err
 	}
-	s.mu.Lock()
-	ch.used = true
-	delete(s.challenges, ch.ID)
-	s.mu.Unlock()
 
 	nowMs := s.now().UnixMilli()
 	if req.Proof.ReconnectSessionID != "" {
@@ -219,8 +236,9 @@ func (s *Server) Open(req OpenRequest) (BrowserSession, bool, error) {
 	}
 
 	// Fresh open.
+	s.sessionSeq++
 	sess := BrowserSession{
-		SessionID:    fmt.Sprintf("ws-%d", s.now().UnixNano()),
+		SessionID:    fmt.Sprintf("ws-%d-%d", s.now().UnixNano(), s.sessionSeq),
 		Origin:       norm.String(),
 		Site:         norm.TopLevelSite(),
 		SubjectThumb: req.Proof.SubjectKeyThumbprint,
@@ -307,7 +325,7 @@ func (s *Server) VerifyWebOrigin(origin string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.origins) > 0 && !s.origins[norm.String()] {
+	if !s.origins[norm.String()] {
 		return fmt.Errorf("webbinding: origin %q not allowed", norm.String())
 	}
 	return nil

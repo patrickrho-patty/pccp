@@ -4,8 +4,10 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -311,36 +313,17 @@ func buildWireEvidenceReceipt(r *models.EvidenceReceipt) *wireEvidenceReceipt {
 
 // digestBytes strips an optional "sha256:" prefix and hex-decodes.
 func digestBytes(s string) []byte {
-	const prefix = "sha256:"
-	for len(s) >= len(prefix) && s[:len(prefix)] == prefix {
-		s = s[len(prefix):]
+	for strings.HasPrefix(s, "sha256:") {
+		s = s[len("sha256:"):]
 	}
-	if len(s) == 0 {
+	if s == "" {
 		return nil
 	}
-	out := make([]byte, len(s)/2)
-	for i := 0; i+1 < len(s); i += 2 {
-		hi := hexVal(s[i])
-		lo := hexVal(s[i+1])
-		if hi < 0 || lo < 0 {
-			return nil
-		}
-		out[i/2] = byte(hi<<4 | lo)
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		return nil
 	}
-	return out
-}
-
-func hexVal(c byte) int {
-	switch {
-	case c >= '0' && c <= '9':
-		return int(c - '0')
-	case c >= 'a' && c <= 'f':
-		return int(c-'a') + 10
-	case c >= 'A' && c <= 'F':
-		return int(c-'A') + 10
-	default:
-		return -1
-	}
+	return b
 }
 
 // ---------------------------------------------------------------------------

@@ -412,17 +412,28 @@ func (pl *DARIListener) BroadcastCatalogDelta() {
 	}
 	pl.mu.Unlock()
 
+	if len(targets) == 0 {
+		return
+	}
+	// Resolve + digest the catalog ONCE for the whole broadcast; only
+	// the epoch binding (and thus the digest) varies per target.
+	descriptors, err := pl.svc.Catalog().GetEffectiveCatalog("", "", "")
+	if err != nil {
+		log.Printf("relay: catalog delta resolve failed: %v", err)
+		return
+	}
+	thumb := sha256.Sum256(pl.svc.Policy().SigningPublicKey())
+	encoded := map[string][]byte{}
 	for _, t := range targets {
-		descriptors, err := pl.svc.Catalog().GetEffectiveCatalog("", "", "")
-		if err != nil {
-			continue
-		}
-		thumb := sha256.Sum256(pl.svc.Policy().SigningPublicKey())
-		snap := buildWireCatalogSnapshot(t.epoch, thumb, descriptors, time.Now())
-		snap.Digest = wireCatalogDigest(snap)
-		body, err := encodeWire(snap)
-		if err != nil {
-			continue
+		body, cached := encoded[t.epoch]
+		if !cached {
+			snap := buildWireCatalogSnapshot(t.epoch, thumb, descriptors, time.Now())
+			snap.Digest = wireCatalogDigest(snap)
+			body, err = encodeWire(snap)
+			if err != nil {
+				continue
+			}
+			encoded[t.epoch] = body
 		}
 		if err := t.conn.SendMessage(dari.MsgModelCatalogDelta, nil, body, 0, 2); err != nil {
 			log.Printf("relay: catalog delta to %s epoch failed: %v", t.epoch, err)

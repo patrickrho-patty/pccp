@@ -78,7 +78,7 @@ func TestEndToEndProvenance(t *testing.T) {
 	// 3. Enroll endpoint and issue lease
 	ep, err := regSvc.EnrollEndpoint(org.ID, "pia-test", "pmp_test_v1", "vllm", "0.6.0",
 		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-		"spiffe://test/node/pia-test", "L1")
+		"spiffe://test/node/pia-test", "none")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestModelRecallInvalidatesLeases(t *testing.T) {
 
 	ep, _ := regSvc.EnrollEndpoint(org.ID, "pia-test2", "pmp_recall_test", "vllm", "0.6",
 		"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-		"node-test", "L1")
+		"node-test", "none")
 	lease, _ := regSvc.IssueEndpointLease(org.ID, ep.EndpointID, 1*time.Hour)
 	if lease.Status != "active" {
 		t.Fatal("expected active lease before recall")

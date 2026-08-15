@@ -77,7 +77,7 @@ type ProfileRegistry struct {
 func NewProfileRegistry() *ProfileRegistry {
 	r := &ProfileRegistry{handlers: map[string]RegisteredProfile{}}
 	// Kernel + implemented extensions (validated in this repo):
-	r.Register(RegisteredProfile{Handler: &kernelProfile{id: "dari/1", capabilities: []string{
+	r.Register(RegisteredProfile{Handler: &staticProfile{id: "dari/1", exact: []string{
 		"peer-credential", "authorization-grant", "attenuation", "governed-exchange",
 		"authorization-decision", "obligations", "signed-state-checkpoint",
 		"evidence-receipt", "linear-evidence", "segmented-mmr", "selective-disclosure",
@@ -218,33 +218,6 @@ func (r *ProfileRegistry) SupportsEffects() bool {
 // ---------------------------------------------------------------------------
 // Static handler implementations.
 // ---------------------------------------------------------------------------
-
-// kernelProfile exposes the dari/1 kernel capabilities.
-type kernelProfile struct {
-	id           string
-	capabilities []string
-}
-
-func (k *kernelProfile) ProfileID() string      { return k.id }
-func (k *kernelProfile) Dependencies() []string { return nil }
-
-func (k *kernelProfile) Negotiate(offer ProfileOffer) ProfileResult {
-	have := map[string]bool{}
-	for _, c := range k.capabilities {
-		have[c] = true
-	}
-	var omitted []string
-	for _, c := range offer.Capabilities {
-		if !have[c.ID] {
-			omitted = append(omitted, c.ID)
-		}
-	}
-	if len(omitted) == 0 {
-		return ProfileResult{Profile: k.id, Status: ProfileExact}
-	}
-	sort.Strings(omitted)
-	return ProfileResult{Profile: k.id, Status: ProfileDegraded, Omitted: omitted}
-}
 
 // staticProfile serves extension profiles with a fixed capability set.
 type staticProfile struct {

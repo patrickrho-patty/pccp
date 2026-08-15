@@ -1,7 +1,6 @@
 package dari
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/binary"
@@ -18,71 +17,45 @@ const DefaultSegmentSize = 1024
 
 // eventLeaf computes the F.9 event leaf.
 func eventLeaf(sequence uint64, eventDigest Digest) Digest {
-	h := shaHash()
 	var seq [8]byte
 	binary.BigEndian.PutUint64(seq[:], sequence)
-	h.Write([]byte("DARI-EVIDENCE-LEAF-v1\x00"))
-	h.Write(seq[:])
-	h.Write(eventDigest[:])
-	return h.SumToDigest()
+	return domainDigest("DARI-EVIDENCE-LEAF-v1\x00", seq[:], eventDigest[:])
 }
 
 // emptyLeaf computes the F.9 position-specific empty leaf for segment
 // s, position p.
 func emptyLeaf(s uint64, p uint32) Digest {
-	h := shaHash()
 	var sb [8]byte
 	var pb [4]byte
 	binary.BigEndian.PutUint64(sb[:], s)
 	binary.BigEndian.PutUint32(pb[:], p)
-	h.Write([]byte("DARI-EVIDENCE-EMPTY-v1\x00"))
-	h.Write(sb[:])
-	h.Write(pb[:])
-	return h.SumToDigest()
+	return domainDigest("DARI-EVIDENCE-EMPTY-v1\x00", sb[:], pb[:])
 }
 
 // nodeHash combines two child digests.
 func nodeHash(left, right Digest) Digest {
-	h := shaHash()
-	h.Write([]byte("DARI-EVIDENCE-NODE-v1\x00"))
-	h.Write(left[:])
-	h.Write(right[:])
-	return h.SumToDigest()
+	return domainDigest("DARI-EVIDENCE-NODE-v1\x00", left[:], right[:])
 }
 
 // segmentLeaf commits one completed/final segment.
 func segmentLeaf(s, firstSequence uint64, actualCount uint32, root Digest) Digest {
-	h := shaHash()
 	var sb [8]byte
 	var fb [8]byte
 	var cb [4]byte
 	binary.BigEndian.PutUint64(sb[:], s)
 	binary.BigEndian.PutUint64(fb[:], firstSequence)
 	binary.BigEndian.PutUint32(cb[:], actualCount)
-	h.Write([]byte("DARI-EVIDENCE-SEGMENT-v1\x00"))
-	h.Write(sb[:])
-	h.Write(fb[:])
-	h.Write(cb[:])
-	h.Write(root[:])
-	return h.SumToDigest()
+	return domainDigest("DARI-EVIDENCE-SEGMENT-v1\x00", sb[:], fb[:], cb[:], root[:])
 }
 
 // mmrNode combines equal-height MMR peaks.
 func mmrNode(left, right Digest) Digest {
-	h := shaHash()
-	h.Write([]byte("DARI-EVIDENCE-MMR-NODE-v1\x00"))
-	h.Write(left[:])
-	h.Write(right[:])
-	return h.SumToDigest()
+	return domainDigest("DARI-EVIDENCE-MMR-NODE-v1\x00", left[:], right[:])
 }
 
 // mmrBag bags peaks right-to-left.
 func mmrBag(left, acc Digest) Digest {
-	h := shaHash()
-	h.Write([]byte("DARI-EVIDENCE-MMR-BAG-v1\x00"))
-	h.Write(left[:])
-	h.Write(acc[:])
-	return h.SumToDigest()
+	return domainDigest("DARI-EVIDENCE-MMR-BAG-v1\x00", left[:], acc[:])
 }
 
 // MMRPeak is one peak: height + digest.
@@ -117,35 +90,26 @@ type SegmentedCommitment struct {
 	MMRRoot       Digest
 }
 
-// shaHash returns the F.9 hasher wrapper.
-func shaHash() *shaWrap { return &shaWrap{} }
-
-type shaWrap struct {
-	h   [32]byte
-	buf bytes.Buffer
-}
-
-func (w *shaWrap) Write(p []byte) (int, error) { return w.buf.Write(p) }
-func (w *shaWrap) SumToDigest() Digest {
-	sum := sha256.Sum256(w.buf.Bytes())
+// domainDigest is the single F.9 hasher: domain || parts → Digest.
+func domainDigest(domain string, parts ...[]byte) Digest {
+	h := sha256.New()
+	h.Write([]byte(domain))
+	for _, p := range parts {
+		h.Write(p)
+	}
 	var d Digest
-	copy(d[:], sum[:])
+	copy(d[:], h.Sum(nil))
 	return d
 }
 
 // linearChainRoot computes R_N over all events (F.9 linear chain).
 func linearChainRoot(exchangeDigest Digest, events []EventCommitment) Digest {
 	var seq [8]byte
-	r := KernelObjectDigestRaw("DARI-EVIDENCE-START-v1\x00", exchangeDigest[:])
+	r := EvidenceChainStart(exchangeDigest[:])
 	for _, ev := range events {
 		ed := ev.EventDigest()
-		h := shaHash()
 		binary.BigEndian.PutUint64(seq[:], ev.Sequence)
-		h.Write([]byte("DARI-EVIDENCE-EVENT-v1\x00"))
-		h.Write(seq[:])
-		h.Write(r[:])
-		h.Write(ed[:])
-		r = h.SumToDigest()
+		r = domainDigest("DARI-EVIDENCE-EVENT-v1\x00", seq[:], r[:], ed[:])
 	}
 	return r
 }
@@ -157,6 +121,9 @@ func BuildSegmentedCommitment(exchangeDigest Digest, events []EventCommitment, s
 	}
 	if segmentSize == 0 || segmentSize&(segmentSize-1) != 0 {
 		return nil, errors.New("dari: segment size must be a power of two")
+	}
+	if segmentSize < 16 || segmentSize > 65536 {
+		return nil, errors.New("dari: segment size must be a negotiated power of two in [16, 65536]")
 	}
 	// Contiguity check.
 	for i := 1; i < len(events); i++ {
@@ -184,15 +151,8 @@ func BuildSegmentedCommitment(exchangeDigest Digest, events []EventCommitment, s
 			end = n
 		}
 		// Build the segment tree with deterministic empty padding.
-		level := leaves[start:end]
-		pos := uint32(0)
-		for uint64(len(level))&(uint64(len(level))-1) != 0 || len(level) < 1 {
-			_ = pos
-			break
-		}
-		// Pad to segmentSize with position-specific empties.
 		padded := make([]Digest, 0, segmentSize)
-		padded = append(padded, level...)
+		padded = append(padded, leaves[start:end]...)
 		for uint32(len(padded)) < segmentSize {
 			padded = append(padded, emptyLeaf(s, uint32(len(padded))))
 		}
@@ -295,12 +255,15 @@ var ErrDisclosureMismatch = errors.New("dari: selective disclosure does not veri
 // root per the F.9 algorithm: canonical event, leaf recomputation,
 // segment geometry, padding-exact path, peak reconstruction (replace
 // exactly one), bagging, root comparison.
-func VerifySelectiveDisclosure(sd *SelectiveDisclosure, firstSequence uint64, expectedRoot Digest) error {
+func VerifySelectiveDisclosure(sd *SelectiveDisclosure, firstSequence uint64, expectedRoot Digest, expectedOmissionDigest ...Digest) error {
 	if sd == nil || len(sd.Disclosures) == 0 || len(sd.Peaks) == 0 {
 		return fmt.Errorf("%w: no disclosures or peaks", ErrDisclosureMismatch)
 	}
 	if sd.SegmentSize == 0 || sd.SegmentSize&(sd.SegmentSize-1) != 0 {
 		return fmt.Errorf("%w: segment size not a power of two", ErrDisclosureMismatch)
+	}
+	if sd.SegmentSize < 16 || sd.SegmentSize > 65536 {
+		return fmt.Errorf("%w: segment size outside [16, 65536]", ErrDisclosureMismatch)
 	}
 	// Peak list shape: strictly descending heights, no duplicates.
 	for i := 1; i < len(sd.Peaks); i++ {
@@ -319,6 +282,9 @@ func VerifySelectiveDisclosure(sd *SelectiveDisclosure, firstSequence uint64, ex
 			return fmt.Errorf("%w: duplicated sequence", ErrDisclosureMismatch)
 		}
 		seenSeq[d.Sequence] = true
+		if d.Sequence < firstSequence {
+			return fmt.Errorf("%w: disclosed sequence precedes the receipt window", ErrDisclosureMismatch)
+		}
 		// Geometry implied by the receipt's first sequence.
 		off := d.Sequence - firstSequence
 		wantSeg := off / uint64(sd.SegmentSize)
@@ -352,6 +318,10 @@ func VerifySelectiveDisclosure(sd *SelectiveDisclosure, firstSequence uint64, ex
 				peak = mmrNode(peak, st.Digest)
 			}
 		}
+		// F.9: exactly `target peak height` MMR steps.
+		if uint64(len(d.PeakPath)) != d.TargetPeakHeight {
+			return fmt.Errorf("%w: peak path length %d != target height %d", ErrDisclosureMismatch, len(d.PeakPath), d.TargetPeakHeight)
+		}
 		// The reconstructed peak must exactly match one peak in the
 		// canonical list.
 		matched := false
@@ -373,6 +343,60 @@ func VerifySelectiveDisclosure(sd *SelectiveDisclosure, firstSequence uint64, ex
 	root := KernelObjectDigestRaw("DARI-EVIDENCE-MMR-ROOT-v1\x00", append(u64be(sd.SegmentCount), acc[:]...))
 	if root != expectedRoot {
 		return fmt.Errorf("%w: root mismatch", ErrDisclosureMismatch)
+	}
+
+	// Omission manifest (F.9 label 7): when present, its canonical
+	// bytes MUST hash to the receipt's omission-manifest digest under
+	// the DARI-OMISSION-MANIFEST-v1 domain, and every range MUST be
+	// ordered, non-overlapping, inside the receipt window, and
+	// disjoint from the disclosed sequences.
+	if len(sd.OmissionManifest) > 0 {
+		digest := KernelObjectDigestRaw("DARI-OMISSION-MANIFEST-v1\x00", sd.OmissionManifest)
+		if len(expectedOmissionDigest) > 0 && digest != expectedOmissionDigest[0] {
+			return fmt.Errorf("%w: omission manifest digest mismatch", ErrDisclosureMismatch)
+		}
+		if err := validateOmissionManifest(sd.OmissionManifest, sd.SegmentCount*uint64(sd.SegmentSize), firstSequence, seenSeq); err != nil {
+			return fmt.Errorf("%w: %v", ErrDisclosureMismatch, err)
+		}
+	} else if len(expectedOmissionDigest) > 0 && expectedOmissionDigest[0] != (Digest{}) {
+		return fmt.Errorf("%w: receipt declares an omission manifest but none was supplied", ErrDisclosureMismatch)
+	}
+	return nil
+}
+
+// OmittedRange is one F.9 omitted-range entry.
+type OmittedRange struct {
+	StartSeq   uint64 `cbor:"1,keyasint"`
+	EndSeq     uint64 `cbor:"2,keyasint"`
+	Reason     string `cbor:"3,keyasint"`
+	Commitment Digest `cbor:"4,keyasint,omitempty"`
+}
+
+// validateOmissionManifest enforces the F.9 rules: canonical array of
+// ordered, non-overlapping half-open [start, end) ranges within the
+// receipt window, disjoint from disclosed sequences.
+func validateOmissionManifest(canonical []byte, eventCapacity uint64, firstSequence uint64, disclosed map[uint64]bool) error {
+	var ranges []OmittedRange
+	if err := UnmarshalCBOR(canonical, &ranges); err != nil {
+		return fmt.Errorf("malformed omission manifest: %w", err)
+	}
+	var prevEnd uint64
+	for i, r := range ranges {
+		if r.EndSeq <= r.StartSeq {
+			return fmt.Errorf("range %d empty or inverted", i)
+		}
+		if r.StartSeq < firstSequence || r.EndSeq > firstSequence+eventCapacity {
+			return fmt.Errorf("range %d outside receipt bounds", i)
+		}
+		if i > 0 && r.StartSeq < prevEnd {
+			return fmt.Errorf("range %d overlaps its predecessor", i)
+		}
+		for s := r.StartSeq; s < r.EndSeq; s++ {
+			if disclosed[s] {
+				return fmt.Errorf("range %d overlaps a disclosed sequence", i)
+			}
+		}
+		prevEnd = r.EndSeq
 	}
 	return nil
 }
@@ -433,20 +457,11 @@ const ReceiptAttestationAAD = "DARI-RECEIPT-ATTESTATION-v1\x00"
 
 // SignReceiptAttestation signs an attestation.
 func SignReceiptAttestation(b *ReceiptAttestationBody, priv ed25519.PrivateKey) ([]byte, Digest, error) {
-	payload, err := MarshalCBOR(b)
+	_, coseBytes, digest, err := SignKernelObject(b, ReceiptAttestationAAD, priv, ObjTypeReceiptAttestation)
 	if err != nil {
 		return nil, Digest{}, err
 	}
-	kid := SubjectKeyThumbprint(priv.Public().(ed25519.PublicKey))
-	sign1, err := CreateCOSESign1WithAAD(payload, []byte(ReceiptAttestationAAD), priv, kid[:])
-	if err != nil {
-		return nil, Digest{}, err
-	}
-	coseBytes, err := MarshalCBOR(sign1)
-	if err != nil {
-		return nil, Digest{}, err
-	}
-	return coseBytes, KernelSignedObjectDigest(ObjTypeReceiptAttestation, coseBytes), nil
+	return coseBytes, digest, nil
 }
 
 // ErrAttestationScope is the F.8 scope violation.
@@ -488,8 +503,6 @@ func ValidateAttestationScope(b *ReceiptAttestationBody) error {
 	}
 	return nil
 }
-
-var _ = bytes.Equal
 
 // BuildDisclosure constructs the disclosure proof for one committed
 // event: the leaf→segment path (with deterministic empty padding) and

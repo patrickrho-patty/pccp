@@ -2,7 +2,10 @@ package sso
 
 import (
 	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/patrickrho-patty/pccp/internal/identity"
@@ -135,10 +138,51 @@ func TestSCIMProvisioning(t *testing.T) {
 	org := models.Organization{Name: "SCIM Test", Slug: "scim-test", Status: "active"}
 	db.Create(&org)
 
-	// SCIM user creation is tested via the HTTP handler
-	// For unit test, we verify the flow
-	if svc == nil {
-		t.Fatal("expected service")
+	// Fail closed: unconfigured SCIM refuses every request.
+	unconfigured := httptest.NewRequest("POST", "/scim?org="+org.ID, nil)
+	rec := httptest.NewRecorder()
+	svc.HandleSCIMRequest(rec, unconfigured)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unconfigured SCIM must 503, got %d", rec.Code)
+	}
+
+	svc.ConfigureSCIMToken("scim-admin-token")
+
+	// No/incorrect bearer token refused.
+	noAuth := httptest.NewRequest("POST", "/scim?org="+org.ID, strings.NewReader(`{"userName":"scim-1"}`))
+	rec = httptest.NewRecorder()
+	svc.HandleSCIMRequest(rec, noAuth)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("token-less SCIM must 401, got %d", rec.Code)
+	}
+
+	// Missing org scope refused.
+	withAuth := httptest.NewRequest("POST", "/scim", strings.NewReader(`{"userName":"scim-1"}`))
+	withAuth.Header.Set("Authorization", "Bearer scim-admin-token")
+	rec = httptest.NewRecorder()
+	svc.HandleSCIMRequest(rec, withAuth)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unscoped SCIM must 400, got %d", rec.Code)
+	}
+
+	// Authorized + scoped creation succeeds.
+	create := httptest.NewRequest("POST", "/scim?org="+org.ID, strings.NewReader(`{"userName":"scim-1","email":"s@e.com","displayName":"SCIM One"}`))
+	create.Header.Set("Authorization", "Bearer scim-admin-token")
+	rec = httptest.NewRecorder()
+	svc.HandleSCIMRequest(rec, create)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("authorized SCIM create must 201, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Cross-org delete refused.
+	var created models.User
+	db.Where("organization_id = ?", org.ID).First(&created)
+	del := httptest.NewRequest("DELETE", "/scim/users?userID="+created.ID+"&org=other-org", nil)
+	del.Header.Set("Authorization", "Bearer scim-admin-token")
+	rec = httptest.NewRecorder()
+	svc.HandleSCIMRequest(rec, del)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-org SCIM delete must 404, got %d", rec.Code)
 	}
 }
 
