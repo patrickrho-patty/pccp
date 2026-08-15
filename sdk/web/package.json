@@ -1,11 +1,23 @@
 {
   "name": "@dari/web-sdk",
   "version": "1.0.0",
-  "description": "DARI browser SDK — WebTransport (HTTP/3) with constrained WebSocket fallback; governed authorization via browser-held key proof of possession",
+  "description": "DARI browser SDK \u2014 WebTransport (HTTP/3) with constrained WebSocket fallback; governed authorization via browser-held key proof of possession",
   "type": "module",
   "main": "src/client.ts",
   "types": "src/client.ts",
-  "files": ["src"],
-  "keywords": ["dari", "webtransport", "governance"],
-  "license": "Proprietary"
+  "files": [
+    "src"
+  ],
+  "keywords": [
+    "dari",
+    "webtransport",
+    "governance"
+  ],
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "node --experimental-strip-types --no-warnings src/client.test.ts"
+  },
+  "engines": {
+    "node": ">=22.6"
+  }
 }

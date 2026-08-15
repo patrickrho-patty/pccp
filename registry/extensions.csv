@@ -1,0 +1,8 @@
+extension,profile,status,capability_reporting_source
+dari.ai/1,dari/1,active,internal/relay GovernInference stages
+dari.model-supply/1,dari/1,active,internal/registry publish + catalog push
+dari.tools/1,dari/1,active,internal/tools executor suite
+dari.web/1,dari/1,active,internal/webbinding vectors
+dari.federation/1,dari/1,active,internal/darifederation vectors
+dari.collab/1,dari/1,active,internal/daricollab runtime vectors
+dari.media/1,dari/1,active,internal/darimedia runtime vectors

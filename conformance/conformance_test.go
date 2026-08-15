@@ -1,6 +1,9 @@
 package conformance
 
 import (
+	"fmt"
+
+	"github.com/patrickrho-patty/pccp/internal/replay"
 	"io"
 	"testing"
 	"time"
@@ -227,10 +230,55 @@ func TestInvariant7_TransportFallbackSemantics(t *testing.T) {
 
 // Invariant 8: No completed side effect is automatically duplicated after reconnect.
 func TestInvariant8_NoDuplicateSideEffects(t *testing.T) {
-	// The replay protection service ensures side-effecting operations
-	// are not re-executed on reconnect
-	// Operations with NEVER_AUTORETRY class should fail on replay
-	// This is tested in internal/replay/service_test.go
+	// A committed NEVER_AUTORETRY side effect replays to the SAME
+	// recorded result — never a second execution (DARI §51/§52; the
+	// effect lifecycle's REPLAY_CONFLICT is additionally pinned by the
+	// runner's F.14 case 9).
+	p := replay.New(time.Minute)
+	runs := 0
+	exec := func() string {
+		runs++
+		return fmt.Sprintf("result-%d", runs)
+	}
+
+	key := "fx-commit-1"
+	seen, _, err := p.Check(key, "sess-8", "exch-8", replay.ClassNeverAutoRetry)
+	if err != nil || seen {
+		t.Fatalf("first check: seen=%v err=%v", seen, err)
+	}
+	first := exec()
+	p.Record(key, first)
+
+	// Reconnect replays the same key on a NEVER_AUTORETRY operation:
+	// the replay is REFUSED (the caller must not auto-retry) and the
+	// effect body does NOT run again.
+	_, _, err = p.Check(key, "sess-8", "exch-8", replay.ClassNeverAutoRetry)
+	if err == nil {
+		t.Fatal("NEVER_AUTORETRY replay must be refused")
+	}
+	if runs != 1 {
+		t.Fatalf("side effect ran %d times, want exactly 1", runs)
+	}
+
+	// A SAME_KEY_ONLY operation replays to its RECORDED result without
+	// re-execution — the caller returns the stored outcome.
+	key2 := "fx-samekey-1"
+	seen2, _, err := p.Check(key2, "sess-8", "exch-8", replay.ClassSameKeyOnly)
+	if err != nil || seen2 {
+		t.Fatalf("first same-key check: seen=%v err=%v", seen2, err)
+	}
+	exec()
+	p.Record(key2, "result-samekey")
+	seen2, entry2, err := p.Check(key2, "sess-8", "exch-8", replay.ClassSameKeyOnly)
+	if err != nil || !seen2 || entry2 == nil {
+		t.Fatalf("same-key replay: seen=%v err=%v", seen2, err)
+	}
+	if entry2.Result != "result-samekey" {
+		t.Fatalf("same-key replay result = %v, want recorded result-samekey", entry2.Result)
+	}
+	if runs != 2 {
+		t.Fatalf("side effect ran %d times, want exactly 2 (one per distinct op)", runs)
+	}
 }
 
 // Invariant 11: A peer profile cannot emit privileged messages.

@@ -230,3 +230,18 @@ func TestCrossDomainReceiptVerification(t *testing.T) {
 		t.Fatal("expired bundle accepted")
 	}
 }
+
+// TestQuarantineBlocksBundleAccept pins the operator control: a
+// quarantined domain's bundles are refused even when otherwise valid.
+func TestQuarantineBlocksBundleAccept(t *testing.T) {
+	authority, issuer := keys(t)
+	store := NewTrustStore()
+	domain := "partner.example"
+	store.Quarantine(domain)
+
+	env := bundleFixture(t, authority, issuer, domain, 0)
+	err := store.Import(env, time.Now().UnixMilli())
+	if !errors.Is(err, ErrQuarantined) {
+		t.Fatalf("quarantined import = %v, want ErrQuarantined", err)
+	}
+}
