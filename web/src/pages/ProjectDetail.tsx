@@ -9,7 +9,9 @@ export default function ProjectDetail() {
   const [project, setProject] = useState<any>(null)
   const [repos, setRepos] = useState<any[]>([])
   const [sessions, setSessions] = useState<any[]>([])
-  const [tab, setTab] = useState<'overview' | 'repos' | 'sessions'>('overview')
+  const [tab, setTab] = useState<'overview' | 'repos' | 'sessions' | 'members'>('overview')
+  const [members, setMembers] = useState<any[]>([])
+  const [memberForm, setMemberForm] = useState({ user_id: '', role: 'member' })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -18,7 +20,8 @@ export default function ProjectDetail() {
       fetch(`/api/projects/${id}`, { headers: authHeaders() }).then(r => r.json()).catch(() => null),
       api.listRepositories().then((d: any[]) => Array.isArray(d) ? d.filter((r: any) => r.project_id === id) : []),
       api.listSessions().then((d: any[]) => Array.isArray(d) ? d.filter((s: any) => s.project_id === id) : []),
-    ]).then(([p, r, s]) => { setProject(p); setRepos(r); setSessions(s) }).finally(() => setLoading(false))
+      fetch(`/api/projects/${id}/members`, { headers: authHeaders() }).then(r => r.ok ? r.json() : []).catch(() => []),
+    ]).then(([p, r, s, m]) => { setProject(p); setRepos(r); setSessions(s); setMembers(Array.isArray(m) ? m : []) }).finally(() => setLoading(false))
   }, [id])
 
   if (loading) return <div className="text-gray-400 p-8 text-center">로딩 중...</div>
@@ -46,11 +49,13 @@ export default function ProjectDetail() {
           { id: 'overview', label: '개요', en: 'Overview' },
           { id: 'repos', label: '저장소', en: 'Repos' },
           { id: 'sessions', label: '세션', en: 'Sessions' },
+          { id: 'members', label: '구성원', en: 'Members' },
         ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id as any)}
             className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === t.id ? 'border-patty-600 text-patty-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
             {t.label} {t.id === 'repos' && repos.length > 0 && `(${repos.length})`}
             {t.id === 'sessions' && sessions.length > 0 && `(${sessions.length})`}
+            {t.id === 'members' && members.length > 0 && `(${members.length})`}
           </button>
         ))}
       </div>
@@ -94,6 +99,60 @@ export default function ProjectDetail() {
                     <td className="py-3 text-sm"><Link to="/sessions" className="text-blue-600 hover:underline">{s.title || '제목 없음'}</Link></td>
                     <td className="py-3"><span className="badge-gray">{s.status}</span></td>
                     <td className="py-3 text-xs text-gray-400">{s.opened_at?.slice(0, 10)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {tab === 'members' && (
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold">프로젝트 구성원 (Explicit Membership)</h3>
+            <div className="flex gap-2">
+              <input value={memberForm.user_id} onChange={e => setMemberForm(f => ({ ...f, user_id: e.target.value }))}
+                placeholder="사용자 ID" className="input text-xs w-48" />
+              <select value={memberForm.role} onChange={e => setMemberForm(f => ({ ...f, role: e.target.value }))}
+                className="input text-xs w-28">
+                <option value="owner">owner</option>
+                <option value="maintainer">maintainer</option>
+                <option value="member">member</option>
+                <option value="viewer">viewer</option>
+              </select>
+              <button className="btn-primary text-xs"
+                onClick={() => {
+                  if (!memberForm.user_id || !id) return
+                  fetch(`/api/projects/${id}/members`, {
+                    method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify(memberForm),
+                  }).then(r => r.ok ? fetch(`/api/projects/${id}/members`, { headers: authHeaders() }) : null)
+                    .then(r => r ? r.json() : null)
+                    .then(m => { if (Array.isArray(m)) setMembers(m); setMemberForm({ user_id: '', role: 'member' }) })
+                    .catch(() => {})
+                }}>추가</button>
+            </div>
+          </div>
+          {members.length === 0 ? (
+            <p className="text-gray-400 text-center py-8">명시적 구성원이 없습니다 — 사용자 ID로 구성원을 추가하세요</p>
+          ) : (
+            <table className="w-full overflow-x-auto block">
+              <thead><tr className="border-b text-left text-xs text-gray-500 uppercase"><th className="pb-3">이름</th><th className="pb-3">이메일</th><th className="pb-3">역할</th><th className="pb-3"></th></tr></thead>
+              <tbody>
+                {members.map(m => (
+                  <tr key={m.user_id} className="border-b border-gray-100">
+                    <td className="py-3 text-sm">{m.name_ko || m.name || m.user_id}</td>
+                    <td className="py-3 text-xs text-gray-500">{m.email || '-'}</td>
+                    <td className="py-3"><span className="badge-blue">{m.role}</span></td>
+                    <td className="py-3 text-right">
+                      <button className="text-red-600 text-xs hover:underline"
+                        onClick={() => {
+                          fetch(`/api/projects/${id}/members/${m.user_id}`, { method: 'DELETE', headers: authHeaders() })
+                            .then(() => setMembers(ms => ms.filter(x => x.user_id !== m.user_id)))
+                            .catch(() => {})
+                        }}>제거</button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

@@ -256,9 +256,8 @@ func runDARIArm(ctx context.Context, turns int, sched Schedule) (Result, error) 
 				return res, err
 			}
 			colds = append(colds, float64(time.Since(turnStart).Microseconds())/1000.0)
-		} else {
-			warms = append(warms, float64(time.Since(turnStart).Microseconds())/1000.0)
 		}
+		warmSend := time.Now()
 
 		// Governed exchange.
 		payload, _ := json.Marshal(map[string]any{
@@ -270,6 +269,10 @@ func runDARIArm(ctx context.Context, turns int, sched Schedule) (Result, error) 
 		t0 := time.Now()
 		if err := client.conn.SendMessage(dari.MsgAIOpen, nil, payload, 1, 1); err != nil {
 			return res, err
+		}
+		if turn > 0 {
+			// Warm turn-start: reused-connection send→first-record.
+			warms = append(warms, float64(time.Since(warmSend).Microseconds())/1000.0)
 		}
 		wireBytes += int64(len(payload)) + 16
 
@@ -610,14 +613,16 @@ func runWSArm(ctx context.Context, turns int, sched Schedule) (Result, error) {
 				return res, err
 			}
 			colds = append(colds, float64(time.Since(turnStart).Microseconds())/1000.0)
-		} else {
-			warms = append(warms, float64(time.Since(turnStart).Microseconds())/1000.0)
 		}
+		warmSend := time.Now()
 
 		reqBody, _ := json.Marshal(map[string]any{"type": "response.create"})
 		t0 := time.Now()
 		if err := conn.WriteMessage(websocket.TextMessage, reqBody); err != nil {
 			return res, err
+		}
+		if turn > 0 {
+			warms = append(warms, float64(time.Since(warmSend).Microseconds())/1000.0)
 		}
 		wireBytes += int64(len(reqBody)) + 8
 

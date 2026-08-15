@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -135,6 +136,9 @@ func (s *Server) setupRouter() {
 
 	// Health check
 	r.Get("/health", s.handleHealth)
+	// SRE component probes: REAL reachability checks for the relay +
+	// PIA (TCP dial with timeout; unconfigured = honestly unknown).
+	r.Get("/api/sre/probes", s.handleSREProbes)
 
 	// OpenAI-compatible inference adapter (§38.5)
 	r.Post("/v1/chat/completions", s.handleCompatChatCompletions)
@@ -208,6 +212,9 @@ func (s *Server) setupRouter() {
 			r.Get("/", s.handleListProjects)
 			r.Post("/", s.handleCreateProject)
 			r.Get("/{id}", s.handleGetProject)
+			r.Get("/{id}/members", s.handleListProjectMembers)
+			r.Post("/{id}/members", s.handleAddProjectMember)
+			r.Delete("/{id}/members/{userId}", s.handleRemoveProjectMember)
 			r.Put("/{id}", s.handleUpdateProject)
 			r.Delete("/{id}", s.handleDeleteProject)
 		})
@@ -3047,6 +3054,7 @@ func (s *Server) handleUpdateSecurityPolicy(w http.ResponseWriter, r *http.Reque
 		RuleID  string `json:"rule_id"`
 		Enabled *bool  `json:"enabled"`
 		Action  string `json:"action"`
+		Pattern string `json:"pattern"`
 	}
 	if err := decodeJSON(r, &updates); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -3057,7 +3065,7 @@ func (s *Server) handleUpdateSecurityPolicy(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	orgID := getOrgID(r)
-	if err := s.security.SetRule(orgID, updates.RuleID, updates.Enabled, updates.Action); err != nil {
+	if err := s.security.SetRule(orgID, updates.RuleID, updates.Enabled, updates.Action, updates.Pattern); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -3866,4 +3874,106 @@ func (s *Server) handleReviewChangeSubmission(w http.ResponseWriter, r *http.Req
 		Result: "delivered", OccurredAt: time.Now().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "directive delivered", "submission": subID})
+}
+
+// handleSREProbes performs live reachability probes for the SRE
+// console's component cards: the relay's DARI/admin listener and the
+// PIA serving endpoint. Addresses come from env; an unset address is
+// reported as "unconfigured" — never a fake green dot.
+func (s *Server) handleSREProbes(w http.ResponseWriter, r *http.Request) {
+	probe := func(addr string) map[string]any {
+		if addr == "" {
+			return map[string]any{"status": "unconfigured", "addr": ""}
+		}
+		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		if err != nil {
+			return map[string]any{"status": "down", "addr": addr, "error": err.Error()}
+		}
+		conn.Close()
+		return map[string]any{"status": "up", "addr": addr}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"relay": probe(os.Getenv("PCCP_RELAY_PROBE_ADDR")),
+		"pia":   probe(os.Getenv("PCCP_PIA_PROBE_ADDR")),
+		"cp":    map[string]any{"status": "up"}, // this handler answering IS the probe
+	})
+}
+
+// handleListProjectMembers returns the project's explicit membership.
+func (s *Server) handleListProjectMembers(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var members []models.ProjectMember
+	if err := s.db.Where("project_id = ?", id).Find(&members).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Join user names.
+	userIDs := make([]string, 0, len(members))
+	for _, m := range members {
+		userIDs = append(userIDs, m.UserID)
+	}
+	var users []models.User
+	if len(userIDs) > 0 {
+		s.db.Where("id IN ?", userIDs).Find(&users)
+	}
+	byID := map[string]models.User{}
+	for _, u := range users {
+		byID[u.ID] = u
+	}
+	out := make([]map[string]any, 0, len(members))
+	for _, m := range members {
+		u := byID[m.UserID]
+		out = append(out, map[string]any{
+			"user_id": m.UserID, "role": m.Role, "granted_by": m.GrantedBy,
+			"name": u.Name, "name_ko": u.NameKo, "email": u.Email,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleAddProjectMember grants a user membership.
+func (s *Server) handleAddProjectMember(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		UserID string `json:"user_id"`
+		Role   string `json:"role"`
+	}
+	if err := decodeJSON(r, &req); err != nil || req.UserID == "" {
+		writeError(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+	if req.Role == "" {
+		req.Role = "member"
+	}
+	member := &models.ProjectMember{ProjectID: id, UserID: req.UserID, Role: req.Role, GrantedBy: "console"}
+	if err := s.db.Where("project_id = ? AND user_id = ?", id, req.UserID).
+		FirstOrCreate(member).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: getOrgID(r), EventType: "cp.project.member_added",
+		ActorType: "admin", Action: "add_project_member", ResourceType: "project",
+		ResourceID: id, Details: "user=" + req.UserID + " role=" + req.Role,
+		Result: "success", OccurredAt: time.Now().Format(time.RFC3339),
+	})
+	writeJSON(w, http.StatusCreated, member)
+}
+
+// handleRemoveProjectMember revokes a membership.
+func (s *Server) handleRemoveProjectMember(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	userID := chi.URLParam(r, "userId")
+	if err := s.db.Where("project_id = ? AND user_id = ?", id, userID).
+		Delete(&models.ProjectMember{}).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: getOrgID(r), EventType: "cp.project.member_removed",
+		ActorType: "admin", Action: "remove_project_member", ResourceType: "project",
+		ResourceID: id, Details: "user=" + userID,
+		Result: "success", OccurredAt: time.Now().Format(time.RFC3339),
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
 }

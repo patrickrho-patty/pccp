@@ -433,7 +433,7 @@ func (s *Service) ListRules(orgID string) ([]models.SecurityRule, error) {
 
 // SetRule persists an enabled/action override for a rule (creating the row if the
 // rule isn't yet in the default catalog).
-func (s *Service) SetRule(orgID, ruleID string, enabled *bool, action string) error {
+func (s *Service) SetRule(orgID, ruleID string, enabled *bool, action string, pattern ...string) error {
 	var row models.SecurityRule
 	found := s.db.Where("organization_id = ? AND rule_id = ?", orgID, ruleID).First(&row).Error == nil
 	if !found {
@@ -450,6 +450,18 @@ func (s *Service) SetRule(orgID, ruleID string, enabled *bool, action string) er
 	}
 	if action != "" {
 		row.Action = action
+	}
+	// Custom rules carry a regex pattern (07 A1): validated at save —
+	// an uncompilable pattern is rejected at the API, never stored to
+	// surface later as a runtime finding.
+	if len(pattern) > 0 && pattern[0] != "" {
+		if _, err := regexp.Compile(pattern[0]); err != nil {
+			return fmt.Errorf("security: rule %s pattern does not compile: %w", ruleID, err)
+		}
+		if row.Type == "" {
+			row.Type = "custom"
+		}
+		row.Pattern = pattern[0]
 	}
 	if found {
 		return s.db.Save(&row).Error

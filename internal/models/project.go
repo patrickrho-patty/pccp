@@ -100,3 +100,16 @@ type PromptExchange struct {
 	Status         string `gorm:"type:varchar(32);default:'pending'" json:"status"`
 	CreatedAt2     string `gorm:"column:created_at_2;type:timestamp" json:"created_at_2,omitempty"`
 }
+
+// ProjectMember is the REAL project membership (web/04 B1): explicit
+// user↔project grants with roles, replacing session-derived inference.
+type ProjectMember struct {
+	Base
+	ProjectID string `gorm:"type:varchar(64);index;not null" json:"project_id"`
+	UserID    string `gorm:"type:varchar(64);index;not null" json:"user_id"`
+	Role      string `gorm:"type:varchar(32);default:'member'" json:"role"` // owner, maintainer, member, viewer
+	GrantedBy string `gorm:"type:varchar(64)" json:"granted_by,omitempty"`
+}
+
+// TableName overrides the table name.
+func (ProjectMember) TableName() string { return "project_members" }

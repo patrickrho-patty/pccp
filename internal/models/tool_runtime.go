@@ -88,6 +88,7 @@ func AllModels() []interface{} {
 		&EnrollmentCode{},
 		// Projects & Repos
 		&Project{},
+		&ProjectMember{},
 		&Repository{},
 		&Branch{},
 		&RepoBaseline{},

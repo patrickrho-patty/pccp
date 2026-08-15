@@ -28,27 +28,13 @@ const PATTERN_PRESETS = {
     { id: 'reveal-credentials', label: '자격증명 노출 (Credential Exposure)', desc: '시스템 프롬프트/API 키 출력 시도', value: '(show.*system.*prompt|reveal.*api.*key|print.*env)' },
     { id: 'indirect-injection', label: '간접 인젝션 (Indirect via Code)', desc: '코드/주석에 숨겨진 인젝션', value: '(<!--.*ignore.*-->|{{.*system.*}}|eval.*prompt)' },
   ],
-  behavior: [
-    { id: 'high-volume', label: '대량 요청 (High Volume Requests)', desc: '분당 100회 이상 자동 요청', value: '__BEHAVIOR_HIGH_VOLUME__' },
-    { id: 'no-human-latency', label: '봇 패턴 (Bot-like Usage)', desc: '사용자 대기 시간이 없는 API적 사용', value: '__BEHAVIOR_BOT_PATTERN__' },
-    { id: 'rapid-enroll', label: '빠른 등록/해지 (Rapid Enroll/Revoke)', desc: '1시간 내 5회 이상 등록/해지', value: '__BEHAVIOR_RAPID_ENROLL__' },
-    { id: 'large-transfer', label: '대용량 전송 (Large File Transfer)', desc: '100MB 이상 외부 전송', value: '__BEHAVIOR_LARGE_TRANSFER__' },
-  ],
-  code: [
-    { id: 'weak-crypto', label: '취약한 암호화 (Weak Crypto)', desc: 'MD5, SHA1, DES, RC4 사용', value: '__CODE_WEAK_CRYPTO__' },
-    { id: 'prohibited-license', label: '금지 라이선스 (Prohibited License)', desc: 'GPL/AGPL in proprietary repo', value: '__CODE_BAD_LICENSE__' },
-    { id: 'vulnerable-dep', label: '취약한 의존성 (Vulnerable Dependency)', desc: 'CVSS 임계치 초과 패키지', value: '__CODE_VULN_DEP__' },
-    { id: 'unapproved-mcp', label: '승인되지 않은 MCP (Unapproved MCP)', desc: '조직 허용 목록 외 MCP 서버', value: '__CODE_UNAPPROVED_MCP__' },
-  ],
-  infra: [
-    { id: 'sandbox-escape', label: '샌드박스 탈출 (Sandbox Escape)', desc: '권한 상승, 예상치 못한 프로세스', value: '__INFRA_SANDBOX_ESCAPE__' },
-    { id: 'endpoint-bypass', label: '엔드포인트 우회 (Endpoint Bypass)', desc: 'vLLM/SGLang 직접 접근 시도', value: '__INFRA_ENDPOINT_BYPASS__' },
-    { id: 'attestation-loss', label: '증명 손실 (Attestation Loss)', desc: 'PIA 증명 만료/무효', value: '__INFRA_ATTESTATION_LOSS__' },
-    { id: 'protocol-downgrade', label: '프로토콜 다운그레이드 (Protocol Downgrade)', desc: 'DARI → HTTP 폴백 시도', value: '__INFRA_PROTOCOL_DOWNGRADE__' },
+  custom: [
+    { id: 'custom', label: '커스텀 정규식 (Custom Regex)', desc: '관리자 정의 정규식 규칙 — 실시간 스캔 적용', value: '' },
   ],
 }
 
 const CATEGORY_INFO: Record<string, any> = {
+  custom: { ko: '커스텀', en: 'Custom Rules', icon: '⚙️', desc: '관리자 정의 정규식 — 즉시 스캔 적용' },
   pii: { ko: '개인정보', en: 'PII Detection', icon: '🆔', desc: '한국 개인정보(주민번호, 사업자번호 등) 감지' },
   secret: { ko: '비밀정보', en: 'Secret Scanning', icon: '🔑', desc: 'API 키, 토큰, 개인키 등 민감 정보 감지' },
   injection: { ko: '프롬프트 인젝션', en: 'Prompt Injection', icon: '🧪', desc: '명령어 재정의, 탈옥, 제어 우회 시도' },
@@ -190,10 +176,11 @@ export default function Security() {
     } else {
       setRules(rs => [...rs, { ...rule, id: `${rule.category}-${Date.now()}` }])
     }
-    // Persist to backend
+    // Persist to backend (custom rules carry their regex pattern —
+    // the engine compiles + scans it live).
     fetch('/api/security/policy', {
       method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rule_id: rule.id, enabled: rule.enabled, severity: rule.severity, action: rule.action }),
+      body: JSON.stringify({ rule_id: rule.id, enabled: rule.enabled, severity: rule.severity, action: rule.action, pattern: rule.pattern || '' }),
     }).catch(() => {})
     setShowBuilder(false)
     setEditingRule(null)

@@ -5,6 +5,12 @@ import { api } from '../api'
 import { showToast } from '../components/Toast'
 import { formatRelative } from '../utils/format'
 
+const probeColor = (s?: string) => s === 'up' ? 'text-green-600' : s === 'down' ? 'text-red-600' : 'text-gray-400'
+const probeLabel = (p?: { status?: string; addr?: string }) => {
+  if (!p?.status || p.status === 'unconfigured') return '미설정 · unconfigured'
+  return p.status === 'up' ? `${p.addr} · 정상` : `${p.addr || '?'} · 접속 불가`
+}
+
 export default function SREConsole() {
   const [tab, setTab] = useState<'overview' | 'reliability' | 'accounts' | 'capacity' | 'risk'>('overview')
   const [accounts, setAccounts] = useState<any[]>([])
@@ -20,13 +26,14 @@ export default function SREConsole() {
       .then(r => r.json()).then(data => setIncidents(Array.isArray(data) ? data : []))
       .catch(() => setIncidents([]))
 
-    // Health checks
+    // Health checks (component reachability is PROBED live — no fake dots)
     Promise.all([
       fetch('/api/realtime/status', { headers: authHeaders() }).then(r => r.json()).catch(() => ({})),
       fetch('/api/telemetry/snapshot', { headers: authHeaders() }).then(r => r.json()).catch(() => ({})),
       fetch('/health', { headers: authHeaders() }).then(r => r.json()).catch(() => ({})),
-    ]).then(([rt, tel, cp]) => {
-      setHealth({ realtime: rt, telemetry: tel, cp })
+      fetch('/api/sre/probes', { headers: authHeaders() }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
+    ]).then(([rt, tel, cp, probes]) => {
+      setHealth({ realtime: rt, telemetry: tel, cp, probes })
     })
   }, [])
 
@@ -79,14 +86,14 @@ export default function SREConsole() {
               <div className="text-xs text-gray-400">{health.cp?.version || 'v0.1.0'}</div>
             </div>
             <div className="card text-center">
-              <div className="text-3xl font-bold text-green-600">●</div>
+              <div className={`text-3xl font-bold ${probeColor(health.probes?.relay?.status)}`}>●</div>
               <div className="text-sm text-gray-500 mt-1">DARI Relay</div>
-              <div className="text-xs text-gray-400">port 8090</div>
+              <div className="text-xs text-gray-400">{probeLabel(health.probes?.relay)}</div>
             </div>
             <div className="card text-center">
-              <div className="text-3xl font-bold text-green-600">●</div>
+              <div className={`text-3xl font-bold ${probeColor(health.probes?.pia?.status)}`}>●</div>
               <div className="text-sm text-gray-500 mt-1">PIA Inference</div>
-              <div className="text-xs text-gray-400">port 9090</div>
+              <div className="text-xs text-gray-400">{probeLabel(health.probes?.pia)}</div>
             </div>
             <div className="card text-center">
               <div className={`text-3xl font-bold ${health.realtime?.connected_clients > 0 ? 'text-green-600' : 'text-gray-400'}`}>●</div>
