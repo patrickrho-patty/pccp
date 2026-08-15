@@ -160,9 +160,10 @@ func (d *Dispatcher) execute(ctx context.Context, bound *Dispatch) {
 		return
 	}
 
+	rp, _ := req.Payload.(RequestPayload)
 	payload := InferencePayload{
 		Model:     bound.Model,
-		Messages:  rawPayload(req.Payload),
+		Messages:  rp.Messages,
 		MaxTokens: req.MaxOutputTokens,
 	}
 	res, err := fw.Send(addr, payload)
@@ -193,17 +194,6 @@ func (d *Dispatcher) SetForwarder(f Forwarder) {
 	d.forwarder = f
 	d.fwMu.Unlock()
 	d.wakeDispatch()
-}
-
-// rawPayload extracts the message bytes stored in the queue payload.
-func rawPayload(p any) []byte {
-	switch v := p.(type) {
-	case []byte:
-		return v
-	case string:
-		return []byte(v)
-	}
-	return nil
 }
 
 // submitResult delivers (exactly once) a terminal result to the waiter.

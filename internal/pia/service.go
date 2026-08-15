@@ -186,11 +186,15 @@ func (s *Service) HasValidLease() bool {
 			return true
 		}
 	}
-	// Check database for a valid lease
+	// Check database for a valid lease. A nil DB means no lease state
+	// exists at all — fail closed, never panic.
 	s.mu.RLock()
 	epID := s.endpointID
 	s.mu.RUnlock()
 	if epID == "" {
+		if s.db == nil {
+			return false
+		}
 		// Discover endpoint_id from DB by matching pia_peer_id
 		var ep models.InferenceEndpoint
 		if err := s.db.Where("pia_peer_id = ?", s.peerID).First(&ep).Error; err == nil {
@@ -201,6 +205,9 @@ func (s *Service) HasValidLease() bool {
 		}
 	}
 	if epID == "" {
+		return false
+	}
+	if s.db == nil {
 		return false
 	}
 	var dbLease models.EndpointLease

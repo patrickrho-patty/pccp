@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
 )
@@ -43,6 +44,12 @@ func NewDARIListener(svc *Service) *DARIListener {
 // generateSelfSignedCert delegates to the shared dari dev-cert helper.
 func generateSelfSignedCert() (tls.Certificate, error) {
 	return dari.DevSelfSignedCert("Patty Code PIA", []string{"localhost", "pia"})
+}
+
+// TLSConfig returns the listener's TLS configuration (the S2 scheduler
+// forwarder dials workers with the same shape).
+func (pl *DARIListener) TLSConfig() *tls.Config {
+	return pl.tlsConfig
 }
 
 func (pl *DARIListener) ListenTCP(ctx context.Context, addr string) error {
@@ -92,8 +99,25 @@ func (pl *DARIListener) handleConn(ctx context.Context, netConn net.Conn) {
 		return
 	}
 	serverNonce := make([]byte, 32)
-	conn.SendHelloAck(&dari.HelloAckMessage{CoreVersion: 1, CryptoProfile: "DARI-BASE-1", ServerNonce: serverNonce})
-	conn.RecvAuthProof()
+	if err := conn.SendHelloAck(&dari.HelloAckMessage{CoreVersion: 1, CryptoProfile: "DARI-BASE-1", ServerNonce: serverNonce}); err != nil {
+		return
+	}
+	// Full protocol flow (HELLO → HELLO_ACK → AUTH_CHALLENGE →
+	// AUTH_PROOF): the DARI clients dialing this listener (relay,
+	// scheduler forwarder) expect the challenge record before sending
+	// their proof.
+	challenge := &dari.AuthChallengeMessage{
+		ServerNonce:     serverNonce,
+		ChallengeID:     []byte(fmt.Sprintf("pia-%s-%d", netConn.RemoteAddr(), time.Now().UnixNano())),
+		RevocationEpoch: 0,
+		AuthDeadlineMs:  uint64(time.Now().Add(30 * time.Second).UnixMilli()),
+	}
+	if err := conn.AuthChallenge(challenge); err != nil {
+		return
+	}
+	if _, err := conn.RecvAuthProof(); err != nil {
+		return
+	}
 	log.Printf("pia-paper: peer authenticated, ready for AI requests")
 	pl.handleAIRequests(ctx, conn, connID)
 }

@@ -59,9 +59,11 @@ func integrationFixture(t *testing.T) (WorkerAgentConfig, *scheduler.Scheduler) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 1 running + 8 waiting: the worker has real headroom, so the S2
+	// dispatch gate sees free capacity (running=1, max=9).
 	engine := fakeEngine(t,
 		`{"object":"list","data":[{"id":"Qwen3.6-27B-FP8"}]}`,
-		"vllm:num_requests_running 3\n",
+		"vllm:num_requests_running 1\nvllm:num_requests_waiting 8\n",
 	)
 	t.Cleanup(engine.Close)
 

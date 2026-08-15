@@ -109,6 +109,13 @@ type Dispatch struct {
 	Model    string
 }
 
+// RequestPayload is what a queued gateway request carries: the resolved
+// model plus the raw message JSON for transparent passthrough to the PIA.
+type RequestPayload struct {
+	Model    string
+	Messages []byte
+}
+
 // Dispatcher owns the global queue and worker selection, and implements
 // the overload gate on fleet signals. Workers call Assign when a slot
 // frees; the dispatcher releases the next eligible request or nothing.
@@ -208,10 +215,11 @@ func (d *Dispatcher) assignLocked(workerID string) *Dispatch {
 	if out.Outcome != queue.OutcomeDispatched {
 		return nil
 	}
-	model, _ := out.Request.Payload.(string)
-	if model == "" {
+	rp, ok := out.Request.Payload.(RequestPayload)
+	if !ok || rp.Model == "" {
 		return nil
 	}
+	model := rp.Model
 	if d.selector == nil {
 		return nil
 	}

@@ -273,3 +273,22 @@ func TestBuildWorkerAgentConfigProductionRequiresEnvelope(t *testing.T) {
 		t.Fatal("production must fail closed without a config envelope")
 	}
 }
+
+// fakeChatEngine serves the OpenAI-compatible completion surface for
+// end-to-end tests: /v1/models, /metrics, /v1/chat/completions.
+func fakeChatEngine(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			w.Write([]byte(`{"object":"list","data":[{"id":"Qwen3.6-27B-FP8"}]}`))
+		case "/metrics":
+			w.Write([]byte("vllm:num_requests_running 1\nvllm:num_requests_waiting 8\n"))
+		case "/v1/chat/completions":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"id":"cmp-1","model":"Qwen3.6-27B-FP8","choices":[{"index":0,"message":{"role":"assistant","content":"안녕하세요! 무엇을 도와드릴까요?"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":9,"total_tokens":21}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}

@@ -92,9 +92,40 @@ func (f *DARIForwarder) Send(workerAddr string, payload InferencePayload) (Infer
 		}
 		switch dari.MessageType(record.MessageType) {
 		case dari.MsgAIComplete:
-			var result InferenceResult
-			if err := json.Unmarshal(record.Payload, &result); err != nil {
-				return InferenceResult{}, fmt.Errorf("scheduler: decode completion: %w", err)
+			// The PIA replies with its OpenAI-compatible response shape
+			// (id/model/choices/usage); normalize it into the scheduler's
+			// InferenceResult.
+			var raw struct {
+				Choices []struct {
+					Message struct {
+						Content string `json:"content"`
+					} `json:"message"`
+					FinishReason string `json:"finish_reason"`
+				} `json:"choices"`
+				Usage struct {
+					PromptTokens     int `json:"prompt_tokens"`
+					CompletionTokens int `json:"completion_tokens"`
+					TotalTokens      int `json:"total_tokens"`
+				} `json:"usage"`
+			}
+			if err := json.Unmarshal(record.Payload, &raw); err != nil {
+				// Fall back: the worker may already speak InferenceResult.
+				var result InferenceResult
+				if err2 := json.Unmarshal(record.Payload, &result); err2 != nil {
+					return InferenceResult{}, fmt.Errorf("scheduler: decode completion: %w", err)
+				}
+				return result, nil
+			}
+			result := InferenceResult{
+				Finish: raw.Choices[0].FinishReason,
+				Usage: map[string]int{
+					"prompt_tokens":     raw.Usage.PromptTokens,
+					"completion_tokens": raw.Usage.CompletionTokens,
+					"total_tokens":      raw.Usage.TotalTokens,
+				},
+			}
+			for _, c := range raw.Choices {
+				result.Text += c.Message.Content
 			}
 			return result, nil
 		case dari.MsgAITokenChunk:

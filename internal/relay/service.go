@@ -446,10 +446,51 @@ func (s *Service) routeViaForwarder(ctx context.Context, exchange *Exchange, req
 	return inferenceResp, nil
 }
 
-// defaultForwarder is the production forwarder: DARI transport when configured,
-// HTTP fallback otherwise (dev/legacy only — not v2 compliant).
+// schedGatewayBase resolves the scheduler's unified-gateway base URL. When
+// set, the governed path routes THROUGH the scheduler (S2): the relay stays
+// the governance gate, the scheduler owns admission/queue/dispatch.
+func schedGatewayBase() string {
+	return strings.TrimRight(os.Getenv("PCCP_SCHED_GATEWAY_ADDR"), "/")
+}
+
+// defaultForwarder is the production forwarder: the S2 scheduler gateway
+// when configured (governance → queue → late-bound dispatch to PIA), DARI
+// transport to PIA otherwise, HTTP fallback last (dev/legacy only).
 func (s *Service) defaultForwarder(ctx context.Context, req InferenceRequest, endpointLeaseID string) (*InferenceResponse, error) {
 	var inferenceResp InferenceResponse
+
+	// S2: the scheduler gateway is the preferred next hop. The relay
+	// remains the only governance gate; admission/queue/dispatch live
+	// in the scheduler (fail-closed — scheduler down = request rejected,
+	// never bypassed).
+	if schedURL := schedGatewayBase(); schedURL != "" {
+		piaReq := map[string]interface{}{
+			"model":       req.Model,
+			"messages":    req.Messages,
+			"max_tokens":  req.MaxTokens,
+			"temperature": req.Temperature,
+			"exchange_id": req.ExchangeID,
+		}
+		bodyJSON, _ := json.Marshal(piaReq)
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", schedURL+"/v1/chat/completions", bytes.NewReader(bodyJSON))
+		if err != nil {
+			return nil, fmt.Errorf("relay: scheduler request build failed: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("X-Tenant-ID", req.OrganizationID)
+		httpReq.Header.Set("X-Exchange-ID", req.ExchangeID)
+		resp, err := s.httpClient.Do(httpReq)
+		if err != nil {
+			return nil, fmt.Errorf("relay: scheduler gateway failed: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("relay: scheduler gateway error (%d): %s", resp.StatusCode, string(body))
+		}
+		json.NewDecoder(resp.Body).Decode(&inferenceResp)
+		return &inferenceResp, nil
+	}
 
 	dariClient := getDARIInferenceClient()
 	if dariClient != nil {

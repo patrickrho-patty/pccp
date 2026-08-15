@@ -60,6 +60,7 @@ type Gateway struct {
 	dispatcher *Dispatcher
 	rewriter   *ModelRewriter
 	media      MediaControl
+	queueTTL   time.Duration
 }
 
 // NewGateway builds the ingress over a dispatcher and optional rewriter.
@@ -67,11 +68,15 @@ func NewGateway(d *Dispatcher, rw *ModelRewriter) *Gateway {
 	if rw == nil {
 		rw = NewModelRewriter(nil)
 	}
-	return &Gateway{dispatcher: d, rewriter: rw, media: DefaultMediaControl()}
+	return &Gateway{dispatcher: d, rewriter: rw, media: DefaultMediaControl(), queueTTL: time.Minute}
 }
 
 // Rewriter exposes the model rewriter (admin wiring).
 func (g *Gateway) Rewriter() *ModelRewriter { return g.rewriter }
+
+// SetQueueTTL bounds how long a request may park in the global queue
+// before the gateway expires it with a retryable 503. Default 1 minute.
+func (g *Gateway) SetQueueTTL(d time.Duration) { g.queueTTL = d }
 
 // chatRequest is the OpenAI/Anthropic-common request shape.
 type chatRequest struct {
@@ -161,8 +166,8 @@ func (g *Gateway) handleIngress(w http.ResponseWriter, r *http.Request, anthropi
 		MaxOutputTokens:      maxOut,
 		MediaTokens:          mediaTokens,
 		ArrivedAt:            time.Now(),
-		TTL:                  time.Minute,
-		Payload:              resolved,
+		TTL:                  g.queueTTL,
+		Payload:              RequestPayload{Model: resolved, Messages: req.Messages},
 	}
 	ch, err := g.dispatcher.Submit(qr)
 	if err != nil {
@@ -177,7 +182,7 @@ func (g *Gateway) handleIngress(w http.ResponseWriter, r *http.Request, anthropi
 	select {
 	case res := <-ch:
 		g.writeCompletion(w, resolved, res)
-	case <-time.After(qr.TTL):
+	case <-time.After(g.queueTTL):
 		g.dispatcher.Cancel(id)
 		writeGatewayError(w, http.StatusServiceUnavailable, "queued request expired; retry")
 	case <-r.Context().Done():
@@ -380,4 +385,66 @@ func writeGatewayError(w http.ResponseWriter, status int, msg string) {
 func fingerprint(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(h[:8])
+}
+
+// HandleEmbeddings serves the embeddings ingress (spec §14 row 1). The
+// embedding request routes through the same queue/dispatch path as chat
+// completions; the response is the raw forwarder result.
+func (g *Gateway) HandleEmbeddings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeGatewayError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	rawBody := mustReadBody(r)
+	var req struct {
+		Model string `json:"model"`
+		Input any    `json:"input"`
+	}
+	if err := json.Unmarshal([]byte(rawBody), &req); err != nil || req.Model == "" {
+		writeGatewayError(w, http.StatusBadRequest, "model is required")
+		return
+	}
+	corr := correlationID(r)
+	resolved, err := g.rewriter.Resolve(req.Model, corr)
+	if err != nil {
+		writeGatewayError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	tenant := r.Header.Get("X-Tenant-ID")
+	if tenant == "" {
+		tenant = "default"
+	}
+	class := r.Header.Get("X-Traffic-Class")
+	if class == "" {
+		class = "batch"
+	}
+	inputTokens := len(rawBody)/4 + 1
+	expected := g.dispatcher.Estimator().Estimate(inputTokens, 0, 1024)
+
+	id := dari.GenerateID("gw-emb")
+	ch, err := g.dispatcher.Submit(queue.Request{
+		ID:                   id,
+		Tenant:               tenant,
+		Class:                queue.Class(class),
+		InputTokens:          inputTokens,
+		ExpectedOutputTokens: expected,
+		MaxOutputTokens:      1024,
+		ArrivedAt:            time.Now(),
+		TTL:                  g.queueTTL,
+		Payload:              RequestPayload{Model: resolved, Messages: []byte(rawBody)},
+	})
+	if err != nil {
+		writeGatewayError(w, http.StatusTooManyRequests, err.Error())
+		return
+	}
+	select {
+	case res := <-ch:
+		g.writeCompletion(w, resolved, res)
+	case <-time.After(g.queueTTL):
+		g.dispatcher.Cancel(id)
+		writeGatewayError(w, http.StatusServiceUnavailable, "queued request expired; retry")
+	case <-r.Context().Done():
+		g.dispatcher.Cancel(id)
+		writeGatewayError(w, http.StatusServiceUnavailable, "request cancelled")
+	}
 }

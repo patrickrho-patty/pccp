@@ -6,12 +6,14 @@ import (
 )
 
 // Scheduler is the composition root of the pccp-scheduler process: registry,
-// admission ladder, and evidence log. The DARI listener feeds it; the HTTP
-// API reads it (S1.5); the router (S3) will consume the registry.
+// admission ladder, evidence log, and the S2 serving stack (queue +
+// dispatcher). The DARI listener feeds it; the HTTP API reads it (S1.5);
+// the router (S3) will consume the registry.
 type Scheduler struct {
 	Registry  *Registry
 	Admission *Admission
 	Evidence  *EvidenceLog
+	Serving   *Serving
 }
 
 // NewScheduler assembles the S1 scheduler with the given trust material,
@@ -21,6 +23,7 @@ func NewScheduler(trust Trust, policy PolicySource, ttl, grace time.Duration, ev
 		Registry:  NewRegistry(ttl, grace),
 		Admission: NewAdmission(trust, NewRevocationStore(), policy),
 		Evidence:  NewEvidenceLog(evidenceKey),
+		Serving:   NewServing(),
 	}
 }
 

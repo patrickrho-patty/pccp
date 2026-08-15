@@ -18,6 +18,6 @@ func queueRequest(id, tenant, class, model string) queue.Request {
 		ExpectedOutputTokens: 10,
 		ArrivedAt:            time.Now(),
 		TTL:                  time.Minute,
-		Payload:              model,
+		Payload:              RequestPayload{Model: model, Messages: []byte(`[]`)},
 	}
 }

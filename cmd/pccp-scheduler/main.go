@@ -77,17 +77,22 @@ func main() {
 	go listener.ServeTCP(ln)
 	log.Printf("scheduler: DARI worker listener on %s", workerAddr)
 
-	// HTTP admin API (CP read-through).
+	// HTTP admin API (CP read-through) + S2 unified gateway on the same
+	// listener: /v1/* is the OpenAI/Anthropic-compatible serving ingress,
+	// /api/v1/* the admin read-through (DARI scheduler §9 + spec §14 row 1).
 	httpSrv := &http.Server{
 		Addr:    httpAddr,
-		Handler: scheduler.NewHTTPHandler(svc, cfg.AdminToken),
+		Handler: scheduler.NewServingHandler(svc, cfg.AdminToken),
 	}
 	go func() {
-		log.Printf("scheduler: HTTP admin API on %s", httpAddr)
+		log.Printf("scheduler: HTTP admin + gateway API on %s", httpAddr)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("scheduler: http serve: %v", err)
 		}
 	}()
+
+	// S2 dispatch loop: binds queued requests to workers as slots free.
+	go svc.Serving.Start(ctx)
 
 	// Lease sweep loop.
 	go func() {
