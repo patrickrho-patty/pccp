@@ -43,7 +43,7 @@
 **Files:**
 - Generate: `docs/plans/PAPER/arxiv/DARI_arXiv_KO.pdf`
 
-- [ ] Build with XeLaTeX and BibTeX until references stabilize.
-- [ ] Check embedded fonts, Hangul extraction, references, citations, and layout diagnostics.
-- [ ] Compare structural counts with the English paper and visually inspect every page.
-- [ ] Conduct a final Korean scholarly-language review.
+- [x] Build with XeLaTeX and BibTeX until references stabilize.
+- [x] Check embedded fonts, Hangul extraction, references, citations, and layout diagnostics.
+- [x] Compare structural counts with the English paper and visually inspect every page.
+- [x] Conduct a final Korean scholarly-language review.

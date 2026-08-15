@@ -28,9 +28,9 @@
 - Consumes: approved product-positioning design and current empirical claims
 - Produces: canonical evidence-led English manuscript
 
-- [ ] Read the manuscript end to end and classify defensive negation, slogans, hype, reader-directed persuasion, and unnecessary meta-commentary.
-- [ ] Rewrite each finding as a direct research claim supported by implementation, protocol design, comparison, or measured evidence.
-- [ ] Confirm that measurements, citations, equations, labels, figures, tables, and assurance boundaries retain their meaning.
+- [x] Read the manuscript end to end and classify defensive negation, slogans, hype, reader-directed persuasion, and unnecessary meta-commentary.
+- [x] Rewrite each finding as a direct research claim supported by implementation, protocol design, comparison, or measured evidence.
+- [x] Confirm that measurements, citations, equations, labels, figures, tables, and assurance boundaries retain their meaning.
 
 ### Task 2: Audit and adapt the Korean manuscript
 
@@ -41,9 +41,9 @@
 - Consumes: revised English claim structure
 - Produces: native Korean scholarly manuscript with equivalent evidentiary force
 
-- [ ] Read the Korean manuscript end to end for promotional, defensive, translated, or conversational constructions.
-- [ ] Reconstruct affected paragraphs in concise Korean research prose rather than translating English syntax line by line.
-- [ ] Confirm one-to-one parity of claims, measurements, citations, labels, equations, figures, and tables.
+- [x] Read the Korean manuscript end to end for promotional, defensive, translated, or conversational constructions.
+- [x] Reconstruct affected paragraphs in concise Korean research prose rather than translating English syntax line by line.
+- [x] Confirm one-to-one parity of claims, measurements, citations, labels, equations, figures, and tables.
 
 ### Task 3: Regenerate and validate both publication artifacts
 
@@ -55,8 +55,8 @@
 - Consumes: revised LaTeX manuscripts
 - Produces: publication-ready English and Korean PDFs
 
-- [ ] Build both editions with `latexmk -xelatex` and require successful exit status.
-- [ ] Require zero undefined citations/references, overfull boxes, missing glyphs, and LaTeX errors.
-- [ ] Compare structural counts and label/citation sets across both editions.
-- [ ] Render and visually inspect the abstract, evaluation, discussion, conclusion, and appendix pages.
-- [ ] Extract PDF text and verify that flagged marketing constructions no longer appear.
+- [x] Build both editions with `latexmk -xelatex` and require successful exit status.
+- [x] Require zero undefined citations/references, overfull boxes, missing glyphs, and LaTeX errors.
+- [x] Compare structural counts and label/citation sets across both editions.
+- [x] Render and visually inspect the abstract, evaluation, discussion, conclusion, and appendix pages.
+- [x] Extract PDF text and verify that flagged marketing constructions no longer appear.
