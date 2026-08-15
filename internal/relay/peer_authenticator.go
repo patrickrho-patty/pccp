@@ -133,6 +133,17 @@ func (a *PeerAuthenticator) Revoke(serial string, epoch uint64) {
 	a.trust.RevokedSerials[serial] = epoch
 }
 
+// AdvanceEpoch moves the verifier's revocation epoch forward without
+// adding a serial. New connections must then present revocation
+// evidence at or above the new epoch.
+func (a *PeerAuthenticator) AdvanceEpoch(epoch uint64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if epoch > a.trust.RevocationEpoch {
+		a.trust.RevocationEpoch = epoch
+	}
+}
+
 // RevocationEpoch returns the verifier's current revocation epoch.
 func (a *PeerAuthenticator) RevocationEpoch() uint64 {
 	a.mu.RLock()

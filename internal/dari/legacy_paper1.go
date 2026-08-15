@@ -24,3 +24,20 @@ func DARIProtocols() []string { return []string{DARIProtocol, LegacyPaper1ALPN} 
 // LegacyPaper1RelayAddrEnv is the pre-migration listen-address
 // environment variable, still honored for compatibility.
 const LegacyPaper1RelayAddrEnv = "PCCP_RELAY_PAPER_ADDR"
+
+// Frozen `paper/1` cryptographic domain strings (spec legacy body +
+// compat map §6 rule 2). The ACTIVE dari/1 kernel uses the DARI-*
+// domains defined normatively in Appendix F (see crypto.go); these
+// constants document the legacy values a paper/1 peer computes. A
+// pre-rename peer interoperating on the legacy profile MUST be
+// reached with THESE bytes; current builds compute the DARI domains
+// (both endpoints deploy together and re-issue credentials on
+// connect). Dual-kernel crypto selection by negotiated ALPN lands
+// with the profile-negotiation work.
+const (
+	LegacyPaper1AuthDomain    = "PAPER-AUTH-v1"    // no trailing NUL
+	LegacyPaper1ObjDomain     = "PAPER-OBJ-v1\x00" // incl. reserved zero byte
+	LegacyPaper1ChunkDomain   = "PAPER-CHUNK-v1\x00"
+	LegacyPaper1EvidenceStart = "PAPER-EVIDENCE-START-v1\x00"
+	LegacyPaper1EvidenceEvent = "PAPER-EVIDENCE-EVENT-v1\x00"
+)

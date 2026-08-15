@@ -34,8 +34,40 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/exchanges/", s.handleExchangeAction)
 	mux.HandleFunc("/v1/inference", s.handleInference)
 	mux.HandleFunc("/v1/provenance/changesets", s.handleListChangeSets)
+	mux.HandleFunc("/v1/harnesses/revoke", s.handleRevokeHarness)
 
 	return mux
+}
+
+// handleRevokeHarness revokes a harness and propagates the revocation
+// to every attached DARI listener — active governed streams terminate
+// (Task 6 Step 3).
+func (s *Server) handleRevokeHarness(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		OrganizationID string `json:"organization_id"`
+		HarnessID      string `json:"harness_id"`
+		Reason         string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.OrganizationID == "" || req.HarnessID == "" {
+		writeError(w, http.StatusBadRequest, "organization_id and harness_id are required")
+		return
+	}
+	if req.Reason == "" {
+		req.Reason = "revoked via relay admin API"
+	}
+	if err := s.svc.RevokeHarness(req.OrganizationID, req.HarnessID, req.Reason); err != nil {
+		writeError(w, http.StatusInternalServerError, "revoke failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked", "harness_id": req.HarnessID})
 }
 
 // handleListChangeSets surfaces the connector-ingested changesets for

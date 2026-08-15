@@ -2,7 +2,7 @@
 
 **Status:** Normative Phase 2 contract
 **Protocol:** DARI — Delegated Authorization and Receipts for Inference
-**Companion specification:** `PAPER_Protocol_Specification_v1.0.md`, Appendix F
+**Companion specification:** `DARI_Protocol_Specification_v1.0.md`, Appendix F
 **Implementation status:** Runtime gates specified; this document does not claim that the current checkout has passed them or provide a deployment measurement
 
 ## 1. Purpose and precedence

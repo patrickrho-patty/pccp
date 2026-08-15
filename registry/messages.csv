@@ -10,6 +10,7 @@ code,name,family,description
 0x0102,USER_BIND,auth,User identity binding
 0x0103,USER_BIND_ACK,auth,User binding acknowledgment
 0x0104,CAPABILITIES,auth,Capability negotiation
+0x0105,AUTH_ACK,auth,Authentication accepted (carries governance trust payload)
 0x0200,SESSION_OPEN,session,Working session request
 0x0201,SESSION_GRANT,session,Working session grant
 0x0202,SESSION_CLOSE,session,Working session close
@@ -24,6 +25,7 @@ code,name,family,description
 0x0305,APPROVAL_REQUEST,governance,Approval request
 0x0306,APPROVAL_RESULT,governance,Approval result
 0x0307,EVIDENCE_RECEIPT,governance,Evidence receipt
+0x0308,EVIDENCE_RECEIPT_ACK,governance,Connector tamper-evidence acknowledgment
 0x0400,AI_OPEN,ai,AI inference open
 0x0401,INFERENCE_REQUEST,ai,Inference request to PIA
 0x0402,AI_TOKEN_CHUNK,ai,Token streaming chunk
@@ -38,9 +40,15 @@ code,name,family,description
 0x0601,TOOL_AUTHORIZE,tools,Tool authorization
 0x0602,RUNTIME_EXECUTE,tools,Runtime execution
 0x0603,TOOL_RESULT,tools,Tool result
+0x0610,EFFECT_PREPARE,dari.tools/1,DARI transactional effect prepare (normative allocation; requires dari.tools/1)
+0x0611,EFFECT_AUTHORIZE,dari.tools/1,DARI transactional effect authorize (normative allocation; requires dari.tools/1)
+0x0612,EFFECT_COMMIT,dari.tools/1,DARI transactional effect commit (normative allocation; requires dari.tools/1)
+0x0613,EFFECT_ABORT,dari.tools/1,DARI transactional effect abort (normative allocation; requires dari.tools/1)
+0x0614,EFFECT_STATUS,dari.tools/1,DARI transactional effect status (normative allocation; requires dari.tools/1)
 0x0700,PROVENANCE_NODE,provenance,Provenance spine node
 0x0701,CHANGE_SET,provenance,Code change set
 0x0702,COMMIT_BIND,provenance,Commit provenance binding
+0x0703,ACTION_ENVELOPE,provenance,Connector action envelope for the audit stream
 0x0800,CHAT_MESSAGE,chat,Chat message
 0x0801,PRESENCE,chat,Presence update
 0x0A00,FILE_OFFER,files,File transfer offer
@@ -48,6 +56,7 @@ code,name,family,description
 0x0A02,FILE_COMMIT,files,File commit
 0x0B00,BROADCAST,broadcast,Broadcast message
 0x0B01,ADMIN_DIRECTIVE,broadcast,Administrative directive
+0x0B02,ADMIN_COMMAND_RESULT,broadcast,Connector admin-command execution evidence
 0x0C00,TELEMETRY,telemetry,Telemetry event
 0x0C01,METER_USAGE,telemetry,Metering event
 0x0D00,MODEL_CATALOG_REQUEST,models,Model catalog request
@@ -60,3 +69,4 @@ code,name,family,description
 0x0D07,MODEL_CAPABILITY_CHANGED,models,Model capability changed
 0x0D08,MODEL_UPGRADE_REQUIRED,models,Model upgrade required
 0x0D09,CATALOG_ACK,models,Catalog acknowledgment
+0x0D10,POLICY_EPOCH,models,Policy-epoch push (session governance)

@@ -1,6 +1,6 @@
 package dari
 
-// Model catalog message types (PCCP v2 §10A.4 — dari.models/1 extension).
+// Model catalog message types (PCCP v2 §10A.4 — dari.model-supply/1 extension, per the DARI profile registry).
 // These extend the DARI protocol to support server-authoritative model discovery.
 const (
 	MsgModelCatalogRequest   MessageType = 0x0D00

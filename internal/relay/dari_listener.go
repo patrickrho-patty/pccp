@@ -495,3 +495,27 @@ func buildGovernRequest(harnessID, sessionID string, payload []byte) (GovernRequ
 		Messages: msgs, MaxTokens: aiReq.MaxTokens,
 	}, nil
 }
+
+// ApplyRevocationSnapshot replaces the listener's revocation view with
+// the identity service's authoritative snapshot (epoch + revoked
+// serials) and immediately terminates every active transport whose
+// serial is revoked. Called whenever the control plane revokes a
+// credential (Task 6 Step 3: revocation must reach live listeners, not
+// just the database).
+func (pl *DARIListener) ApplyRevocationSnapshot(epoch uint64, serials map[string]uint64) {
+	pl.mu.Lock()
+	snapshot := make(map[string]uint64, len(serials))
+	for s, e := range serials {
+		snapshot[s] = e
+	}
+	pl.mu.Unlock()
+
+	for serial := range snapshot {
+		pl.RevokeCredential(serial, epoch)
+	}
+	// Advance the epoch so NEW connections must present fresh
+	// revocation evidence at or above the authoritative snapshot.
+	pl.authenticator.AdvanceEpoch(epoch)
+}
+
+// registerListener is invoked by Service.AttachDARIListener.

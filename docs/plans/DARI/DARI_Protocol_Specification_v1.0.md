@@ -249,7 +249,7 @@ A TCP DARI server SHOULD accept TCP/443 where practical.
 
 The TLS/TCP binding:
 
-- MUST negotiate `dari/1` with ALPN;
+- MUST negotiate `dari/1` with ALPN; a deployment MAY accept the legacy `paper/1` identifier during the migration window (see the Compatibility and Profile Map);
 - MUST use TLS 1.3;
 - MUST reject a connection that negotiates another application protocol;
 - MUST NOT encapsulate DARI inside HTTP, WebSocket, SSE, gRPC, or CONNECT as the native fallback;
@@ -636,7 +636,7 @@ The peer computes:
 ```text
 auth_context =
   HASH(
-    "DARI-AUTH-v1" ||
+    "PAPER-AUTH-v1" ||
     canonical(HELLO) ||
     canonical(HELLO_ACK) ||
     client_nonce ||
@@ -1072,7 +1072,7 @@ For an object `O` of registered type `T`:
 ```text
 object_digest =
   HASH(
-    "DARI-OBJ-v1\0" ||
+    "PAPER-OBJ-v1\0" ||
     uint16(T) ||
     deterministic_cbor(O_without_digest)
   )
@@ -1083,7 +1083,7 @@ For a payload chunk:
 ```text
 chunk_digest =
   HASH(
-    "DARI-CHUNK-v1\0" ||
+    "PAPER-CHUNK-v1\0" ||
     exchange_id ||
     lane_id ||
     lane_sequence ||
@@ -1151,10 +1151,10 @@ Absence of a parent does not imply independence if the implementation failed to 
 Within one exchange, Relay maintains an ordered evidence chain:
 
 ```text
-R0 = HASH("DARI-EVIDENCE-START-v1\0" || exchange_open_digest)
+R0 = HASH("PAPER-EVIDENCE-START-v1\0" || exchange_open_digest)
 
 Ri = HASH(
-       "DARI-EVIDENCE-EVENT-v1\0" ||
+       "PAPER-EVIDENCE-EVENT-v1\0" ||
        R(i-1) ||
        event_digest
      )
@@ -3082,7 +3082,7 @@ These invariants should be expressed in executable conformance scenarios and, fo
 
 # Appendix F. Normative DARI v1 Contract (Phase 2 Freeze)
 
-This appendix freezes the Phase 2 wire and semantic contract for **DARI — Delegated Authorization and Receipts for Inference**. It is normative for `dari/1` and every `dari.*` profile. Earlier DARI sections remain the bounded `dari/1` legacy specification. Where an earlier DARI rule conflicts with this appendix for a negotiated DARI profile, this appendix takes precedence. This appendix does not assert that the new behavior is implemented or measured.
+This appendix freezes the Phase 2 wire and semantic contract for **DARI — Delegated Authorization and Receipts for Inference**. It is normative for `dari/1` and every `dari.*` profile. Earlier sections remain the bounded `paper/1` legacy specification. Where an earlier DARI rule conflicts with this appendix for a negotiated DARI profile, this appendix takes precedence. This appendix does not assert that the new behavior is implemented or measured.
 
 ## F.1 Scope, roles, and conformance
 
@@ -3170,7 +3170,7 @@ Sig_structure = deterministic_cbor([
 
 The baseline signature algorithm is Ed25519 (`alg = -8`). Another algorithm MAY be negotiated by a future profile, but a receiver MUST NOT substitute an unnegotiated algorithm. The protected header map MUST be exactly `cose-protected-dari`; `alg` and `kid` MUST NOT occur in the unprotected map, and no other protected header is valid in `dari/1`. A `kid` identifies a key; it is not a trust decision. The verifier MUST resolve the key through a valid Peer Credential or configured trust anchor and then perform the object-specific authorization checks. A Peer Credential subject key MUST be exactly `cose-key-ed25519`; key bytes, curve, and key type are not inferred from a `kid`.
 
-`dari/1` preserves its frozen legacy signing and digest bytes, including any documented compatibility quirk. A receiver MUST NOT apply `dari/1` map-form COSE or legacy object-digest bytes to a `dari/1` object, and MUST NOT silently rewrite one form into the other.
+`paper/1` preserves its frozen legacy signing and digest bytes, including any documented compatibility quirk. A receiver MUST NOT apply `paper/1` map-form COSE or legacy object-digest bytes to a `dari/1` object, and MUST NOT silently rewrite one form into the other.
 
 ## F.3 Peer Credential and proof-of-possession linkage
 
@@ -3721,11 +3721,11 @@ Later success MUST NOT override an earlier failure. Caches MAY accelerate a step
 
 On any failure, the receiver MUST NOT forward protected content, allocate inference, create a new or unauthorized effect, or advance to a more privileged state. An already committed external effect MUST be reconciled through its durable status and evidence path; it MUST NOT be erased or reported as uncommitted merely because a later evidence step failed. Malformed framing, authentication-integrity failure, or repeated hostile input SHOULD close the connection. An object-scoped policy, authority, freshness, obligation, or replay failure SHOULD deny or abort the affected exchange without disrupting unrelated exchanges when isolation is safe. The receiver SHOULD append a denial/failure event when doing so does not trust unvalidated attacker-controlled claims. A failure to durably append required evidence MUST produce `EVIDENCE_FAILURE`, never `COMPLETED`.
 
-Profile negotiation failure uses `UNSUPPORTED`. A critical requested profile with `UNSUPPORTED` MUST terminate negotiation. A non-critical `DEGRADED` result MUST enumerate every omitted capability and MUST NOT weaken the `dari/1` authorization, receipt, freshness, rollback, or effect semantics. A receiver MUST NOT silently fall back from a DARI object to a `dari/1` parser after any DARI validation failure.
+Profile negotiation failure uses `UNSUPPORTED`. A critical requested profile with `UNSUPPORTED` MUST terminate negotiation. A non-critical `DEGRADED` result MUST enumerate every omitted capability and MUST NOT weaken the `dari/1` authorization, receipt, freshness, rollback, or effect semantics. A receiver MUST NOT silently fall back from a DARI object to a `paper/1` parser after any DARI validation failure.
 
 ## F.12 Stable allocations
 
-Object-type numbers and message-type numbers are independent registries. Existing `dari/1` numbers are not renumbered. This appendix reserves these object types for DARI signed-object domain separation:
+Object-type numbers and message-type numbers are independent registries. Existing `paper/1` numbers are not renumbered. This appendix reserves these object types for DARI signed-object domain separation:
 
 | Object | Object type |
 |---|---:|
@@ -3754,13 +3754,13 @@ The only new message allocations are the transactional-effect subfamily:
 | `EFFECT_ABORT` | `0x0613` | signed Effect Result with `ABORTED` |
 | `EFFECT_STATUS` | `0x0614` | Effect Status request or signed response |
 
-Values `0x0604` through `0x0606` are not available: the legacy specification already assigns them even though current source registries are inconsistent. The message-type allocation `0x0610` through `0x0614` MUST NOT be reused by `dari/1` or another extension. A profile that does not negotiate `dari.tools/1` MUST report these messages as `UNSUPPORTED_MESSAGE_TYPE` without attempting a legacy interpretation.
+Values `0x0604` through `0x0606` are not available: the legacy specification already assigns them even though current source registries are inconsistent. The message-type allocation `0x0610` through `0x0614` MUST NOT be reused by `paper/1` or another extension. A profile that does not negotiate `dari.tools/1` MUST report these messages as `UNSUPPORTED_MESSAGE_TYPE` without attempting a legacy interpretation.
 
 ## F.13 Protocol and extension profiles
 
 The normative profile and compatibility table is `DARI_COMPATIBILITY_AND_PROFILE_MAP.md`. The following profile identifiers are exact and case-sensitive:
 
-- `dari/1` is bounded legacy compatibility for the frozen preface, record/message encoding, and documented legacy objects. It is not the active DARI kernel and confers no DARI conformance.
+- `paper/1` is bounded legacy compatibility for the frozen preface, record/message encoding, and documented legacy objects. It is not the active DARI kernel and confers no DARI conformance.
 - `dari/1` is the active, application-neutral DARI kernel defined by this appendix.
 - `dari.ai/1` is provider-neutral inference request, streaming response, usage, cancellation, and model/endpoint binding.
 - `dari.tools/1` is the transactional effects and tool-bridge profile defined by F.10 and F.12.
@@ -3902,7 +3902,7 @@ A conformance suite MUST exercise at least these cases and observe no new or una
 8. Altered disclosed event, wrong leaf position, bad empty padding, wrong segment count, malformed MMR peak list, altered omission manifest, overlapping omission range, or proof for an event outside receipt bounds.
 9. Duplicate operation with identical binding returns the stored state/result without another execution; duplicate operation with changed nonce, input, grant, executor, or retry owner returns `REPLAY_CONFLICT`; reconnect queries status rather than re-executing; unauthorized retry owner is rejected; crash in `EXECUTING` never fabricates `COMMITTED`.
 10. Critical `dari.web/1` or `dari.federation/1` negotiation fails with `UNSUPPORTED`; a non-critical request is explicitly omitted and never reported as `EXACT` or `DEGRADED`.
-11. A DARI validation error never triggers silent parsing as `dari/1`; a legacy `dari/1` object never acquires delegation, fresh-state, multi-party-attestation, selective-disclosure, or exactly-once claims that its bytes do not prove.
+11. A DARI validation error never triggers silent parsing through the legacy decoder; a legacy `paper/1` object never acquires delegation, fresh-state, multi-party-attestation, selective-disclosure, or exactly-once claims that its bytes do not prove.
 12. A profile offer with a duplicate capability, an unoffered result, a missing critical capability, a peer role/profile mismatch, or a schema-valid body on a runtime that has not passed its gate is rejected or reported `UNSUPPORTED`.
 13. A checkpoint without an inline body or authenticated resolver, an obligation update with a skipped transition, a receipt that self-declares an unobserved signer role, or an effect-status response with the wrong discriminator is rejected before protected work.
 

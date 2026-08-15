@@ -91,10 +91,11 @@ func main() {
 			Certificates: []tls.Certificate{loaded},
 		}
 	}
-	paperListener := relay.NewDARIListener(svc, paperTLS, trust)
+	dariListener := relay.NewDARIListener(svc, paperTLS, trust)
+	svc.AttachDARIListener(dariListener)
 	go func() {
 		log.Printf("Starting DARI native listener on %s (issuer=%s, revoked=%d)", dariAddr, svc.Identity().CAIssuerID(), len(revokedSerials))
-		if err := paperListener.ListenTCP(ctx, dariAddr); err != nil && ctx.Err() == nil {
+		if err := dariListener.ListenTCP(ctx, dariAddr); err != nil && ctx.Err() == nil {
 			log.Printf("DARI listener error: %v", err)
 		}
 	}()

@@ -57,7 +57,7 @@ func (c *DARIInferenceClient) ensureConnected(ctx context.Context) error {
 		CoreVersions:       []uint8{1},
 		PeerProfile:        dari.ProfileRelay,
 		TransportFeatures:  []string{"tcp-tls"},
-		Extensions:         map[string]uint8{"dari.ai/1": 1, "dari.models/1": 1},
+		Extensions:         map[string]uint8{"dari.ai/1": 1, "dari.model-supply/1": 1},
 		CryptoProfiles:     []string{"DARI-BASE-1"},
 		ClientNonce:        make([]byte, 32),
 		ImplementationName: "pccp-relay",

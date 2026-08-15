@@ -20,6 +20,15 @@ The protocol was renamed from PAPER to DARI. This file is the historical narrati
 
 - Message-type numbering, framing layout, CBOR schemas, COSE-Sign1 envelope, lease/epoch/catalog/receipt bodies — byte-identical.
 - The 8-byte connection preface.
+- The frozen `paper/1` cryptographic domain strings (`PAPER-AUTH-v1`, `PAPER-OBJ-v1\0`, `PAPER-CHUNK-v1\0`, `PAPER-EVIDENCE-*-v1`) — recorded as named constants in `legacy_paper1.go`.
+
+## Domain-string semantics (read this before interoperating cross-version)
+
+The legacy spec body computes its transcript/object/chunk/evidence domains with `PAPER-*` strings; the normative Appendix F kernel (`dari/1`) defines `DARI-*` domains. Current builds compute the **DARI-\* domains** (both endpoints deploy together; credentials and leases are re-issued on connect, so the live e2e suites verify the pair). A **pre-rename** peer must be reached on the legacy profile with the frozen `PAPER-*` bytes; selecting the domain set by negotiated ALPN arrives with profile negotiation (master-plan Tasks 7+).
+
+## Connector registry reconciliation (compat map §12)
+
+The duplicated client package's known drift was reconciled to the deployed root registry: `CLOSE` moved to `0x0006` (with `DRAIN` at `0x0005`), the model-catalog block moved to `0x0D00–0x0D09`, admin/broadcast to `0x0B00–0x0B02`, provenance to `0x0700–0x0703`, receipts to `0x0307/0x0308`, leases to `0x0210–0x0212`. `registry/messages.csv` was updated to corroborate (including the normative `0x0610–0x0614` DARI effect allocations). Extension identifiers now follow the profile registry (`dari.ai/1`, `dari.model-supply/1`).
 
 ## Validation
 

@@ -21,7 +21,7 @@ All three arms consume the same deterministic token schedule (128 tokens, 2 ms i
 ## Method
 
 - N=30 turns per arm; each turn is one full completion.
-- TTFT measured at the client at the first content-bearing event; ITL between consecutive events; "Cold" = connect+handshake+session-setup amortized per turn-1 (PAPER/SSE re-connect per turn; DARI and WS reuse).
+- TTFT measured at the client at the first content-bearing event; ITL between consecutive events; "Cold" = connect+handshake+session-setup amortized per turn-1 (SSE re-connects per turn; DARI and WS reuse).
 - Wire bytes counted at the application layer (framing + payloads), excluding TLS record overhead common to all arms.
 - The DARI arm exercises the **real** governed loop: live relay binary, enrollment via the CA, AUTH_PROOF verification, SESSION_OPEN governance pushes (epoch → catalog → lease), per-exchange authorization, receipt issuance/ack.
 

@@ -46,6 +46,8 @@ type Service struct {
 	// In-flight exchanges
 	mu        sync.RWMutex
 	exchanges map[string]*Exchange
+	// listeners receive revocation propagation (Task 6).
+	listeners []*DARIListener
 }
 
 // inferenceForwarder forwards a governed inference request to a PIA.
@@ -722,4 +724,33 @@ func (s *Service) recordExchange(ex *Exchange) {
 // RelayID returns the relay identifier.
 func (s *Service) RelayID() string {
 	return s.relayID
+}
+
+// AttachDARIListener registers a live DARI listener to receive
+// revocation propagation. The relay binary calls this at startup so a
+// control-plane revoke terminates active governed streams.
+func (s *Service) AttachDARIListener(pl *DARIListener) {
+	if pl == nil {
+		return
+	}
+	s.mu.Lock()
+	s.listeners = append(s.listeners, pl)
+	s.mu.Unlock()
+}
+
+// RevokeHarness revokes a harness in the identity service AND pushes
+// the revocation to every attached listener, terminating its active
+// transports (Task 6 Step 3).
+func (s *Service) RevokeHarness(orgID, harnessID, reason string) error {
+	if err := s.identity.RevokeHarness(orgID, harnessID, reason); err != nil {
+		return err
+	}
+	epoch, serials := s.identity.RevocationSnapshot()
+	s.mu.RLock()
+	listeners := append([]*DARIListener(nil), s.listeners...)
+	s.mu.RUnlock()
+	for _, pl := range listeners {
+		pl.ApplyRevocationSnapshot(epoch, serials)
+	}
+	return nil
 }

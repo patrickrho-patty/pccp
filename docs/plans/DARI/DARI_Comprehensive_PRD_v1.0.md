@@ -4104,7 +4104,7 @@ The following supporting contracts are also required:
 
 For `dari/1`, every signed object MUST use deterministic CBOR, an attached untagged RFC 9052 COSE Sign1 array, protected `alg` and `kid`, empty unprotected headers, the object-specific external AAD, and exact decoded-body-to-payload equality. The verifier MUST reject non-canonical input, duplicate keys, unknown critical fields, detached payloads, unprotected algorithm selection, signature/model mismatch, or an unnegotiated algorithm.
 
-Object and signed-envelope digests MUST use the domain-separated inputs and object-type registry in Appendix F.2 and F.12. Implementers MUST preserve legacy `dari/1` byte quirks only inside its explicit compatibility path. They MUST NOT silently apply a legacy digest, map-form COSE encoding, or decoder fallback to `dari/1`.
+Object and signed-envelope digests MUST use the domain-separated inputs and object-type registry in Appendix F.2 and F.12. Implementers MUST preserve legacy `paper/1` byte quirks only inside its explicit compatibility path. They MUST NOT silently apply a legacy digest, map-form COSE encoding, or decoder fallback to `dari/1`.
 
 Every protected transition MUST use the validation order in Appendix F.11. A failure at any earlier step MUST prevent later forwarding, inference allocation, external effect, or success state. Evidence append or finalization failure MUST produce `EVIDENCE_FAILURE`, never `COMPLETED`.
 
