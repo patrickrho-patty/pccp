@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -65,9 +65,9 @@ func (s *Service) CreateOrganization(name, nameKo, slug, profile string) (*model
 func (s *Service) CreateUser(orgID, email, name, nameKo, authMethod, externalID string) (*models.User, error) {
 	user := &models.User{
 		AuditBase: models.AuditBase{
-			Base:            models.Base{},
-			OrganizationID:  orgID,
-			Classification:  "internal",
+			Base:           models.Base{},
+			OrganizationID: orgID,
+			Classification: "internal",
 		},
 		Email:      email,
 		Name:       name,
@@ -128,14 +128,14 @@ func (s *Service) EnrollHarness(req EnrollHarnessRequest) (*models.Harness, *dar
 	// Issue PPC
 	pubKey := ed25519.PublicKey(pubBytes)
 	cred, err := s.ca.Issue(dari.IssueRequest{
-		SubjectPeerID:          req.HarnessID,
-		Organization:           req.OrganizationID,
-		Profile:                dari.ProfileHarness,
-		PublicKey:              pubKey,
-		Validity:               90 * 24 * time.Hour, // 90-day validity
-		RevocationAuthority:    s.ca.IssuerID,
+		SubjectPeerID:           req.HarnessID,
+		Organization:            req.OrganizationID,
+		Profile:                 dari.ProfileHarness,
+		PublicKey:               pubKey,
+		Validity:                90 * 24 * time.Hour, // 90-day validity
+		RevocationAuthority:     s.ca.IssuerID,
 		AllowedProtocolVersions: []uint8{1},
-		BuildChannel:           "stable",
+		BuildChannel:            "stable",
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("identity: issue PPC: %w", err)
@@ -146,23 +146,23 @@ func (s *Service) EnrollHarness(req EnrollHarnessRequest) (*models.Harness, *dar
 
 	// Create harness record
 	harness := &models.Harness{
-		OrganizationID:  req.OrganizationID,
-		DeviceID:        device.ID,
-		HarnessID:       req.HarnessID,
-		BinaryVersion:   req.BinaryVersion,
-		BinaryHash:      req.BinaryHash,
+		OrganizationID:   req.OrganizationID,
+		DeviceID:         device.ID,
+		HarnessID:        req.HarnessID,
+		BinaryVersion:    req.BinaryVersion,
+		BinaryHash:       req.BinaryHash,
 		ExtensionVersion: req.ExtensionVersion,
-		CLIVersion:      req.CLIVersion,
-		PublicKey:       req.PublicKeyHex,
-		CredentialJSON:  credentialHex,
+		CLIVersion:       req.CLIVersion,
+		PublicKey:        req.PublicKeyHex,
+		CredentialJSON:   credentialHex,
 		CredentialDigest: credentialDigest.String(),
-		BuildChannel:    "stable",
-		PolicyProfile:   "enterprise",
-		LicenseState:    "active",
-		Status:          "enrolled",
-		EnrollmentMode:  req.EnrollmentMode,
-		EnrolledAt:      time.Now().Format(time.RFC3339),
-		LastHeartbeat:   time.Now().Format(time.RFC3339),
+		BuildChannel:     "stable",
+		PolicyProfile:    "enterprise",
+		LicenseState:     "active",
+		Status:           "enrolled",
+		EnrollmentMode:   req.EnrollmentMode,
+		EnrolledAt:       time.Now().Format(time.RFC3339),
+		LastHeartbeat:    time.Now().Format(time.RFC3339),
 	}
 	harness.AllowedUsers = fmt.Sprintf(`["%s"]`, req.UserID)
 
@@ -285,10 +285,10 @@ func (s *Service) CreateProject(orgID, name, nameKo, slug string, allowedModels 
 		AuditBase: models.AuditBase{
 			OrganizationID: orgID,
 		},
-		Name:               name,
-		NameKo:             nameKo,
-		Slug:               slug,
-		Status:             "active",
+		Name:                name,
+		NameKo:              nameKo,
+		Slug:                slug,
+		Status:              "active",
 		AllowedModelClasses: modelsJSON,
 	}
 	if err := s.db.Create(proj).Error; err != nil {
@@ -412,3 +412,6 @@ func (s *Service) GenerateEnrollmentCode(orgID, userID string, validity time.Dur
 	}
 	return code, nil
 }
+
+// DB exposes the underlying gorm handle (hierarchy admin tooling).
+func (s *Service) DB() *gorm.DB { return s.db }

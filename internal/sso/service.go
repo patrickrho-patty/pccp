@@ -1,12 +1,18 @@
 package sso
 
 import (
+	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"io"
+	"math/big"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,11 +25,12 @@ import (
 
 // Service implements SAML 2.0 and OIDC SSO integration (PRD 8.2, 32.1).
 type Service struct {
-	db         *gorm.DB
-	jwtSecret  []byte
-	samlIDPID  string
-	samlIDPURL string
-	samlSPURL  string
+	oidcJWKS     map[string]interface{}
+	db           *gorm.DB
+	jwtSecret    []byte
+	samlIDPID    string
+	samlIDPURL   string
+	samlSPURL    string
 	oidcIssuer   string
 	oidcClientID string
 	oidcSecret   string
@@ -61,13 +68,13 @@ func (s *Service) GenerateSAMLRedirect(relayState string) (string, error) {
 }
 
 type SAMLResponse struct {
- 	UserID       string `json:"user_i_d"`
- 	Email        string `json:"email"`
- 	Name         string `json:"name"`
- 	NameKo       string `json:"name_ko"`
- 	Attributes   map[string]string `json:"attributes"`
- 	Issuer       string `json:"issuer"`
- 	NotOnOrAfter time.Time `json:"not_on_or_after"`
+	UserID       string            `json:"user_i_d"`
+	Email        string            `json:"email"`
+	Name         string            `json:"name"`
+	NameKo       string            `json:"name_ko"`
+	Attributes   map[string]string `json:"attributes"`
+	Issuer       string            `json:"issuer"`
+	NotOnOrAfter time.Time         `json:"not_on_or_after"`
 }
 
 func (s *Service) HandleSAMLCallback(samlResponse string, relayState string) (*SAMLResponse, error) {
@@ -77,7 +84,7 @@ func (s *Service) HandleSAMLCallback(samlResponse string, relayState string) (*S
 	}
 
 	var resp struct {
-		XMLName   xml.Name `xml:"Response"`
+		XMLName    xml.Name `xml:"Response"`
 		Assertions []struct {
 			Subject struct {
 				NameID string `xml:"NameID"`
@@ -90,11 +97,11 @@ func (s *Service) HandleSAMLCallback(samlResponse string, relayState string) (*S
 	}
 
 	if err := xml.Unmarshal(data, &resp); err != nil {
-		return s.mockSAMLResponse(samlResponse), nil
+		return nil, fmt.Errorf("sso: malformed SAML response: %w", err)
 	}
 
 	if len(resp.Assertions) == 0 || resp.Assertions[0].Subject.NameID == "" {
-		return s.mockSAMLResponse(samlResponse), nil
+		return nil, fmt.Errorf("sso: SAML response carries no authenticated subject")
 	}
 
 	result := &SAMLResponse{Attributes: make(map[string]string)}
@@ -134,32 +141,222 @@ type OIDCTokenResponse struct {
 }
 
 func (s *Service) HandleOIDCCallback(code, redirectURI string) (*OIDCTokenResponse, error) {
-	return &OIDCTokenResponse{
-		AccessToken: "mock_access_" + generateID(),
-		IDToken:     s.generateMockIDToken(),
-		ExpiresIn:   3600,
-		TokenType:   "Bearer",
-	}, nil
+	if s.oidcIssuer == "" {
+		return nil, fmt.Errorf("sso: OIDC not configured")
+	}
+	// Real code exchange against the configured IdP token endpoint.
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", code)
+	form.Set("redirect_uri", redirectURI)
+	form.Set("client_id", s.oidcClientID)
+	form.Set("client_secret", s.oidcSecret)
+	req, err := http.NewRequest(http.MethodPost, strings.TrimSuffix(s.oidcIssuer, "/")+"/token",
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("sso: token request build: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("sso: token endpoint unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("sso: token endpoint rejected the code (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+	var out OIDCTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("sso: decode token response: %w", err)
+	}
+	if out.IDToken == "" {
+		return nil, fmt.Errorf("sso: token response carries no id_token")
+	}
+	return &out, nil
 }
 
 type OIDCUserInfo struct {
-	Sub   string `json:"sub"`
-	Email string `json:"email"`
-	Name  string `json:"name"`
+	Sub    string `json:"sub"`
+	Email  string `json:"email"`
+	Name   string `json:"name"`
 	Locale string `json:"locale,omitempty"`
 }
 
-func (s *Service) ParseOIDCIDToken(idToken string) (*OIDCUserInfo, error) {
-	token, _, err := jwt.NewParser().ParseUnverified(idToken, jwt.MapClaims{})
-	if err != nil {
-		return nil, fmt.Errorf("sso: parse ID token: %w", err)
+// SetOIDCJWKS installs the IdP's JWKS (discovered from the issuer's
+// well-known endpoint or provisioned offline for sovereign deploys).
+func (s *Service) SetOIDCJWKS(jwksJSON []byte) error {
+	var jwks struct {
+		Keys []struct {
+			Kid string `json:"kid"`
+			Kty string `json:"kty"`
+			Crv string `json:"crv"`
+			X   string `json:"x"`
+			Y   string `json:"y"`
+			N   string `json:"n"`
+			E   string `json:"e"`
+		} `json:"keys"`
 	}
-	claims := token.Claims.(jwt.MapClaims)
+	if err := json.Unmarshal(jwksJSON, &jwks); err != nil {
+		return fmt.Errorf("sso: decode JWKS: %w", err)
+	}
+	s.oidcJWKS = map[string]interface{}{}
+	for _, k := range jwks.Keys {
+		switch k.Kty {
+		case "EC":
+			if k.Crv == "P-256" {
+				x, xerr := base64.RawURLEncoding.DecodeString(k.X)
+				y, yerr := base64.RawURLEncoding.DecodeString(k.Y)
+				if xerr != nil || len(x) != 32 {
+					continue
+				}
+				xInt := new(big.Int).SetBytes(x)
+				var yInt *big.Int
+				if yerr == nil && len(y) == 32 {
+					yInt = new(big.Int).SetBytes(y)
+				} else {
+					// Recover y from the curve equation (both
+					// candidates; verify the point is on the curve).
+					yy, ok := decompressP256(xInt)
+					if !ok {
+						continue
+					}
+					yInt = yy
+				}
+				if !elliptic.P256().IsOnCurve(xInt, yInt) {
+					continue
+				}
+				pub := &ecdsa.PublicKey{Curve: elliptic.P256(), X: xInt, Y: yInt}
+				if k.Kid != "" {
+					s.oidcJWKS[k.Kid] = pub
+				} else {
+					s.oidcJWKS["default"] = pub
+				}
+			}
+		case "RSA":
+			n, errN := base64.RawURLEncoding.DecodeString(k.N)
+			e, errE := base64.RawURLEncoding.DecodeString(k.E)
+			if errN != nil || errE != nil || len(e) < 1 || len(e) > 4 {
+				continue
+			}
+			exp := 0
+			for _, b := range e {
+				exp = exp<<8 | int(b)
+			}
+			pub := &rsa.PublicKey{N: new(big.Int).SetBytes(n), E: exp}
+			if k.Kid != "" {
+				s.oidcJWKS[k.Kid] = pub
+			} else {
+				s.oidcJWKS["default"] = pub
+			}
+		}
+	}
+	if len(s.oidcJWKS) == 0 {
+		return fmt.Errorf("sso: JWKS carries no usable keys")
+	}
+	return nil
+}
+
+// DiscoverOIDCJWKS fetches the issuer's JWKS from the well-known
+// endpoint (sovereign deployments provision it offline instead).
+func (s *Service) DiscoverOIDCJWKS(ctx context.Context) error {
+	if s.oidcIssuer == "" {
+		return fmt.Errorf("sso: OIDC not configured")
+	}
+	wellKnown := strings.TrimSuffix(s.oidcIssuer, "/") + "/.well-known/openid-configuration"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, wellKnown, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("sso: discover issuer: %w", err)
+	}
+	defer resp.Body.Close()
+	var cfg struct {
+		JWKSURI string `json:"jwks_uri"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil || cfg.JWKSURI == "" {
+		return fmt.Errorf("sso: issuer discovery missing jwks_uri")
+	}
+	jwksResp, err := http.Get(cfg.JWKSURI)
+	if err != nil {
+		return fmt.Errorf("sso: fetch JWKS: %w", err)
+	}
+	defer jwksResp.Body.Close()
+	jwksBytes, err := io.ReadAll(io.LimitReader(jwksResp.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	return s.SetOIDCJWKS(jwksBytes)
+}
+
+// decompressP256 recovers the even-parity y for x on P-256.
+func decompressP256(x *big.Int) (*big.Int, bool) {
+	// y² = x³ - 3x + b (mod p)
+	p := elliptic.P256().Params().P
+	b := elliptic.P256().Params().B
+	rhs := new(big.Int).Exp(x, big.NewInt(3), p)
+	rhs.Sub(rhs, new(big.Int).Mul(big.NewInt(3), x))
+	rhs.Add(rhs, b)
+	rhs.Mod(rhs, p)
+	// p ≡ 3 (mod 4) for P-256 → y = rhs^((p+1)/4).
+	exp := new(big.Int).Add(p, big.NewInt(1))
+	exp.Div(exp, big.NewInt(4))
+	y := new(big.Int).Exp(rhs, exp, p)
+	// Verify y² == rhs.
+	check := new(big.Int).Mul(y, y)
+	check.Mod(check, p)
+	if check.Cmp(rhs) != 0 {
+		return nil, false
+	}
+	return y, true
+}
+
+// ParseOIDCIDToken verifies the ID token signature against the
+// provisioned JWKS, the issuer, and the expiry — ParseUnverified is
+// never used for authentication.
+func (s *Service) ParseOIDCIDToken(idToken string) (*OIDCUserInfo, error) {
+	if len(s.oidcJWKS) == 0 {
+		return nil, fmt.Errorf("sso: no OIDC JWKS provisioned (refusing to trust an unverified ID token)")
+	}
+	keyfunc := func(t *jwt.Token) (interface{}, error) {
+		switch t.Method.Alg() {
+		case "ES256", "RS256":
+		default:
+			return nil, fmt.Errorf("sso: unsupported ID token algorithm %q", t.Method.Alg())
+		}
+		kid, _ := t.Header["kid"].(string)
+		if kid != "" {
+			if key, ok := s.oidcJWKS[kid]; ok {
+				return key, nil
+			}
+		}
+		if key, ok := s.oidcJWKS["default"]; ok {
+			return key, nil
+		}
+		return nil, fmt.Errorf("sso: ID token kid not in JWKS")
+	}
+	parser := jwt.NewParser(jwt.WithValidMethods([]string{"ES256", "RS256"}))
+	if s.oidcIssuer != "" {
+		parser = jwt.NewParser(jwt.WithValidMethods([]string{"ES256", "RS256"}), jwt.WithIssuer(s.oidcIssuer))
+	}
+	token, err := parser.Parse(idToken, keyfunc)
+	if err != nil || !token.Valid {
+		return nil, fmt.Errorf("sso: ID token verification failed: %v", err)
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("sso: ID token claims malformed")
+	}
 	info := &OIDCUserInfo{
 		Sub:    getStringClaim(claims, "sub"),
 		Email:  getStringClaim(claims, "email"),
 		Name:   getStringClaim(claims, "name"),
 		Locale: getStringClaim(claims, "locale"),
+	}
+	if info.Sub == "" {
+		return nil, fmt.Errorf("sso: ID token carries no subject")
 	}
 	if info.Locale == "" {
 		info.Locale = "ko-KR"
@@ -190,9 +387,15 @@ func (s *Service) ProvisionUserFromSSO(orgID string, saml *SAMLResponse) (*model
 	if err != nil {
 		return nil, fmt.Errorf("sso: lookup user: %w", err)
 	}
-	if saml.Name != "" { user.Name = saml.Name }
-	if saml.NameKo != "" { user.NameKo = saml.NameKo }
-	if saml.Email != "" { user.Email = saml.Email }
+	if saml.Name != "" {
+		user.Name = saml.Name
+	}
+	if saml.NameKo != "" {
+		user.NameKo = saml.NameKo
+	}
+	if saml.Email != "" {
+		user.Email = saml.Email
+	}
 	now := time.Now().Format(time.RFC3339)
 	user.LastLoginAt = &now
 	s.db.Save(&user)
@@ -210,11 +413,11 @@ func (s *Service) GenerateSessionToken(userID, orgID, role string) (string, erro
 }
 
 type SCIMUser struct {
-	Schemas    []string `json:"schemas"`
-	ID         string   `json:"id"`
-	UserName   string   `json:"userName"`
-	Active     bool     `json:"active"`
-	DisplayName string  `json:"displayName"`
+	Schemas     []string `json:"schemas"`
+	ID          string   `json:"id"`
+	UserName    string   `json:"userName"`
+	Active      bool     `json:"active"`
+	DisplayName string   `json:"displayName"`
 }
 
 func (s *Service) HandleSCIMRequest(w http.ResponseWriter, r *http.Request) {
@@ -226,7 +429,9 @@ func (s *Service) HandleSCIMRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		orgID := r.URL.Query().Get("org")
-		if orgID == "" { orgID = "default" }
+		if orgID == "" {
+			orgID = "default"
+		}
 		user := models.User{
 			AuditBase:  models.AuditBase{OrganizationID: orgID},
 			Name:       scimUser.DisplayName,
@@ -237,7 +442,9 @@ func (s *Service) HandleSCIMRequest(w http.ResponseWriter, r *http.Request) {
 			Locale:     "ko-KR",
 			Timezone:   "Asia/Seoul",
 		}
-		if !scimUser.Active { user.Status = "suspended" }
+		if !scimUser.Active {
+			user.Status = "suspended"
+		}
 		if err := s.db.Create(&user).Error; err != nil {
 			http.Error(w, "failed to create user", http.StatusInternalServerError)
 			return
@@ -284,7 +491,9 @@ func (s *Service) generateMockIDToken() string {
 }
 
 func getStringClaim(claims jwt.MapClaims, key string) string {
-	if v, ok := claims[key]; ok { return fmt.Sprintf("%v", v) }
+	if v, ok := claims[key]; ok {
+		return fmt.Sprintf("%v", v)
+	}
 	return ""
 }
 

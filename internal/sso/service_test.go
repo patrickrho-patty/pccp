@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"encoding/base64"
 	"path/filepath"
 	"testing"
 
@@ -41,15 +42,33 @@ func TestSAMLCallback(t *testing.T) {
 	db := setupDB(t)
 	svc := New(db, "test-secret")
 
-	// Mock SAML response
-	mockResp := "PHNhbWxwOlJlc3BvbnNlIHhtbG5zOnNhbWxwPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6cHJvdG9jb2wiPjwvc2FtbHA6UmVzcG9uc2U+"
-	resp, err := svc.HandleSAMLCallback(mockResp, "relay")
+	// A REAL SAML response shape with an authenticated subject and
+	// attributes (base64 of the XML).
+	real := `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">
+		<saml:Assertion>
+			<saml:Subject><saml:NameID>dev-kim@partner.example</saml:NameID></saml:Subject>
+			<saml:AttributeStatement>
+				<saml:Attribute Name="email"><saml:AttributeValue>dev-kim@partner.example</saml:AttributeValue></saml:Attribute>
+				<saml:Attribute Name="nameKo"><saml:AttributeValue>김개발</saml:AttributeValue></saml:Attribute>
+			</saml:AttributeStatement>
+		</saml:Assertion>
+	</samlp:Response>`
+	resp, err := svc.HandleSAMLCallback(base64.StdEncoding.EncodeToString([]byte(real)), "relay")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Mock returns Korean name
-	if resp.NameKo != "김개발" {
-		t.Fatalf("expected 김개발, got %s", resp.NameKo)
+	if resp.UserID != "dev-kim@partner.example" || resp.NameKo != "김개발" {
+		t.Fatalf("parsed = %+v", resp)
+	}
+
+	// An EMPTY assertion response fails closed (no mock fallback).
+	empty := base64.StdEncoding.EncodeToString([]byte(`<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"></samlp:Response>`))
+	if _, err := svc.HandleSAMLCallback(empty, "relay"); err == nil {
+		t.Fatal("subject-less SAML response must fail closed")
+	}
+	// Garbage base64/XML fails closed.
+	if _, err := svc.HandleSAMLCallback("!!!not-base64!!!", "relay"); err == nil {
+		t.Fatal("garbage SAML response must fail closed")
 	}
 }
 

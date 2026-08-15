@@ -32,17 +32,17 @@ type TimestampedModel struct {
 // AuditBase adds universal labels (PRD §37.3) on top of Base.
 type AuditBase struct {
 	Base
-	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
-	ProjectID      string `gorm:"type:varchar(64);index" json:"project_id,omitempty"`
-	Classification string `gorm:"type:varchar(64);default:'internal'" json:"classification"`
-	OwnerID        string `gorm:"type:varchar(64)" json:"owner_id,omitempty"`
-	RetentionPolicy string `gorm:"type:varchar(64)" json:"retention_profile,omitempty"`
-	LegalHold      bool   `gorm:"default:false" json:"legal_hold"`
-	AccessLabels   string `gorm:"type:text" json:"access_labels,omitempty"` // JSON array
+	OrganizationID    string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
+	ProjectID         string `gorm:"type:varchar(64);index" json:"project_id,omitempty"`
+	Classification    string `gorm:"type:varchar(64);default:'internal'" json:"classification"`
+	OwnerID           string `gorm:"type:varchar(64)" json:"owner_id,omitempty"`
+	RetentionPolicy   string `gorm:"type:varchar(64)" json:"retention_profile,omitempty"`
+	LegalHold         bool   `gorm:"default:false" json:"legal_hold"`
+	AccessLabels      string `gorm:"type:text" json:"access_labels,omitempty"` // JSON array
 	RegionRestriction string `gorm:"type:varchar(128)" json:"region_restriction,omitempty"`
-	EncryptionKeyRef string `gorm:"type:varchar(128)" json:"encryption_key_ref,omitempty"`
-	SourceProvenance string `gorm:"type:text" json:"source_provenance,omitempty"` // JSON
-	ArchiveState    string `gorm:"type:varchar(32);default:'active'" json:"archive_state"`
+	EncryptionKeyRef  string `gorm:"type:varchar(128)" json:"encryption_key_ref,omitempty"`
+	SourceProvenance  string `gorm:"type:text" json:"source_provenance,omitempty"` // JSON
+	ArchiveState      string `gorm:"type:varchar(32);default:'active'" json:"archive_state"`
 }
 
 // GenerateID generates a prefixed UUID.

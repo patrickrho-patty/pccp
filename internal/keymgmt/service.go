@@ -31,15 +31,15 @@ const (
 
 // KeyEntry represents a managed key.
 type KeyEntry struct {
- 	ID         string `json:"i_d"`
- 	Domain     KeyDomain `json:"domain"`
- 	Algorithm  string `json:"algorithm"`  // ed25519, aes-256-gcm
- 	PublicKey  []byte `json:"public_key"`
- 	PrivateKey []byte `json:"private_key"`  // never exported in production (HSM/KMS)
- 	CreatedAt  time.Time `json:"created_at"`
- 	ExpiresAt  time.Time `json:"expires_at"`
- 	RotatedFrom string `json:"rotated_from"`  // previous key ID if rotated
- 	Status     string `json:"status"`  // active, rotated, revoked
+	ID          string    `json:"i_d"`
+	Domain      KeyDomain `json:"domain"`
+	Algorithm   string    `json:"algorithm"` // ed25519, aes-256-gcm
+	PublicKey   []byte    `json:"public_key"`
+	PrivateKey  []byte    `json:"private_key"` // never exported in production (HSM/KMS)
+	CreatedAt   time.Time `json:"created_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	RotatedFrom string    `json:"rotated_from"` // previous key ID if rotated
+	Status      string    `json:"status"`       // active, rotated, revoked
 }
 
 // New creates a new key management service.

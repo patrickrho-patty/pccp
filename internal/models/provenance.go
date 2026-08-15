@@ -22,19 +22,19 @@ type ActionEnvelope struct {
 	ModelPackageID string `gorm:"type:varchar(64)" json:"model_package_id,omitempty"`
 	EndpointID     string `gorm:"type:varchar(64)" json:"endpoint_id,omitempty"`
 	// Context
-	ProjectID      string `gorm:"type:varchar(64)" json:"project_id,omitempty"`
-	RepositoryID   string `gorm:"type:varchar(64)" json:"repository_id,omitempty"`
-	Branch         string `gorm:"type:varchar(255)" json:"branch,omitempty"`
-	PolicyEpochID  string `gorm:"type:varchar(64)" json:"policy_epoch_id,omitempty"`
-	LeaseID        string `gorm:"type:varchar(64)" json:"lease_id,omitempty"`
+	ProjectID     string `gorm:"type:varchar(64)" json:"project_id,omitempty"`
+	RepositoryID  string `gorm:"type:varchar(64)" json:"repository_id,omitempty"`
+	Branch        string `gorm:"type:varchar(255)" json:"branch,omitempty"`
+	PolicyEpochID string `gorm:"type:varchar(64)" json:"policy_epoch_id,omitempty"`
+	LeaseID       string `gorm:"type:varchar(64)" json:"lease_id,omitempty"`
 	// Action details
 	ActionType     string `gorm:"type:varchar(64);not null;index" json:"action_type"` // ai_inference, file_write, tool_use, etc.
-	ActionPayload  string `gorm:"type:text" json:"action_payload,omitempty"` // JSON details
+	ActionPayload  string `gorm:"type:text" json:"action_payload,omitempty"`          // JSON details
 	VerdictResult  string `gorm:"type:varchar(64)" json:"verdict_result,omitempty"`
 	Classification string `gorm:"type:varchar(32);default:'internal'" json:"classification"`
 	// Signature
 	EnvelopeDigest string `gorm:"type:varchar(128)" json:"envelope_digest"` // content-addressed digest
-	CPSignature    string `gorm:"type:text" json:"cp_signature"` // CP signature
+	CPSignature    string `gorm:"type:text" json:"cp_signature"`            // CP signature
 	OccurredAt     string `gorm:"type:timestamp" json:"occurred_at"`
 }
 
@@ -53,17 +53,17 @@ type ChangeSet struct {
 	ModelPackageID string `gorm:"type:varchar(64)" json:"model_package_id,omitempty"`
 	EndpointID     string `gorm:"type:varchar(64)" json:"endpoint_id,omitempty"`
 	// Changes
-	FilesChanged   string `gorm:"type:text" json:"files_changed,omitempty"` // JSON array of file paths
-	DiffSummary    string `gorm:"type:text" json:"diff_summary,omitempty"`
-	DiffDigest     string `gorm:"type:varchar(128)" json:"diff_digest,omitempty"` // content-addressed
-	LinesAdded     int    `json:"lines_added,omitempty"`
-	LinesRemoved   int    `json:"lines_removed,omitempty"`
+	FilesChanged string `gorm:"type:text" json:"files_changed,omitempty"` // JSON array of file paths
+	DiffSummary  string `gorm:"type:text" json:"diff_summary,omitempty"`
+	DiffDigest   string `gorm:"type:varchar(128)" json:"diff_digest,omitempty"` // content-addressed
+	LinesAdded   int    `json:"lines_added,omitempty"`
+	LinesRemoved int    `json:"lines_removed,omitempty"`
 	// Attribution
 	AttributionState string `gorm:"type:varchar(32);default:'AI_GENERATED'" json:"attribution_state"`
 	// PRD §19.3: AI_GENERATED, AI_THEN_HUMAN_EDITED, HUMAN_THEN_AI_ASSISTED, HUMAN_WRITTEN
-	Confidence     float64 `json:"confidence,omitempty"`
-	ChangeSetDigest string `gorm:"type:varchar(128)" json:"change_set_digest"`
-	Status         string `gorm:"type:varchar(32);default:'pending'" json:"status"` // pending, committed, rejected
+	Confidence      float64 `json:"confidence,omitempty"`
+	ChangeSetDigest string  `gorm:"type:varchar(128)" json:"change_set_digest"`
+	Status          string  `gorm:"type:varchar(32);default:'pending'" json:"status"` // pending, committed, rejected
 }
 
 // ProvenanceSpan maps code to origin (PRD §19, Appendix B.1).
@@ -73,18 +73,18 @@ type ProvenanceSpan struct {
 	RepositoryID   string `gorm:"type:varchar(64);index;not null" json:"repository_id"`
 	ChangeSetID    string `gorm:"type:varchar(64);index" json:"change_set_id,omitempty"`
 	// Code location
-	FilePath       string `gorm:"type:varchar(512);not null" json:"file_path"`
-	CommitSHA      string `gorm:"type:varchar(64)" json:"commit_sha,omitempty"`
-	SymbolLang     string `gorm:"type:varchar(32)" json:"symbol_language,omitempty"`
-	SymbolName     string `gorm:"type:varchar(512)" json:"symbol_qualified_name,omitempty"`
-	StartLine      int    `json:"start_line"`
-	EndLine        int    `json:"end_line"`
+	FilePath   string `gorm:"type:varchar(512);not null" json:"file_path"`
+	CommitSHA  string `gorm:"type:varchar(64)" json:"commit_sha,omitempty"`
+	SymbolLang string `gorm:"type:varchar(32)" json:"symbol_language,omitempty"`
+	SymbolName string `gorm:"type:varchar(512)" json:"symbol_qualified_name,omitempty"`
+	StartLine  int    `json:"start_line"`
+	EndLine    int    `json:"end_line"`
 	// Fingerprints (PRD §19.4)
-	ASTFingerprint string `gorm:"type:varchar(128)" json:"ast_fingerprint,omitempty"`
+	ASTFingerprint      string `gorm:"type:varchar(128)" json:"ast_fingerprint,omitempty"`
 	SemanticFingerprint string `gorm:"type:varchar(128)" json:"semantic_fingerprint,omitempty"`
 	// Attribution
-	AttributionState string `gorm:"type:varchar(32);not null" json:"attribution_state"`
-	Confidence     float64 `json:"confidence,omitempty"`
+	AttributionState string  `gorm:"type:varchar(32);not null" json:"attribution_state"`
+	Confidence       float64 `json:"confidence,omitempty"`
 	// Origin
 	SessionID      string `gorm:"type:varchar(64)" json:"session_id,omitempty"`
 	UserID         string `gorm:"type:varchar(64)" json:"user_id,omitempty"`
@@ -92,13 +92,13 @@ type ProvenanceSpan struct {
 	ModelPackageID string `gorm:"type:varchar(64)" json:"model_package_id,omitempty"`
 	EndpointID     string `gorm:"type:varchar(64)" json:"endpoint_id,omitempty"`
 	// References
-	ContextRefsJSON string `gorm:"type:text" json:"context_refs,omitempty"` // JSON array
-	ToolCallRefsJSON string `gorm:"type:text" json:"tool_call_refs,omitempty"`
+	ContextRefsJSON        string `gorm:"type:text" json:"context_refs,omitempty"` // JSON array
+	ToolCallRefsJSON       string `gorm:"type:text" json:"tool_call_refs,omitempty"`
 	PolicyDecisionRefsJSON string `gorm:"type:text" json:"policy_decision_refs,omitempty"`
-	ParentSpanRefs string `gorm:"type:text" json:"parent_span_refs,omitempty"` // JSON array
+	ParentSpanRefs         string `gorm:"type:text" json:"parent_span_refs,omitempty"` // JSON array
 	// Evidence
 	EvidenceBundleID string `gorm:"type:varchar(64)" json:"evidence_bundle_id,omitempty"`
-	SpanDigest     string `gorm:"type:varchar(128)" json:"span_digest"` // content-addressed
+	SpanDigest       string `gorm:"type:varchar(128)" json:"span_digest"` // content-addressed
 }
 
 // CommitBinding links a git commit to provenance (PRD §18.6, DARI §43).
@@ -130,14 +130,18 @@ type AuditEvent struct {
 	Result         string `gorm:"type:varchar(32);default:'success'" json:"result"` // success, failure, denied
 	LegalHold      bool   `gorm:"default:false" json:"legal_hold"`
 	EventDigest    string `gorm:"type:varchar(128)" json:"event_digest"`
+	// ArchiveState tracks retention disposition: active (default),
+	// archived. Retention enforcement transitions it; legal hold
+	// blocks the transition.
+	ArchiveState string `gorm:"type:varchar(32);default:'active'" json:"archive_state,omitempty"`
 	// PrevEventDigest links the event into a per-org hash chain: it is
 	// the EventDigest of the org's previous audit event (empty for the
 	// first). VerifyAuditChain recomputes both.
 	PrevEventDigest string `gorm:"type:varchar(128)" json:"prev_event_digest,omitempty"`
 	// ChainSeq is the per-org monotonic insertion sequence. UUID IDs
 	// are not chronological, so chain order and linkage use this.
-	ChainSeq int64 `gorm:"index:idx_audit_org_seq" json:"chain_seq"`
-	OccurredAt     string `gorm:"type:timestamp" json:"occurred_at"`
+	ChainSeq   int64  `gorm:"index:idx_audit_org_seq" json:"chain_seq"`
+	OccurredAt string `gorm:"type:timestamp" json:"occurred_at"`
 }
 
 // AuditDigestDomain separates audit-chain digests from other hashes.
@@ -212,9 +216,9 @@ type EvidenceReceipt struct {
 	EndpointID     string `gorm:"type:varchar(64)" json:"endpoint_id,omitempty"`
 	KeyAlgorithm   string `gorm:"type:varchar(32);default:'ed25519'" json:"key_algorithm"`
 	// Signature
-	Signature      string `gorm:"type:text" json:"signature"` // COSE-Sign1
+	Signature         string `gorm:"type:text" json:"signature"` // COSE-Sign1
 	RedactionManifest string `gorm:"type:text" json:"redaction_manifest,omitempty"`
-	IssuedAt       string `gorm:"type:timestamp" json:"issued_at"`
+	IssuedAt          string `gorm:"type:timestamp" json:"issued_at"`
 	// AcknowledgedAt records (RFC3339) when the harness confirmed
 	// receipt of this evidence receipt over DARI; empty until acked.
 	AcknowledgedAt string `gorm:"type:timestamp" json:"acknowledged_at,omitempty"`

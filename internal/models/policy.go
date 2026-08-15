@@ -7,7 +7,7 @@ package models
 type PolicyRule struct {
 	Base
 	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
-	Domain         string `gorm:"type:varchar(64);not null" json:"domain"`     // models, tools, data, scm, network, session
+	Domain         string `gorm:"type:varchar(64);not null" json:"domain"` // models, tools, data, scm, network, session
 	TemplateID     string `gorm:"type:varchar(128)" json:"template_id"`
 	Name           string `gorm:"type:varchar(255)" json:"name"`
 	NameEn         string `gorm:"type:varchar(255)" json:"nameEn"`
