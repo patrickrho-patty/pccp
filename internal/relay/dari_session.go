@@ -152,6 +152,17 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 		}
 	}
 
+	// Production governance wiring (C3/C4/D1/D3-D6/E4): push the
+	// org's governance-state snapshot so the connector's governed
+	// gates fire on real tool calls.
+	govView := pl.svc.GatherGovernanceState(orgID, "", so.Model)
+	govSnap := BuildGovernanceState(govView)
+	if govBody, gerr := encodeWire(govSnap); gerr == nil {
+		if err := conn.SendMessage(dari.MsgGovernanceState, nil, govBody, 0, 2); err != nil {
+			log.Printf("relay: governance-state push to %s failed: %v", connID, err)
+		}
+	}
+
 	// Issue the capability lease (A3) and push LEASE_ISSUE (0x0210).
 	lease, err := pl.svc.Policy().IssueCapabilityLease(pl.leaseRequest(connID, orgID, so.SessionID, so.UserID, epoch.EpochID, so.Model))
 	if err != nil {

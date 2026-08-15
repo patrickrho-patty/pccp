@@ -117,6 +117,7 @@ const (
 const (
 	MsgPolicyEpochPush MessageType = 0x0D10
 	MsgDLPRulePack     MessageType = 0x0D11
+	MsgGovernanceState MessageType = 0x0D12
 )
 
 // Telemetry / metering (0x0C00–0x0CFF)
@@ -240,6 +241,8 @@ func (mt MessageType) String() string {
 		return "POLICY_EPOCH"
 	case MsgDLPRulePack:
 		return "DLP_RULE_PACK"
+	case MsgGovernanceState:
+		return "GOVERNANCE_STATE"
 	case MsgModelCatalogRequest:
 		return "MODEL_CATALOG_REQUEST"
 	case MsgModelCatalogSnapshot:
