@@ -267,6 +267,11 @@ func (s *Server) setupAdditionalRoutes(r chi.Router, ext *AdditionalServices) {
 		r.Post("/scim", s.wrapSSOSCIM(ext))
 	})
 
+	// Public SCIM v2 provisioning surface (web/01 B7). Fail-closed:
+	// HandleSCIMRequest requires a configured bearer token, so an
+	// unconfigured deployment always answers 503, never open.
+	r.Handle("/scim/v2/*", s.wrapSSOSCIM(ext))
+
 	// Sovereign
 	r.Route("/sovereign", func(r chi.Router) {
 		r.Post("/trust-bundle", s.wrapSovImportBundle(ext))

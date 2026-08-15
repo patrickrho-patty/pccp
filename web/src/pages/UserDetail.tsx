@@ -1,171 +1,392 @@
 import { useState, useEffect } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
+import { EntitySelect } from '../components/EntitySelect'
+import { FavoriteStar } from '../hooks/useFavorites'
+import { showToast } from '../components/Toast'
 
-function authHeaders() { const token = localStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }
+// UserDetail (web/01 B4): /users/:id with tabs — Overview /
+// Entitlement / Sessions / Harnesses / Usage / Audit / Contractor.
+const TABS = [
+  { id: 'overview', label: '개요', en: 'Overview' },
+  { id: 'entitlements', label: '권한', en: 'Entitlement' },
+  { id: 'sessions', label: '세션', en: 'Sessions' },
+  { id: 'harnesses', label: '하네스', en: 'Harnesses' },
+  { id: 'usage', label: '사용량', en: 'Usage' },
+  { id: 'audit', label: '감사', en: 'Audit' },
+  { id: 'contractor', label: '계약', en: 'Contractor' },
+]
+
+const STATUS_BADGE: Record<string, string> = {
+  active: 'bg-green-50 text-green-700 border-green-200',
+  suspended: 'bg-amber-50 text-amber-700 border-amber-200',
+  offboarded: 'bg-gray-100 text-gray-500 border-gray-200',
+}
+const STATUS_KO: Record<string, string> = { active: '활성', suspended: '정지', offboarded: '퇴사' }
 
 export default function UserDetail() {
   const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
+  const [params, setParams] = useSearchParams()
+  const tab = params.get('tab') || 'overview'
+  const setTab = (t: string) => setParams(t === 'overview' ? {} : { tab: t })
+
   const [user, setUser] = useState<any>(null)
   const [sessions, setSessions] = useState<any[]>([])
   const [harnesses, setHarnesses] = useState<any[]>([])
-  const [tab, setTab] = useState<'overview' | 'sessions' | 'harnesses' | 'audit'>('overview')
+  const [allHarnesses, setAllHarnesses] = useState<any[]>([])
   const [auditEvents, setAuditEvents] = useState<any[]>([])
-  const [enrollmentCode, setEnrollmentCode] = useState<string | null>(null)
+  const [usage, setUsage] = useState<any>(null)
+  const [entitlements, setEntitlements] = useState<any>({ assignments: [], roles: [] })
+  const [roles, setRoles] = useState<any[]>([])
+  const [ssoStatus, setSsoStatus] = useState<any>(null)
+  const [contractor, setContractor] = useState<any>({
+    sponsor_user_id: '', company: '', contract_start: '', contract_end: '',
+    allowed_repo_ids: [] as string[], allowed_model_classes: [] as string[], network_zone: '',
+  })
+  const [enrollmentCode, setEnrollmentCode] = useState<any>(null)
+  const [reasonText, setReasonText] = useState('')
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
+  const load = () => {
     if (!id) return
-    Promise.all([
-      api.getUser(id),
-      api.listSessions().then((d: any[]) => d.filter((s: any) => s.user_id === id)),
-      api.listHarnesses().then((d: any[]) => {
-        const userSessions = sessions
-        return d.filter((h: any) => h.allowed_users?.includes(id))
-      }),
-    ]).then(([u, sess, hrn]) => {
-      setUser(u)
-      setSessions(sess)
-      setHarnesses(hrn)
-    }).catch(() => {}).finally(() => setLoading(false))
-    api.getUserAudit(id || '').then(d => setAuditEvents(Array.isArray(d) ? d : [])).catch(() => {})
-  }, [id])
+    setLoading(true)
+    api.getUser(id).then(setUser).catch(() => setUser(null))
+    api.listSessions().then((d: any[]) => setSessions((Array.isArray(d) ? d : []).filter((s: any) => s.user_id === id))).catch(() => {})
+    api.getUserHarnesses(id).then(d => setHarnesses(Array.isArray(d) ? d : [])).catch(() => {})
+    api.listHarnesses().then(d => setAllHarnesses(Array.isArray(d) ? d : [])).catch(() => {})
+    api.getUserAudit(id).then(d => setAuditEvents(Array.isArray(d) ? d : [])).catch(() => {})
+    api.getUserUsage(id).then(setUsage).catch(() => setUsage(null))
+    api.getUserEntitlements(id).then(setEntitlements).catch(() => {})
+    api.listRoles().then(d => setRoles(Array.isArray(d) ? d : [])).catch(() => {})
+    api.getUserSSOStatus(id).then(setSsoStatus).catch(() => setSsoStatus(null))
+    if (user?.contractor_info) {
+      try { setContractor({ ...contractor, ...JSON.parse(user.contractor_info) }) } catch { /* legacy blob */ }
+    }
+    setLoading(false)
+  }
+  useEffect(() => { load() }, [id])
 
-  if (loading) return <div className="text-gray-400 p-8 text-center">로딩 중...</div>
+  if (loading && !user) return <div className="text-gray-400 p-8 text-center">로딩 중...</div>
   if (!user) return <div className="text-gray-400 p-8 text-center">사용자를 찾을 수 없습니다</div>
 
-  const statusBadge = (s: string) => {
-    const map: Record<string, string> = { active: 'badge-green', suspended: 'badge-yellow', offboarded: 'badge-gray' }
-    return map[s] || 'badge-gray'
+  const offboard = async () => {
+    if (!id) return
+    try {
+      const res = await api.offboardUser(id, reasonText || '관리자 퇴사 처리')
+      showToast(`퇴사 완료 — 세션 ${res.closed_sessions} 종료, 하네스 ${res.revoked_harnesses} 해제`, 'success')
+      setReasonText('')
+      load()
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
-  const statusLabel = (s: string) => ({ active: '활성', suspended: '정지', offboarded: '퇴사' } as any)[s] || s
+
+  const assignRole = async (roleId: string, scope: string, scopeId: string) => {
+    if (!id) return
+    try {
+      const current = entitlements.assignments || []
+      const next = [
+        ...current.filter((a: any) => !(a.role_id === roleId && a.scope === scope && a.scope_id === scopeId)),
+        { role_id: roleId, scope, scope_id: scopeId },
+      ].map(a => ({ role_id: a.role_id, scope: a.scope, scope_id: a.scope_id || '' }))
+      await api.putUserEntitlements(id, next)
+      const fresh = await api.getUserEntitlements(id)
+      setEntitlements(fresh)
+      showToast('권한 저장 완료', 'success')
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+  const revokeRole = async (roleId: string, scope: string, scopeId: string) => {
+    if (!id) return
+    try {
+      const next = (entitlements.assignments || [])
+        .filter((a: any) => !(a.role_id === roleId && a.scope === scope && a.scope_id === scopeId))
+        .map((a: any) => ({ role_id: a.role_id, scope: a.scope, scope_id: a.scope_id || '' }))
+      await api.putUserEntitlements(id, next)
+      const fresh = await api.getUserEntitlements(id)
+      setEntitlements(fresh)
+      showToast('권한 해제 완료', 'success')
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
+  const saveContractor = async () => {
+    if (!id) return
+    try {
+      const updated = await api.putContractor(id, contractor)
+      setUser(updated)
+      showToast('계약 정보 저장 완료', 'success')
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
+  const issueEnrollment = async () => {
+    if (!id) return
+    try {
+      const res = await api.issueEnrollmentCode(id)
+      setEnrollmentCode(typeof res === 'string' ? { code: res } : res)
+    } catch (e: any) { showToast(e?.message || '발급 실패', 'error') }
+  }
+
+  const grantHarness = async (harnessId: string) => {
+    if (!id || !harnessId) return
+    try {
+      await api.grantUserHarness(id, harnessId)
+      const d = await api.getUserHarnesses(id)
+      setHarnesses(Array.isArray(d) ? d : [])
+      showToast('하네스 바인딩 완료', 'success')
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+  const revokeHarness = async (harnessId: string) => {
+    if (!id) return
+    try {
+      await api.revokeUserHarness(id, harnessId)
+      const d = await api.getUserHarnesses(id)
+      setHarnesses(Array.isArray(d) ? d : [])
+      showToast('하네스 바인딩 해제', 'success')
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
 
   return (
-    <div>
-      <Link to="/users" className="text-sm text-blue-600 hover:underline mb-4 inline-block">← 사용자 목록</Link>
+    <div className="p-6 space-y-4 page-enter">
+      <Link to="/users" className="text-xs text-blue-600 hover:underline">← 사용자 목록</Link>
 
-      <div className="card mb-6">
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">{user.name_ko || user.name}</h1>
-            <p className="text-sm text-gray-400">{user.name} · {user.email}</p>
+      <div className="card p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
+              {(user.name_ko || user.name || '?').slice(0, 2).toUpperCase()}
+            </div>
+            <div>
+              <h1 className="text-lg font-bold flex items-center gap-2">
+                {user.name_ko || user.name} <span className="text-sm font-normal text-gray-400">({user.name})</span>
+                <FavoriteStar entity="users" id={user.id} />
+              </h1>
+              <p className="text-xs text-gray-400">{user.email} · {user.title || user.title_ko || '직함 없음'} · 사번 {user.employee_id || '—'}</p>
+              <div className="flex gap-2 mt-1 items-center">
+                <span className={`text-[10px] px-2 py-0.5 rounded-full border ${STATUS_BADGE[user.status] || ''}`}>{STATUS_KO[user.status] || user.status}</span>
+                {ssoStatus && (
+                  <span className="text-[10px] text-gray-500">
+                    {ssoStatus.connected ? 'SSO 연결됨' : 'SSO 미연결'} · {ssoStatus.last_login_at ? `최근 로그인 ${ssoStatus.last_login_at.slice(0, 10)}` : '로그인 기록 없음'}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
-          <span className={statusBadge(user.status)}>{statusLabel(user.status)}</span>
+          <div className="flex gap-2">
+            <button className="btn-sm btn-secondary" onClick={issueEnrollment}>초대 코드 발급</button>
+            {user.status !== 'offboarded' && (
+              <>
+                <button className="btn-sm btn-secondary" onClick={() => api.updateUser(id!, { status: 'suspended', reason: 'detail page' }).then(() => { load(); showToast('정지 완료', 'success') })}>정지</button>
+                <button className="btn-sm btn-danger" onClick={() => setReasonText(reasonText ? '' : ' ')}>퇴사 처리</button>
+              </>
+            )}
+          </div>
         </div>
+        {enrollmentCode && (
+          <div className="mt-3 p-3 bg-gray-50 rounded-lg">
+            <div className="text-[10px] text-gray-500">1회용 등록 코드</div>
+            <div className="font-mono text-base tracking-widest">{enrollmentCode.code}</div>
+            {enrollmentCode.expires_at && <div className="text-[10px] text-gray-400">만료: {enrollmentCode.expires_at}</div>}
+          </div>
+        )}
+        {user.status !== 'offboarded' && reasonText !== '' && (
+          <div className="mt-3 p-3 bg-red-50 rounded-lg space-y-2">
+            <textarea className="input text-xs w-full" rows={2} placeholder="퇴사 사유 (감사 로그에 기록됩니다)"
+              value={reasonText.trim()} onChange={e => setReasonText(e.target.value)} />
+            <div className="flex items-center gap-2">
+            <span className="text-[11px] text-red-600">퇴사 처리 시 세션 종료 + 하네스 바인딩 해제</span>
+            <button className="btn-sm btn-danger" onClick={offboard}>퇴사 확정</button>
+            <button className="btn-sm btn-secondary" onClick={() => setReasonText('')}>취소</button>
+            </div>
+          </div>
+        )}
       </div>
 
-      <div className="flex gap-1 mb-6 border-b border-gray-200">
-        {[
-          { id: 'overview', label: '개요', en: 'Overview' },
-          { id: 'sessions', label: '세션', en: 'Sessions' },
-          { id: 'harnesses', label: '하네스', en: 'Harnesses' },
-          { id: 'audit', label: '감사', en: 'Audit' },
-        ].map(t => (
-          <button key={t.id} onClick={() => setTab(t.id as any)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === t.id ? 'border-patty-600 text-patty-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-            {t.label} {t.id === 'sessions' && sessions.length > 0 && `(${sessions.length})`}
-            {t.id === 'harnesses' && harnesses.length > 0 && `(${harnesses.length})`}
+      <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`px-3 py-2 text-xs whitespace-nowrap ${tab === t.id ? 'border-b-2 border-blue-600 text-blue-600 font-semibold' : 'text-gray-500 hover:text-gray-700'}`}>
+            {t.label} {t.en}
           </button>
         ))}
       </div>
 
       {tab === 'overview' && (
-        <div className="card grid grid-cols-2 gap-4 text-sm">
-          <div><span className="text-gray-500">이메일:</span> {user.email}</div>
-          <div><span className="text-gray-500">한글 이름:</span> {user.name_ko || '-'}</div>
-          <div><span className="text-gray-500">직함:</span> {user.title || '-'}</div>
-          <div><span className="text-gray-500">인증 방식:</span> {user.auth_method}</div>
-          <div><span className="text-gray-500">부서:</span> {user.business_unit_id || '-'}</div>
-          <div><span className="text-gray-500">상태:</span> <span className={statusBadge(user.status)}>{statusLabel(user.status)}</span></div>
-          <div><span className="text-gray-500">로케일:</span> {user.locale || 'ko-KR'}</div>
-          <div><span className="text-gray-500">타임존:</span> {user.timezone || 'Asia/Seoul'}</div>
-          <div><span className="text-gray-500">사번:</span> {user.employee_id || '-'}</div>
-          <div><span className="text-gray-500">등록일:</span> {user.created_at?.slice(0, 10)}</div>
-          {user.last_login_at && <div><span className="text-gray-500">마지막 로그인:</span> {user.last_login_at?.slice(0, 19)}</div>}
-          <div className="col-span-2 pt-3 border-t border-gray-100">
-            <button onClick={async () => {
-              try {
-                await fetch('/api/communications/conversations', {
-                  method: 'POST',
-                  headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ type: 'direct', title: user.name_ko || user.name, participant_ids: [id] })
-                })
-                navigate('/communications')
-              } catch {}
-            }} className="btn-sm btn-primary">💬 메시지 보내기</button>
-            <button onClick={async () => {
-              try {
-                const res = await fetch(`/api/users/${id}/enrollment-code`, { method: 'POST', headers: authHeaders() })
-                const data = await res.json()
-                setEnrollmentCode(data.code)
-              } catch {}
-            }} className="btn-sm btn-secondary ml-2">🔑 초대 코드</button>
-            {enrollmentCode && <span className="text-xs font-mono text-blue-600 ml-2 select-all">{enrollmentCode}</span>}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="card p-4">
+            <h3 className="text-xs font-bold mb-2">기본 정보</h3>
+            <dl className="text-[11px] space-y-1">
+              <div className="flex justify-between"><dt className="text-gray-400">인증 방식</dt><dd>{user.auth_method}</dd></div>
+              <div className="flex justify-between"><dt className="text-gray-400">외부 ID</dt><dd>{user.external_id || '—'}</dd></div>
+              <div className="flex justify-between"><dt className="text-gray-400">MFA</dt><dd>{user.mfa_enrolled ? '등록됨' : '미등록'}</dd></div>
+              <div className="flex justify-between"><dt className="text-gray-400">로케일</dt><dd>{user.locale}</dd></div>
+              <div className="flex justify-between"><dt className="text-gray-400">시간대</dt><dd>{user.timezone}</dd></div>
+              <div className="flex justify-between"><dt className="text-gray-400">생성일</dt><dd>{(user.created_at || '').slice(0, 10)}</dd></div>
+              <div className="flex justify-between"><dt className="text-gray-400">계약직</dt><dd>{user.contractor_info ? '예' : '아니오'}</dd></div>
+            </dl>
+          </div>
+          <div className="card p-4">
+            <h3 className="text-xs font-bold mb-2">요약</h3>
+            <div className="text-[11px] space-y-1">
+              <div className="flex justify-between"><span className="text-gray-400">세션</span><span>{sessions.length}</span></div>
+              <div className="flex justify-between"><span className="text-gray-400">하네스</span><span>{harnesses.length}</span></div>
+              <div className="flex justify-between"><span className="text-gray-400">감사 이벤트</span><span>{auditEvents.length}</span></div>
+              {usage && <div className="flex justify-between"><span className="text-gray-400">누적 비용</span><span>{usage.total_cost_micros ?? 0} µ¢</span></div>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'entitlements' && (
+        <div className="card p-4 space-y-3">
+          <h3 className="text-xs font-bold">개발자 권한 (Entitlement)</h3>
+          <p className="text-[10px] text-gray-400">하네스를 통한 개발자 권한 범위입니다 (콘솔 운영자 권한과 별개).</p>
+          <div className="space-y-2">
+            {roles.map(r => {
+              const assigned = (entitlements.assignments || []).filter((a: any) => a.role_id === r.id)
+              return (
+                <div key={r.id} className="flex items-center justify-between border rounded-lg p-2">
+                  <div>
+                    <div className="text-xs font-semibold">{r.name_ko || r.name}</div>
+                    <div className="text-[10px] text-gray-400">{(() => { try { return JSON.parse(r.permissions).join(', ') } catch { return '' } })()}</div>
+                  </div>
+                  <div className="flex gap-1">
+                    {assigned.map((a: any) => (
+                      <span key={a.id} className="text-[10px] px-2 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 flex items-center gap-1">
+                        {a.scope || 'org'}
+                        <button onClick={() => revokeRole(r.id, a.scope, a.scope_id || '')}>✕</button>
+                      </span>
+                    ))}
+                    {assigned.length === 0 && (
+                      <button className="text-[10px] px-2 py-1 rounded bg-gray-100 hover:bg-blue-50 text-blue-600"
+                        onClick={() => assignRole(r.id, 'org', '')}>부여</button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
 
       {tab === 'sessions' && (
-        <div className="card">
-          {sessions.length === 0 ? (
-            <p className="text-gray-400 text-center py-8">세션 이력이 없습니다</p>
-          ) : (
-            <table className="w-full overflow-x-auto block">
-              <thead><tr className="border-b text-left text-xs text-gray-500 uppercase">
-                <th className="pb-3">제목</th><th className="pb-3">모델</th><th className="pb-3">상태</th><th className="pb-3">시작일</th>
-              </tr></thead>
-              <tbody>
-                {sessions.map(s => (
-                  <tr key={s.id} className="border-b border-gray-100">
-                    <td className="py-3 text-sm"><Link to="/sessions" className="text-blue-600 hover:underline">{s.title || '제목 없음'}</Link></td>
-                    <td className="py-3 text-sm">{s.model_class}</td>
-                    <td className="py-3"><span className="badge-gray">{s.status}</span></td>
-                    <td className="py-3 text-xs text-gray-400">{s.opened_at?.slice(0, 10)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div className="card p-4">
+          <h3 className="text-xs font-bold mb-2">세션 ({sessions.length})</h3>
+          {sessions.length === 0 ? <p className="text-[11px] text-gray-400">세션 없음</p> : (
+            <div className="space-y-1">
+              {sessions.map((s: any) => (
+                <Link key={s.id} to={`/sessions`} className="flex justify-between text-[11px] border-b border-gray-50 py-1 hover:bg-gray-50 px-1">
+                  <span className="text-gray-700">{s.title || s.session_id}</span>
+                  <span className="text-gray-400">{s.status} · {s.model_class || '—'}</span>
+                </Link>
+              ))}
+            </div>
           )}
         </div>
       )}
 
       {tab === 'harnesses' && (
-        <div className="card">
-          {harnesses.length === 0 ? (
-            <p className="text-gray-400 text-center py-8">연결된 하네스가 없습니다</p>
-          ) : (
-            harnesses.map(h => (
-              <div key={h.id} className="flex items-center justify-between py-3 border-b border-gray-100 last:border-0">
-                <div>
-                  <Link to="/harnesses" className="text-sm font-mono text-blue-600 hover:underline">{h.harness_id?.slice(0, 30)}</Link>
-                  <span className="ml-2 badge-gray">{h.status}</span>
-                </div>
-                <span className="text-xs text-gray-400">v{h.binary_version}</span>
+        <div className="card p-4 space-y-3">
+          <h3 className="text-xs font-bold">하네스 바인딩 ({harnesses.length})</h3>
+          <div className="space-y-1">
+            {harnesses.map((h: any) => (
+              <div key={h.id} className="flex justify-between items-center text-[11px] border-b border-gray-50 py-1">
+                <span className="text-gray-700">{h.name} <span className="text-gray-400">({h.harness_id})</span></span>
+                <button className="text-[10px] px-2 py-1 rounded text-red-600 hover:bg-red-50" onClick={() => revokeHarness(h.id)}>해제</button>
               </div>
-            ))
+            ))}
+            {harnesses.length === 0 && <p className="text-[11px] text-gray-400">바인딩된 하네스 없음</p>}
+          </div>
+          <div className="flex gap-2 items-center">
+            <select className="input text-xs" defaultValue=""
+              onChange={e => { if (e.target.value) grantHarness(e.target.value) }}>
+              <option value="">하네스 바인딩 추가...</option>
+              {allHarnesses.filter((h: any) => !harnesses.some((b: any) => b.id === h.id)).map((h: any) => (
+                <option key={h.id} value={h.id}>{h.name} ({h.harness_id})</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {tab === 'usage' && (
+        <div className="card p-4">
+          <h3 className="text-xs font-bold mb-2">사용량 / 비용 (Usage)</h3>
+          {!usage ? <p className="text-[11px] text-gray-400">사용 기록 없음</p> : (
+            <div className="space-y-2">
+              <div className="text-[11px] text-gray-500">누적 비용: <span className="font-semibold">{usage.total_cost_micros} µ¢</span> · 기록 {usage.record_count}건</div>
+              <table className="w-full text-[11px]">
+                <thead><tr className="text-left text-gray-400">
+                  <th>지표</th><th>단위</th><th className="text-right">수량</th><th className="text-right">비용</th>
+                </tr></thead>
+                <tbody>
+                  {(usage.metrics || []).map((m: any) => (
+                    <tr key={m.metric_type} className="border-t border-gray-50">
+                      <td>{m.metric_type}</td><td>{m.unit}</td>
+                      <td className="text-right">{m.quantity}</td>
+                      <td className="text-right">{m.cost_micros} µ¢</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}
 
       {tab === 'audit' && (
-        <div className="card">
-          {auditEvents.length === 0 ? (
-            <p className="text-gray-400 text-center py-8">감사 이력이 없습니다</p>
-          ) : (
-            <table className="w-full overflow-x-auto block">
-              <thead><tr className="border-b text-left text-xs text-gray-500 uppercase"><th className="pb-3">시간</th><th className="pb-3">이벤트</th><th className="pb-3">결과</th></tr></thead>
-              <tbody>
-                {auditEvents.map((e, i) => (
-                  <tr key={i} className="border-b border-gray-100">
-                    <td className="py-3 text-xs text-gray-400">{e.occurred_at?.slice(0, 19)}</td>
-                    <td className="py-3 text-sm">{e.action || e.event_type}</td>
-                    <td className="py-3"><span className="badge-gray">{e.result || '-'}</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div className="card p-4">
+          <h3 className="text-xs font-bold mb-2">감사 이벤트 ({auditEvents.length})</h3>
+          {auditEvents.length === 0 ? <p className="text-[11px] text-gray-400">감사 이벤트 없음</p> : (
+            <div className="space-y-1">
+              {auditEvents.map((e: any) => (
+                <div key={e.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+                  <span className="text-gray-700">{e.action}</span>
+                  <span className="text-gray-400">{(e.occurred_at || '').slice(0, 16)} · {e.result}</span>
+                </div>
+              ))}
+            </div>
           )}
+        </div>
+      )}
+
+      {tab === 'contractor' && (
+        <div className="card p-4 space-y-3">
+          <h3 className="text-xs font-bold">계약직 프로필 (Contractor)</h3>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-gray-500">스폰서 (사번/이메일)</label>
+              <EntitySelect entity="user" value={contractor.sponsor_user_id} onChange={v => setContractor({ ...contractor, sponsor_user_id: v })} />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-500">회사</label>
+              <input className="input text-xs w-full" value={contractor.company} onChange={e => setContractor({ ...contractor, company: e.target.value })} />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-500">계약 시작</label>
+              <input className="input text-xs w-full" type="date" value={contractor.contract_start} onChange={e => setContractor({ ...contractor, contract_start: e.target.value })} />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-500">계약 종료 (만료 시 자동 정지)</label>
+              <input className="input text-xs w-full" type="date" value={contractor.contract_end} onChange={e => setContractor({ ...contractor, contract_end: e.target.value })} />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-500">허용 저장소 (쉼표 구분)</label>
+              <input className="input text-xs w-full" value={contractor.allowed_repo_ids.join(',')}
+                onChange={e => setContractor({ ...contractor, allowed_repo_ids: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })} />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-500">허용 모델 클래스 (쉼표 구분)</label>
+              <input className="input text-xs w-full" value={contractor.allowed_model_classes.join(',')}
+                onChange={e => setContractor({ ...contractor, allowed_model_classes: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })} />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-500">네트워크 존</label>
+              <select className="input text-xs w-full" value={contractor.network_zone} onChange={e => setContractor({ ...contractor, network_zone: e.target.value })}>
+                <option value="">—</option>
+                <option value="internal">내부망</option>
+                <option value="dmz">DMZ</option>
+                <option value="external">외부망</option>
+              </select>
+            </div>
+          </div>
+          <button className="btn-sm btn-primary" onClick={saveContractor}>계약 정보 저장</button>
         </div>
       )}
     </div>

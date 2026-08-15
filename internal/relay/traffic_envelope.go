@@ -42,7 +42,7 @@ func (s *Service) trafficIssuerKey() (ed25519.PrivateKey, error) {
 // downgrades, interactive-paid requires an entitlement check upstream
 // (capability lease) — the scheduler's resolver treats absence/invalid
 // as batch, so mis-signing here only degrades, never elevates.
-func (s *Service) signTrafficEnvelope(tenantID, requestID string) (*scheduler.TrafficEnvelope, error) {
+func (s *Service) signTrafficEnvelope(tenantID, userID, requestID string) (*scheduler.TrafficEnvelope, error) {
 	priv, err := s.trafficIssuerKey()
 	if err != nil {
 		return nil, err
@@ -50,6 +50,16 @@ func (s *Service) signTrafficEnvelope(tenantID, requestID string) (*scheduler.Tr
 	class := os.Getenv("PCCP_RELAY_TRAFFIC_CLASS")
 	if class == "" {
 		class = "interactive-normal"
+	}
+	// Developer-entitlement cap (web/01 B5): interactive-paid requires
+	// the scoped entitlement on the live path — mis-signing here can
+	// only degrade, never elevate (scheduler treats invalid as batch).
+	if class == "interactive-paid" {
+		if userID == "" {
+			class = "interactive-normal"
+		} else if ok, err := s.identity.EvaluateEntitlement(tenantID, userID, "class:interactive-paid"); err != nil || !ok {
+			class = "interactive-normal"
+		}
 	}
 	env := scheduler.NewTrafficEnvelope(requestID, tenantID, class, 2*time.Minute)
 	if err := env.Sign(priv); err != nil {

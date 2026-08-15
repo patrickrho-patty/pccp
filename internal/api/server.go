@@ -174,11 +174,26 @@ func (s *Server) setupRouter() {
 		r.Route("/users", func(r chi.Router) {
 			r.Get("/", s.handleListUsers)
 			r.Post("/", s.handleCreateUser)
+			r.Post("/import", s.handleImportUsersCSV)
 			r.Get("/{id}", s.handleGetUser)
 			r.Put("/{id}", s.handleUpdateUser)
 			r.Delete("/{id}", s.handleDeleteUser)
 			r.Get("/{id}/audit", s.handleListUserAudit)
 			r.Post("/{id}/enrollment-code", s.handleIssueEnrollmentCode)
+			r.Get("/{id}/harnesses", s.handleListUserHarnesses)
+			r.Post("/{id}/harnesses", s.handleGrantUserHarness)
+			r.Delete("/{id}/harnesses/{harnessId}", s.handleRevokeUserHarness)
+			r.Get("/{id}/usage", s.handleGetUserUsage)
+			r.Post("/{id}/offboard", s.handleOffboardUser)
+			r.Get("/{id}/entitlements", s.handleGetUserEntitlements)
+			r.Put("/{id}/entitlements", s.handlePutUserEntitlements)
+			r.Get("/{id}/sso-status", s.handleUserSSOStatus)
+			r.Put("/{id}/contractor", s.handleContractorProfile)
+		})
+
+		// Developer entitlement roles (web/01 B5)
+		r.Route("/roles", func(r chi.Router) {
+			r.Get("/", s.handleListRoles)
 		})
 
 		// Business Units (Korean org hierarchy) — PRD §12.1
@@ -513,6 +528,11 @@ func (s *Server) ListenAndServe(addr string) error {
 			if n := s.security.SweepSuppressions(); n > 0 {
 				log.Printf("api: reopened %d expired suppressions", n)
 			}
+			// Auto-disable contractors past their contract window
+			// (web/01 A5).
+			if n := s.identity.SweepExpiredContractors(); n > 0 {
+				log.Printf("api: suspended %d expired contractors", n)
+			}
 		}
 	}()
 	log.Printf("api: listening on %s", addr)
@@ -749,7 +769,29 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 			page = 1
 		}
 		if search != "" {
-			q = q.Where("name LIKE ? OR email LIKE ? OR name_ko LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%")
+			q = q.Where("name LIKE ? OR email LIKE ? OR name_ko LIKE ? OR employee_id LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%", "%"+search+"%")
+		}
+		// Server-side filters (web/01 B3): business unit, status, role.
+		if v := r.URL.Query().Get("business_unit"); v != "" {
+			q = q.Where("business_unit_id = ?", v)
+		}
+		if v := r.URL.Query().Get("status"); v != "" {
+			q = q.Where("status = ?", v)
+		}
+		if v := r.URL.Query().Get("role"); v != "" {
+			q = q.Where("id IN (SELECT user_id FROM user_roles WHERE role_id = ?)", v)
+		}
+		switch r.URL.Query().Get("sort") {
+		case "name":
+			q = q.Order("name ASC")
+		case "name_ko":
+			q = q.Order("name_ko ASC")
+		case "last_login":
+			q = q.Order("last_login_at DESC NULLS LAST")
+		case "email":
+			q = q.Order("email ASC")
+		default:
+			q = q.Order("created_at DESC")
 		}
 		var total int64
 		q.Count(&total)
@@ -2881,6 +2923,10 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		Locale         *string `json:"locale,omitempty"`
 		Timezone       *string `json:"timezone,omitempty"`
 		BusinessUnitID *string `json:"business_unit_id,omitempty"`
+		EmployeeID     *string `json:"employee_id,omitempty"`
+		ContractorInfo *string `json:"contractor_info,omitempty"`
+		MFAEnrolled    *bool   `json:"mfa_enrolled,omitempty"`
+		Reason         *string `json:"reason,omitempty"`
 	}
 	if err := decodeJSON(r, &updates); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -2913,6 +2959,29 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if updates.BusinessUnitID != nil {
 		user.BusinessUnitID = *updates.BusinessUnitID
 	}
+	if updates.EmployeeID != nil {
+		user.EmployeeId = *updates.EmployeeID
+	}
+	if updates.ContractorInfo != nil {
+		// Validate the structured contractor record (web/01 A5).
+		var profile identity.ContractorProfile
+		if err := json.Unmarshal([]byte(*updates.ContractorInfo), &profile); err != nil {
+			writeError(w, http.StatusBadRequest, "contractor_info must be a valid ContractorProfile JSON")
+			return
+		}
+		if profile.ContractStart != "" && profile.ContractEnd != "" && profile.ContractEnd < profile.ContractStart {
+			writeError(w, http.StatusBadRequest, "contract_end precedes contract_start")
+			return
+		}
+		user.ContractorInfo = *updates.ContractorInfo
+	}
+	if updates.MFAEnrolled != nil {
+		user.MFAEnrolled = *updates.MFAEnrolled
+	}
+	reason := ""
+	if updates.Reason != nil {
+		reason = *updates.Reason
+	}
 	s.db.Save(&user)
 	s.db.Create(&models.AuditEvent{
 		OrganizationID: getOrgID(r),
@@ -2921,7 +2990,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		Action:         "update_user",
 		ResourceType:   "user",
 		ResourceID:     id,
-		Details:        "user fields updated",
+		Details:        fmt.Sprintf(`{"reason":"%s"}`, reason),
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	})
@@ -2931,6 +3000,13 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	_ = decodeJSON(r, &req)
+	if req.Reason == "" {
+		req.Reason = "admin offboarding"
+	}
 
 	// 1. Mark user as offboarded + record date
 	s.db.Model(&models.User{}).Where("id = ?", id).Updates(map[string]interface{}{
@@ -2971,7 +3047,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		Action:         "offboard_user",
 		ResourceType:   "user",
 		ResourceID:     id,
-		Details:        "offboarded with session termination + harness revocation",
+		Details:        fmt.Sprintf(`{"reason":"%s"}`, req.Reason),
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	})

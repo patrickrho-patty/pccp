@@ -1,121 +1,102 @@
-import { useState, useEffect, Fragment } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
-import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
+import { useServerTable, buildQuery, ServerQuery } from '../hooks/useServerTable'
+import { useFavorites, FavoriteStar } from '../hooks/useFavorites'
+import { StatCard } from '../components/StatCard'
+import { EntitySelect } from '../components/EntitySelect'
+import { Modal, ModalFooter } from '../components/Modal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import EmptyState from '../components/EmptyState'
+import { ResponsiveTable, Column } from '../components/ResponsiveTable'
 import { exportCSV } from '../utils/csv'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
 import { useRowNav } from '../hooks/useRowNav'
 
-const FILTER_CONFIG: FilterConfig = {
-  searchFields: ['name', 'name_ko', 'email', 'auth_method', 'title'],
-  searchPlaceholder: '이름, 이메일, 인증 방식, 직함으로 검색...',
-  dropdowns: [
-    {
-      key: 'auth_method',
-      label: '인증',
-      options: [
-        { value: 'local', label: 'Local' },
-        { value: 'oidc', label: 'OIDC' },
-        { value: 'saml', label: 'SAML' },
-        { value: 'ldap', label: 'LDAP' },
-        { value: 'scim', label: 'SCIM' },
-      ],
-    },
-    {
-      key: 'status',
-      label: '상태',
-      options: [
-        { value: 'active', label: '활성' },
-        { value: 'suspended', label: '정지' },
-        { value: 'offboarded', label: '퇴사' },
-      ],
-    },
-  ],
-}
+// Users page (web/01 plan): managed developer population — governed
+// subjects, NOT console operators. Server-side list (B3), business-unit
+// picker (A1), harness binding (A2), enrollment codes (A3), seats (A4),
+// structured contractors (A5), audit + reasons (B1), offboard workflow
+// (B2), detail links (B4), entitlements (B5), usage (B6), SCIM/CSV (B7),
+// SSO status (B8).
 
 const AUTH_METHODS = [
-  { value: 'local', label: 'Local (로컬)' },
+  { value: 'local', label: 'Local' },
   { value: 'oidc', label: 'OIDC' },
   { value: 'saml', label: 'SAML 2.0' },
   { value: 'ldap', label: 'LDAP / AD' },
   { value: 'scim', label: 'SCIM' },
 ]
 
+const STATUS_OPTIONS = [
+  { value: 'active', label: '활성' },
+  { value: 'suspended', label: '정지' },
+  { value: 'offboarded', label: '퇴사' },
+]
+
+const STATUS_KO: Record<string, string> = {
+  active: '활성', suspended: '정지', offboarded: '퇴사',
+}
+
+const STATUS_BADGE: Record<string, string> = {
+  active: 'bg-green-50 text-green-700 border-green-200',
+  suspended: 'bg-amber-50 text-amber-700 border-amber-200',
+  offboarded: 'bg-gray-100 text-gray-500 border-gray-200',
+}
+
+function initials(name: string) {
+  return (name || '?').slice(0, 2).toUpperCase()
+}
+
 export default function Users() {
   const confirm = useConfirm()
-  const [users, setUsers] = useState<any[]>([])
+  const { favorites, sortPinnedFirst } = useFavorites('users')
+
+  const fetchUsers = (q: ServerQuery) =>
+    api.listUsersPaged(buildQuery(q)).then(res => {
+      if (Array.isArray(res)) return res
+      return { data: res.data ?? [], total: res.total ?? 0, page: res.page, size: res.size }
+    })
+
+  const table = useServerTable<any>(fetchUsers, {
+    size: 25,
+    sortFields: ['name', 'name_ko', 'email', 'last_login'],
+  })
+
+  const [businessUnits, setBusinessUnits] = useState<any[]>([])
+  const [roles, setRoles] = useState<any[]>([])
+  const [seatUsage, setSeatUsage] = useState<any>(null)
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [filters, setFilters] = useState({
-    search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string>,
-  })
-  const [page, setPage] = useState(1)
-  const pageSize = 25
-  const [sessions, setSessions] = useState<any[]>([])
-  const [harnesses, setHarnesses] = useState<any[]>([])
-  const [businessUnits, setBusinessUnits] = useState<any[]>([])
-  const [org, setOrg] = useState<any>(null)
-  const [expandedUserId, setExpandedUserId] = useState<string | null>(null)
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [offboardTarget, setOffboardTarget] = useState<any>(null)
   const [form, setForm] = useState({
-    email: '', name: '', name_ko: '', title: '', auth_method: 'local', business_unit_id: '',
+    email: '', name: '', name_ko: '', title: '', auth_method: 'local', business_unit_id: '', employee_id: '',
   })
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [reasonTarget, setReasonTarget] = useState<{ id: string; action: 'suspend' | 'offboard' } | null>(null)
+  const [reasonText, setReasonText] = useState('')
+  const [enrollTarget, setEnrollTarget] = useState<any>(null)
+  const [enrollCode, setEnrollCode] = useState<{ code: string; expires_at: string } | null>(null)
+  const [bulkUnitOpen, setBulkUnitOpen] = useState(false)
+  const [bulkUnitId, setBulkUnitId] = useState('')
+  const [importOpen, setImportOpen] = useState(false)
+  const [importResult, setImportResult] = useState<any>(null)
+  const [importApplying, setImportApplying] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
-  const load = () => {
-    api.listUsers().then(data => setUsers(Array.isArray(data) ? data : []))
-    api.listSessions().then(data => setSessions(Array.isArray(data) ? data : []))
-    api.listHarnesses().then(data => setHarnesses(Array.isArray(data) ? data : []))
-    api.listBusinessUnits().then(data => setBusinessUnits(Array.isArray(data) ? data : []))
-    api.listOrganizations().then(data => setOrg(Array.isArray(data) && data[0] ? data[0] : null))
-  }
-  useEffect(() => { load() }, [])
-
-  const filtered = useFilteredData(users, filters, FILTER_CONFIG)
-  const paged = filtered.slice((page - 1) * pageSize, page * pageSize)
-  const { selectedIndex } = useRowNav(paged.length, (i) => setExpandedUserId(expandedUserId === paged[i].id ? null : paged[i].id))
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault()
-    try {
-      await api.createUser({ ...form, business_unit_id: form.business_unit_id })
-      setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local' })
-      setShowForm(false)
-      showToast('사용자 생성됨', 'success')
-      load()
-    } catch (err: any) { showToast('생성 실패: ' + err.message) }
-  }
-
-  const handleEdit = (user: any) => {
-    setEditingId(user.id)
-    setForm({
-      email: user.email || '', name: user.name || '', name_ko: user.name_ko || '',
-      title: user.title || '', auth_method: user.auth_method || 'local',
-      business_unit_id: user.business_unit_id || '',
+  const loadMeta = () => {
+    api.listBusinessUnits().then(d => setBusinessUnits(Array.isArray(d) ? d : []))
+    api.listRoles().then(d => setRoles(Array.isArray(d) ? d : []))
+    api.listOrganizations().then(d => {
+      const org = Array.isArray(d) && d[0] ? d[0] : null
+      if (org?.id) api.getSeatUsage?.(org.id).then(s => setSeatUsage(s)).catch(() => setSeatUsage(null))
     })
-    setShowForm(true)
   }
+  useEffect(() => { loadMeta() }, [])
 
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!editingId) return
-    try {
-      await api.updateUser(editingId, { ...form, business_unit_id: form.business_unit_id })
-      setEditingId(null)
-      setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local' })
-      setShowForm(false)
-      showToast('수정 완료', 'success')
-      load()
-    } catch (err: any) { showToast('수정 실패: ' + err.message) }
-  }
-
-  const handleStatusChange = async (user: any, newStatus: string) => {
-    try { await api.updateUser(user.id, { status: newStatus }); load() }
-    catch (err: any) { showToast('상태 변경 실패: ' + err.message) }
-  }
+  const rows = sortPinnedFirst(table.rows, u => u.id)
+  const { selectedIndex } = useRowNav(rows.length, (i) => setExpandedId(expandedId === rows[i].id ? null : rows[i].id))
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => {
@@ -126,243 +107,408 @@ export default function Users() {
     })
   }
 
-  const handleBulkSuspend = async () => {
-    if (!await confirm({ title: '확인', message: selectedIds.size + '명을 정지하시겠습니까?', danger: true })) return
-    for (const id of selectedIds) {
-      try { await api.updateUser(id, { status: 'suspended' }) } catch {}
+  const openCreate = () => {
+    setEditingId(null)
+    setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local', business_unit_id: '', employee_id: '' })
+    setShowForm(true)
+  }
+  const openEdit = (u: any) => {
+    setEditingId(u.id)
+    setForm({
+      email: u.email || '', name: u.name || '', name_ko: u.name_ko || '', title: u.title || '',
+      auth_method: u.auth_method || 'local', business_unit_id: u.business_unit_id || '', employee_id: u.employee_id || '',
+    })
+    setShowForm(true)
+  }
+
+  const saveForm = async () => {
+    try {
+      if (editingId) {
+        await api.updateUser(editingId, form)
+        showToast('저장 완료 · Saved', 'success')
+      } else {
+        await api.createUser(form)
+        showToast('개발자 생성 완료 · Created', 'success')
+      }
+      setShowForm(false)
+      table.reload()
+      loadMeta()
+    } catch (e: any) {
+      showToast(e?.message || '저장 실패', 'error')
     }
-    setSelectedIds(new Set())
-    load()
   }
 
-  const handleBulkOffboard = async () => {
-    if (!await confirm({ title: '확인', message: selectedIds.size + '명을 퇴사 처리하시겠습니까?', danger: true })) return
-    for (const id of selectedIds) {
-      try { await api.deleteUser(id) } catch {}
+  const runReasonAction = async () => {
+    if (!reasonTarget) return
+    try {
+      if (reasonTarget.action === 'offboard') {
+        await api.offboardUser(reasonTarget.id, reasonText || '관리자 퇴사 처리')
+      } else {
+        await api.updateUser(reasonTarget.id, { status: 'suspended', reason: reasonText || '관리자 정지' })
+      }
+      showToast('완료 · Done', 'success')
+      setReasonTarget(null)
+      setReasonText('')
+      table.reload()
+    } catch (e: any) {
+      showToast(e?.message || '실패', 'error')
     }
-    setSelectedIds(new Set())
-    load()
   }
 
-  const handleDelete = async (user: any) => {
-    if (!await confirm({ title: '퇴사 처리', message: `${user.name_ko || user.name}을(를) 퇴사 처리하시겠습니까?`, danger: true })) return
-    try { await api.deleteUser(user.id); load() }
-    catch (err: any) { showToast('삭제 실패: ' + err.message) }
+  const issueEnrollment = async (u: any) => {
+    try {
+      const res = await api.issueEnrollmentCode(u.id)
+      setEnrollCode(typeof res === 'string' ? { code: res, expires_at: '' } : res)
+      setEnrollTarget(u)
+    } catch (e: any) {
+      showToast(e?.message || '발급 실패', 'error')
+    }
   }
 
-  const getUserSessions = (userId: string) => sessions.filter(s => s.user_id === userId)
-  const getUserHarnesses = (userId: string) => {
-    // Harnesses don't have user_id directly, but we can match via sessions
-    const userSessionHarnessIds = sessions.filter(s => s.user_id === userId).map(s => s.harness_id)
-    return harnesses.filter(h => userSessionHarnessIds.includes(h.harness_id))
+  const bulkAssignUnit = async () => {
+    try {
+      for (const id of selectedIds) {
+        await api.updateUser(id, { business_unit_id: bulkUnitId })
+      }
+      showToast(`부서 일괄 배정 완료 (${selectedIds.size})`, 'success')
+      setBulkUnitOpen(false)
+      setSelectedIds(new Set())
+      table.reload()
+    } catch (e: any) {
+      showToast(e?.message || '실패', 'error')
+    }
   }
-  const formatRelative = (ts: string) => {
-    if (!ts) return '-'
-    const d = new Date(ts)
-    const diff = Date.now() - d.getTime()
-    const mins = Math.floor(diff / 60000)
-    if (mins < 1) return '방금 전'
-    if (mins < 60) return mins + '분 전'
-    const hours = Math.floor(mins / 60)
-    if (hours < 24) return hours + '시간 전'
-    return d.toLocaleDateString('ko-KR')
+
+  const runImport = async (apply: boolean) => {
+    const file = fileRef.current?.files?.[0]
+    if (!file) {
+      showToast('CSV 파일을 선택하세요', 'error')
+      return
+    }
+    setImportApplying(true)
+    try {
+      const res = await api.importUsersCSV(file, apply)
+      setImportResult(res)
+      if (apply) {
+        showToast(`가져오기 완료 (${res.imported}명)`, 'success')
+        table.reload()
+      }
+    } catch (e: any) {
+      showToast(e?.message || '가져오기 실패', 'error')
+    } finally {
+      setImportApplying(false)
+    }
   }
-  const statusBadge = (s: string) => {
-    const map: Record<string, string> = { active: 'badge-green', suspended: 'badge-yellow', offboarded: 'badge-gray' }
-    return map[s] || 'badge-gray'
+
+  const exportSelected = () => {
+    const sel = selectedIds.size ? rows.filter(r => selectedIds.has(r.id)) : rows
+    exportCSV(sel.map(u => ({
+      email: u.email, name: u.name, name_ko: u.name_ko, title: u.title,
+      auth_method: u.auth_method, status: u.status, employee_id: u.employee_id || '',
+      business_unit_id: u.business_unit_id || '',
+    })), 'users.csv')
   }
-  const statusLabel = (s: string) => {
-    const map: Record<string, string> = { active: '활성', suspended: '정지', offboarded: '퇴사' }
-    return map[s] || s
-  }
+
+  const columns: Column<any>[] = [
+    {
+      key: 'name', header: '개발자',
+      render: (u) => (
+        <div className="flex items-center gap-2">
+          <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold ${u.status === 'offboarded' ? 'bg-gray-200 text-gray-500' : 'bg-blue-100 text-blue-700'}`}>
+            {initials(u.name_ko || u.name)}
+          </div>
+          <div className="min-w-0">
+            <Link to={`/users/${u.id}`} className="text-xs font-semibold hover:underline text-gray-800 truncate block">
+              {u.name_ko || u.name} <span className="text-gray-400 font-normal">({u.name})</span>
+            </Link>
+            <div className="text-[10px] text-gray-400 truncate">{u.email}</div>
+          </div>
+          {u.contractor_info && <span title="계약직" className="text-[10px] px-1 rounded bg-purple-50 text-purple-600 border border-purple-200">계약</span>}
+        </div>
+      ),
+      cardLabel: '개발자',
+    },
+    {
+      key: 'auth', header: '인증',
+      render: (u) => (
+        <div className="text-[11px]">
+          <div className="text-gray-600">{(AUTH_METHODS.find(m => m.value === u.auth_method) || {} as any).label || u.auth_method}</div>
+          {u.auth_method !== 'local' && u.auth_method && (
+            <div className={u.external_id ? 'text-green-600' : 'text-amber-600'}>
+              {u.external_id ? 'OIDC 연결됨' : '미연결'}
+            </div>
+          )}
+          {u.last_login_at && <div className="text-gray-400">최근 로그인 {u.last_login_at.slice(0, 10)}</div>}
+        </div>
+      ),
+      cardLabel: '인증',
+    },
+    {
+      key: 'unit', header: '부서',
+      render: (u) => {
+        const bu = businessUnits.find(b => b.id === u.business_unit_id)
+        return <span className="text-[11px] text-gray-600">{bu ? bu.name_ko || bu.name : (u.business_unit_id ? u.business_unit_id.slice(0, 8) : '—')}</span>
+      },
+      cardLabel: '부서',
+    },
+    {
+      key: 'title', header: '직함',
+      render: (u) => <span className="text-[11px] text-gray-600">{u.title || u.title_ko || '—'}</span>,
+      cardLabel: '직함',
+    },
+    {
+      key: 'status', header: '상태',
+      render: (u) => (
+        <span className={`text-[10px] px-2 py-0.5 rounded-full border ${STATUS_BADGE[u.status] || STATUS_BADGE.active}`}>
+          {STATUS_KO[u.status] || u.status}
+        </span>
+      ),
+      cardLabel: '상태',
+    },
+    {
+      key: 'actions', header: '',
+      render: (u) => (
+        <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+          <FavoriteStar entity="users" id={u.id} />
+          <button className="text-[10px] px-2 py-1 rounded hover:bg-blue-50 text-blue-600" title="초대 코드 발급"
+            onClick={() => issueEnrollment(u)}>초대 코드</button>
+          {u.status === 'active' && (
+            <button className="text-[10px] px-2 py-1 rounded hover:bg-amber-50 text-amber-600"
+              onClick={() => { setReasonTarget({ id: u.id, action: 'suspend' }); setReasonText('') }}>정지</button>
+          )}
+          {u.status !== 'offboarded' && (
+            <button className="text-[10px] px-2 py-1 rounded hover:bg-red-50 text-red-600"
+              onClick={() => { setReasonTarget({ id: u.id, action: 'offboard' }); setReasonText('') }}>퇴사</button>
+          )}
+          <button className="text-[10px] px-2 py-1 rounded hover:bg-gray-100 text-gray-600"
+            onClick={() => openEdit(u)}>수정</button>
+        </div>
+      ),
+      cardLabel: '작업',
+    },
+  ]
+
+  const seats = seatUsage || { users: 0, max_users: 0, harnesses: 0, max_harnesses: 0 }
 
   return (
-    <div>
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">사용자 <span className="text-gray-400 text-lg font-normal">Users</span></h1>
-          {org && <span className="text-xs text-gray-400 ml-4">{users.filter(u => u.status !== 'offboarded').length}/{org.max_user_seats || '∞'} 좌석</span>}
-        <button onClick={() => {
-          if (editingId) { setEditingId(null); setForm({ email: '', name: '', name_ko: '', title: '', auth_method: 'local' }) }
-          setShowForm(!showForm)
-        }} className="btn-primary">
-          {showForm ? '취소' : '+ 사용자 추가'}
-        </button>
-        <button onClick={() => exportCSV(`users_${new Date().toISOString().slice(0,10)}.csv`, ['이메일', '이름', '한글명', '직함', '인증방식', '부서', '상태', '등록일'], users.map(u => [u.email, u.name, u.name_ko, u.title, u.auth_method, u.business_unit_id, u.status, u.created_at?.slice(0,10)]))} className="btn-sm btn-secondary ml-2">📥 CSV 내보내기</button>
+    <div className="p-6 space-y-4 page-enter">
+      {/* Seats (A4) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard label="개발자" value={seats.users ?? table.total} accent="blue"
+          to="/users" sub={seats.max_users ? `좌석 ${seats.max_users}` : undefined} />
+        <StatCard label="하네스" value={seats.harnesses ?? '—'} accent="green"
+          to="/harnesses" sub={seats.max_harnesses ? `좌석 ${seats.max_harnesses}` : undefined} />
+        <StatCard label="활성 세션" value={seats.active_sessions ?? '—'} accent="purple" to="/sessions" />
+        <StatCard label="계약직" value={rows.filter(u => !!u.contractor_info).length} accent="orange"
+          to="/users" sub="구조화된 계약 프로필" />
       </div>
 
-      {showForm && (
-        <form onSubmit={editingId ? handleUpdate : handleCreate} className="card mb-6 space-y-4">
-          <h2 className="text-sm font-semibold text-gray-700">
-            {editingId ? '사용자 수정 · Edit User' : '새 사용자 · New User'}
-          </h2>
-          <div className="grid grid-cols-2 gap-4">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <h2 className="text-sm font-bold">개발자 · Users</h2>
+          <p className="text-[11px] text-gray-400">관리 대상 개발자 (하네스 사용자) — 콘솔 운영자와 별개입니다.</p>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <button className="btn-sm btn-secondary" onClick={() => setImportOpen(true)}>CSV 가져오기</button>
+          <button className="btn-sm btn-secondary" onClick={exportSelected}>내보내기</button>
+          {selectedIds.size > 0 && (
+            <>
+              <button className="btn-sm btn-secondary" onClick={() => setBulkUnitOpen(true)}>
+                부서 일괄 배정 ({selectedIds.size})
+              </button>
+              <button className="btn-sm btn-danger"
+                onClick={() => { setReasonTarget({ id: '__bulk__', action: 'suspend' }); setReasonText('') }}>
+                일괄 정지 ({selectedIds.size})
+              </button>
+            </>
+          )}
+          <button className="btn-sm btn-primary" onClick={openCreate}>+ 새 개발자</button>
+        </div>
+      </div>
+
+      {/* Filters + sort (server-side) */}
+      <div className="flex gap-2 flex-wrap items-center">
+        <input
+          className="input text-xs w-56"
+          placeholder="이름 / 이메일 / 사번 검색..."
+          value={table.search}
+          onChange={e => table.setSearch(e.target.value)}
+        />
+        <select className="input text-xs w-28" value={table.filters.status || ''}
+          onChange={e => table.setFilter('status', e.target.value)}>
+          <option value="">전체 상태</option>
+          {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
+        <select className="input text-xs w-28" value={table.filters.auth_method || ''}
+          onChange={e => table.setFilter('auth_method', e.target.value)}>
+          <option value="">전체 인증</option>
+          {AUTH_METHODS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
+        <select className="input text-xs w-32" value={table.filters.business_unit || ''}
+          onChange={e => table.setFilter('business_unit', e.target.value)}>
+          <option value="">전체 부서</option>
+          {businessUnits.map(b => <option key={b.id} value={b.id}>{b.name_ko || b.name}</option>)}
+        </select>
+        <select className="input text-xs w-32" value={table.filters.role || ''}
+          onChange={e => table.setFilter('role', e.target.value)}>
+          <option value="">전체 권한</option>
+          {roles.map(r => <option key={r.id} value={r.id}>{r.name_ko || r.name}</option>)}
+        </select>
+        <select className="input text-xs w-28" value={table.sort}
+          onChange={e => table.setSort(e.target.value)}>
+          <option value="">정렬: 최신순</option>
+          <option value="name">이름</option>
+          <option value="name_ko">한글 이름</option>
+          <option value="email">이메일</option>
+          <option value="last_login">최근 로그인</option>
+        </select>
+        {table.loading && <span className="text-[10px] text-gray-400 animate-pulse">로딩...</span>}
+        {table.error && <span className="text-[10px] text-red-500">{table.error}</span>}
+      </div>
+
+      <ResponsiveTable
+        columns={columns}
+        rows={rows}
+        rowKey={u => u.id}
+        expand={(u) => (
+          <div className="px-3 py-2 text-[11px] text-gray-500 space-y-1">
+            <div>사번: {u.employee_id || '—'} · 권한: {roles.filter(r => u.role_ids?.includes(r.id)).map(r => r.name_ko || r.name).join(', ') || '—'}</div>
+            <div className="flex gap-2">
+              <Link className="text-blue-600 hover:underline" to={`/users/${u.id}`}>상세 페이지</Link>
+              <Link className="text-blue-600 hover:underline" to={`/users/${u.id}?tab=usage`}>사용량</Link>
+              <Link className="text-blue-600 hover:underline" to={`/users/${u.id}?tab=harnesses`}>하네스</Link>
+            </div>
+          </div>
+        )}
+        empty={<EmptyState icon="👤" title="첫 개발자를 초대하세요"
+          message="초대 코드로 하네스를 등록하거나 CSV로 일괄 가져올 수 있습니다."
+          action={{ label: '+ 새 개발자', onClick: openCreate }} />}
+      />
+
+      {/* Pagination */}
+      {table.total > table.size && (
+        <div className="flex items-center justify-between text-[11px] text-gray-500">
+          <span>총 {table.total}명</span>
+          <div className="flex gap-1">
+            <button className="btn-sm btn-secondary" disabled={table.page <= 1} onClick={() => table.setPage(p => Math.max(1, p - 1))}>이전</button>
+            <span className="px-2 py-1">{table.page} / {Math.ceil(table.total / table.size)}</span>
+            <button className="btn-sm btn-secondary" disabled={table.page >= Math.ceil(table.total / table.size)}
+              onClick={() => table.setPage(p => p + 1)}>다음</button>
+          </div>
+        </div>
+      )}
+
+      {/* Create/Edit form (A1 business-unit picker) */}
+      <Modal open={showForm} title={editingId ? '개발자 수정' : '새 개발자'} onClose={() => setShowForm(false)}
+        footer={<ModalFooter onCancel={() => setShowForm(false)} onConfirm={saveForm} confirmLabel={editingId ? '저장' : '생성'} />}>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="label">이메일 · Email</label>
-              <input className="input" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required />
+              <label className="text-[10px] text-gray-500">이름</label>
+              <input className="input text-xs w-full" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
             </div>
             <div>
-              <label className="label">이름 · Name</label>
-              <input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required />
+              <label className="text-[10px] text-gray-500">한글 이름</label>
+              <input className="input text-xs w-full" value={form.name_ko} onChange={e => setForm({ ...form, name_ko: e.target.value })} />
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500">이메일</label>
+            <input className="input text-xs w-full" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-gray-500">직함</label>
+              <input className="input text-xs w-full" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} />
             </div>
             <div>
-              <label className="label">한글 이름 · Korean Name</label>
-              <input className="input" value={form.name_ko} onChange={e => setForm({ ...form, name_ko: e.target.value })} placeholder="김개발" />
+              <label className="text-[10px] text-gray-500">사번</label>
+              <input className="input text-xs w-full" value={form.employee_id} onChange={e => setForm({ ...form, employee_id: e.target.value })} />
             </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="label">직함 · Title</label>
-              <input className="input" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="시니어 개발자" />
-            </div>
-            <div>
-              <label className="label">인증 방식 · Auth Method</label>
-              <select className="input" value={form.auth_method} onChange={e => setForm({ ...form, auth_method: e.target.value })}>
+              <label className="text-[10px] text-gray-500">인증 방식</label>
+              <select className="input text-xs w-full" value={form.auth_method} onChange={e => setForm({ ...form, auth_method: e.target.value })}>
                 {AUTH_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
               </select>
             </div>
             <div>
-              <label className="label">부서 · Department</label>
-              <select className="input" value={form.business_unit_id} onChange={e => setForm({ ...form, business_unit_id: e.target.value })}>
-                <option value="">선택 안함</option>
-                {businessUnits.length > 0
-                  ? businessUnits.map(bu => <option key={bu.id} value={bu.id}>{bu.name_ko || bu.name}</option>)
-                  : <>
-                    <option value="dev">개발팀 · Development</option>
-                    <option value="qa">QA팀 · Quality Assurance</option>
-                    <option value="devops">데브옵스팀 · DevOps</option>
-                    <option value="security">보안팀 · Security</option>
-                    <option value="data">데이터팀 · Data</option>
-                    <option value="infra">인프라팀 · Infrastructure</option>
-                    <option value="product">프로덕트팀 · Product</option>
-                    <option value="exec">경영진 · Executive</option>
-                  </>}
-              </select>
+              <label className="text-[10px] text-gray-500">부서</label>
+              <EntitySelect entity="business_unit" value={form.business_unit_id}
+                onChange={v => setForm({ ...form, business_unit_id: v })} />
             </div>
           </div>
-          <button type="submit" className="btn-primary">{editingId ? '수정 · Save' : '생성 · Create'}</button>
-        </form>
-      )}
-
-      {selectedIds.size > 0 && (
-        <div className="flex items-center gap-3 mb-4 p-3 bg-blue-50 rounded-lg">
-          <span className="text-sm font-medium text-blue-700">{selectedIds.size}명 선택됨</span>
-          <button onClick={handleBulkSuspend} className="btn-sm btn-secondary">일괄 정지</button>
-          <button onClick={handleBulkOffboard} className="btn-sm btn-danger">일괄 퇴사</button>
-          <button onClick={() => setSelectedIds(new Set())} className="btn-sm btn-secondary">취소</button>
         </div>
-      )}
+      </Modal>
 
-      <FilterBar config={FILTER_CONFIG} onChange={setFilters} />
+      {/* Reason modal (B1) */}
+      <Modal open={!!reasonTarget} title={reasonTarget?.action === 'offboard' ? '퇴사 처리' : '계정 정지'}
+        onClose={() => setReasonTarget(null)}
+        footer={<ModalFooter onCancel={() => setReasonTarget(null)} onConfirm={runReasonAction}
+          confirmLabel={reasonTarget?.action === 'offboard' ? '퇴사 처리' : '정지'} danger />}>
+        <div className="space-y-2">
+          <p className="text-xs text-gray-500">
+            {reasonTarget?.action === 'offboard'
+              ? '퇴사 처리 시 모든 세션이 종료되고 하네스 바인딩이 해제됩니다. 사유를 남겨주세요.'
+              : '계정을 정지하면 해당 개발자의 하네스 요청이 거부됩니다. 사유를 남겨주세요.'}
+          </p>
+          <textarea className="input text-xs w-full" rows={3} placeholder="사유 (감사 로그에 기록됩니다)"
+            value={reasonText} onChange={e => setReasonText(e.target.value)} />
+        </div>
+      </Modal>
 
-      <div className="card">
-        <table className="w-full overflow-x-auto block">
-          <thead>
-            <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
-              <th className="pb-3 w-8"><input type="checkbox" onChange={(e) => { if (e.target.checked) setSelectedIds(new Set(paged.map(u => u.id))); else setSelectedIds(new Set()) }} /></th><th className="pb-3">이름 · Name</th>
-              <th className="pb-3">이메일</th>
-              <th className="pb-3">직함</th>
-              <th className="pb-3">인증</th>
-              <th className="pb-3">상태</th>
-              <th className="pb-3 text-right">작업</th>
-            </tr>
-          </thead>
-          <tbody>
-            {paged.length === 0 ? (
-              <tr><td colSpan={9} className="py-8">
-                <EmptyState
-                  icon={filters.search ? '🔍' : '👥'}
-                  title={filters.search ? '검색 결과가 없습니다' : '등록된 사용자가 없습니다'}
-                  message={filters.search ? '다른 검색어로 시도해보세요' : '+ 사용자 추가 버튼으로 첫 사용자를 등록하세요'}
-                />
-              </td></tr>
-            ) : paged.map(u => (
-              <Fragment key={u.id}>
-                <tr key={u.id} className={`border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer ${selectedIndex === paged.indexOf(u) ? 'bg-blue-50 ring-1 ring-blue-300' : ''}`} onClick={() => setExpandedUserId(expandedUserId === u.id ? null : u.id)}>
-                <td className="py-3" onClick={e => e.stopPropagation()}>
-                  <Link to={`/users/${u.id}`} className="font-medium text-sm text-blue-600 hover:underline">{u.name_ko || u.name}</Link>
-                  <div className="text-xs text-gray-400">{u.name}</div>
-                </td>
-                <td className="py-3 text-sm">{u.email}</td>
-                <td className="py-3 text-sm text-gray-600">{u.title || '-'}</td>
-                <td className="py-3" onClick={e => e.stopPropagation()}><span className="badge-gray">{u.auth_method}</span></td>
-                <td className="py-3" onClick={e => e.stopPropagation()}><span className={statusBadge(u.status)}>{statusLabel(u.status)}</span></td>
-                <td className="py-3" onClick={e => e.stopPropagation()}>
-                  <div className="flex gap-2 justify-end">
-                    <button onClick={() => handleEdit(u)} className="text-blue-600 text-xs hover:underline">수정</button>
-                    {u.status === 'active' && <button onClick={() => handleStatusChange(u, 'suspended')} className="text-yellow-600 text-xs hover:underline">정지</button>}
-                    {u.status === 'suspended' && <button onClick={() => handleStatusChange(u, 'active')} className="text-green-600 text-xs hover:underline">활성화</button>}
-                    {u.status !== 'offboarded' && <button onClick={() => setOffboardTarget(u)} className="text-red-600 text-xs hover:underline">퇴사</button>}
+      {/* Enrollment code result (A3) */}
+      <Modal open={!!enrollTarget} title="초대 코드 발급" onClose={() => { setEnrollTarget(null); setEnrollCode(null) }}
+        footer={<ModalFooter onCancel={() => { setEnrollTarget(null); setEnrollCode(null) }} onConfirm={() => { setEnrollTarget(null); setEnrollCode(null) }} confirmLabel="닫기" />}>
+        <div className="space-y-2">
+          <p className="text-xs text-gray-500">{enrollTarget?.name_ko || enrollTarget?.name} ({enrollTarget?.email}) 님의 1회용 등록 코드입니다.</p>
+          {enrollCode ? (
+            <>
+              <div className="font-mono text-lg text-center py-3 bg-gray-50 rounded-lg tracking-widest">{enrollCode.code}</div>
+              {enrollCode.expires_at && <p className="text-[10px] text-gray-400 text-center">만료: {enrollCode.expires_at}</p>}
+            </>
+          ) : (
+            <div className="text-xs text-gray-400 text-center py-3">발급 중...</div>
+          )}
+        </div>
+      </Modal>
+
+      {/* Bulk business-unit assign */}
+      <Modal open={bulkUnitOpen} title={`부서 일괄 배정 (${selectedIds.size}명)`} onClose={() => setBulkUnitOpen(false)}
+        footer={<ModalFooter onCancel={() => setBulkUnitOpen(false)} onConfirm={bulkAssignUnit} confirmLabel="배정" />}>
+        <EntitySelect entity="business_unit" value={bulkUnitId} onChange={setBulkUnitId} />
+      </Modal>
+
+      {/* CSV import (B7) */}
+      <Modal open={importOpen} title="CSV 가져오기" onClose={() => { setImportOpen(false); setImportResult(null) }}
+        footer={
+          <div className="flex gap-2 justify-end">
+            <button className="btn-sm btn-secondary" onClick={() => { setImportOpen(false); setImportResult(null) }}>닫기</button>
+            <button className="btn-sm btn-secondary" disabled={importApplying} onClick={() => runImport(false)}>미리보기</button>
+            <button className="btn-sm btn-primary" disabled={importApplying || !importResult} onClick={() => runImport(true)}>적용</button>
+          </div>
+        }>
+        <div className="space-y-2">
+          <p className="text-[11px] text-gray-500">형식: <code className="bg-gray-100 px-1">email,name</code> 헤더의 CSV. 동일 이메일은 건너뜁니다 (SCIM 멱등).</p>
+          <input ref={fileRef} type="file" accept=".csv,text/csv" className="text-xs" />
+          {importResult && (
+            <div className="text-[11px] space-y-1">
+              <div className="font-semibold">
+                {importResult.dry_run ? '미리보기' : '적용 완료'} — {importResult.imported}건 {importResult.dry_run ? '가져올 예정' : '가져옴'}
+              </div>
+              <div className="max-h-40 overflow-auto">
+                {importResult.rows?.map((r: any) => (
+                  <div key={r.line} className="flex justify-between">
+                    <span>#{r.line} {r.email} {r.name}</span>
+                    <span className={r.error ? 'text-red-500' : 'text-gray-400'}>{r.error || r.status}</span>
                   </div>
-                </td>
-                </tr>
-                {expandedUserId === u.id && (
-                    <tr className="bg-gray-50">
-                      <td colSpan={9} className="p-4">
-                        <div className="grid grid-cols-3 gap-6">
-                          {/* Sessions */}
-                          <div>
-                            <div className="text-xs font-semibold text-gray-600 mb-2">세션 이력 ({getUserSessions(u.id).length})</div>
-                            {getUserSessions(u.id).length === 0 ? (
-                              <p className="text-xs text-gray-400">세션 없음</p>
-                            ) : (
-                              <div className="space-y-1">
-                                {getUserSessions(u.id).slice(0, 5).map(s => (
-                                  <div key={s.id} className="text-xs">
-                                    <span className="font-medium">{s.title || '제목 없음'}</span>
-                                    <span className="text-gray-400 ml-2">{s.model_class}</span>
-                                    <span className={`ml-2 ${s.status === 'active' ? 'text-green-600' : 'text-gray-400'}`}>{s.status}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          {/* Harnesses */}
-                          <div>
-                            <div className="text-xs font-semibold text-gray-600 mb-2">하네스 ({getUserHarnesses(u.id).length})</div>
-                            {getUserHarnesses(u.id).length === 0 ? (
-                              <p className="text-xs text-gray-400">하네스 없음</p>
-                            ) : (
-                              <div className="space-y-1">
-                                {getUserHarnesses(u.id).map(h => (
-                                  <div key={h.id} className="text-xs">
-                                    <span className="font-mono">{h.harness_id}</span>
-                                    <span className={`ml-2 ${h.status === 'active' || h.status === 'enrolled' ? 'text-green-600' : 'text-gray-400'}`}>{h.status}</span>
-                                    <span className="text-gray-400 ml-1">v{h.binary_version}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          {/* Quick Info */}
-                          <div>
-                            <div className="text-xs font-semibold text-gray-600 mb-2">사용자 정보</div>
-                            <div className="space-y-1 text-xs text-gray-500">
-                              <div>인증: <span className="font-medium text-gray-700">{u.auth_method}</span></div>
-                              <div>로케일: {u.locale || 'ko-KR'}</div>
-                              <div>타임존: {u.timezone || 'Asia/Seoul'}</div>
-                              <div>등록: {u.created_at?.slice(0, 10)}</div>
-                              {u.last_login_at && <div>마지막 로그인: {formatRelative(u.last_login_at)}</div>}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-              </Fragment>
                 ))}
-          </tbody>
-        </table>
-      </div>
-
-      <Pagination total={filtered.length} page={page} pageSize={pageSize} onPageChange={setPage} />
-
-      <ConfirmDialog
-        open={!!offboardTarget}
-        title="퇴사 처리 · Offboard User"
-        message={offboardTarget ? `${offboardTarget.name_ko || offboardTarget.name}을(를) 퇴사 처리하시겠습니까? 활성 세션이 종료되고 하네스가 폐기됩니다.` : ''}
-        confirmLabel="퇴사 실행"
-        danger
-        onConfirm={async () => { if (offboardTarget) { try { await api.deleteUser(offboardTarget.id); load() } catch {} } setOffboardTarget(null) }}
-        onCancel={() => setOffboardTarget(null)}
-      />
+              </div>
+            </div>
+          )}
+        </div>
+      </Modal>
     </div>
   )
 }

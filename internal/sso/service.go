@@ -502,6 +502,13 @@ func (s *Service) HandleSCIMRequest(w http.ResponseWriter, r *http.Request) {
 			userID = r.URL.Query().Get("userID")
 		}
 		if userID == "" {
+			// Public /scim/v2 mount: /Users/{id} is the trailing segment.
+			segs := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+			if len(segs) >= 2 && segs[len(segs)-2] == "Users" {
+				userID = segs[len(segs)-1]
+			}
+		}
+		if userID == "" {
 			http.Error(w, "userID required", http.StatusBadRequest)
 			return
 		}

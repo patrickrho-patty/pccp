@@ -57,21 +57,52 @@ export const api = {
 
   // Organizations
   listOrganizations: () => request<any[]>('/api/organizations'),
+  getSeatUsage: () => request<any>('/api/organizations/seats'),
   createOrganization: (data: any) =>
     request<any>('/api/organizations', { method: 'POST', body: JSON.stringify(data) }),
 
   // Users
   listUsers: () => request<any[]>('/api/users'),
+  listUsersPaged: (query: string) =>
+    request<{ data: any[]; total: number; page: number; size: number }>(`/api/users?${query}`),
   createUser: (data: any) =>
     request<any>('/api/users', { method: 'POST', body: JSON.stringify(data) }),
   updateUser: (id: string, data: any) =>
     request<any>(`/api/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-  deleteUser: (id: string) =>
-    request<any>(`/api/users/${id}`, { method: 'DELETE' }),
+  deleteUser: (id: string, reason?: string) =>
+    request<any>(`/api/users/${id}`, { method: 'DELETE', body: JSON.stringify({ reason }) }),
+  offboardUser: (id: string, reason: string) =>
+    request<any>(`/api/users/${id}/offboard`, { method: 'POST', body: JSON.stringify({ reason }) }),
   getUser: (id: string) =>
     request<any>(`/api/users/${id}`),
   getUserAudit: (id: string) =>
     request<any[]>(`/api/users/${id}/audit`),
+  getUserHarnesses: (id: string) =>
+    request<any[]>(`/api/users/${id}/harnesses`),
+  grantUserHarness: (id: string, harnessId: string) =>
+    request<any>(`/api/users/${id}/harnesses`, { method: 'POST', body: JSON.stringify({ harness_id: harnessId }) }),
+  revokeUserHarness: (id: string, harnessId: string) =>
+    request<any>(`/api/users/${id}/harnesses/${harnessId}`, { method: 'DELETE' }),
+  getUserUsage: (id: string) =>
+    request<any>(`/api/users/${id}/usage`),
+  importUsersCSV: (file: File, apply: boolean) => {
+    const form = new FormData()
+    form.append('file', file)
+    const token = localStorage.getItem('pccp_token')
+    const headers: Record<string, string> = {}
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    return fetch(`/api/users/import${apply ? '?apply=true' : ''}`, { method: 'POST', headers, body: form })
+      .then(r => r.json())
+  },
+  getUserEntitlements: (id: string) =>
+    request<any>(`/api/users/${id}/entitlements`),
+  putUserEntitlements: (id: string, roles: any[]) =>
+    request<any>(`/api/users/${id}/entitlements`, { method: 'PUT', body: JSON.stringify({ roles }) }),
+  listRoles: () => request<any[]>('/api/roles'),
+  getUserSSOStatus: (id: string) =>
+    request<any>(`/api/users/${id}/sso-status`),
+  putContractor: (id: string, profile: any) =>
+    request<any>(`/api/users/${id}/contractor`, { method: 'PUT', body: JSON.stringify(profile) }),
   getHarnessAudit: (id: string) =>
     request<any[]>(`/api/harnesses/${id}/audit`),
 

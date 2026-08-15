@@ -479,7 +479,13 @@ func (s *Service) defaultForwarder(ctx context.Context, req InferenceRequest, en
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("X-Tenant-ID", req.OrganizationID)
 		httpReq.Header.Set("X-Exchange-ID", req.ExchangeID)
-		if env, err := s.signTrafficEnvelope(req.OrganizationID, req.ExchangeID); err == nil {
+		envUserID := ""
+		s.mu.RLock()
+		if ex, ok := s.exchanges[req.ExchangeID]; ok {
+			envUserID = ex.UserID
+		}
+		s.mu.RUnlock()
+		if env, err := s.signTrafficEnvelope(req.OrganizationID, envUserID, req.ExchangeID); err == nil {
 			raw, _ := json.Marshal(env)
 			httpReq.Header.Set("X-Traffic-Envelope", string(raw))
 		}
@@ -786,6 +792,19 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 		// An unknown session row is not an error here: the DARI
 		// session-governance handshake (lease + epoch binding) is the
 		// authoritative gate; the Session row is the CP-side view.
+
+		// Developer standing gate (web/01 B2): a suspended/offboarded
+		// developer must not keep exchanging through any harness, even
+		// with a live lease.
+		if session.UserID != "" {
+			var dev models.User
+			if err := s.db.Where("id = ?", session.UserID).First(&dev).Error; err == nil {
+				if dev.Status != "active" {
+					s.denyWithoutExchange(req, orgID, "user_"+dev.Status)
+					return nil, nil, fmt.Errorf("relay: developer %s is %s — inference refused", session.UserID, dev.Status)
+				}
+			}
+		}
 	}
 
 	// 2. Resolve the harness + lease (fail-closed) through the
