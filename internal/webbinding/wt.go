@@ -2,48 +2,24 @@ package webbinding
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"math/big"
 	"net"
 	"net/http"
 	"strings"
-	"time"
 
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/webtransport-go"
 )
 
-// selfSignedCert generates a dev certificate for the WT listener.
+// selfSignedCert delegates to the shared dari dev-cert helper.
 func selfSignedCert() (*tls.Certificate, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	cert, err := dari.DevSelfSignedCert("DARI web", []string{"localhost"})
 	if err != nil {
 		return nil, err
 	}
-	tmpl := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{Organization: []string{"DARI web"}},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * 365 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		DNSNames:     []string{"localhost"},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
-	if err != nil {
-		return nil, err
-	}
-	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
+	return &cert, nil
 }
-
-// wt.go is the primary dari.web/1 carrier: WebTransport over HTTP/3.
-// The endpoint upgrades an extended CONNECT with the dari.web/1
-// protocol token and serves the canonical envelope stream. The SAME
-// Server (origin policy, proofs, governance handler) serves the WS
-// fallback — carrier parity is a conformance vector.
 
 // WTServer binds a webbinding.Server to HTTP/3 + WebTransport.
 type WTServer struct {

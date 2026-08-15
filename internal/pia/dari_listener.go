@@ -2,21 +2,13 @@ package pia
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"log"
-	"math/big"
 	"net"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
 )
@@ -48,38 +40,9 @@ func NewDARIListener(svc *Service) *DARIListener {
 	}
 }
 
-// generateSelfSignedCert creates an ephemeral ECDSA self-signed certificate
-// for DARI TLS connections. In production, this should use proper PKI.
+// generateSelfSignedCert delegates to the shared dari dev-cert helper.
 func generateSelfSignedCert() (tls.Certificate, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{Organization: []string{"Patty Code PIA"}},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
-		DNSNames:     []string{"localhost", "pia"},
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-
-	return tls.X509KeyPair(certPEM, keyPEM)
+	return dari.DevSelfSignedCert("Patty Code PIA", []string{"localhost", "pia"})
 }
 
 func (pl *DARIListener) ListenTCP(ctx context.Context, addr string) error {
@@ -156,7 +119,9 @@ func (pl *DARIListener) handleAIRequests(ctx context.Context, conn *dari.Transpo
 			}
 			json.Unmarshal(record.Payload, &aiReq)
 			vllmModel := os.Getenv("PCCP_VLLM_MODEL")
-			if vllmModel == "" { vllmModel = aiReq.Model }
+			if vllmModel == "" {
+				vllmModel = aiReq.Model
+			}
 			infReq := InferenceRequest{Model: vllmModel, Messages: convertDARIMessages(aiReq.Messages), MaxTokens: aiReq.MaxTokens, Temperature: 0.7}
 			resp, err := pl.svc.HandleInference(ctx, infReq)
 			if err != nil {

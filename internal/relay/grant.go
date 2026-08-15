@@ -1,20 +1,17 @@
 package relay
 
 import (
-	"context"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/models"
-	"github.com/patrickrho-patty/pccp/internal/webbinding"
 )
 
 // grant.go wires the DARI Authorization Grant into the live governed
@@ -40,31 +37,29 @@ func (s *Service) IssueSessionGrant(lease *models.CapabilityLease, harnessPub ed
 		return nil, errors.New("relay: lease carries no subject peer")
 	}
 
-	var allowedModels []string
-	if err := json.Unmarshal([]byte(lease.AllowedModelPackages), &allowedModels); err != nil {
-		return nil, errors.New("relay: lease allowed-models column unparseable — refusing to issue a grant")
+	scope, err := parseLeaseScope(lease)
+	if err != nil {
+		return nil, err
 	}
+	allowedModels := scope.AllowedModels
 	if len(allowedModels) == 0 {
 		return nil, errors.New("relay: lease carries no allowed models — refusing to issue a wildcard grant")
 	}
-	var tools []string
-	_ = json.Unmarshal([]byte(lease.ToolClasses), &tools)
-	var repoScope []map[string]string
-	_ = json.Unmarshal([]byte(lease.RepositoryScope), &repoScope)
-	var filePathScope struct {
-		Read  []string `json:"read"`
-		Write []string `json:"write"`
-	}
-	_ = json.Unmarshal([]byte(lease.FilePathScope), &filePathScope)
+	tools := scope.Tools
+	repoScope := scope.RepoScope
+	filePathScope := struct {
+		Read  []string
+		Write []string
+	}{scope.ReadPaths, scope.WritePaths}
 
-	scope := dari.AuthorizationScope{
+	grantScope := dari.AuthorizationScope{
 		ActionClasses:   []string{"ai.inference"},
 		Models:          allowedModels,
 		Tools:           tools,
 		ApprovalClasses: []string{"lease.standard"},
 	}
 	for _, rs := range repoScope {
-		scope.ReadPaths = append(scope.ReadPaths, dari.PathScope{
+		grantScope.ReadPaths = append(grantScope.ReadPaths, dari.PathScope{
 			Authority:  rs["repo"],
 			Revision:   rs["branch"],
 			Prefix:     "src",
@@ -73,20 +68,20 @@ func (s *Service) IssueSessionGrant(lease *models.CapabilityLease, harnessPub ed
 	}
 	for _, p := range filePathScope.Read {
 		if prefix, err := dari.NormalizePathPrefix(p); err == nil {
-			scope.ReadPaths = append(scope.ReadPaths, dari.PathScope{Authority: "repo", Revision: "main", Prefix: prefix, Operations: []string{"read"}})
+			grantScope.ReadPaths = append(grantScope.ReadPaths, dari.PathScope{Authority: "repo", Revision: "main", Prefix: prefix, Operations: []string{"read"}})
 		}
 	}
 	for _, p := range filePathScope.Write {
 		if prefix, err := dari.NormalizePathPrefix(p); err == nil {
-			scope.WritePaths = append(scope.WritePaths, dari.PathScope{Authority: "repo", Revision: "main", Prefix: prefix, Operations: []string{"write"}})
+			grantScope.WritePaths = append(grantScope.WritePaths, dari.PathScope{Authority: "repo", Revision: "main", Prefix: prefix, Operations: []string{"write"}})
 		}
 	}
 	if lease.TokenBudget > 0 {
-		scope.ResourceBudgets = map[string]uint64{"tokens": uint64(lease.TokenBudget)}
+		grantScope.ResourceBudgets = map[string]uint64{"tokens": uint64(lease.TokenBudget)}
 	}
-	scope, err := dari.NormalizeScope(scope)
-	if err != nil {
-		return nil, fmt.Errorf("relay: normalize grant scope: %w", err)
+	grantScope, nerr := dari.NormalizeScope(grantScope)
+	if nerr != nil {
+		return nil, fmt.Errorf("relay: normalize grant scope: %w", nerr)
 	}
 
 	nb, _ := time.Parse(time.RFC3339, lease.NotBefore)
@@ -102,7 +97,7 @@ func (s *Service) IssueSessionGrant(lease *models.CapabilityLease, harnessPub ed
 		UserID:               lease.UserID,
 		SessionID:            lease.SessionID,
 		PolicyEpochID:        lease.PolicyEpochID,
-		Scope:                scope,
+		Scope:                grantScope,
 		NotBeforeMs:          nb.UnixMilli(),
 		NotAfterMs:           na.UnixMilli(),
 		IssuerSequence:       lease.LeaseSequence,
@@ -333,87 +328,6 @@ func (s *Service) denyWithoutExchange(req GovernRequest, orgID, reason string) {
 	s.issueDecision(stub, OpenExchangeRequest{
 		OrganizationID: orgID, SessionID: req.SessionID, HarnessID: req.HarnessID,
 	}, dari.DecisionDeny, reason)
-}
-
-// webEffectExecutor is the relay-owned effect executor serving
-// dari.web/1 EFFECT_STATUS queries with SIGNED status responses
-// (F.10: a reconnecting caller queries status; it never re-executes).
-type webEffectExecutor struct {
-	executor *dari.EffectExecutor
-	priv     ed25519.PrivateKey
-}
-
-// NewWebBindingServer builds the dari.web/1 carrier over this relay's
-// governed path: every inbound envelope routes through GovernInference
-// with the session's grant — the browser path never bypasses governance.
-func (s *Service) NewWebBindingServer(allowedOrigins []string) (*webbinding.Server, error) {
-	store, err := webbinding.NewSessionStore("")
-	if err != nil {
-		return nil, err
-	}
-	fx := &webEffectExecutor{
-		executor: dari.NewEffectExecutor(s.relayID, s.policy.SigningPrivateKey()),
-		priv:     s.policy.SigningPrivateKey(),
-	}
-	return webbinding.NewServer(store, allowedOrigins, func(sessionID string, envelope []byte) ([]byte, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		// Effect-status queries route to the durable executor view with
-		// a SIGNED response (never fabricated).
-		if opID, ok := strings.CutPrefix(string(envelope), "EFFECT_STATUS:"); ok {
-			return fx.status(opID)
-		}
-		// Parse the canonical AI_OPEN envelope and govern it.
-		var aiReq struct {
-			Model     string                   `json:"model"`
-			Messages  []map[string]interface{} `json:"messages"`
-			MaxTokens int                      `json:"max_tokens"`
-		}
-		if err := json.Unmarshal(envelope, &aiReq); err != nil {
-			return nil, fmt.Errorf("webbinding: not an AI_OPEN envelope: %w", err)
-		}
-		msgs := make([]map[string]string, 0, len(aiReq.Messages))
-		for _, m := range aiReq.Messages {
-			role, _ := m["role"].(string)
-			content, _ := m["content"].(string)
-			msgs = append(msgs, map[string]string{"role": role, "content": content})
-		}
-		resp, _, err := s.GovernInference(ctx, GovernRequest{
-			SessionID: "web-" + sessionID,
-			Model:     aiReq.Model,
-			Messages:  msgs,
-			MaxTokens: aiReq.MaxTokens,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return json.Marshal(resp)
-	})
-}
-
-// status returns the signed F.10 status response for an operation
-// (ABSENT for unknown operations — honest, never fabricated).
-func (w *webEffectExecutor) status(opID string) ([]byte, error) {
-	state, _, ok := w.executor.Status(opID)
-	if !ok {
-		state = dari.EffectStateAbsent
-	}
-	body := &dari.EffectStatusBody{
-		Version:     1,
-		OperationID: opID,
-		Kind:        2,
-		State:       &state,
-	}
-	payload, err := dari.MarshalCBOR(body)
-	if err != nil {
-		return nil, err
-	}
-	kid := dari.SubjectKeyThumbprint(w.priv.Public().(ed25519.PublicKey))
-	sign1, err := dari.CreateCOSESign1WithAAD(payload, []byte(dari.EffectStatusAAD), w.priv, kid[:])
-	if err != nil {
-		return nil, err
-	}
-	return dari.MarshalCBOR(sign1)
 }
 
 // exchangeBindingDigest digests the governed-exchange binding body

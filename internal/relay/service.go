@@ -654,7 +654,7 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 	// (harness→lease→epoch→package→endpoint→endpoint-lease) resolves
 	// once and is reused per request while fresh.
 	revEpoch, _ := s.identity.RevocationSnapshot()
-	cacheKey := req.HarnessID + "|" + req.Model
+	cacheKey := GovCacheKey(req.HarnessID, req.Model)
 	var lease models.CapabilityLease
 	if snap, cerr := s.hotState.Get(cacheKey, time.Now(), revEpoch); cerr == nil && snap != nil {
 		harness, lease = snap.Harness, snap.Lease
@@ -689,13 +689,18 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 		return nil, nil, fmt.Errorf("relay: legacy lease not convertible to an authorization grant: %w", gerr)
 	}
 
-	// 3. Resolve model_id → published ModelPackage (reject recalled).
+	// 3. The snapshot resolved the package; cache hits reuse it and
+	// re-check recall from the carried row (reject recalled).
 	var pkg models.ModelPackage
-	if err := s.db.Where("model_id = ?", req.Model).First(&pkg).Error; err != nil {
+	if cached, cerr := s.hotState.Get(cacheKey, time.Now(), revEpoch); cerr == nil && cached != nil && cached.Package.PackageID != "" {
+		pkg = cached.Package
+	} else if err := s.db.Where("model_id = ?", req.Model).First(&pkg).Error; err != nil {
 		s.denyWithoutExchange(req, orgID, "model_not_registered")
 		return nil, nil, fmt.Errorf("relay: model %s not in registry: %w", req.Model, err)
 	}
 	if pkg.State == "recalled" {
+		s.denyWithoutExchange(req, orgID, "model_recalled")
+		s.hotState.Invalidate(cacheKey)
 		return nil, nil, fmt.Errorf("relay: model %s has been recalled", req.Model)
 	}
 

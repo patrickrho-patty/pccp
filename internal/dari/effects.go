@@ -387,3 +387,49 @@ func NewOperationNonce() [32]byte {
 	}
 	return n
 }
+
+// EffectStatusEnvelope carries a signed status response.
+type EffectStatusEnvelope struct {
+	Body         *EffectStatusBody
+	COSE         *COSESign1
+	COSEBytes    []byte
+	SignedDigest Digest
+}
+
+// SignEffectStatus signs a status response (executor-signed, F.10).
+func SignEffectStatus(b *EffectStatusBody, priv ed25519.PrivateKey) (*EffectStatusEnvelope, error) {
+	if err := ValidateEffectStatusShape(b); err != nil {
+		return nil, err
+	}
+	sign1, coseBytes, digest, err := SignKernelObject(b, EffectStatusAAD, priv, ObjTypeEffectStatusResp)
+	if err != nil {
+		return nil, err
+	}
+	return &EffectStatusEnvelope{Body: b, COSE: sign1, COSEBytes: coseBytes, SignedDigest: digest}, nil
+}
+
+// DecodeEffectStatus verifies + decodes a signed status response.
+func DecodeEffectStatus(coseBytes []byte, signer ed25519.PublicKey) (*EffectStatusEnvelope, error) {
+	body, sign1, digest, err := DecodeKernelObject(
+		coseBytes, EffectStatusAAD,
+		func(b *EffectStatusBody) ([]byte, error) { return MarshalCBOR(b) }, signer)
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateEffectStatusShape(body); err != nil {
+		return nil, err
+	}
+	return &EffectStatusEnvelope{Body: body, COSE: sign1, COSEBytes: coseBytes, SignedDigest: digest}, nil
+}
+
+// DecodeEffectAuthorization verifies + decodes an effect authorization
+// (completes the kernel sign/decode pairs).
+func DecodeEffectAuthorization(coseBytes []byte, signer ed25519.PublicKey) (*EffectAuthorizationEnvelope, error) {
+	body, sign1, digest, err := DecodeKernelObject(
+		coseBytes, EffectAuthorizationAAD,
+		func(b *EffectAuthorizationBody) ([]byte, error) { return MarshalCBOR(b) }, signer)
+	if err != nil {
+		return nil, err
+	}
+	return &EffectAuthorizationEnvelope{Body: body, COSE: sign1, COSEBytes: coseBytes, SignedDigest: digest}, nil
+}

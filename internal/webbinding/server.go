@@ -254,13 +254,15 @@ func (s *Server) Open(req OpenRequest) (BrowserSession, bool, error) {
 }
 
 // Deliver sends one envelope toward the browser through the bounded
-// queue; overflow sheds (counted) rather than blocks the relay path.
+// queue; overflow sheds (counted) rather than blocking the relay
+// path. The queue is drained by the carriers' write loops.
 func (s *Server) Deliver(sessionID string, envelope []byte) error {
+	_ = sessionID
 	s.mu.Lock()
 	q := s.sendQueue
 	s.mu.Unlock()
 	if q == nil {
-		return nil
+		return errors.New("webbinding: no send queue")
 	}
 	select {
 	case q <- envelope:
@@ -271,6 +273,11 @@ func (s *Server) Deliver(sessionID string, envelope []byte) error {
 		s.mu.Unlock()
 		return errors.New("webbinding: send queue full — envelope shed")
 	}
+}
+
+// Drain returns the outbound queue for carrier write loops.
+func (s *Server) Drain() <-chan []byte {
+	return s.sendQueue
 }
 
 // Process routes one inbound canonical envelope through the governed

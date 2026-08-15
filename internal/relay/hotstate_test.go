@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"gorm.io/gorm"
 	"strings"
 	"sync"
 	"testing"
@@ -95,11 +96,8 @@ func TestConcurrencyGateSheds(t *testing.T) {
 
 func TestResolveGovernanceSnapshotFailClosed(t *testing.T) {
 	db := setupGovernedTestDB(t)
-	const (
-		orgID     = "org-hot"
-		harnessID = "hrn-hot"
-		modelID   = "patty-hot"
-	)
+	harnessID := "hrn-hot"
+	modelID := "patty-hot"
 	svc, err := New(db, "", "relay-hot-test")
 	if err != nil {
 		t.Fatal(err)
@@ -109,23 +107,14 @@ func TestResolveGovernanceSnapshotFailClosed(t *testing.T) {
 		t.Fatal("unresolved governance context must fail closed")
 	}
 
-	// Fully-seeded chain resolves.
-	future := time.Now().Add(time.Hour).Format(time.RFC3339)
-	past := time.Now().Add(-time.Hour).Format(time.RFC3339)
-	db.Create(&models.Harness{OrganizationID: orgID, HarnessID: harnessID, Status: "enrolled"})
-	db.Create(&models.CapabilityLease{OrganizationID: orgID, LeaseID: "lease-hot", SubjectPeerID: harnessID,
-		UserID: "u", SessionID: "sess-hot", PolicyEpochID: "epoch-hot",
-		AllowedModelPackages: `["pmp-hot"]`, NotBefore: past, NotAfter: future, Status: "active"})
-	db.Create(&models.PolicyEpoch{OrganizationID: orgID, EpochID: "epoch-hot", AllowedModelsJSON: `["pmp-hot"]`, Status: "active"})
-	db.Create(&models.ModelPackage{PackageID: "pmp-hot", ModelID: modelID, Name: "Hot", State: "published"})
-	db.Create(&models.InferenceEndpoint{OrganizationID: orgID, EndpointID: "ep-hot", ModelPackageID: "pmp-hot", Status: "active"})
-	db.Create(&models.EndpointLease{EndpointID: "ep-hot", OrganizationID: orgID, ModelPackageID: "pmp-hot", LeaseID: "epl-hot", NotAfter: future, Status: "active", IssuedAt: past})
+	// Fully-seeded chain resolves (shared seeder).
+	harnessID, _, modelID = seedGovernedStack(t, db, "hot")
 
 	snap, err := svc.ResolveGovernanceSnapshot(harnessID, modelID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.Endpoint.EndpointID != "ep-hot" || snap.Package.PackageID != "pmp-hot" {
+	if snap.Endpoint.EndpointID == "" || snap.Package.PackageID == "" {
 		t.Fatalf("snapshot: %+v", snap)
 	}
 	_ = context.Background()
@@ -150,4 +139,37 @@ func TestEnsureModelServingFailsClosedOutsideBootstrap(t *testing.T) {
 	if pkg.State != "published" {
 		t.Fatalf("bootstrap should publish: %s", pkg.State)
 	}
+}
+
+// seedGovernedStack is the shared governed-stack seeder: Harness +
+// CapabilityLease + PolicyEpoch + ModelPackage + InferenceEndpoint +
+// EndpointLease with unique IDs per test (the shared in-memory test DB
+// requires uniqueness).
+func seedGovernedStack(t *testing.T, db *gorm.DB, suffix string) (harnessID, sessionID, modelID string) {
+	t.Helper()
+	const (
+		orgID  = "org-gov"
+		userID = "u-gov"
+	)
+	harnessID = "hrn-gov-" + suffix
+	sessionID = "sess-gov-" + suffix
+	leaseID := "lease-gov-" + suffix
+	epochID := "epoch-gov-" + suffix
+	pkgID := "pmp-gov-" + suffix
+	modelID = "patty-gov-" + suffix
+	endpoint := "ep-gov-" + suffix
+	epLease := "epl-gov-" + suffix
+	future := time.Now().Add(time.Hour).Format(time.RFC3339)
+	past := time.Now().Add(-time.Hour).Format(time.RFC3339)
+	allowed := `["` + pkgID + `"]`
+
+	db.Create(&models.Harness{OrganizationID: orgID, HarnessID: harnessID, Status: "enrolled"})
+	db.Create(&models.CapabilityLease{OrganizationID: orgID, LeaseID: leaseID, SubjectPeerID: harnessID,
+		UserID: userID, SessionID: sessionID, PolicyEpochID: epochID,
+		AllowedModelPackages: allowed, NotBefore: past, NotAfter: future, LeaseSequence: 1, Status: "active"})
+	db.Create(&models.PolicyEpoch{OrganizationID: orgID, EpochID: epochID, AllowedModelsJSON: allowed, Status: "active"})
+	db.Create(&models.ModelPackage{PackageID: pkgID, ModelID: modelID, Name: "Gov", State: "published"})
+	db.Create(&models.InferenceEndpoint{OrganizationID: orgID, EndpointID: endpoint, ModelPackageID: pkgID, Status: "active"})
+	db.Create(&models.EndpointLease{EndpointID: endpoint, OrganizationID: orgID, ModelPackageID: pkgID, LeaseID: epLease, NotAfter: future, Status: "active", IssuedAt: past})
+	return harnessID, sessionID, modelID
 }

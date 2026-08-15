@@ -50,12 +50,12 @@ type VLLMMessage struct {
 
 // vLLMChatResponse is the OpenAI-compatible chat completion response.
 type vLLMChatResponse struct {
-	ID      string         `json:"id"`
-	Object  string         `json:"object"`
-	Created int64          `json:"created"`
-	Model   string         `json:"model"`
-	Choices []VLLMChoice   `json:"choices"`
-	Usage   VLLMUsage      `json:"usage"`
+	ID      string       `json:"id"`
+	Object  string       `json:"object"`
+	Created int64        `json:"created"`
+	Model   string       `json:"model"`
+	Choices []VLLMChoice `json:"choices"`
+	Usage   VLLMUsage    `json:"usage"`
 }
 
 type VLLMChoice struct {

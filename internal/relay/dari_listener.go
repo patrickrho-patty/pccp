@@ -31,17 +31,24 @@ const DARIALPN = dari.DARIProtocol
 // Per the README guardrail: "No HTTP/REST/WebSocket for protocol traffic."
 // The HTTP API in server.go is for admin/control-plane operations only;
 // the DARI wire protocol is for Harness/PIA peer connections.
+// connState is one authenticated connection's full state. A single
+// map + one forget path replaces six parallel maps mutated in
+// lockstep (partial-cleanup bugs become impossible).
+type connState struct {
+	conn      credentialConnection
+	serial    string
+	sessionID string
+	cred      *dari.PeerCredential
+	epoch     string
+	grant     *dari.GrantEnvelope
+}
+
 type DARIListener struct {
-	svc               *Service
-	tlsConfig         *tls.Config
-	authenticator     *PeerAuthenticator
-	mu                sync.Mutex
-	conns             map[string]credentialConnection
-	credentialSerials map[string]string               // connID → authenticated credential serial
-	sessions          map[string]string               // connID → working sessionID (from SESSION_OPEN)
-	credentials       map[string]*dari.PeerCredential // connID → verified credential (org/peer binding)
-	sessionEpochs     map[string]string               // connID → policy epoch bound at session setup
-	sessionGrants     map[string]*dari.GrantEnvelope  // connID → issued session grant
+	svc           *Service
+	tlsConfig     *tls.Config
+	authenticator *PeerAuthenticator
+	mu            sync.Mutex
+	conns         map[string]*connState
 }
 
 type credentialConnection interface {
@@ -65,15 +72,10 @@ func NewDARIListener(svc *Service, tlsConfig *tls.Config, trust ...TrustBundle) 
 		bundle = trust[0]
 	}
 	return &DARIListener{
-		svc:               svc,
-		tlsConfig:         tlsConfig,
-		authenticator:     NewPeerAuthenticator(bundle),
-		conns:             make(map[string]credentialConnection),
-		credentialSerials: make(map[string]string),
-		sessions:          make(map[string]string),
-		credentials:       make(map[string]*dari.PeerCredential),
-		sessionEpochs:     make(map[string]string),
-		sessionGrants:     make(map[string]*dari.GrantEnvelope),
+		svc:           svc,
+		tlsConfig:     tlsConfig,
+		authenticator: NewPeerAuthenticator(bundle),
+		conns:         make(map[string]*connState),
 	}
 }
 
@@ -147,18 +149,9 @@ func (pl *DARIListener) handleConn(ctx context.Context, netConn net.Conn) {
 
 	connID := fmt.Sprintf("paper-%s-%d", netConn.RemoteAddr(), time.Now().UnixNano())
 	pl.mu.Lock()
-	pl.conns[connID] = conn
+	pl.conns[connID] = &connState{conn: conn}
 	pl.mu.Unlock()
-	defer func() {
-		pl.mu.Lock()
-		delete(pl.conns, connID)
-		delete(pl.credentialSerials, connID)
-		delete(pl.sessions, connID)
-		delete(pl.credentials, connID)
-		delete(pl.sessionEpochs, connID)
-		delete(pl.sessionGrants, connID)
-		pl.mu.Unlock()
-	}()
+	defer pl.forgetConnection(connID)
 
 	log.Printf("relay: dari connection from %s (id=%s)", netConn.RemoteAddr(), connID)
 
@@ -260,7 +253,9 @@ func (pl *DARIListener) handleConn(ctx context.Context, netConn net.Conn) {
 		return
 	}
 	pl.mu.Lock()
-	pl.credentials[connID] = credential
+	if state := pl.conns[connID]; state != nil {
+		state.cred = credential
+	}
 	pl.mu.Unlock()
 
 	if err := conn.SendControl(dari.MsgAuthAck, nil, pl.authAckPayload()); err != nil {
@@ -286,15 +281,23 @@ func (pl *DARIListener) trackAuthenticatedConnection(connID, serial string, conn
 	if pl.authenticator.isRevoked(serial) {
 		_ = conn.Close()
 		delete(pl.conns, connID)
-		delete(pl.sessions, connID)
-		delete(pl.credentials, connID)
-		delete(pl.sessionEpochs, connID)
-		delete(pl.sessionGrants, connID)
 		return false
 	}
-	pl.conns[connID] = conn
-	pl.credentialSerials[connID] = serial
+	if state := pl.conns[connID]; state != nil {
+		state.conn = conn
+		state.serial = serial
+	} else {
+		pl.conns[connID] = &connState{conn: conn, serial: serial}
+	}
 	return true
+}
+
+// forgetConnection removes every trace of a connection (single
+// cleanup path for all six formerly-parallel maps).
+func (pl *DARIListener) forgetConnection(connID string) {
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
+	delete(pl.conns, connID)
 }
 
 // RevokeCredential advances the revocation view and immediately closes every
@@ -304,19 +307,14 @@ func (pl *DARIListener) RevokeCredential(serial string, epoch uint64) {
 
 	pl.mu.Lock()
 	toClose := make([]credentialConnection, 0)
-	for connID, credentialSerial := range pl.credentialSerials {
-		if credentialSerial != serial {
+	for connID, state := range pl.conns {
+		if state.serial != serial {
 			continue
 		}
-		if conn := pl.conns[connID]; conn != nil {
-			toClose = append(toClose, conn)
+		if state.conn != nil {
+			toClose = append(toClose, state.conn)
 		}
 		delete(pl.conns, connID)
-		delete(pl.credentialSerials, connID)
-		delete(pl.sessions, connID)
-		delete(pl.credentials, connID)
-		delete(pl.sessionEpochs, connID)
-		delete(pl.sessionGrants, connID)
 	}
 	pl.mu.Unlock()
 
@@ -362,7 +360,7 @@ func (pl *DARIListener) handleApplicationMessages(ctx context.Context, conn *dar
 				pl.setSession(connID, so.SessionID)
 			}
 			log.Printf("relay: dari SESSION_OPEN from %s session=%s", connID, so.SessionID)
-			pl.setupSession(ctx, conn, connID, so.SessionID, so.UserID, so.Model)
+			pl.setupSession(ctx, conn, connID, so)
 
 		case record.Kind == dari.KindMessage && msgType == dari.MsgAIOpen:
 			log.Printf("relay: dari AI_OPEN from %s, governing", connID)
@@ -403,11 +401,9 @@ func (pl *DARIListener) BroadcastCatalogDelta() {
 		epoch string
 	}
 	var targets []target
-	for connID, epoch := range pl.sessionEpochs {
-		if raw := pl.conns[connID]; raw != nil {
-			if conn, ok := raw.(*dari.TransportConn); ok {
-				targets = append(targets, target{conn, epoch})
-			}
+	for _, state := range pl.conns {
+		if conn, ok := state.conn.(*dari.TransportConn); ok && state.epoch != "" {
+			targets = append(targets, target{conn, state.epoch})
 		}
 	}
 	pl.mu.Unlock()
@@ -452,13 +448,18 @@ func (pl *DARIListener) ActiveConnections() int {
 func (pl *DARIListener) sessionFor(connID string) string {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
-	return pl.sessions[connID]
+	if state := pl.conns[connID]; state != nil {
+		return state.sessionID
+	}
+	return ""
 }
 
 func (pl *DARIListener) setSession(connID, sessionID string) {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
-	pl.sessions[connID] = sessionID
+	if state := pl.conns[connID]; state != nil {
+		state.sessionID = sessionID
+	}
 }
 
 // governAIOpen runs an AI_OPEN through the governed flow and sends the
@@ -469,7 +470,9 @@ func (pl *DARIListener) governAIOpen(ctx context.Context, conn *dari.TransportCo
 	greq, err := buildGovernRequest(harnessID, pl.sessionFor(connID), reqRecord.Payload)
 	if err == nil {
 		pl.mu.Lock()
-		greq.Grant = pl.sessionGrants[connID]
+		if state := pl.conns[connID]; state != nil {
+			greq.Grant = state.grant
+		}
 		pl.mu.Unlock()
 	}
 	if err != nil {
@@ -533,26 +536,13 @@ func (pl *DARIListener) pushEvidenceReceiptMessage(conn *dari.TransportConn, con
 // buildGovernRequest parses an AI_OPEN payload into a GovernRequest. Pure helper
 // (unit-tested) so the governed dispatch is verifiable without a live DARI conn.
 func buildGovernRequest(harnessID, sessionID string, payload []byte) (GovernRequest, error) {
-	var aiReq struct {
-		Model     string                   `json:"model"`
-		Messages  []map[string]interface{} `json:"messages"`
-		MaxTokens int                      `json:"max_tokens"`
-	}
-	if err := json.Unmarshal(payload, &aiReq); err != nil {
-		return GovernRequest{}, fmt.Errorf("decode: %w", err)
-	}
-	msgs := make([]map[string]string, 0, len(aiReq.Messages))
-	for _, m := range aiReq.Messages {
-		role, _ := m["role"].(string)
-		content, _ := m["content"].(string)
-		msgs = append(msgs, map[string]string{"role": role, "content": content})
-	}
-	if aiReq.MaxTokens <= 0 {
-		aiReq.MaxTokens = 4096
+	model, msgs, maxTokens, err := parseAIOpen(payload)
+	if err != nil {
+		return GovernRequest{}, err
 	}
 	return GovernRequest{
-		HarnessID: harnessID, SessionID: sessionID, Model: aiReq.Model,
-		Messages: msgs, MaxTokens: aiReq.MaxTokens,
+		HarnessID: harnessID, SessionID: sessionID, Model: model,
+		Messages: msgs, MaxTokens: maxTokens,
 	}, nil
 }
 

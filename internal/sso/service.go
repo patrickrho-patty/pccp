@@ -525,34 +525,6 @@ func (s *Service) HandleSCIMRequest(w http.ResponseWriter, r *http.Request) {
 // ConfigureSCIMToken sets the SCIM admin bearer token.
 func (s *Service) ConfigureSCIMToken(token string) { s.scimToken = token }
 
-func (s *Service) mockSAMLResponse(raw string) *SAMLResponse {
-	return &SAMLResponse{
-		UserID: "mock-user-001",
-		Email:  "kim@patty.dev",
-		Name:   "Kim Gaebal",
-		NameKo: "김개발",
-		Attributes: map[string]string{
-			"email":      "kim@patty.dev",
-			"name":       "Kim Gaebal",
-			"nameKo":     "김개발",
-			"department": "개발팀",
-		},
-		Issuer:       s.samlIDPID,
-		NotOnOrAfter: time.Now().Add(8 * time.Hour),
-	}
-}
-
-func (s *Service) generateMockIDToken() string {
-	claims := jwt.MapClaims{
-		"sub": "mock-user-001", "email": "kim@patty.dev",
-		"name": "김개발", "locale": "ko-KR",
-		"exp": time.Now().Add(1 * time.Hour).Unix(),
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, _ := token.SignedString(s.jwtSecret)
-	return signed
-}
-
 func getStringClaim(claims jwt.MapClaims, key string) string {
 	if v, ok := claims[key]; ok {
 		return fmt.Sprintf("%v", v)
@@ -571,10 +543,3 @@ var _ = ed25519.PublicKeySize
 // candidateKeySets flattens the JWKS into per-key candidate sets: one
 // set per (kid-slot) with each individual key, so x-only EC keys with
 // two y roots are each tried.
-func candidateKeySets(jwks map[string][]crypto.PublicKey) []crypto.PublicKey {
-	var out []crypto.PublicKey
-	for _, keys := range jwks {
-		out = append(out, keys...)
-	}
-	return out
-}

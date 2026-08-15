@@ -289,19 +289,23 @@ func (s *Server) AcceptWebSocketFallback(conn *websocket.Conn, expectedOrigin st
 	const wsPongWait = 90 * time.Second
 	conn.SetReadDeadline(time.Now().Add(wsPongWait))
 	conn.SetPongHandler(func(string) error { conn.SetReadDeadline(time.Now().Add(wsPongWait)); return nil })
+	keepaliveDone := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(60 * time.Second)
 		defer ticker.Stop()
-		for range ticker.C {
-			conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
-			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+		for {
+			select {
+			case <-keepaliveDone:
 				return
+			case <-ticker.C:
+				conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					return
+				}
 			}
 		}
 	}()
-	defer func() {
-		// stop the keepalive by closing from our side after return
-	}()
+	defer close(keepaliveDone)
 
 	ch, bindingToken, err := s.BeginConnection(expectedOrigin)
 	if err != nil {

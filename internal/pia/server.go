@@ -34,12 +34,12 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
-		"status":       "ok",
-		"pia_peer_id":  s.svc.PeerID(),
-		"has_lease":    s.svc.HasValidLease(),
-		"endpoint_id":  s.svc.EndpointID(),
-		"public_key":   s.svc.PublicKeyHex(),
-		"timestamp":    time.Now().Format(time.RFC3339),
+		"status":      "ok",
+		"pia_peer_id": s.svc.PeerID(),
+		"has_lease":   s.svc.HasValidLease(),
+		"endpoint_id": s.svc.EndpointID(),
+		"public_key":  s.svc.PublicKeyHex(),
+		"timestamp":   time.Now().Format(time.RFC3339),
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

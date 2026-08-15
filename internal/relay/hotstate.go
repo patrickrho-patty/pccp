@@ -52,12 +52,16 @@ func NewHotStateCache(ttl time.Duration) *HotStateCache {
 // ErrRevokedSnapshot marks a cached entry captured before a revocation.
 var ErrRevokedSnapshot = errors.New("relay: cached governance state predates a revocation")
 
+// GovCacheKey is the hot-state cache key: governance resolution is
+// per (harness, model).
+func GovCacheKey(harnessID, model string) string { return harnessID + "|" + model }
+
 // Get returns a cached snapshot only when fresh by BOTH TTL and the
 // current revocation epoch.
-func (c *HotStateCache) Get(harnessID string, now time.Time, revocationEpoch uint64) (*GovernanceSnapshot, error) {
+func (c *HotStateCache) Get(key string, now time.Time, revocationEpoch uint64) (*GovernanceSnapshot, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	snap, ok := c.entries[harnessID]
+	snap, ok := c.entries[key]
 	if !ok {
 		c.misses.Add(1)
 		return nil, nil
@@ -79,7 +83,7 @@ func (c *HotStateCache) Get(harnessID string, now time.Time, revocationEpoch uin
 // Put stores a snapshot under the current revocation epoch. A
 // snapshot captured BEFORE the cache's current epoch is dropped — it
 // may predate a revocation and must never be served.
-func (c *HotStateCache) Put(harnessID string, snap *GovernanceSnapshot, revocationEpoch uint64) {
+func (c *HotStateCache) Put(key string, snap *GovernanceSnapshot, revocationEpoch uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if revocationEpoch > c.epoch {
@@ -93,14 +97,14 @@ func (c *HotStateCache) Put(harnessID string, snap *GovernanceSnapshot, revocati
 	}
 	cp := *snap
 	cp.ResolvedAt = time.Now()
-	c.entries[harnessID] = &cp
+	c.entries[key] = &cp
 }
 
 // Invalidate drops one harness (revocation, lease change, epoch bump).
-func (c *HotStateCache) Invalidate(harnessID string) {
+func (c *HotStateCache) Invalidate(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	delete(c.entries, harnessID)
+	delete(c.entries, key)
 }
 
 // InvalidateAll drops every entry (catalog publish, policy change).

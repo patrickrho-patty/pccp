@@ -1,11 +1,17 @@
 package dari
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"sync"
 	"time"
@@ -326,3 +332,26 @@ func (tc *TransportConn) RecvAuthProof() (*AuthProofMessage, error) {
 
 // Ensure binary import used
 var _ = binary.BigEndian
+
+// DevSelfSignedCert mints an ephemeral ECDSA P-256 self-signed
+// certificate for dev/test listeners (shared by the relay, PIA, and
+// web carriers).
+func DevSelfSignedCert(org string, dnsNames []string) (tls.Certificate, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	tmpl := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{Organization: []string{org}},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * 365 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		DNSNames:     dnsNames,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
+}

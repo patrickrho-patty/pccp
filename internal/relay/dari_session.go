@@ -54,8 +54,8 @@ type sessionOpenRequest struct {
 // catalog snapshot is epoch-bound), then CATALOG_SNAPSHOT, then
 // LEASE_ISSUE, then SESSION_GRANT. The connector's connect() consumes
 // exactly this sequence before its first AI_OPEN.
-func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportConn, connID, sessionID, userID, model string) {
-	if sessionID == "" {
+func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportConn, connID string, so sessionOpenRequest) {
+	if so.SessionID == "" {
 		pl.sendJSONError(conn, connID, "session_open missing session_id")
 		return
 	}
@@ -64,19 +64,19 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 		pl.sendJSONError(conn, connID, "authenticated peer has no organization")
 		return
 	}
-	if userID == "" {
-		userID = "user-" + connID
+	if so.UserID == "" {
+		so.UserID = "user-" + connID
 	}
 
-	// Model serving (Task 15/audit finding): a peer-supplied model name
+	// Model serving (Task 15/audit finding): a peer-supplied so.Model name
 	// NEVER self-authorizes. Outside explicit dev bootstrap
 	// (PCCP_DEV_BOOTSTRAP=1) the package, endpoint, endpoint-lease, and
 	// a policy epoch allowing the package must ALREADY exist — the
 	// session fails closed otherwise. Bootstrap mode exists for
 	// first-run/e2e bring-up only.
-	pkg, err := plEnsureModelServing(pl, orgID, model)
+	pkg, err := plEnsureModelServing(pl, orgID, so.Model)
 	if err != nil {
-		pl.sendJSONError(conn, connID, "model serving unavailable: "+err.Error())
+		pl.sendJSONError(conn, connID, "so.Model serving unavailable: "+err.Error())
 		return
 	}
 	epoch, err := pl.svc.Policy().GetActiveEpoch(orgID)
@@ -93,7 +93,7 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 			return
 		}
 	} else if !epochAllowsPackage(epoch, pkg.PackageID) {
-		pl.sendJSONError(conn, connID, "model not allowed under the active policy epoch")
+		pl.sendJSONError(conn, connID, "so.Model not allowed under the active policy epoch")
 		return
 	}
 
@@ -142,7 +142,7 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 	}
 
 	// Issue the capability lease (A3) and push LEASE_ISSUE (0x0210).
-	lease, err := pl.svc.Policy().IssueCapabilityLease(pl.leaseRequest(connID, orgID, sessionID, userID, epoch.EpochID, model))
+	lease, err := pl.svc.Policy().IssueCapabilityLease(pl.leaseRequest(connID, orgID, so.SessionID, so.UserID, epoch.EpochID, so.Model))
 	if err != nil {
 		pl.sendJSONError(conn, connID, "lease issuance failed: "+err.Error())
 		return
@@ -181,11 +181,14 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 	// SESSION_GRANT (0x0201) closes the setup phase and carries the
 	// signed grant on dari/1 connections.
 	pl.mu.Lock()
-	pl.sessionEpochs[connID] = epoch.EpochID
-	pl.sessionGrants[connID] = grantEnv
+	if state := pl.conns[connID]; state != nil {
+		state.epoch = epoch.EpochID
+		state.grant = grantEnv
+		state.sessionID = so.SessionID
+	}
 	pl.mu.Unlock()
 	grant, _ := json.Marshal(map[string]string{
-		"session_id":   sessionID,
+		"session_id":   so.SessionID,
 		"policy_epoch": epoch.EpochID,
 		"lease_id":     lease.LeaseID,
 		"organization": orgID,
@@ -195,7 +198,7 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 		log.Printf("relay: session grant to %s failed: %v", connID, err)
 		return
 	}
-	log.Printf("relay: session %s granted for %s (epoch=%s lease=%s grant=%s)", sessionID, connID, epoch.EpochID, lease.LeaseID, grantEnv.Body.GrantID)
+	log.Printf("relay: session %s granted for %s (epoch=%s lease=%s grant=%s)", so.SessionID, connID, epoch.EpochID, lease.LeaseID, grantEnv.Body.GrantID)
 }
 
 // leaseRequest builds the issuance request. The lease's allowed-models
@@ -221,7 +224,7 @@ func (pl *DARIListener) leaseRequest(connID, orgID, sessionID, userID, epochID, 
 // devBootstrap reports whether explicit first-run bootstrap is on
 // (PCCP_DEV_BOOTSTRAP=1). Bootstrap auto-registers unknown models and
 // issues the first epoch; production NEVER runs in this mode — a
-// peer-supplied model cannot self-authorize.
+// peer-supplied so.Model cannot self-authorize.
 func devBootstrap() bool { return os.Getenv("PCCP_DEV_BOOTSTRAP") == "1" }
 
 // ensureModelServing resolves the governed chain a real exchange
@@ -330,10 +333,10 @@ func (pl *DARIListener) orgForPeer(connID string) string {
 func (pl *DARIListener) credentialForConn(connID string) *dari.PeerCredential {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
-	if pl.credentials == nil {
-		return nil
+	if state := pl.conns[connID]; state != nil {
+		return state.cred
 	}
-	return pl.credentials[connID]
+	return nil
 }
 
 // peerIDForConn returns the authenticated subject peer ID.
@@ -366,7 +369,10 @@ func exchangeDigestHex(exchangeID string) string {
 func (pl *DARIListener) epochForSession(connID string) string {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
-	return pl.sessionEpochs[connID]
+	if state := pl.conns[connID]; state != nil {
+		return state.epoch
+	}
+	return ""
 }
 
 // ---------------------------------------------------------------------------

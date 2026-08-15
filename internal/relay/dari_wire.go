@@ -74,18 +74,10 @@ func buildWireLease(lease *models.CapabilityLease, issuerID string) (*wireLease,
 	if lease == nil {
 		return nil, fmt.Errorf("relay: nil lease")
 	}
-	// AllowedModelPackages / scopes are stored as JSON arrays.
-	var allowedModels []string
-	_ = json.Unmarshal([]byte(lease.AllowedModelPackages), &allowedModels)
-	var repoScope []map[string]string
-	_ = json.Unmarshal([]byte(lease.RepositoryScope), &repoScope)
-	var filePathScope struct {
-		Read  []string `json:"read"`
-		Write []string `json:"write"`
+	scope, err := parseLeaseScope(lease)
+	if err != nil {
+		return nil, err
 	}
-	_ = json.Unmarshal([]byte(lease.FilePathScope), &filePathScope)
-	var toolClasses []string
-	_ = json.Unmarshal([]byte(lease.ToolClasses), &toolClasses)
 	nb, err := time.Parse(time.RFC3339, lease.NotBefore)
 	if err != nil {
 		return nil, fmt.Errorf("relay: lease not-before %q: %w", lease.NotBefore, err)
@@ -103,11 +95,11 @@ func buildWireLease(lease *models.CapabilityLease, issuerID string) (*wireLease,
 		UserID:             lease.UserID,
 		SessionID:          lease.SessionID,
 		PolicyEpochID:      lease.PolicyEpochID,
-		AllowedModels:      allowedModels,
-		RepositoryScope:    repoScope,
-		FilePathReadScope:  filePathScope.Read,
-		FilePathWriteScope: filePathScope.Write,
-		ToolClasses:        toolClasses,
+		AllowedModels:      scope.AllowedModels,
+		RepositoryScope:    scope.RepoScope,
+		FilePathReadScope:  scope.ReadPaths,
+		FilePathWriteScope: scope.WritePaths,
+		ToolClasses:        scope.Tools,
 		TokenBudget:        lease.TokenBudget,
 		NotBeforeUnixMs:    nb.UnixMilli(),
 		NotAfterUnixMs:     na.UnixMilli(),
@@ -443,4 +435,34 @@ func BuildReceiptAckCBOR(receiptID, exchangeID string, ackDigest [32]byte, acked
 		AckDigest:     ackDigest,
 		AckedAtUnixMs: ackedAtUnixMs,
 	})
+}
+
+// leaseScopeView is the parsed JSON-scope view of a persisted
+// capability lease. Shared by grant issuance and wire encoding so
+// tolerance policy lives in one place.
+type leaseScopeView struct {
+	AllowedModels []string            `json:"allowed"`
+	Tools         []string            `json:"tools"`
+	RepoScope     []map[string]string `json:"repo"`
+	ReadPaths     []string            `json:"read"`
+	WritePaths    []string            `json:"write"`
+}
+
+// parseLeaseScope parses the lease's JSON columns. Unparseable
+// allowed-models is an ERROR (callers fail closed); the optional
+// scope columns tolerate absence.
+func parseLeaseScope(lease *models.CapabilityLease) (*leaseScopeView, error) {
+	out := &leaseScopeView{}
+	if err := json.Unmarshal([]byte(lease.AllowedModelPackages), &out.AllowedModels); err != nil {
+		return nil, fmt.Errorf("relay: lease allowed-models unparseable")
+	}
+	_ = json.Unmarshal([]byte(lease.ToolClasses), &out.Tools)
+	_ = json.Unmarshal([]byte(lease.RepositoryScope), &out.RepoScope)
+	var filePathScope struct {
+		Read  []string `json:"read"`
+		Write []string `json:"write"`
+	}
+	_ = json.Unmarshal([]byte(lease.FilePathScope), &filePathScope)
+	out.ReadPaths, out.WritePaths = filePathScope.Read, filePathScope.Write
+	return out, nil
 }

@@ -23,16 +23,16 @@ import (
 // It stands between the Relay and the actual serving engine (vLLM/SGLang/mock),
 // verifying model packages, holding endpoint leases, and proxying inference requests.
 type Service struct {
-	db           *gorm.DB
-	peerID       string
-	privKey      ed25519.PrivateKey
-	pubKey       ed25519.PublicKey
-	pubKeyHex    string
-	servingURL   string
-	servingType  string
-	assureLevel  string
-	modelPkgID   string
-	vllmAdapter  *VLLMAdapter
+	db          *gorm.DB
+	peerID      string
+	privKey     ed25519.PrivateKey
+	pubKey      ed25519.PublicKey
+	pubKeyHex   string
+	servingURL  string
+	servingType string
+	assureLevel string
+	modelPkgID  string
+	vllmAdapter *VLLMAdapter
 
 	mu          sync.RWMutex
 	endpointID  string
@@ -44,12 +44,12 @@ type Service struct {
 
 // Config holds PIA runtime configuration.
 type Config struct {
- 	PeerID         string `json:"peer_i_d"`
- 	ServingURL     string `json:"serving_u_r_l"`
- 	ServingType    string `json:"serving_type"`  // vllm, sglang, mock
- 	AssuranceLevel string `json:"assurance_level"`
- 	ModelPackageID string `json:"model_package_i_d"`
- 	ControlPlaneURL string `json:"control_plane_u_r_l"`
+	PeerID          string `json:"peer_i_d"`
+	ServingURL      string `json:"serving_u_r_l"`
+	ServingType     string `json:"serving_type"` // vllm, sglang, mock
+	AssuranceLevel  string `json:"assurance_level"`
+	ModelPackageID  string `json:"model_package_i_d"`
+	ControlPlaneURL string `json:"control_plane_u_r_l"`
 }
 
 // New creates a new PIA service.
@@ -65,18 +65,18 @@ func New(db *gorm.DB, cfg Config) (*Service, error) {
 	}
 
 	s := &Service{
-		db:           db,
-		peerID:       cfg.PeerID,
-		privKey:      priv,
-		pubKey:       pub,
-		pubKeyHex:    hex.EncodeToString(pub),
-		servingURL:   cfg.ServingURL,
-		servingType:  cfg.ServingType,
-		assureLevel:  cfg.AssuranceLevel,
-		modelPkgID:   cfg.ModelPackageID,
-		vllmAdapter:  vllm,
-		cpURL:        cfg.ControlPlaneURL,
-		httpClient:   &http.Client{Timeout: 120 * time.Second},
+		db:          db,
+		peerID:      cfg.PeerID,
+		privKey:     priv,
+		pubKey:      pub,
+		pubKeyHex:   hex.EncodeToString(pub),
+		servingURL:  cfg.ServingURL,
+		servingType: cfg.ServingType,
+		assureLevel: cfg.AssuranceLevel,
+		modelPkgID:  cfg.ModelPackageID,
+		vllmAdapter: vllm,
+		cpURL:       cfg.ControlPlaneURL,
+		httpClient:  &http.Client{Timeout: 120 * time.Second},
 	}
 
 	return s, nil
@@ -95,14 +95,14 @@ func (s *Service) PeerID() string {
 // EnrollWithControlPlane registers the PIA with the control plane.
 func (s *Service) EnrollWithControlPlane(ctx context.Context, orgID, modelPackageID string) error {
 	reqBody := map[string]interface{}{
-		"organization_id":     orgID,
-		"pia_peer_id":         s.peerID,
-		"model_package_id":    modelPackageID,
-		"serving_engine":      s.servingType,
+		"organization_id":        orgID,
+		"pia_peer_id":            s.peerID,
+		"model_package_id":       modelPackageID,
+		"serving_engine":         s.servingType,
 		"serving_engine_version": "0.6.0",
-		"public_key_hex":      s.pubKeyHex,
-		"node_identity":       fmt.Sprintf("spiffe://patty.local/node/%s", s.peerID),
-		"assurance_level":     s.assureLevel,
+		"public_key_hex":         s.pubKeyHex,
+		"node_identity":          fmt.Sprintf("spiffe://patty.local/node/%s", s.peerID),
+		"assurance_level":        s.assureLevel,
 	}
 
 	bodyJSON, _ := json.Marshal(reqBody)
@@ -218,12 +218,12 @@ func (s *Service) HasValidLease() bool {
 
 // InferenceRequest is the DARI inference request payload.
 type InferenceRequest struct {
-	Model       string            `json:"model"`
-	Messages    []Message         `json:"messages"`
-	MaxTokens   int               `json:"max_tokens,omitempty"`
-	Temperature float64           `json:"temperature,omitempty"`
-	Stream      bool              `json:"stream,omitempty"`
-	ExchangeID  string            `json:"exchange_id,omitempty"`
+	Model       string    `json:"model"`
+	Messages    []Message `json:"messages"`
+	MaxTokens   int       `json:"max_tokens,omitempty"`
+	Temperature float64   `json:"temperature,omitempty"`
+	Stream      bool      `json:"stream,omitempty"`
+	ExchangeID  string    `json:"exchange_id,omitempty"`
 }
 
 // Message is a chat message.
@@ -376,7 +376,7 @@ func generateMockCodeResponse(prompt, model string) string {
 
 	return fmt.Sprintf(`Here is the code response for your request (model: %s).
 
-` + "```go" + `// AI-generated code — source: %s
+`+"```go"+`// AI-generated code — source: %s
 // Recorded in the provenance chain
 package main
 
@@ -385,7 +385,7 @@ import "fmt"
 func ExampleFunction() {
     fmt.Println("Hello from Patty Code")
 }
-` + "```", model, model)
+`+"```", model, model)
 }
 
 // StartAttestationLoop starts periodic re-attestation.

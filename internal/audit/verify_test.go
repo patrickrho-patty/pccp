@@ -73,12 +73,14 @@ func TestChainAllocatesSequentiallyUnderConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// sqlite file DBs serialize writes; retry transient locks.
-			for attempt := 0; attempt < 8; attempt++ {
+			// sqlite file DBs serialize writes; retry transient locks
+			// with backoff until the deadline.
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
 				if err := db.Create(&models.AuditEvent{OrganizationID: "race", EventType: "t", Action: "a"}).Error; err == nil {
 					return
 				}
-				time.Sleep(5 * time.Millisecond)
+				time.Sleep(10 * time.Millisecond)
 			}
 		}()
 	}
