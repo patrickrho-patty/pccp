@@ -13,8 +13,8 @@ import (
 // Collects signals and computes risk scores per account.
 // Per §10C.9: "IP/geolocation alone is never enough for automatic permanent ban."
 type Service struct {
-	db  *gorm.DB
-	mu  sync.Mutex
+	db *gorm.DB
+	mu sync.Mutex
 	// In-memory signal tracking
 	signals map[string][]*Signal // accountID → signals
 }
@@ -22,8 +22,8 @@ type Service struct {
 // Signal represents a single integrity detection signal.
 type Signal struct {
 	AccountID  string    `json:"account_id"`
-	Type       string    `json:"type"`       // concurrent_harnesses, geo_implausible, etc.
-	Severity   string    `json:"severity"`   // info, low, medium, high
+	Type       string    `json:"type"`     // concurrent_harnesses, geo_implausible, etc.
+	Severity   string    `json:"severity"` // info, low, medium, high
 	Details    string    `json:"details"`
 	DetailsKo  string    `json:"details_ko"`
 	DetectedAt time.Time `json:"detected_at"`

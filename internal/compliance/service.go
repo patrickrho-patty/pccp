@@ -36,51 +36,51 @@ const (
 
 // CompliancePack is a set of control mappings for a certification.
 type CompliancePack struct {
-	ID                string              `json:"id"`
-	Certification     CertificationType   `json:"certification"`
-	Name              string              `json:"name"`
-	NameKo            string              `json:"name_ko"`
-	Version           string              `json:"version"`
-	Profile           string              `json:"profile"` // enterprise, government
-	ControlMappings   []ControlMapping    `json:"control_mappings"`
-	Status            string              `json:"status"`
-	CreatedAt         string              `json:"created_at"`
+	ID              string            `json:"id"`
+	Certification   CertificationType `json:"certification"`
+	Name            string            `json:"name"`
+	NameKo          string            `json:"name_ko"`
+	Version         string            `json:"version"`
+	Profile         string            `json:"profile"` // enterprise, government
+	ControlMappings []ControlMapping  `json:"control_mappings"`
+	Status          string            `json:"status"`
+	CreatedAt       string            `json:"created_at"`
 }
 
 // ControlMapping maps a compliance control to PCCP features and evidence.
 type ControlMapping struct {
-	ControlID       string   `json:"control_id"`       // e.g. "CSAP-1.1", "ISMS-P-2.3"
-	ControlName     string   `json:"control_name"`
-	ControlNameKo   string   `json:"control_name_ko"`
-	Category        string   `json:"category"`         // access_control, audit, encryption, etc.
-	Description     string   `json:"description"`
-	DescriptionKo   string   `json:"description_ko"`
+	ControlID     string `json:"control_id"` // e.g. "CSAP-1.1", "ISMS-P-2.3"
+	ControlName   string `json:"control_name"`
+	ControlNameKo string `json:"control_name_ko"`
+	Category      string `json:"category"` // access_control, audit, encryption, etc.
+	Description   string `json:"description"`
+	DescriptionKo string `json:"description_ko"`
 	// PCCP implementation
 	ImplementingFeature string `json:"implementing_feature"` // which PCCP service addresses this
-	EvidenceQuery   string   `json:"evidence_query"` // API query to retrieve evidence
-	Status          string   `json:"status"` // implemented, partial, planned
-	Notes           string   `json:"notes,omitempty"`
+	EvidenceQuery       string `json:"evidence_query"`       // API query to retrieve evidence
+	Status              string `json:"status"`               // implemented, partial, planned
+	Notes               string `json:"notes,omitempty"`
 }
 
 // ComplianceAssessment is an assessment of compliance status.
 type ComplianceAssessment struct {
-	ID              string                 `json:"id"`
-	OrganizationID  string                 `json:"organization_id"`
-	Certification   CertificationType      `json:"certification"`
-	AssessedAt      string                 `json:"assessed_at"`
-	OverallStatus   string                 `json:"overall_status"` // compliant, partially_compliant, gap
+	ID              string                    `json:"id"`
+	OrganizationID  string                    `json:"organization_id"`
+	Certification   CertificationType         `json:"certification"`
+	AssessedAt      string                    `json:"assessed_at"`
+	OverallStatus   string                    `json:"overall_status"` // compliant, partially_compliant, gap
 	ControlResults  []ControlAssessmentResult `json:"control_results"`
-	OpenGaps        int                    `json:"open_gaps"`
-	Recommendations []string               `json:"recommendations"`
+	OpenGaps        int                       `json:"open_gaps"`
+	Recommendations []string                  `json:"recommendations"`
 }
 
 // ControlAssessmentResult is the assessment result for a single control.
 type ControlAssessmentResult struct {
-	ControlID   string `json:"control_id"`
-	Status      string `json:"status"` // compliant, partial, gap, not_applicable
-	Evidence    string `json:"evidence,omitempty"`
-	GapDesc     string `json:"gap_description,omitempty"`
-	GapDescKo   string `json:"gap_description_ko,omitempty"`
+	ControlID string `json:"control_id"`
+	Status    string `json:"status"` // compliant, partial, gap, not_applicable
+	Evidence  string `json:"evidence,omitempty"`
+	GapDesc   string `json:"gap_description,omitempty"`
+	GapDescKo string `json:"gap_description_ko,omitempty"`
 }
 
 // GetCertificationPack returns the default compliance mapping for a certification.

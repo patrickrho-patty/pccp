@@ -35,14 +35,14 @@ const (
 
 // Report is a generated report.
 type Report struct {
-	ID              string      `json:"id"`
-	Type            ReportType  `json:"type"`
-	OrganizationID  string      `json:"organization_id"`
-	Period          string      `json:"period"`
-	GeneratedAt     string      `json:"generated_at"`
-	GeneratedBy     string      `json:"generated_by"`
-	Data            interface{} `json:"data"`
-	ProvenanceDigest string     `json:"provenance_digest"`
+	ID               string      `json:"id"`
+	Type             ReportType  `json:"type"`
+	OrganizationID   string      `json:"organization_id"`
+	Period           string      `json:"period"`
+	GeneratedAt      string      `json:"generated_at"`
+	GeneratedBy      string      `json:"generated_by"`
+	Data             interface{} `json:"data"`
+	ProvenanceDigest string      `json:"provenance_digest"`
 }
 
 // GenerateReport generates a report of the specified type.
@@ -80,20 +80,20 @@ func (s *Service) GenerateReport(orgID string, reportType ReportType, period str
 
 // WeeklyGovernanceReport is the executive weekly AI governance brief (PRD §33.12).
 type WeeklyGovernanceReport struct {
-	Period             string         `json:"period"`
-	TotalSessions      int64          `json:"total_sessions"`
-	ActiveHarnesses    int64          `json:"active_harnesses"`
-	TotalUsers         int64          `json:"total_users"`
-	ModelInvocations   int64          `json:"model_invocations"`
-	CodeChanges        int64          `json:"code_changes"`
-	SecurityFindings   int64          `json:"security_findings"`
-	CriticalFindings   int64          `json:"critical_findings"`
-	ApprovalRate       float64        `json:"approval_rate"`
-	PolicyViolations   int64          `json:"policy_violations"`
-	ComplianceStatus   string         `json:"compliance_status"`
-	TopModelsByUsage   []ModelUsage   `json:"top_models"`
-	FindingsByType     map[string]int `json:"findings_by_type"`
-	Recommendations    []string       `json:"recommendations"`
+	Period           string         `json:"period"`
+	TotalSessions    int64          `json:"total_sessions"`
+	ActiveHarnesses  int64          `json:"active_harnesses"`
+	TotalUsers       int64          `json:"total_users"`
+	ModelInvocations int64          `json:"model_invocations"`
+	CodeChanges      int64          `json:"code_changes"`
+	SecurityFindings int64          `json:"security_findings"`
+	CriticalFindings int64          `json:"critical_findings"`
+	ApprovalRate     float64        `json:"approval_rate"`
+	PolicyViolations int64          `json:"policy_violations"`
+	ComplianceStatus string         `json:"compliance_status"`
+	TopModelsByUsage []ModelUsage   `json:"top_models"`
+	FindingsByType   map[string]int `json:"findings_by_type"`
+	Recommendations  []string       `json:"recommendations"`
 }
 
 type ModelUsage struct {
@@ -144,13 +144,13 @@ func (s *Service) generateGovernanceReport(orgID string) *WeeklyGovernanceReport
 
 // MonthlyUsageReport shows token usage and cost.
 type MonthlyUsageReport struct {
-	Period            string               `json:"period"`
-	TotalTokensIn     int64                `json:"total_tokens_in"`
-	TotalTokensOut    int64                `json:"total_tokens_out"`
-	TotalCostKRW      int64                `json:"total_cost_krw"`
-	ModelBreakdown    map[string]int64     `json:"model_breakdown"`
-	UserBreakdown     map[string]int64     `json:"user_breakdown"`
-	DailyAverages     map[string]int64     `json:"daily_averages"`
+	Period         string           `json:"period"`
+	TotalTokensIn  int64            `json:"total_tokens_in"`
+	TotalTokensOut int64            `json:"total_tokens_out"`
+	TotalCostKRW   int64            `json:"total_cost_krw"`
+	ModelBreakdown map[string]int64 `json:"model_breakdown"`
+	UserBreakdown  map[string]int64 `json:"user_breakdown"`
+	DailyAverages  map[string]int64 `json:"daily_averages"`
 }
 
 func (s *Service) generateUsageReport(orgID string) *MonthlyUsageReport {
@@ -180,14 +180,14 @@ func (s *Service) generateUsageReport(orgID string) *MonthlyUsageReport {
 
 // SecurityReport summarizes security findings.
 type SecurityReport struct {
-	Period            string              `json:"period"`
-	TotalFindings     int64               `json:"total_findings"`
-	BySeverity        map[string]int      `json:"by_severity"`
-	ByType            map[string]int      `json:"by_type"`
-	OpenCount         int64               `json:"open_count"`
-	ResolvedCount     int64               `json:"resolved_count"`
-	MTTR              float64             `json:"mttr_hours"` // mean time to resolve
-	TopAffectedUsers  map[string]int      `json:"top_affected_users"`
+	Period           string         `json:"period"`
+	TotalFindings    int64          `json:"total_findings"`
+	BySeverity       map[string]int `json:"by_severity"`
+	ByType           map[string]int `json:"by_type"`
+	OpenCount        int64          `json:"open_count"`
+	ResolvedCount    int64          `json:"resolved_count"`
+	MTTR             float64        `json:"mttr_hours"` // mean time to resolve
+	TopAffectedUsers map[string]int `json:"top_affected_users"`
 }
 
 func (s *Service) generateSecurityReport(orgID string) *SecurityReport {

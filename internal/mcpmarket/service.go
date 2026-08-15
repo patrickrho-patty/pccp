@@ -13,8 +13,8 @@ import (
 // Provides a managed registry for MCP servers with discovery, versioning,
 // and organizational approval workflows.
 type Service struct {
-	mu        sync.RWMutex
-	listings  map[string]*MCPListing // listing ID → listing
+	mu       sync.RWMutex
+	listings map[string]*MCPListing // listing ID → listing
 }
 
 // New creates a new MCP marketplace service.
@@ -24,63 +24,63 @@ func New() *Service {
 
 // MCPListing represents an MCP server listing in the marketplace.
 type MCPListing struct {
-	ID                string            `json:"id"`
-	Name              string            `json:"name"`
-	NameKo            string            `json:"name_ko"`
-	Description       string            `json:"description"`
-	DescriptionKo     string            `json:"description_ko"`
-	Publisher         string            `json:"publisher"`
-	PublisherVerified bool              `json:"publisher_verified"`
-	Category          string            `json:"category"` // filesystem, database, api, search, tools
-	Tags              []string          `json:"tags"`
-	IconURL           string            `json:"icon_url,omitempty"`
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	NameKo            string   `json:"name_ko"`
+	Description       string   `json:"description"`
+	DescriptionKo     string   `json:"description_ko"`
+	Publisher         string   `json:"publisher"`
+	PublisherVerified bool     `json:"publisher_verified"`
+	Category          string   `json:"category"` // filesystem, database, api, search, tools
+	Tags              []string `json:"tags"`
+	IconURL           string   `json:"icon_url,omitempty"`
 	// Versioning
-	Versions          []MCPVersion      `json:"versions"`
-	LatestVersion     string            `json:"latest_version"`
+	Versions      []MCPVersion `json:"versions"`
+	LatestVersion string       `json:"latest_version"`
 	// Security
-	SecurityAudit     *SecurityAudit    `json:"security_audit,omitempty"`
-	RiskLevel         string            `json:"risk_level"` // low, medium, high
-	RequiredPermissions []string        `json:"required_permissions"`
-	NetworkAccess     bool              `json:"network_access"`
-	FileAccess        bool              `json:"file_access"`
+	SecurityAudit       *SecurityAudit `json:"security_audit,omitempty"`
+	RiskLevel           string         `json:"risk_level"` // low, medium, high
+	RequiredPermissions []string       `json:"required_permissions"`
+	NetworkAccess       bool           `json:"network_access"`
+	FileAccess          bool           `json:"file_access"`
 	// Marketplace
-	DownloadCount     int64             `json:"download_count"`
-	Rating            float64           `json:"rating"`
-	Reviews           []MCPReview       `json:"reviews,omitempty"`
+	DownloadCount int64       `json:"download_count"`
+	Rating        float64     `json:"rating"`
+	Reviews       []MCPReview `json:"reviews,omitempty"`
 	// Status
-	Status            string            `json:"status"` // listed, deprecated, removed
-	ListedAt          string            `json:"listed_at"`
-	UpdatedAt         string            `json:"updated_at"`
+	Status    string `json:"status"` // listed, deprecated, removed
+	ListedAt  string `json:"listed_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 // MCPVersion represents a specific version of an MCP server.
 type MCPVersion struct {
-	Version       string `json:"version"`
-	PackageHash   string `json:"package_hash"`
-	Signature     string `json:"signature"`
+	Version         string `json:"version"`
+	PackageHash     string `json:"package_hash"`
+	Signature       string `json:"signature"`
 	ContainerDigest string `json:"container_digest"`
-	Changelog     string `json:"changelog"`
-	ChangelogKo   string `json:"changelog_ko,omitempty"`
-	ReleasedAt    string `json:"released_at"`
-	Deprecated    bool   `json:"deprecated"`
+	Changelog       string `json:"changelog"`
+	ChangelogKo     string `json:"changelog_ko,omitempty"`
+	ReleasedAt      string `json:"released_at"`
+	Deprecated      bool   `json:"deprecated"`
 }
 
 // SecurityAudit represents a security audit of an MCP server.
 type SecurityAudit struct {
-	Auditor       string   `json:"auditor"`
-	AuditedAt     string   `json:"audited_at"`
-	Result        string   `json:"result"` // passed, failed, conditional
-	Findings      []string `json:"findings"`
+	Auditor         string   `json:"auditor"`
+	AuditedAt       string   `json:"audited_at"`
+	Result          string   `json:"result"` // passed, failed, conditional
+	Findings        []string `json:"findings"`
 	Recommendations []string `json:"recommendations"`
 }
 
 // MCPReview represents a user review of an MCP server.
 type MCPReview struct {
-	UserID    string  `json:"user_id"`
-	UserName  string  `json:"user_name"`
-	Rating    int     `json:"rating"` // 1-5
-	Comment   string  `json:"comment"`
-	CreatedAt string  `json:"created_at"`
+	UserID    string `json:"user_id"`
+	UserName  string `json:"user_name"`
+	Rating    int    `json:"rating"` // 1-5
+	Comment   string `json:"comment"`
+	CreatedAt string `json:"created_at"`
 }
 
 // PublishListing publishes a new MCP server to the marketplace.
@@ -236,25 +236,25 @@ func (s *Service) SeedDefaultListings() {
 	defaults := []MCPListing{
 		{
 			Name: "Filesystem MCP", NameKo: "파일시스템 MCP",
-			Description: "Read/write access to local filesystem",
+			Description:   "Read/write access to local filesystem",
 			DescriptionKo: "로컬 파일 시스템 읽기/쓰기",
-			Publisher: "patty", PublisherVerified: true,
+			Publisher:     "patty", PublisherVerified: true,
 			Category: "filesystem", RiskLevel: "medium",
 			FileAccess: true, Status: "listed",
 		},
 		{
 			Name: "PostgreSQL MCP", NameKo: "PostgreSQL MCP",
-			Description: "Query PostgreSQL databases",
+			Description:   "Query PostgreSQL databases",
 			DescriptionKo: "PostgreSQL 데이터베이스 쿼리",
-			Publisher: "patty", PublisherVerified: true,
+			Publisher:     "patty", PublisherVerified: true,
 			Category: "database", RiskLevel: "high",
 			NetworkAccess: true, Status: "listed",
 		},
 		{
 			Name: "Korean NLP MCP", NameKo: "한국어 NLP MCP",
-			Description: "Korean language processing tools",
+			Description:   "Korean language processing tools",
 			DescriptionKo: "한국어 자연어 처리 도구",
-			Publisher: "patty-korea", PublisherVerified: true,
+			Publisher:     "patty-korea", PublisherVerified: true,
 			Category: "korean", Tags: []string{"korean", "nlp", "형태소"},
 			RiskLevel: "low", Status: "listed",
 		},

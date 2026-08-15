@@ -16,8 +16,8 @@ import (
 
 // Config holds database connection configuration.
 type Config struct {
- 	Driver string `json:"driver"`  // "postgres" or "sqlite"
- 	DSN    string `json:"d_s_n"`  // connection string
+	Driver string `json:"driver"` // "postgres" or "sqlite"
+	DSN    string `json:"d_s_n"`  // connection string
 }
 
 // New creates a new GORM database connection based on the config.

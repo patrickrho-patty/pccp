@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -59,13 +59,13 @@ type ArgumentPolicy struct {
 
 // MCPPolicy defines organization-wide MCP allow/deny configuration.
 type MCPPolicy struct {
-	OrganizationID       string                     `json:"organization_id"`
-	AllowList            []string                   `json:"allow_list"`
-	DenyList             []string                   `json:"deny_list"`
+	OrganizationID       string                      `json:"organization_id"`
+	AllowList            []string                    `json:"allow_list"`
+	DenyList             []string                    `json:"deny_list"`
 	ProjectOverrides     map[string]ProjectMCPPolicy `json:"project_overrides"`
-	ArgumentPolicies     []ArgumentPolicy           `json:"argument_policies"`
-	ResultScanning       bool                       `json:"result_scanning"`
-	TokenQuotaPerSession int                        `json:"token_quota_per_session"`
+	ArgumentPolicies     []ArgumentPolicy            `json:"argument_policies"`
+	ResultScanning       bool                        `json:"result_scanning"`
+	TokenQuotaPerSession int                         `json:"token_quota_per_session"`
 }
 
 // MCPConnectionRequest is a request to connect an MCP server within a session.
@@ -125,13 +125,13 @@ func (s *Service) RegisterServer(server MCPServer) (*MCPServer, error) {
 func (s *Service) SetPolicy(orgID string, policy MCPPolicy) error {
 	policyJSON, _ := json.Marshal(policy)
 	pack := &models.PolicyPack{
-		Base:            models.Base{ID: dari.GenerateID("mcp_policy")},
-		OrganizationID:  orgID,
-		Name:            "MCP Governance Policy",
-		Version:         "1.0",
-		Profile:         "enterprise",
-		ToolPolicyJSON:  string(policyJSON),
-		Status:          "active",
+		Base:           models.Base{ID: dari.GenerateID("mcp_policy")},
+		OrganizationID: orgID,
+		Name:           "MCP Governance Policy",
+		Version:        "1.0",
+		Profile:        "enterprise",
+		ToolPolicyJSON: string(policyJSON),
+		Status:         "active",
 	}
 	return s.db.Create(pack).Error
 }

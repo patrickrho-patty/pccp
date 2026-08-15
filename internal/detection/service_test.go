@@ -58,7 +58,7 @@ func TestRiskScore(t *testing.T) {
 	svc := New(setupDB(t))
 	// Add some signals
 	svc.CheckGeoImplausible("acct-1", nil, []string{"A", "B", "C"}) // high = 20
-	svc.CheckCredentialReplay("acct-1", "h", []string{"1", "2"})     // critical = 30
+	svc.CheckCredentialReplay("acct-1", "h", []string{"1", "2"})    // critical = 30
 
 	score := svc.GetRiskScore("acct-1")
 	if score != 50 {

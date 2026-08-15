@@ -32,26 +32,26 @@ func New(db *gorm.DB) *Service {
 
 // EndpointMetrics holds runtime metrics for a model endpoint (PRD §30.2).
 type EndpointMetrics struct {
-	EndpointID       string  `json:"endpoint_id"`
-	PIAVersion       string  `json:"pia_version"`
-	HostIdentity     string  `json:"host_identity"`
-	Cluster          string  `json:"cluster"`
-	ServingEngine    string  `json:"serving_engine"`
-	ServingVersion   string  `json:"serving_version"`
-	LoadedModel      string  `json:"loaded_model"`
-	AttestationAge   string  `json:"attestation_age"`
-	AssuranceLevel   string  `json:"assurance_level"`
-	LeaseExpiry      string  `json:"lease_expiry"`
-	ActiveRequests   int     `json:"active_requests"`
-	QueuedRequests   int     `json:"queued_requests"`
-	TTFTMs           float64 `json:"ttft_ms"` // Time To First Token
-	DecodeLatencyMs  float64 `json:"decode_latency_ms"`
-	KVCacheUsage     float64 `json:"kv_cache_usage"`
-	FailureCount     int64   `json:"failure_count"`
-	RestartCount     int     `json:"restart_count"`
-	RoutingWeight    int     `json:"routing_weight"`
-	DrainState       string  `json:"drain_state"` // active, draining, canary
-	UpdatedAt        string  `json:"updated_at"`
+	EndpointID      string  `json:"endpoint_id"`
+	PIAVersion      string  `json:"pia_version"`
+	HostIdentity    string  `json:"host_identity"`
+	Cluster         string  `json:"cluster"`
+	ServingEngine   string  `json:"serving_engine"`
+	ServingVersion  string  `json:"serving_version"`
+	LoadedModel     string  `json:"loaded_model"`
+	AttestationAge  string  `json:"attestation_age"`
+	AssuranceLevel  string  `json:"assurance_level"`
+	LeaseExpiry     string  `json:"lease_expiry"`
+	ActiveRequests  int     `json:"active_requests"`
+	QueuedRequests  int     `json:"queued_requests"`
+	TTFTMs          float64 `json:"ttft_ms"` // Time To First Token
+	DecodeLatencyMs float64 `json:"decode_latency_ms"`
+	KVCacheUsage    float64 `json:"kv_cache_usage"`
+	FailureCount    int64   `json:"failure_count"`
+	RestartCount    int     `json:"restart_count"`
+	RoutingWeight   int     `json:"routing_weight"`
+	DrainState      string  `json:"drain_state"` // active, draining, canary
+	UpdatedAt       string  `json:"updated_at"`
 }
 
 // GPUMetrics holds GPU health metrics (PRD §30.3).
@@ -168,16 +168,16 @@ func (s *Service) RouteRequest(orgID, modelPackageID string, dataResidency strin
 
 // ModelOperationsReport returns model operations data (PRD §30.1).
 type ModelOperationsReport struct {
-	ModelPackageID    string  `json:"model_package_id"`
-	LogicalName       string  `json:"logical_name"`
-	ArtifactID        string  `json:"artifact_id"`
-	ContextLimit      int     `json:"context_limit"`
-	EndpointCount     int     `json:"endpoint_count"`
-	CurrentTraffic    int     `json:"current_traffic"`
-	AvgTTFTMs         float64 `json:"avg_ttft_ms"`
-	AvgDecodeMs       float64 `json:"avg_decode_ms"`
-	ErrorRate         float64 `json:"error_rate"`
-	Status            string  `json:"status"`
+	ModelPackageID string  `json:"model_package_id"`
+	LogicalName    string  `json:"logical_name"`
+	ArtifactID     string  `json:"artifact_id"`
+	ContextLimit   int     `json:"context_limit"`
+	EndpointCount  int     `json:"endpoint_count"`
+	CurrentTraffic int     `json:"current_traffic"`
+	AvgTTFTMs      float64 `json:"avg_ttft_ms"`
+	AvgDecodeMs    float64 `json:"avg_decode_ms"`
+	ErrorRate      float64 `json:"error_rate"`
+	Status         string  `json:"status"`
 }
 
 // GetModelOperationsReport returns operations data for all models.

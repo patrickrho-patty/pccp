@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -50,34 +50,34 @@ const (
 
 // ConfigChange represents a proposed configuration change (PRD §46.2).
 type ConfigChange struct {
-	ID              string          `json:"id"`
-	OrganizationID  string          `json:"organization_id"`
-	Domain          ConfigDomain    `json:"domain"`
-	Title           string          `json:"title"`
-	Description     string          `json:"description"`
-	ProposedBy      string          `json:"proposed_by"`
+	ID             string       `json:"id"`
+	OrganizationID string       `json:"organization_id"`
+	Domain         ConfigDomain `json:"domain"`
+	Title          string       `json:"title"`
+	Description    string       `json:"description"`
+	ProposedBy     string       `json:"proposed_by"`
 	// Lifecycle state (PRD §46.2)
-	State           string          `json:"state"` // draft, validating, pending_approval, approved, publishing, rolling_out, enforcing, rolled_back, expired
+	State string `json:"state"` // draft, validating, pending_approval, approved, publishing, rolling_out, enforcing, rolled_back, expired
 	// Configuration data
-	CurrentConfig   json.RawMessage `json:"current_config,omitempty"`
-	ProposedConfig  json.RawMessage `json:"proposed_config"`
-	Diff            json.RawMessage `json:"diff,omitempty"`
+	CurrentConfig  json.RawMessage `json:"current_config,omitempty"`
+	ProposedConfig json.RawMessage `json:"proposed_config"`
+	Diff           json.RawMessage `json:"diff,omitempty"`
 	// Validation
 	ValidationResults json.RawMessage `json:"validation_results,omitempty"`
-	ConflictCheck   json.RawMessage `json:"conflict_check,omitempty"`
-	SimulationResult json.RawMessage `json:"simulation_result,omitempty"`
+	ConflictCheck     json.RawMessage `json:"conflict_check,omitempty"`
+	SimulationResult  json.RawMessage `json:"simulation_result,omitempty"`
 	// Approval
 	RequiresApproval bool   `json:"requires_approval"`
 	ApprovedBy       string `json:"approved_by,omitempty"`
 	ApprovedAt       string `json:"approved_at,omitempty"`
 	RejectionReason  string `json:"rejection_reason,omitempty"`
 	// Rollout
-	RolloutStrategy  string `json:"rollout_strategy"` // immediate, staged, canary
-	RolloutPercent   int    `json:"rollout_percent"`
-	ObservedAt       string `json:"observed_at,omitempty"`
+	RolloutStrategy string `json:"rollout_strategy"` // immediate, staged, canary
+	RolloutPercent  int    `json:"rollout_percent"`
+	ObservedAt      string `json:"observed_at,omitempty"`
 	// Timestamps
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 // CreateChange proposes a new configuration change.
@@ -123,10 +123,10 @@ func (s *Service) ValidateChange(changeID string) error {
 
 	// Run validation (simplified)
 	results := map[string]interface{}{
-		"valid":         true,
-		"schema_check":  "passed",
+		"valid":           true,
+		"schema_check":    "passed",
 		"reference_check": "passed",
-		"warnings":      []string{},
+		"warnings":        []string{},
 	}
 
 	resultJSON, _ := json.Marshal(results)
@@ -259,10 +259,10 @@ func (s *Service) RollbackChange(changeID, reason string) error {
 
 // DetectDrift checks for configuration drift (PRD §46.3).
 type DriftResult struct {
-	Component    string `json:"component"`
-	DriftType    string `json:"drift_type"` // stale_harness, stale_pia, stale_policy, stale_config
-	Description  string `json:"description"`
-	Severity     string `json:"severity"`
+	Component   string `json:"component"`
+	DriftType   string `json:"drift_type"` // stale_harness, stale_pia, stale_policy, stale_config
+	Description string `json:"description"`
+	Severity    string `json:"severity"`
 }
 
 // DetectDrift checks for configuration drift across the fleet (PRD §46.3).

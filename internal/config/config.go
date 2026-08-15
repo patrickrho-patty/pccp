@@ -9,24 +9,24 @@ import (
 // ServerConfig holds control plane server configuration.
 type ServerConfig struct {
 	// HTTP server
- 	HTTPAddr string `json:"h_t_t_p_addr"`
+	HTTPAddr string `json:"h_t_t_p_addr"`
 	// Database
- 	DBDriver string `json:"d_b_driver"`
- 	DBDSN    string `json:"d_b_d_s_n"`
+	DBDriver string `json:"d_b_driver"`
+	DBDSN    string `json:"d_b_d_s_n"`
 	// JWT
- 	JWTSecret string `json:"j_w_t_secret"`
+	JWTSecret string `json:"j_w_t_secret"`
 	// Control Plane CA
- 	CAKeyFile string `json:"c_a_key_file"`
- 	CACertFile string `json:"c_a_cert_file"`
+	CAKeyFile  string `json:"c_a_key_file"`
+	CACertFile string `json:"c_a_cert_file"`
 	// Admin bootstrap
- 	AdminEmail string `json:"admin_email"`
- 	AdminPassword string `json:"admin_password"`
+	AdminEmail    string `json:"admin_email"`
+	AdminPassword string `json:"admin_password"`
 	// File storage (for evidence bundles, diffs, etc.)
- 	StorageDir string `json:"storage_dir"`
+	StorageDir string `json:"storage_dir"`
 	// Default language/locale
- 	DefaultLocale string `json:"default_locale"`
+	DefaultLocale string `json:"default_locale"`
 	// Deployment profile
- 	DeploymentProfile string `json:"deployment_profile"`  // enterprise, public, sovereign
+	DeploymentProfile string `json:"deployment_profile"` // enterprise, public, sovereign
 }
 
 // LoadFromEnv loads configuration from environment variables with sensible defaults.
@@ -49,74 +49,74 @@ func LoadFromEnv() ServerConfig {
 // RelayConfig holds Relay (data plane) configuration.
 type RelayConfig struct {
 	// QUIC/TCP listen address
- 	QUICAddr string `json:"q_u_i_c_addr"`
- 	TCPAddr  string `json:"t_c_p_addr"`
+	QUICAddr string `json:"q_u_i_c_addr"`
+	TCPAddr  string `json:"t_c_p_addr"`
 	// TLS
- 	TLSCertFile string `json:"t_l_s_cert_file"`
- 	TLSKeyFile  string `json:"t_l_s_key_file"`
+	TLSCertFile string `json:"t_l_s_cert_file"`
+	TLSKeyFile  string `json:"t_l_s_key_file"`
 	// Control Plane API
- 	ControlPlaneURL string `json:"control_plane_u_r_l"`
- 	ControlPlaneToken string `json:"control_plane_token"`
+	ControlPlaneURL   string `json:"control_plane_u_r_l"`
+	ControlPlaneToken string `json:"control_plane_token"`
 	// Database (shared or relay-local)
- 	DBDriver string `json:"d_b_driver"`
- 	DBDSN    string `json:"d_b_d_s_n"`
+	DBDriver string `json:"d_b_driver"`
+	DBDSN    string `json:"d_b_d_s_n"`
 	// Evidence storage
- 	EvidenceDir string `json:"evidence_dir"`
+	EvidenceDir string `json:"evidence_dir"`
 }
 
 // LoadRelayFromEnv loads relay config from env.
 func LoadRelayFromEnv() RelayConfig {
 	return RelayConfig{
-		QUICAddr:         getenvDefault("PCCP_RELAY_QUIC_ADDR", ":8443"),
-		TCPAddr:          getenvDefault("PCCP_RELAY_TCP_ADDR", ":8444"),
-		TLSCertFile:      getenvDefault("PCCP_RELAY_TLS_CERT", ".keys/relay.crt"),
-		TLSKeyFile:       getenvDefault("PCCP_RELAY_TLS_KEY", ".keys/relay.key"),
-		ControlPlaneURL:  getenvDefault("PCCP_CP_URL", "http://localhost:8080"),
+		QUICAddr:          getenvDefault("PCCP_RELAY_QUIC_ADDR", ":8443"),
+		TCPAddr:           getenvDefault("PCCP_RELAY_TCP_ADDR", ":8444"),
+		TLSCertFile:       getenvDefault("PCCP_RELAY_TLS_CERT", ".keys/relay.crt"),
+		TLSKeyFile:        getenvDefault("PCCP_RELAY_TLS_KEY", ".keys/relay.key"),
+		ControlPlaneURL:   getenvDefault("PCCP_CP_URL", "http://localhost:8080"),
 		ControlPlaneToken: os.Getenv("PCCP_CP_TOKEN"),
-		DBDriver:         getenvDefault("PCCP_DB_DRIVER", "sqlite"),
-		DBDSN:            os.Getenv("PCCP_DB_DSN"),
-		EvidenceDir:      getenvDefault("PCCP_EVIDENCE_DIR", ".data/evidence"),
+		DBDriver:          getenvDefault("PCCP_DB_DRIVER", "sqlite"),
+		DBDSN:             os.Getenv("PCCP_DB_DSN"),
+		EvidenceDir:       getenvDefault("PCCP_EVIDENCE_DIR", ".data/evidence"),
 	}
 }
 
 // PIAConfig holds PIA (Patty Inference Agent) configuration.
 type PIAConfig struct {
 	// DARI peer
- 	PeerID string `json:"peer_i_d"`
+	PeerID string `json:"peer_i_d"`
 	// Relay endpoint
- 	RelayAddr string `json:"relay_addr"`
+	RelayAddr string `json:"relay_addr"`
 	// TLS
- 	TLSCertFile string `json:"t_l_s_cert_file"`
- 	TLSKeyFile  string `json:"t_l_s_key_file"`
+	TLSCertFile string `json:"t_l_s_cert_file"`
+	TLSKeyFile  string `json:"t_l_s_key_file"`
 	// Local serving engine
- 	ServingEngineType string `json:"serving_engine_type"`  // vllm, sglang, mock
- 	ServingEngineURL  string `json:"serving_engine_u_r_l"`  // localhost URL
+	ServingEngineType string `json:"serving_engine_type"`  // vllm, sglang, mock
+	ServingEngineURL  string `json:"serving_engine_u_r_l"` // localhost URL
 	// Model
- 	ModelPackageID string `json:"model_package_i_d"`
- 	ModelWeightsPath string `json:"model_weights_path"`
+	ModelPackageID   string `json:"model_package_i_d"`
+	ModelWeightsPath string `json:"model_weights_path"`
 	// Attestation
- 	AssuranceLevel string `json:"assurance_level"`
- 	AttestationInterval string `json:"attestation_interval"`  // duration string
+	AssuranceLevel      string `json:"assurance_level"`
+	AttestationInterval string `json:"attestation_interval"` // duration string
 	// Database
- 	DBDriver string `json:"d_b_driver"`
- 	DBDSN    string `json:"d_b_d_s_n"`
+	DBDriver string `json:"d_b_driver"`
+	DBDSN    string `json:"d_b_d_s_n"`
 }
 
 // LoadPIAFromEnv loads PIA config from env.
 func LoadPIAFromEnv() PIAConfig {
 	return PIAConfig{
-		PeerID:             getenvDefault("PCCP_PIA_PEER_ID", "pia-local"),
-		RelayAddr:          getenvDefault("PCCP_PIA_RELAY_ADDR", "localhost:8443"),
-		TLSCertFile:        getenvDefault("PCCP_PIA_TLS_CERT", ".keys/pia.crt"),
-		TLSKeyFile:         getenvDefault("PCCP_PIA_TLS_KEY", ".keys/pia.key"),
-		ServingEngineType:  getenvDefault("PCCP_PIA_ENGINE", "vllm"),
-		ServingEngineURL:   getenvDefault("PCCP_PIA_SERVING_URL", "http://localhost:8081"),
-		ModelPackageID:     getenvDefault("PCCP_PIA_MODEL_PACKAGE", ""),
-		ModelWeightsPath:   os.Getenv("PCCP_PIA_MODEL_PATH"),
-		AssuranceLevel:     getenvDefault("PCCP_PIA_ASSURANCE", "L1"),
+		PeerID:              getenvDefault("PCCP_PIA_PEER_ID", "pia-local"),
+		RelayAddr:           getenvDefault("PCCP_PIA_RELAY_ADDR", "localhost:8443"),
+		TLSCertFile:         getenvDefault("PCCP_PIA_TLS_CERT", ".keys/pia.crt"),
+		TLSKeyFile:          getenvDefault("PCCP_PIA_TLS_KEY", ".keys/pia.key"),
+		ServingEngineType:   getenvDefault("PCCP_PIA_ENGINE", "vllm"),
+		ServingEngineURL:    getenvDefault("PCCP_PIA_SERVING_URL", "http://localhost:8081"),
+		ModelPackageID:      getenvDefault("PCCP_PIA_MODEL_PACKAGE", ""),
+		ModelWeightsPath:    os.Getenv("PCCP_PIA_MODEL_PATH"),
+		AssuranceLevel:      getenvDefault("PCCP_PIA_ASSURANCE", "L1"),
 		AttestationInterval: getenvDefault("PCCP_PIA_ATTEST_INTERVAL", "5m"),
-		DBDriver:           getenvDefault("PCCP_DB_DRIVER", "sqlite"),
-		DBDSN:              os.Getenv("PCCP_DB_DSN"),
+		DBDriver:            getenvDefault("PCCP_DB_DRIVER", "sqlite"),
+		DBDSN:               os.Getenv("PCCP_DB_DSN"),
 	}
 }
 

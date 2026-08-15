@@ -25,8 +25,8 @@ func New() *Service {
 type AssuranceLevel string
 
 const (
-	Level1Software AssuranceLevel = "L1" // Software Verified
-	Level2Host     AssuranceLevel = "L2" // Host Attested (TPM/Secure Boot)
+	Level1Software     AssuranceLevel = "L1" // Software Verified
+	Level2Host         AssuranceLevel = "L2" // Host Attested (TPM/Secure Boot)
 	Level3Confidential AssuranceLevel = "L3" // Confidential Computing (TEE/GPU)
 )
 
@@ -37,9 +37,9 @@ const (
 	AttestTPM           AttestationType = "tpm"
 	AttestSecureBoot    AttestationType = "secure_boot"
 	AttestMeasuredBoot  AttestationType = "measured_boot"
-	AttestTEE           AttestationType = "tee"            // Trusted Execution Environment
-	AttestGPUCC         AttestationType = "gpu_cc"          // GPU Confidential Computing
-	AttestVM            AttestationType = "vm"              // Confidential VM
+	AttestTEE           AttestationType = "tee"    // Trusted Execution Environment
+	AttestGPUCC         AttestationType = "gpu_cc" // GPU Confidential Computing
+	AttestVM            AttestationType = "vm"     // Confidential VM
 	AttestContainer     AttestationType = "container"
 	AttestPIABinary     AttestationType = "pia_binary"
 	AttestModelArtifact AttestationType = "model_artifact"
@@ -47,27 +47,27 @@ const (
 
 // AttestationEvidence represents collected attestation evidence.
 type AttestationEvidence struct {
-	Type            AttestationType `json:"type"`
-	Level           AssuranceLevel  `json:"level"`
+	Type  AttestationType `json:"type"`
+	Level AssuranceLevel  `json:"level"`
 	// Raw evidence data (opaque to PCCP, verified by attestation verifier)
-	RawEvidence     json.RawMessage `json:"raw_evidence"`
+	RawEvidence json.RawMessage `json:"raw_evidence"`
 	// Parsed measurements
-	Measurements    map[string]string `json:"measurements"` // component → hash
+	Measurements map[string]string `json:"measurements"` // component → hash
 	// Reference values (from trust bundle)
 	ReferenceValues map[string]string `json:"reference_values,omitempty"`
 	// Verification result
-	Verified        bool   `json:"verified"`
+	Verified          bool   `json:"verified"`
 	VerificationError string `json:"verification_error,omitempty"`
-	VerifiedAt      string `json:"verified_at,omitempty"`
+	VerifiedAt        string `json:"verified_at,omitempty"`
 }
 
 // CollectRequest is a request to collect attestation evidence from a host.
 type CollectRequest struct {
- 	EndpointID    string `json:"endpoint_i_d"`
- 	NodeIdentity  string `json:"node_identity"`
- 	GPUIDs        []string `json:"g_p_u_i_ds"`
- 	RequiredTypes []AttestationType `json:"required_types"`
- 	RequiredLevel AssuranceLevel `json:"required_level"`
+	EndpointID    string            `json:"endpoint_i_d"`
+	NodeIdentity  string            `json:"node_identity"`
+	GPUIDs        []string          `json:"g_p_u_i_ds"`
+	RequiredTypes []AttestationType `json:"required_types"`
+	RequiredLevel AssuranceLevel    `json:"required_level"`
 }
 
 // CollectEvidence collects attestation evidence.
@@ -78,8 +78,8 @@ func (s *Service) CollectEvidence(req CollectRequest) ([]AttestationEvidence, er
 
 	for _, attType := range req.RequiredTypes {
 		ev := AttestationEvidence{
-			Type:  attType,
-			Level: req.RequiredLevel,
+			Type:         attType,
+			Level:        req.RequiredLevel,
 			Measurements: make(map[string]string),
 		}
 
@@ -101,7 +101,7 @@ func (s *Service) CollectEvidence(req CollectRequest) ([]AttestationEvidence, er
 
 		case AttestTPM:
 			// TPM measurement (production would use tpm2-tools)
-			ev.Measurements["tpm_pcr_0"] = "sha256:" + hashString("pcr0-" + req.NodeIdentity)
+			ev.Measurements["tpm_pcr_0"] = "sha256:" + hashString("pcr0-"+req.NodeIdentity)
 			ev.Measurements["tpm_pcr_7"] = "sha256:" + hashString("pcr7-secureboot")
 			ev.RawEvidence = json.RawMessage(`{"tpm_quote":"placeholder"}`)
 			// Mark as needing verification against reference values
@@ -115,7 +115,7 @@ func (s *Service) CollectEvidence(req CollectRequest) ([]AttestationEvidence, er
 		case AttestTEE:
 			// Confidential VM / TEE attestation
 			ev.Measurements["tee_type"] = "sev-snp"
-			ev.Measurements["tee_report"] = "sha256:" + hashString("tee-report-" + req.NodeIdentity)
+			ev.Measurements["tee_report"] = "sha256:" + hashString("tee-report-"+req.NodeIdentity)
 			ev.RawEvidence = json.RawMessage(`{"attestation_report":"placeholder"}`)
 			ev.Verified = false
 
@@ -198,11 +198,11 @@ func AssuranceLevelRequirements(level AssuranceLevel) []string {
 // ModelKeyReleaseRequest represents a request to release a model decryption key
 // after attestation passes (PRD §9.8).
 type ModelKeyReleaseRequest struct {
- 	EndpointID         string `json:"endpoint_i_d"`
- 	OrganizationID     string `json:"organization_i_d"`
- 	ModelPackageID     string `json:"model_package_i_d"`
- 	AssuranceLevel     AssuranceLevel `json:"assurance_level"`
- 	AttestationEvidence []AttestationEvidence `json:"attestation_evidence"`
+	EndpointID          string                `json:"endpoint_i_d"`
+	OrganizationID      string                `json:"organization_i_d"`
+	ModelPackageID      string                `json:"model_package_i_d"`
+	AssuranceLevel      AssuranceLevel        `json:"assurance_level"`
+	AttestationEvidence []AttestationEvidence `json:"attestation_evidence"`
 }
 
 // ModelKeyReleaseResult is the result of a key release request.

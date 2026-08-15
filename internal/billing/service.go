@@ -7,46 +7,46 @@ import (
 	"sync"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
 )
 
 // Service implements Usage, Entitlements, Billing, and Chargeback (PRD §29).
 type Service struct {
-	db         *gorm.DB
-	signingKey ed25519.PrivateKey
-	mu         sync.RWMutex
+	db           *gorm.DB
+	signingKey   ed25519.PrivateKey
+	mu           sync.RWMutex
 	entitlements map[string]*Entitlement // orgID → entitlement
 }
 
 // Entitlement constrains what an organization can use (PRD §29.2).
 type Entitlement struct {
-	ID                string   `json:"id"`
-	OrganizationID    string   `json:"organization_id"`
-	Plan              string   `json:"plan"` // enterprise, government, public
+	ID             string `json:"id"`
+	OrganizationID string `json:"organization_id"`
+	Plan           string `json:"plan"` // enterprise, government, public
 	// Model constraints
 	AllowedModelFamilies []string `json:"allowed_model_families"`
 	ContextLimit         int      `json:"context_limit"`
 	// Quotas
-	RequestQuotaPerDay   int64    `json:"request_quota_per_day"`
-	TokenQuotaPerDay     int64    `json:"token_quota_per_day"`
-	ConcurrentSessions   int      `json:"concurrent_sessions"`
-	MaxHarnesses         int      `json:"max_harnesses"`
+	RequestQuotaPerDay int64 `json:"request_quota_per_day"`
+	TokenQuotaPerDay   int64 `json:"token_quota_per_day"`
+	ConcurrentSessions int   `json:"concurrent_sessions"`
+	MaxHarnesses       int   `json:"max_harnesses"`
 	// Features
 	WorkIntelligenceEnabled bool   `json:"work_intelligence_enabled"`
 	AdvancedSecurityEnabled bool   `json:"advanced_security_enabled"`
-	CloudGPUPoolAccess     bool   `json:"cloud_gpu_pool_access"`
-	SupportTier            string `json:"support_tier"`
+	CloudGPUPoolAccess      bool   `json:"cloud_gpu_pool_access"`
+	SupportTier             string `json:"support_tier"`
 	// Retention
-	RetentionDays         int      `json:"retention_days"`
+	RetentionDays int `json:"retention_days"`
 	// Validity
-	ValidFrom             string   `json:"valid_from"`
-	ValidUntil            string   `json:"valid_until"`
-	GracePeriodDays       int      `json:"grace_period_days"`
+	ValidFrom       string `json:"valid_from"`
+	ValidUntil      string `json:"valid_until"`
+	GracePeriodDays int    `json:"grace_period_days"`
 	// Signing
-	CPSignature           string   `json:"cp_signature"`
-	Status                string   `json:"status"` // active, suspended, expired
+	CPSignature string `json:"cp_signature"`
+	Status      string `json:"status"` // active, suspended, expired
 }
 
 // New creates a new billing service.
@@ -56,9 +56,9 @@ func New(db *gorm.DB) (*Service, error) {
 		return nil, fmt.Errorf("billing: generate signing key: %w", err)
 	}
 	return &Service{
-		db:            db,
-		signingKey:    priv,
-		entitlements:  make(map[string]*Entitlement),
+		db:           db,
+		signingKey:   priv,
+		entitlements: make(map[string]*Entitlement),
 	}, nil
 }
 
@@ -127,10 +127,10 @@ func (s *Service) GetEntitlement(orgID string) *Entitlement {
 
 // CheckQuota verifies if a request falls within quota limits.
 type QuotaCheck struct {
-	Allowed       bool   `json:"allowed"`
-	Reason        string `json:"reason"`
-	Remaining     int64  `json:"remaining"`
-	ResetAt       string `json:"reset_at,omitempty"`
+	Allowed   bool   `json:"allowed"`
+	Reason    string `json:"reason"`
+	Remaining int64  `json:"remaining"`
+	ResetAt   string `json:"reset_at,omitempty"`
 }
 
 // CheckRequestQuota checks if a model request is within daily quota.
@@ -207,14 +207,14 @@ func (s *Service) CheckConcurrentSessions(orgID string) bool {
 
 // Chargeback represents an internal chargeback/showback entry (PRD §29.5).
 type Chargeback struct {
-	OrganizationID string `json:"organization_id"`
-	BusinessUnit   string `json:"business_unit"`
-	ProjectID      string `json:"project_id"`
-	Period         string `json:"period"`
-	TotalTokensIn  int64  `json:"total_tokens_in"`
-	TotalTokensOut int64  `json:"total_tokens_out"`
-	TotalRequests  int64  `json:"total_requests"`
-	EstimatedCostKRW int64 `json:"estimated_cost_krw"`
+	OrganizationID   string `json:"organization_id"`
+	BusinessUnit     string `json:"business_unit"`
+	ProjectID        string `json:"project_id"`
+	Period           string `json:"period"`
+	TotalTokensIn    int64  `json:"total_tokens_in"`
+	TotalTokensOut   int64  `json:"total_tokens_out"`
+	TotalRequests    int64  `json:"total_requests"`
+	EstimatedCostKRW int64  `json:"estimated_cost_krw"`
 }
 
 // GenerateChargebackReport generates a chargeback report by business unit.
@@ -249,7 +249,7 @@ func (s *Service) GenerateChargebackReport(orgID, period string) ([]Chargeback, 
 		}
 
 		// Estimate cost (KRW per 1M tokens — simplified)
-		buMap[bu].EstimatedCostKRW = (buMap[bu].TotalTokensIn+buMap[bu].TotalTokensOut)/1000000*5000
+		buMap[bu].EstimatedCostKRW = (buMap[bu].TotalTokensIn + buMap[bu].TotalTokensOut) / 1000000 * 5000
 	}
 
 	var result []Chargeback
@@ -261,15 +261,15 @@ func (s *Service) GenerateChargebackReport(orgID, period string) ([]Chargeback, 
 
 func defaultEntitlement(orgID string) *Entitlement {
 	return &Entitlement{
-		OrganizationID:        orgID,
-		Plan:                  "public",
-		ContextLimit:          32768,
-		ConcurrentSessions:    3,
-		MaxHarnesses:          5,
+		OrganizationID:          orgID,
+		Plan:                    "public",
+		ContextLimit:            32768,
+		ConcurrentSessions:      3,
+		MaxHarnesses:            5,
 		WorkIntelligenceEnabled: false,
 		AdvancedSecurityEnabled: false,
-		SupportTier:           "community",
-		RetentionDays:         30,
-		Status:                "active",
+		SupportTier:             "community",
+		RetentionDays:           30,
+		Status:                  "active",
 	}
 }

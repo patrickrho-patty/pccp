@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -198,42 +198,42 @@ func (s *Service) AnnounceModel(catalogModelID string) error {
 func (s *Service) SeedDefaultCatalog() error {
 	defaults := []models.CatalogModel{
 		{
-			CatalogModelID:   "patty-code-standard",
-			DisplayName:      "Patty Code Standard",
-			DisplayNameKo:    "패티 코드 스탠다드",
-			Description:      "Qwen3 MoE — standard coding model for everyday development",
-			DescriptionKo:    "Qwen3 MoE — 일상적인 개발을 위한 표준 코딩 모델",
-			Family:           "code",
-			ReleaseChannel:   "stable",
-			Availability:     "available",
-			DefaultRank:      10,
-			CapabilitiesJSON: defaultCapabilitiesJSON(),
-			MaxInputTokens:   131072,
-			MaxOutputTokens:  32768,
-			EntitlementClass: "unlimited-developer",
-			EntitlementLabel: "Included",
-			EntitlementLabelKo: "포함됨",
+			CatalogModelID:         "patty-code-standard",
+			DisplayName:            "Patty Code Standard",
+			DisplayNameKo:          "패티 코드 스탠다드",
+			Description:            "Qwen3 MoE — standard coding model for everyday development",
+			DescriptionKo:          "Qwen3 MoE — 일상적인 개발을 위한 표준 코딩 모델",
+			Family:                 "code",
+			ReleaseChannel:         "stable",
+			Availability:           "available",
+			DefaultRank:            10,
+			CapabilitiesJSON:       defaultCapabilitiesJSON(),
+			MaxInputTokens:         131072,
+			MaxOutputTokens:        32768,
+			EntitlementClass:       "unlimited-developer",
+			EntitlementLabel:       "Included",
+			EntitlementLabelKo:     "포함됨",
 			MinDARIProtocolVersion: 2,
-			ProductionPackageID: "pmp_qwen3_moe_v1",
+			ProductionPackageID:    "pmp_qwen3_moe_v1",
 		},
 		{
-			CatalogModelID:   "patty-code-pro",
-			DisplayName:      "Patty Code Pro",
-			DisplayNameKo:    "패티 코드 프로",
-			Description:      "Qwen3 MoE with higher reasoning effort for complex tasks",
-			DescriptionKo:    "Qwen3 MoE — 복잡한 작업을 위한 심층 추론 고급 모델",
-			Family:           "code",
-			ReleaseChannel:   "stable",
-			Availability:     "available",
-			DefaultRank:      20,
-			CapabilitiesJSON: proCapabilitiesJSON(),
-			MaxInputTokens:   262144,
-			MaxOutputTokens:  65536,
-			EntitlementClass: "pro",
-			EntitlementLabel: "Pro Plan",
-			EntitlementLabelKo: "프로 플랜",
+			CatalogModelID:         "patty-code-pro",
+			DisplayName:            "Patty Code Pro",
+			DisplayNameKo:          "패티 코드 프로",
+			Description:            "Qwen3 MoE with higher reasoning effort for complex tasks",
+			DescriptionKo:          "Qwen3 MoE — 복잡한 작업을 위한 심층 추론 고급 모델",
+			Family:                 "code",
+			ReleaseChannel:         "stable",
+			Availability:           "available",
+			DefaultRank:            20,
+			CapabilitiesJSON:       proCapabilitiesJSON(),
+			MaxInputTokens:         262144,
+			MaxOutputTokens:        65536,
+			EntitlementClass:       "pro",
+			EntitlementLabel:       "Pro Plan",
+			EntitlementLabelKo:     "프로 플랜",
 			MinDARIProtocolVersion: 2,
-			ProductionPackageID: "pmp_kocoder_v1",
+			ProductionPackageID:    "pmp_kocoder_v1",
 		},
 	}
 
@@ -271,9 +271,9 @@ func (s *Service) toDescriptor(cm models.CatalogModel) models.ModelDescriptor {
 		DefaultRank:    cm.DefaultRank,
 		Capabilities:   caps,
 		Limits: models.ModelLimits{
-			MaxInputTokens:     cm.MaxInputTokens,
-			MaxOutputTokens:    cm.MaxOutputTokens,
-			MaxTools:           cm.MaxTools,
+			MaxInputTokens:       cm.MaxInputTokens,
+			MaxOutputTokens:      cm.MaxOutputTokens,
+			MaxTools:             cm.MaxTools,
 			MaxParallelToolCalls: cm.MaxParallelTools,
 		},
 		Entitlement: models.ModelEntitlement{
@@ -282,9 +282,9 @@ func (s *Service) toDescriptor(cm models.CatalogModel) models.ModelDescriptor {
 			LabelKo: cm.EntitlementLabelKo,
 		},
 		ClientReqs: models.ModelClientReqs{
-			MinHarnessVersion:  cm.MinHarnessVersion,
-			MinDARIProtocolVersion:  cm.MinDARIProtocolVersion,
-			RequiredExtensions: extensions,
+			MinHarnessVersion:      cm.MinHarnessVersion,
+			MinDARIProtocolVersion: cm.MinDARIProtocolVersion,
+			RequiredExtensions:     extensions,
 		},
 		Lifecycle: models.ModelLifecycle{
 			AnnouncedAt:  cm.AnnouncedAt,

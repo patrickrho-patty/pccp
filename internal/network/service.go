@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -27,11 +27,11 @@ func New(db *gorm.DB) *Service {
 
 // NetworkGrant is an approved scoped network access grant (PRD §17.4).
 type NetworkGrant struct {
-	ID              string `json:"id"`
-	OrganizationID  string `json:"organization_id"`
-	SessionID       string `json:"session_id,omitempty"`
-	HarnessID       string `json:"harness_id,omitempty"`
-	SandboxID       string `json:"sandbox_id,omitempty"`
+	ID             string `json:"id"`
+	OrganizationID string `json:"organization_id"`
+	SessionID      string `json:"session_id,omitempty"`
+	HarnessID      string `json:"harness_id,omitempty"`
+	SandboxID      string `json:"sandbox_id,omitempty"`
 	// Destination scoping
 	DestinationName string `json:"destination_name"` // human-readable label
 	DNSPattern      string `json:"dns_pattern"`      // e.g. "*.github.com"
@@ -41,16 +41,16 @@ type NetworkGrant struct {
 	Method          string `json:"method,omitempty"` // HTTP method if applicable
 	Path            string `json:"path,omitempty"`   // URL path pattern
 	// Purpose and constraints
-	Purpose         string `json:"purpose"`          // why this grant exists
-	Duration        string `json:"duration"`         // how long it's valid
-	ByteBudget      int64  `json:"byte_budget"`      // max bytes (0 = unlimited)
-	ContentClass    string `json:"content_class"`    // public, internal, confidential
+	Purpose      string `json:"purpose"`       // why this grant exists
+	Duration     string `json:"duration"`      // how long it's valid
+	ByteBudget   int64  `json:"byte_budget"`   // max bytes (0 = unlimited)
+	ContentClass string `json:"content_class"` // public, internal, confidential
 	// State
-	Status          string `json:"status"`           // active, expired, revoked
-	GrantedAt       string `json:"granted_at"`
-	ExpiresAt       string `json:"expires_at"`
-	BytesUsed       int64  `json:"bytes_used"`
-	GrantedBy       string `json:"granted_by"`       // admin or "auto"
+	Status    string `json:"status"` // active, expired, revoked
+	GrantedAt string `json:"granted_at"`
+	ExpiresAt string `json:"expires_at"`
+	BytesUsed int64  `json:"bytes_used"`
+	GrantedBy string `json:"granted_by"` // admin or "auto"
 }
 
 // ConnectionRequest is a request to make a network connection.
@@ -68,11 +68,11 @@ type ConnectionRequest struct {
 
 // ConnectionDecision is the broker's decision.
 type ConnectionDecision struct {
-	Allowed   bool   `json:"allowed"`
-	GrantID   string `json:"grant_id,omitempty"`
-	Reason    string `json:"reason"`
-	ProxyAddr string `json:"proxy_addr,omitempty"` // if connection must go through proxy
-	ByteLimit int64  `json:"byte_limit,omitempty"`
+	Allowed   bool     `json:"allowed"`
+	GrantID   string   `json:"grant_id,omitempty"`
+	Reason    string   `json:"reason"`
+	ProxyAddr string   `json:"proxy_addr,omitempty"` // if connection must go through proxy
+	ByteLimit int64    `json:"byte_limit,omitempty"`
 	RuleIDs   []string `json:"rule_ids,omitempty"`
 }
 

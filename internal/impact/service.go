@@ -23,16 +23,16 @@ func New(db *gorm.DB) *Service {
 
 // ImpactGraph represents the code dependency/impact graph (PRD §20.1).
 type ImpactGraph struct {
-	Nodes         []ImpactNode   `json:"nodes"`
-	Edges         []ImpactEdge   `json:"edges"`
-	AffectedCallers []ImpactNode `json:"affected_callers"`
-	TestsCovering []string       `json:"tests_covering"`
-	SuggestedReviewers []string  `json:"suggested_reviewers"`
+	Nodes              []ImpactNode `json:"nodes"`
+	Edges              []ImpactEdge `json:"edges"`
+	AffectedCallers    []ImpactNode `json:"affected_callers"`
+	TestsCovering      []string     `json:"tests_covering"`
+	SuggestedReviewers []string     `json:"suggested_reviewers"`
 }
 
 // ImpactNode represents a node in the impact graph.
 type ImpactNode struct {
-	Type       string `json:"type"`       // repository, module, symbol, api, db_table, service, test
+	Type       string `json:"type"` // repository, module, symbol, api, db_table, service, test
 	ID         string `json:"id"`
 	Name       string `json:"name"`
 	Repository string `json:"repository,omitempty"`
@@ -49,35 +49,35 @@ type ImpactEdge struct {
 
 // AnalyzeChange analyzes the potential impact of a code change.
 type AnalyzeRequest struct {
- 	OrganizationID string `json:"organization_i_d"`
- 	RepositoryID   string `json:"repository_i_d"`
- 	FilePath       string `json:"file_path"`
- 	SymbolsChanged []string `json:"symbols_changed"`
- 	Languages      []string `json:"languages"`
- 	IsAuth         bool `json:"is_auth"`  // touches authentication/authorization
- 	IsCrypto       bool `json:"is_crypto"`  // touches cryptography
- 	IsDBMigration  bool `json:"is_d_b_migration"`  // touches database schema/migration
- 	IsAPIContract  bool `json:"is_a_p_i_contract"`  // touches external API contract
- 	IsConfig       bool `json:"is_config"`  // touches production configuration
- 	Dependencies   []string `json:"dependencies"`  // dependency changes
+	OrganizationID string   `json:"organization_i_d"`
+	RepositoryID   string   `json:"repository_i_d"`
+	FilePath       string   `json:"file_path"`
+	SymbolsChanged []string `json:"symbols_changed"`
+	Languages      []string `json:"languages"`
+	IsAuth         bool     `json:"is_auth"`           // touches authentication/authorization
+	IsCrypto       bool     `json:"is_crypto"`         // touches cryptography
+	IsDBMigration  bool     `json:"is_d_b_migration"`  // touches database schema/migration
+	IsAPIContract  bool     `json:"is_a_p_i_contract"` // touches external API contract
+	IsConfig       bool     `json:"is_config"`         // touches production configuration
+	Dependencies   []string `json:"dependencies"`      // dependency changes
 }
 
 // RiskScore is the AI Change Risk Score (PRD §20.2).
 type RiskScore struct {
-	Score            float64         `json:"score"` // 0-100
-	Level            string          `json:"level"` // low, medium, high, critical
-	Factors          []RiskFactor    `json:"factors"`
-	RequiresApproval bool            `json:"requires_approval"`
-	Reviewers        []string        `json:"suggested_reviewers"`
+	Score            float64      `json:"score"` // 0-100
+	Level            string       `json:"level"` // low, medium, high, critical
+	Factors          []RiskFactor `json:"factors"`
+	RequiresApproval bool         `json:"requires_approval"`
+	Reviewers        []string     `json:"suggested_reviewers"`
 }
 
 // RiskFactor is a single contributor to the risk score.
 type RiskFactor struct {
-	Name        string  `json:"name"`
-	NameKo      string  `json:"name_ko"`
-	Weight      float64 `json:"weight"`
+	Name         string  `json:"name"`
+	NameKo       string  `json:"name_ko"`
+	Weight       float64 `json:"weight"`
 	Contribution float64 `json:"contribution"`
-	Description string  `json:"description"`
+	Description  string  `json:"description"`
 }
 
 // AnalyzeChange analyzes the potential impact of a code change.
@@ -115,11 +115,11 @@ func (s *Service) calculateRiskScore(req AnalyzeRequest) *RiskScore {
 	// Factor: Authentication/authorization code touched
 	if req.IsAuth {
 		f := RiskFactor{
-			Name:        "auth_code_touched",
-			NameKo:      "인증/인가 코드 수정",
-			Weight:      25,
+			Name:         "auth_code_touched",
+			NameKo:       "인증/인가 코드 수정",
+			Weight:       25,
 			Contribution: 25,
-			Description: "인증 또는 인가 관련 코드가 수정됨",
+			Description:  "인증 또는 인가 관련 코드가 수정됨",
 		}
 		factors = append(factors, f)
 		totalScore += 25
@@ -183,8 +183,8 @@ func (s *Service) calculateRiskScore(req AnalyzeRequest) *RiskScore {
 		f := RiskFactor{
 			Name:         "broad_change",
 			NameKo:       "광범위한 변경",
-			Weight:        10,
-			Contribution:  10,
+			Weight:       10,
+			Contribution: 10,
 			Description:  fmt.Sprintf("%d개 심볼 수정됨", symbolCount),
 		}
 		factors = append(factors, f)
@@ -196,8 +196,8 @@ func (s *Service) calculateRiskScore(req AnalyzeRequest) *RiskScore {
 		f := RiskFactor{
 			Name:         "dependency_change",
 			NameKo:       "의존성 변경",
-			Weight:        10,
-			Contribution:  float64(len(req.Dependencies)) * 3,
+			Weight:       10,
+			Contribution: float64(len(req.Dependencies)) * 3,
 			Description:  fmt.Sprintf("%d개 의존성 변경됨", len(req.Dependencies)),
 		}
 		factors = append(factors, f)
@@ -261,12 +261,12 @@ func (s *Service) findReviewers(orgID, repoID, filePath string) []string {
 
 // RecordImpactAnalysis persists an impact analysis for a change set.
 type RecordRequest struct {
- 	OrganizationID string `json:"organization_i_d"`
- 	RepositoryID   string `json:"repository_i_d"`
- 	ChangeSetID    string `json:"change_set_i_d"`
- 	SessionID      string `json:"session_i_d"`
- 	RiskScore      *RiskScore `json:"risk_score"`
- 	ImpactGraph    *ImpactGraph `json:"impact_graph"`
+	OrganizationID string       `json:"organization_i_d"`
+	RepositoryID   string       `json:"repository_i_d"`
+	ChangeSetID    string       `json:"change_set_i_d"`
+	SessionID      string       `json:"session_i_d"`
+	RiskScore      *RiskScore   `json:"risk_score"`
+	ImpactGraph    *ImpactGraph `json:"impact_graph"`
 }
 
 // RecordImpactAnalysis stores the analysis result for future reference.
@@ -293,12 +293,12 @@ func (s *Service) RecordImpactAnalysis(req RecordRequest) error {
 
 // DetectSecuritySensitivePath checks if a file path contains security-sensitive patterns.
 type PathSensitivity struct {
- 	IsAuth      bool `json:"is_auth"`
- 	IsCrypto    bool `json:"is_crypto"`
- 	IsDB        bool `json:"is_d_b"`
- 	IsAPI       bool `json:"is_a_p_i"`
- 	IsConfig    bool `json:"is_config"`
- 	Patterns    []string `json:"patterns"`
+	IsAuth   bool     `json:"is_auth"`
+	IsCrypto bool     `json:"is_crypto"`
+	IsDB     bool     `json:"is_d_b"`
+	IsAPI    bool     `json:"is_a_p_i"`
+	IsConfig bool     `json:"is_config"`
+	Patterns []string `json:"patterns"`
 }
 
 // DetectPathSensitivity analyzes a file path for security-sensitive areas.

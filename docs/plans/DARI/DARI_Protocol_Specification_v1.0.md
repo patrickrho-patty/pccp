@@ -2662,7 +2662,7 @@ DARI Harness session
 The exact CDDL repository file is normative when published. The following representation documents the v1 model:
 
 ```cddl
-paper-peer-credential = {
+legacy-paper-credential = {  ; legacy paper/1 profile — see the compatibility map
   1: uint,                    ; credential_version
   2: tstr,                    ; issuer
   3: tstr,                    ; peer_id
@@ -3019,7 +3019,7 @@ The adapter can evolve independently. A serving-engine plugin may improve integr
 A recommended project layout:
 
 ```text
-paper-protocol/
+dari-protocol/
 ├── spec/
 │   ├── core.md
 │   ├── transport-quic.md

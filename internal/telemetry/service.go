@@ -13,11 +13,11 @@ import (
 // Prompt content is never telemetry. Metering events used for billing
 // MUST be tied to authenticated Exchange/Session IDs.
 type Service struct {
-	db          *gorm.DB
-	mu          sync.Mutex
-	counters    map[string]int64
-	gauges      map[string]float64
-	histograms  map[string][]float64
+	db         *gorm.DB
+	mu         sync.Mutex
+	counters   map[string]int64
+	gauges     map[string]float64
+	histograms map[string][]float64
 }
 
 // New creates a new telemetry service.
@@ -139,17 +139,17 @@ func (s *Service) GetHistogramStats(name string) HistogramStats {
 // RecordMetering records a metering event for billing (DARI §50).
 // Metering events MUST be tied to authenticated Exchange/Session IDs.
 type MeteringEvent struct {
- 	OrganizationID string `json:"organization_i_d"`
- 	SessionID      string `json:"session_i_d"`
- 	ExchangeID     string `json:"exchange_i_d"`
- 	UserID         string `json:"user_i_d"`
- 	HarnessID      string `json:"harness_i_d"`
- 	ModelPackageID string `json:"model_package_i_d"`
- 	EndpointID     string `json:"endpoint_i_d"`
- 	MetricType     MetricType `json:"metric_type"`
- 	Quantity       int64 `json:"quantity"`
- 	Unit           string `json:"unit"`
- 	OccurredAt     time.Time `json:"occurred_at"`
+	OrganizationID string     `json:"organization_i_d"`
+	SessionID      string     `json:"session_i_d"`
+	ExchangeID     string     `json:"exchange_i_d"`
+	UserID         string     `json:"user_i_d"`
+	HarnessID      string     `json:"harness_i_d"`
+	ModelPackageID string     `json:"model_package_i_d"`
+	EndpointID     string     `json:"endpoint_i_d"`
+	MetricType     MetricType `json:"metric_type"`
+	Quantity       int64      `json:"quantity"`
+	Unit           string     `json:"unit"`
+	OccurredAt     time.Time  `json:"occurred_at"`
 }
 
 // RecordMetering records a metering event.
@@ -179,10 +179,10 @@ func (s *Service) RecordMetering(event MeteringEvent) error {
 
 // Snapshot returns all current telemetry values.
 type Snapshot struct {
-	Counters   map[string]int64        `json:"counters"`
-	Gauges     map[string]float64      `json:"gauges"`
+	Counters   map[string]int64          `json:"counters"`
+	Gauges     map[string]float64        `json:"gauges"`
 	Histograms map[string]HistogramStats `json:"histograms"`
-	Timestamp  string                  `json:"timestamp"`
+	Timestamp  string                    `json:"timestamp"`
 }
 
 // Snapshot returns all current telemetry values.

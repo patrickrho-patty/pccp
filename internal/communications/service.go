@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -28,10 +28,10 @@ func (s *Service) CreateConversation(orgID, convType, title string, participants
 			OrganizationID: orgID,
 			Classification: "internal",
 		},
-		Type:            convType,
-		Title:           title,
+		Type:             convType,
+		Title:            title,
 		ParticipantsJSON: string(partJSON),
-		Status:          "active",
+		Status:           "active",
 	}
 	if err := s.db.Create(conv).Error; err != nil {
 		return nil, fmt.Errorf("comms: create conversation: %w", err)
@@ -42,13 +42,13 @@ func (s *Service) CreateConversation(orgID, convType, title string, participants
 // SendMessage sends a message in a conversation.
 func (s *Service) SendMessage(convID, senderID, senderType, contentType, content string, parentID string) (*models.Message, error) {
 	msg := &models.Message{
-		ConversationID: convID,
-		SenderID:       senderID,
-		SenderType:     senderType,
-		ContentType:    contentType,
-		Content:        content,
+		ConversationID:  convID,
+		SenderID:        senderID,
+		SenderType:      senderType,
+		ContentType:     contentType,
+		Content:         content,
 		ParentMessageID: parentID,
-		DeliveredAt:    time.Now().Format(time.RFC3339),
+		DeliveredAt:     time.Now().Format(time.RFC3339),
 	}
 
 	if err := s.db.Create(msg).Error; err != nil {
@@ -181,9 +181,9 @@ func (s *Service) AckBroadcast(broadcastID, userID string) error {
 func (s *Service) LinkMessageToAIContext(messageID, sessionID, exchangeID string) error {
 	return s.db.Model(&models.Message{}).Where("id = ?", messageID).
 		Updates(map[string]interface{}{
-			"linked_session_id":           sessionID,
-			"linked_exchange_id":          exchangeID,
-			"requires_context_exchange":   true,
+			"linked_session_id":         sessionID,
+			"linked_exchange_id":        exchangeID,
+			"requires_context_exchange": true,
 		}).Error
 }
 

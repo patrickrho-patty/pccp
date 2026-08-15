@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -24,34 +24,34 @@ func New(db *gorm.DB) *Service {
 
 // Incident represents a security incident (PRD §15.2).
 type Incident struct {
-	ID              string   `json:"id"`
-	OrganizationID  string   `json:"organization_id"`
-	Title           string   `json:"title"`
-	TitleKo         string   `json:"title_ko"`
-	Description     string   `json:"description"`
-	Severity        string   `json:"severity"` // critical, high, medium, low, info
-	Status          string   `json:"status"`   // open, investigating, contained, resolved, closed
+	ID             string `json:"id"`
+	OrganizationID string `json:"organization_id"`
+	Title          string `json:"title"`
+	TitleKo        string `json:"title_ko"`
+	Description    string `json:"description"`
+	Severity       string `json:"severity"` // critical, high, medium, low, info
+	Status         string `json:"status"`   // open, investigating, contained, resolved, closed
 	// Affected entities
-	UserIDs         []string `json:"user_ids,omitempty"`
-	HarnessIDs      []string `json:"harness_ids,omitempty"`
-	SessionIDs      []string `json:"session_ids,omitempty"`
-	RepositoryIDs   []string `json:"repository_ids,omitempty"`
-	ModelIDs        []string `json:"model_ids,omitempty"`
+	UserIDs       []string `json:"user_ids,omitempty"`
+	HarnessIDs    []string `json:"harness_ids,omitempty"`
+	SessionIDs    []string `json:"session_ids,omitempty"`
+	RepositoryIDs []string `json:"repository_ids,omitempty"`
+	ModelIDs      []string `json:"model_ids,omitempty"`
 	// Classification
-	Category        string   `json:"category"` // credential_leak, pii_exposure, injection, etc.
+	Category string `json:"category"` // credential_leak, pii_exposure, injection, etc.
 	// Evidence
-	FindingIDs      []string `json:"finding_ids,omitempty"`
-	EvidenceRefs    []string `json:"evidence_refs,omitempty"`
-	PolicyRuleIDs   []string `json:"policy_rule_ids,omitempty"`
+	FindingIDs    []string `json:"finding_ids,omitempty"`
+	EvidenceRefs  []string `json:"evidence_refs,omitempty"`
+	PolicyRuleIDs []string `json:"policy_rule_ids,omitempty"`
 	// Timeline
-	FirstSeenAt     string   `json:"first_seen_at"`
-	ContainedAt     string   `json:"contained_at,omitempty"`
-	ResolvedAt      string   `json:"resolved_at,omitempty"`
+	FirstSeenAt string `json:"first_seen_at"`
+	ContainedAt string `json:"contained_at,omitempty"`
+	ResolvedAt  string `json:"resolved_at,omitempty"`
 	// Recommended actions
 	RecommendedActions []string `json:"recommended_actions"`
 	// Containment
-	ContainmentMode string   `json:"containment_mode,omitempty"` // session, harness, project, org
-	CreatedBy       string   `json:"created_by"`
+	ContainmentMode string `json:"containment_mode,omitempty"` // session, harness, project, org
+	CreatedBy       string `json:"created_by"`
 }
 
 // CreateIncident creates a new security incident.
@@ -68,15 +68,15 @@ func (s *Service) CreateIncident(inc Incident) (*Incident, error) {
 
 	// Store as a SecurityFinding
 	finding := &models.SecurityFinding{
-		Base:            models.Base{ID: inc.ID},
-		OrganizationID:  inc.OrganizationID,
-		FindingType:     "incident_" + inc.Category,
-		Severity:        inc.Severity,
-		Title:           inc.Title,
-		TitleKo:         inc.TitleKo,
-		Description:     inc.Description,
-		Status:          inc.Status,
-		OccurredAt:      inc.FirstSeenAt,
+		Base:           models.Base{ID: inc.ID},
+		OrganizationID: inc.OrganizationID,
+		FindingType:    "incident_" + inc.Category,
+		Severity:       inc.Severity,
+		Title:          inc.Title,
+		TitleKo:        inc.TitleKo,
+		Description:    inc.Description,
+		Status:         inc.Status,
+		OccurredAt:     inc.FirstSeenAt,
 	}
 	if err := s.db.Create(finding).Error; err != nil {
 		return nil, fmt.Errorf("incident: create: %w", err)
@@ -112,12 +112,12 @@ type ContainRequest struct {
 
 // ContainResult records what was contained.
 type ContainResult struct {
-	IncidentID      string   `json:"incident_id"`
-	Mode            string   `json:"mode"`
-	AffectedSessions []string `json:"affected_sessions"`
+	IncidentID        string   `json:"incident_id"`
+	Mode              string   `json:"mode"`
+	AffectedSessions  []string `json:"affected_sessions"`
 	AffectedHarnesses []string `json:"affected_harnesses"`
-	Actions         []string `json:"actions"`
-	Timestamp       string   `json:"timestamp"`
+	Actions           []string `json:"actions"`
+	Timestamp         string   `json:"timestamp"`
 }
 
 // Contain applies containment measures (PRD §15.4).
@@ -215,7 +215,7 @@ func (s *Service) Resolve(orgID, incidentID, resolution string) error {
 	s.db.Model(&models.SecurityFinding{}).
 		Where("id = ?", incidentID).
 		Updates(map[string]interface{}{
-			"status":   "resolved",
+			"status": "resolved",
 		})
 
 	s.recordAudit(orgID, "cp.incident.resolved", "incident", incidentID,

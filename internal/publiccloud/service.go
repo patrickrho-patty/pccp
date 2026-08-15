@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -24,12 +24,12 @@ type Service struct {
 
 // SlotTracker tracks active work slots for an account.
 type SlotTracker struct {
-	AccountID      string
-	Interactive    int
-	Subagent       int
-	HeavyContext   int
-	Background     int
-	LastActivity   time.Time
+	AccountID    string
+	Interactive  int
+	Subagent     int
+	HeavyContext int
+	Background   int
+	LastActivity time.Time
 }
 
 // New creates a new public cloud service.
@@ -48,13 +48,13 @@ func New(db *gorm.DB) (*Service, error) {
 // CreateAccount creates a new Public Cloud account (§8.2).
 func (s *Service) CreateAccount(email, displayName, displayNameKo, plan string) (*models.Account, error) {
 	account := &models.Account{
-		Email:         email,
-		DisplayName:   displayName,
-		DisplayNameKo: displayNameKo,
-		Profile:       "public",
+		Email:              email,
+		DisplayName:        displayName,
+		DisplayNameKo:      displayNameKo,
+		Profile:            "public",
 		SubscriptionStatus: "none",
-		Locale:         "ko-KR",
-		Timezone:       "Asia/Seoul",
+		Locale:             "ko-KR",
+		Timezone:           "Asia/Seoul",
 		MaxHarnesses:       3,
 		MaxActiveHarnesses: 2,
 		NormalWorkSlots:    5,
@@ -101,12 +101,12 @@ func (s *Service) CreateSubscription(accountID, plan string) (*models.Subscripti
 	// Update account
 	s.db.Model(&models.Account{}).Where("id = ?", accountID).Updates(map[string]interface{}{
 		"subscription_status":  "active",
-		"subscription_plan":     plan,
-		"subscription_expiry":   sub.ExpiresAt,
-		"max_harnesses":         planConfig.MaxHarnesses,
-		"max_active_harnesses":  planConfig.MaxActiveHarnesses,
-		"normal_work_slots":     planConfig.NormalSlots,
-		"heavy_work_slots":      planConfig.HeavySlots,
+		"subscription_plan":    plan,
+		"subscription_expiry":  sub.ExpiresAt,
+		"max_harnesses":        planConfig.MaxHarnesses,
+		"max_active_harnesses": planConfig.MaxActiveHarnesses,
+		"normal_work_slots":    planConfig.NormalSlots,
+		"heavy_work_slots":     planConfig.HeavySlots,
 	})
 
 	return sub, nil
@@ -266,13 +266,21 @@ func (s *Service) ReleaseWorkSlot(accountID string, class WorkSlotClass) {
 	}
 	switch class {
 	case SlotInteractive:
-		if tracker.Interactive > 0 { tracker.Interactive-- }
+		if tracker.Interactive > 0 {
+			tracker.Interactive--
+		}
 	case SlotSubagent:
-		if tracker.Subagent > 0 { tracker.Subagent-- }
+		if tracker.Subagent > 0 {
+			tracker.Subagent--
+		}
 	case SlotHeavyContext:
-		if tracker.HeavyContext > 0 { tracker.HeavyContext-- }
+		if tracker.HeavyContext > 0 {
+			tracker.HeavyContext--
+		}
 	case SlotBackground:
-		if tracker.Background > 0 { tracker.Background-- }
+		if tracker.Background > 0 {
+			tracker.Background--
+		}
 	}
 }
 
@@ -315,12 +323,12 @@ func (s *Service) GetAccountByEmail(email string) (*models.Account, error) {
 
 // PlanConfig holds plan-specific defaults.
 type PlanConfig struct {
-	Name             string
-	AllowedModels    string // JSON array
-	MaxHarnesses     int
+	Name               string
+	AllowedModels      string // JSON array
+	MaxHarnesses       int
 	MaxActiveHarnesses int
-	NormalSlots      int
-	HeavySlots       int
+	NormalSlots        int
+	HeavySlots         int
 }
 
 func getPlanConfig(plan string) PlanConfig {

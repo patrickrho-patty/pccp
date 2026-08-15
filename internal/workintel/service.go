@@ -40,29 +40,29 @@ func (s *Service) RecordUsage(orgID, userID, harnessID, sessionID, modelPkgID, e
 
 // UsageSummary returns aggregated usage for an organization.
 type UsageSummary struct {
-	TotalTokensIn   int64                        `json:"total_tokens_in"`
-	TotalTokensOut  int64                        `json:"total_tokens_out"`
-	ModelBreakdown  map[string]ModelUsage        `json:"model_breakdown"`
-	UserBreakdown   map[string]UserUsage         `json:"user_breakdown"`
-	DailyUsage      []DailyUsage                 `json:"daily_usage"`
+	TotalTokensIn  int64                 `json:"total_tokens_in"`
+	TotalTokensOut int64                 `json:"total_tokens_out"`
+	ModelBreakdown map[string]ModelUsage `json:"model_breakdown"`
+	UserBreakdown  map[string]UserUsage  `json:"user_breakdown"`
+	DailyUsage     []DailyUsage          `json:"daily_usage"`
 }
 
 type ModelUsage struct {
-	TokensIn   int64 `json:"tokens_in"`
-	TokensOut  int64 `json:"tokens_out"`
-	Sessions   int64 `json:"sessions"`
+	TokensIn  int64 `json:"tokens_in"`
+	TokensOut int64 `json:"tokens_out"`
+	Sessions  int64 `json:"sessions"`
 }
 
 type UserUsage struct {
-	TokensIn   int64 `json:"tokens_in"`
-	TokensOut  int64 `json:"tokens_out"`
-	Sessions   int   `json:"sessions"`
+	TokensIn  int64 `json:"tokens_in"`
+	TokensOut int64 `json:"tokens_out"`
+	Sessions  int   `json:"sessions"`
 }
 
 type DailyUsage struct {
-	Date       string `json:"date"`
-	TokensIn   int64  `json:"tokens_in"`
-	TokensOut  int64  `json:"tokens_out"`
+	Date      string `json:"date"`
+	TokensIn  int64  `json:"tokens_in"`
+	TokensOut int64  `json:"tokens_out"`
 }
 
 // GetUsageSummary returns aggregated usage metrics for an organization.
@@ -108,16 +108,16 @@ func (s *Service) GetUsageSummary(orgID string, days int) (*UsageSummary, error)
 
 // EngineeringMetrics calculates engineering productivity metrics (PRD §24.2).
 type EngineeringMetrics struct {
-	UserID          string  `json:"user_id"`
-	Sessions        int64   `json:"sessions"`
-	TotalActions    int64   `json:"total_actions"`
-	AIInferences    int64   `json:"ai_inferences"`
-	ChangesCreated  int64   `json:"changes_created"`
-	LinesAdded      int64   `json:"lines_added"`
-	LinesRemoved    int64   `json:"lines_removed"`
-	AverageLatency  float64 `json:"average_latency_ms"`
-	ToolUses        int64   `json:"tool_uses"`
-	SecurityFindings int64  `json:"security_findings"`
+	UserID           string  `json:"user_id"`
+	Sessions         int64   `json:"sessions"`
+	TotalActions     int64   `json:"total_actions"`
+	AIInferences     int64   `json:"ai_inferences"`
+	ChangesCreated   int64   `json:"changes_created"`
+	LinesAdded       int64   `json:"lines_added"`
+	LinesRemoved     int64   `json:"lines_removed"`
+	AverageLatency   float64 `json:"average_latency_ms"`
+	ToolUses         int64   `json:"tool_uses"`
+	SecurityFindings int64   `json:"security_findings"`
 }
 
 // GetEngineeringMetrics returns engineering metrics for a user or organization.
@@ -159,8 +159,8 @@ func (s *Service) GetEngineeringMetrics(orgID string, userID string, days int) (
 
 	// Lines changed (aggregate)
 	type lineResult struct {
-  		Added   int64 `json:"added"`
-  		Removed int64 `json:"removed"`
+		Added   int64 `json:"added"`
+		Removed int64 `json:"removed"`
 	}
 	var lr lineResult
 	s.db.Model(&models.ChangeSet{}).
@@ -180,20 +180,20 @@ func (s *Service) GetEngineeringMetrics(orgID string, userID string, days int) (
 
 // ScorecardDimension represents one dimension of a work intelligence scorecard (PRD §25).
 type ScorecardDimension struct {
-	Name        string  `json:"name"`
-	NameKo      string  `json:"name_ko"`
-	Weight      float64 `json:"weight"`
-	Score       float64 `json:"score"` // 0-100
-	Evidence    []string `json:"evidence"`
+	Name     string   `json:"name"`
+	NameKo   string   `json:"name_ko"`
+	Weight   float64  `json:"weight"`
+	Score    float64  `json:"score"` // 0-100
+	Evidence []string `json:"evidence"`
 }
 
 // Scorecard is an evaluation rubric scorecard (PRD §25.1).
 type Scorecard struct {
-	UserID      string               `json:"user_id"`
-	Period      string               `json:"period"` // e.g. "2026-08"
-	Dimensions  []ScorecardDimension `json:"dimensions"`
-	OverallScore float64             `json:"overall_score"`
-	RequiresHumanFinalization bool   `json:"requires_human_finalization"`
+	UserID                    string               `json:"user_id"`
+	Period                    string               `json:"period"` // e.g. "2026-08"
+	Dimensions                []ScorecardDimension `json:"dimensions"`
+	OverallScore              float64              `json:"overall_score"`
+	RequiresHumanFinalization bool                 `json:"requires_human_finalization"`
 }
 
 // GenerateScorecard creates a work intelligence scorecard for a user (PRD §25).
@@ -205,8 +205,8 @@ func (s *Service) GenerateScorecard(orgID, userID, period string) (*Scorecard, e
 	}
 
 	scorecard := &Scorecard{
-		UserID:                  userID,
-		Period:                  period,
+		UserID:                    userID,
+		Period:                    period,
 		RequiresHumanFinalization: true, // ALWAYS require human finalization
 		Dimensions: []ScorecardDimension{
 			{
@@ -299,12 +299,12 @@ func max(a, b float64) float64 {
 
 // GetSecurityMetrics returns security posture metrics.
 type SecurityMetrics struct {
-	TotalFindings   int64                    `json:"total_findings"`
-	CriticalCount   int64                    `json:"critical_count"`
-	HighCount       int64                    `json:"high_count"`
-	OpenCount       int64                    `json:"open_count"`
-	ResolvedCount   int64                    `json:"resolved_count"`
-	FindingByType   map[string]int64         `json:"finding_by_type"`
+	TotalFindings int64            `json:"total_findings"`
+	CriticalCount int64            `json:"critical_count"`
+	HighCount     int64            `json:"high_count"`
+	OpenCount     int64            `json:"open_count"`
+	ResolvedCount int64            `json:"resolved_count"`
+	FindingByType map[string]int64 `json:"finding_by_type"`
 }
 
 func (s *Service) GetSecurityMetrics(orgID string, days int) (*SecurityMetrics, error) {

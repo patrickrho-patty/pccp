@@ -42,12 +42,12 @@ func TestEndpointMetricsUpdate(t *testing.T) {
 func TestGPUMetricsUpdate(t *testing.T) {
 	svc := New(setupDB(t))
 	svc.UpdateGPUMetrics("gpu-0", GPUMetrics{
-		GPUModel:      "NVIDIA H100",
-		Utilization:   75.5,
-		VRAMTotalGB:   80,
-		VRAMUsedGB:    60,
-		TemperatureC:  72.0,
-		ECCHealth:     "healthy",
+		GPUModel:         "NVIDIA H100",
+		Utilization:      75.5,
+		VRAMTotalGB:      80,
+		VRAMUsedGB:       60,
+		TemperatureC:     72.0,
+		ECCHealth:        "healthy",
 		MaintenanceState: "active",
 	})
 

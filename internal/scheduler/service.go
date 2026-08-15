@@ -10,23 +10,23 @@ import (
 // Weighted fairness across accounts prevents one user's subagents
 // from monopolizing a shared GPU pool.
 type Service struct {
-	mu       sync.Mutex
-	queues   map[string]*AccountQueue // accountID → queue
-	pending  []QueuedRequest          // FIFO + priority queue
+	mu      sync.Mutex
+	queues  map[string]*AccountQueue // accountID → queue
+	pending []QueuedRequest          // FIFO + priority queue
 }
 
 // AccountQueue tracks an account's queue position and slot usage.
 type AccountQueue struct {
-	AccountID      string
-	PlanWeight     int
-	QueueAge       time.Duration
-	EnqueuedAt     time.Time
-	ActiveSlots    int
-	MaxSlots       int
-	CurrentCLU     float64
-	BurstCLU       float64
+	AccountID       string
+	PlanWeight      int
+	QueueAge        time.Duration
+	EnqueuedAt      time.Time
+	ActiveSlots     int
+	MaxSlots        int
+	CurrentCLU      float64
+	BurstCLU        float64
 	SustainedWindow float64
-	Class          string // INTERACTIVE, SUBAGENT, HEAVY_CONTEXT, BACKGROUND
+	Class           string // INTERACTIVE, SUBAGENT, HEAVY_CONTEXT, BACKGROUND
 }
 
 // QueuedRequest represents a request waiting for admission.

@@ -24,10 +24,10 @@ func New(db *gorm.DB) *Service {
 
 // CheckResult is the result of a security scan.
 type CheckResult struct {
-	Passed     bool             `json:"passed"`
-	Findings   []SecurityFinding `json:"findings,omitempty"`
-	Verdict    string           `json:"verdict"` // ALLOW, DENY, REQUIRE_REVIEW
-	Transformed string          `json:"transformed,omitempty"` // redacted text if ALLOW_TRANSFORM
+	Passed      bool              `json:"passed"`
+	Findings    []SecurityFinding `json:"findings,omitempty"`
+	Verdict     string            `json:"verdict"`               // ALLOW, DENY, REQUIRE_REVIEW
+	Transformed string            `json:"transformed,omitempty"` // redacted text if ALLOW_TRANSFORM
 }
 
 // SecurityFinding is a detected security issue.
@@ -270,13 +270,13 @@ func (s *Service) detectKoreanPII(text string) []SecurityFinding {
 		matches := p.Pattern.FindAllStringIndex(text, -1)
 		for _, m := range matches {
 			findings = append(findings, SecurityFinding{
-				Type:       p.Type,
-				Severity:   p.Severity,
-				Title:      p.Title,
-				TitleKo:    p.TitleKo,
-				RuleID:     p.RuleID,
-				Match:      redactMatch(text[m[0]:m[1]]),
-				Position:   m[0],
+				Type:        p.Type,
+				Severity:    p.Severity,
+				Title:       p.Title,
+				TitleKo:     p.TitleKo,
+				RuleID:      p.RuleID,
+				Match:       redactMatch(text[m[0]:m[1]]),
+				Position:    m[0],
 				Description: fmt.Sprintf("Korean PII detected: %s", p.TitleKo),
 			})
 		}
@@ -290,13 +290,13 @@ func (s *Service) detectSecrets(text string) []SecurityFinding {
 		matches := p.Pattern.FindAllStringIndex(text, -1)
 		for _, m := range matches {
 			findings = append(findings, SecurityFinding{
-				Type:       p.Type,
-				Severity:   p.Severity,
-				Title:      p.Title,
-				TitleKo:    p.TitleKo,
-				RuleID:     p.RuleID,
-				Match:      redactMatch(text[m[0]:m[1]]),
-				Position:   m[0],
+				Type:        p.Type,
+				Severity:    p.Severity,
+				Title:       p.Title,
+				TitleKo:     p.TitleKo,
+				RuleID:      p.RuleID,
+				Match:       redactMatch(text[m[0]:m[1]]),
+				Position:    m[0],
 				Description: fmt.Sprintf("Secret detected: %s", p.TitleKo),
 			})
 		}
@@ -310,13 +310,13 @@ func (s *Service) detectInjection(text string) []SecurityFinding {
 		matches := p.Pattern.FindAllStringIndex(text, -1)
 		for _, m := range matches {
 			findings = append(findings, SecurityFinding{
-				Type:       p.Type,
-				Severity:   p.Severity,
-				Title:      p.Title,
-				TitleKo:    p.TitleKo,
-				RuleID:     p.RuleID,
-				Match:      text[m[0]:m[1]],
-				Position:   m[0],
+				Type:        p.Type,
+				Severity:    p.Severity,
+				Title:       p.Title,
+				TitleKo:     p.TitleKo,
+				RuleID:      p.RuleID,
+				Match:       text[m[0]:m[1]],
+				Position:    m[0],
 				Description: fmt.Sprintf("Prompt injection detected: %s", p.TitleKo),
 			})
 		}
@@ -330,13 +330,13 @@ func (s *Service) detectSensitivePaths(text string) []SecurityFinding {
 		matches := p.Pattern.FindAllStringIndex(text, -1)
 		for _, m := range matches {
 			findings = append(findings, SecurityFinding{
-				Type:       p.Type,
-				Severity:   p.Severity,
-				Title:      p.Title,
-				TitleKo:    p.TitleKo,
-				RuleID:     p.RuleID,
-				Match:      text[m[0]:m[1]],
-				Position:   m[0],
+				Type:        p.Type,
+				Severity:    p.Severity,
+				Title:       p.Title,
+				TitleKo:     p.TitleKo,
+				RuleID:      p.RuleID,
+				Match:       text[m[0]:m[1]],
+				Position:    m[0],
 				Description: fmt.Sprintf("Sensitive path detected: %s", p.TitleKo),
 			})
 		}

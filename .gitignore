@@ -13,6 +13,9 @@ web/dist/
 # Patty Code Harness worktree (separate repo)
 patty-code-pccp/
 
+# Reference checkouts for distributed-systems research (not part of this repo)
+tools/
+
 # IDE
 .idea/
 .vscode/

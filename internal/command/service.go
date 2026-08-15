@@ -10,7 +10,7 @@ import (
 // Service implements Command Authorization (PRD §17.3).
 // Command policy parses rather than string-matches where feasible.
 type Service struct {
-	mu      sync.RWMutex
+	mu       sync.RWMutex
 	policies map[string]*CommandPolicy // orgID → policy
 }
 
@@ -25,28 +25,28 @@ type CommandPolicy struct {
 
 // CommandRule defines a parsed command matching rule.
 type CommandRule struct {
-	ID           string   `json:"id"`
-	Executable   string   `json:"executable"`   // e.g. "pytest", "curl", "git"
-	ArgsPattern  string   `json:"args_pattern"`  // regex pattern for arguments
-	WorkingDir   string   `json:"working_dir,omitempty"` // required working directory
-	EnvRequired  []string `json:"env_required,omitempty"` // required env vars
-	EnvForbidden []string `json:"env_forbidden,omitempty"` // forbidden env vars
-	NetworkBehavior string `json:"network_behavior,omitempty"` // none, outbound, inbound
-	PrivilegeLevel   string `json:"privilege_level,omitempty"` // user, root
-	RiskClass   string   `json:"risk_class"` // low, medium, high, critical
-	Reason      string   `json:"reason"`
+	ID              string   `json:"id"`
+	Executable      string   `json:"executable"`                 // e.g. "pytest", "curl", "git"
+	ArgsPattern     string   `json:"args_pattern"`               // regex pattern for arguments
+	WorkingDir      string   `json:"working_dir,omitempty"`      // required working directory
+	EnvRequired     []string `json:"env_required,omitempty"`     // required env vars
+	EnvForbidden    []string `json:"env_forbidden,omitempty"`    // forbidden env vars
+	NetworkBehavior string   `json:"network_behavior,omitempty"` // none, outbound, inbound
+	PrivilegeLevel  string   `json:"privilege_level,omitempty"`  // user, root
+	RiskClass       string   `json:"risk_class"`                 // low, medium, high, critical
+	Reason          string   `json:"reason"`
 }
 
 // CommandRequest is a parsed command to be evaluated.
 type CommandRequest struct {
- 	OrganizationID string `json:"organization_i_d"`
- 	SessionID      string `json:"session_i_d"`
- 	Executable     string `json:"executable"`
- 	Arguments      []string `json:"arguments"`
- 	WorkingDir     string `json:"working_dir"`
- 	EnvVars        []string `json:"env_vars"`  // names only, values not captured for privacy
- 	RequiresNetwork bool `json:"requires_network"`
- 	RequiresRoot   bool `json:"requires_root"`
+	OrganizationID  string   `json:"organization_i_d"`
+	SessionID       string   `json:"session_i_d"`
+	Executable      string   `json:"executable"`
+	Arguments       []string `json:"arguments"`
+	WorkingDir      string   `json:"working_dir"`
+	EnvVars         []string `json:"env_vars"` // names only, values not captured for privacy
+	RequiresNetwork bool     `json:"requires_network"`
+	RequiresRoot    bool     `json:"requires_root"`
 }
 
 // CommandDecision is the authorization decision.
@@ -269,7 +269,7 @@ func containsArg(args []string, target string) bool {
 
 func defaultPolicy(orgID string) *CommandPolicy {
 	return &CommandPolicy{
-		OrganizationID: orgID,
+		OrganizationID:  orgID,
 		DefaultBehavior: "allow",
 		DenyRules: []CommandRule{
 			{ID: "deny-sudo", Executable: "sudo", RiskClass: "critical", Reason: "sudo is prohibited"},

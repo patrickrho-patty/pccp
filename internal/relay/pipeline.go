@@ -15,7 +15,7 @@ import (
 // the removal of the mock-inference fallback (a forwarder that cannot
 // produce real records now refuses rather than fabricating them).
 
-// Stage names for the governed pipeline trace (PAPER §10.2).
+// Stage names for the governed pipeline trace (DARI §10.2).
 const (
 	StageAuthenticate      = "authenticate"
 	StageLeaseValidate     = "lease_validate"

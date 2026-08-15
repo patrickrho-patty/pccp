@@ -10,10 +10,10 @@ import (
 type IdempotencyClass string
 
 const (
-	ClassSafeReplay        IdempotencyClass = "SAFE_REPLAY"
-	ClassSameKeyOnly       IdempotencyClass = "SAME_KEY_ONLY"
-	ClassQueryBeforeRetry  IdempotencyClass = "QUERY_BEFORE_RETRY"
-	ClassNeverAutoRetry    IdempotencyClass = "NEVER_AUTORETRY"
+	ClassSafeReplay       IdempotencyClass = "SAFE_REPLAY"
+	ClassSameKeyOnly      IdempotencyClass = "SAME_KEY_ONLY"
+	ClassQueryBeforeRetry IdempotencyClass = "QUERY_BEFORE_RETRY"
+	ClassNeverAutoRetry   IdempotencyClass = "NEVER_AUTORETRY"
 )
 
 // Protection implements replay protection (DARI §51) and idempotency tracking (DARI §52).
@@ -27,12 +27,12 @@ type Protection struct {
 
 // IdempotencyEntry tracks a previously-seen operation.
 type IdempotencyEntry struct {
- 	Key        string `json:"key"`
- 	Class      IdempotencyClass `json:"class"`
- 	Result     interface{} `json:"result"`
- 	SeenAt     time.Time `json:"seen_at"`
- 	ExchangeID string `json:"exchange_i_d"`
- 	SessionID  string `json:"session_i_d"`
+	Key        string           `json:"key"`
+	Class      IdempotencyClass `json:"class"`
+	Result     interface{}      `json:"result"`
+	SeenAt     time.Time        `json:"seen_at"`
+	ExchangeID string           `json:"exchange_i_d"`
+	SessionID  string           `json:"session_i_d"`
 }
 
 // New creates a new replay protection service.

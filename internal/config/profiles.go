@@ -2,42 +2,42 @@ package config
 
 // DeploymentProfile defines the three consumption profiles (PRD §1.1, §34).
 type DeploymentProfile struct {
- 	Name             string `json:"name"`  // enterprise, public, sovereign
- 	DefaultLocale    string `json:"default_locale"`
- 	DefaultTimezone  string `json:"default_timezone"`
+	Name            string `json:"name"` // enterprise, public, sovereign
+	DefaultLocale   string `json:"default_locale"`
+	DefaultTimezone string `json:"default_timezone"`
 	// Security defaults
- 	RequireMDM       bool `json:"require_m_d_m"`
- 	RequireMFA       bool `json:"require_m_f_a"`
- 	RequireHardwareKey bool `json:"require_hardware_key"`
- 	RequireAttestation bool `json:"require_attestation"`
- 	MinAssuranceLevel string `json:"min_assurance_level"`
+	RequireMDM         bool   `json:"require_m_d_m"`
+	RequireMFA         bool   `json:"require_m_f_a"`
+	RequireHardwareKey bool   `json:"require_hardware_key"`
+	RequireAttestation bool   `json:"require_attestation"`
+	MinAssuranceLevel  string `json:"min_assurance_level"`
 	// Network
- 	AllowPublicInternet bool `json:"allow_public_internet"`
- 	RequireVPN          bool `json:"require_v_p_n"`
+	AllowPublicInternet bool `json:"allow_public_internet"`
+	RequireVPN          bool `json:"require_v_p_n"`
 	// Retention
- 	TranscriptRetention string `json:"transcript_retention"`  // metadata_only, redacted, full
- 	MaxRetentionDays    int `json:"max_retention_days"`
+	TranscriptRetention string `json:"transcript_retention"` // metadata_only, redacted, full
+	MaxRetentionDays    int    `json:"max_retention_days"`
 	// Updates
- 	UpdateMode          string `json:"update_mode"`  // automatic, manual, offline
+	UpdateMode string `json:"update_mode"` // automatic, manual, offline
 	// Compliance
- 	KoreanPIIDetection  bool `json:"korean_p_i_i_detection"`
- 	AuditLevel          string `json:"audit_level"`  // standard, enhanced, maximum
+	KoreanPIIDetection bool   `json:"korean_p_i_i_detection"`
+	AuditLevel         string `json:"audit_level"` // standard, enhanced, maximum
 }
 
 // EnterpriseProfile returns the default enterprise deployment profile.
 func EnterpriseProfile() DeploymentProfile {
 	return DeploymentProfile{
-		Name:               "enterprise",
-		DefaultLocale:      "ko-KR",
-		DefaultTimezone:    "Asia/Seoul",
-		RequireMFA:         true,
-		MinAssuranceLevel:  "L1",
+		Name:                "enterprise",
+		DefaultLocale:       "ko-KR",
+		DefaultTimezone:     "Asia/Seoul",
+		RequireMFA:          true,
+		MinAssuranceLevel:   "L1",
 		AllowPublicInternet: true,
 		TranscriptRetention: "metadata_only",
-		MaxRetentionDays:   90,
-		UpdateMode:         "automatic",
-		KoreanPIIDetection: true,
-		AuditLevel:         "enhanced",
+		MaxRetentionDays:    90,
+		UpdateMode:          "automatic",
+		KoreanPIIDetection:  true,
+		AuditLevel:          "enhanced",
 	}
 }
 
@@ -65,16 +65,16 @@ func SovereignProfile() DeploymentProfile {
 // PublicProfile returns the individual/public deployment profile.
 func PublicProfile() DeploymentProfile {
 	return DeploymentProfile{
-		Name:               "public",
-		DefaultLocale:      "ko-KR",
-		DefaultTimezone:    "Asia/Seoul",
-		MinAssuranceLevel:  "L1",
+		Name:                "public",
+		DefaultLocale:       "ko-KR",
+		DefaultTimezone:     "Asia/Seoul",
+		MinAssuranceLevel:   "L1",
 		AllowPublicInternet: true,
 		TranscriptRetention: "redacted",
-		MaxRetentionDays:   30,
-		UpdateMode:         "automatic",
-		KoreanPIIDetection: true,
-		AuditLevel:         "standard",
+		MaxRetentionDays:    30,
+		UpdateMode:          "automatic",
+		KoreanPIIDetection:  true,
+		AuditLevel:          "standard",
 	}
 }
 

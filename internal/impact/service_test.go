@@ -57,11 +57,11 @@ func TestCalculateRiskScoreLow(t *testing.T) {
 
 func TestDetectPathSensitivity(t *testing.T) {
 	tests := []struct {
-		path    string
-		isAuth  bool
+		path     string
+		isAuth   bool
 		isCrypto bool
-		isDB    bool
-		isAPI   bool
+		isDB     bool
+		isAPI    bool
 		isConfig bool
 	}{
 		{"src/auth/LoginService.java", true, false, false, false, false},
@@ -86,11 +86,11 @@ func TestDetectPathSensitivity(t *testing.T) {
 func TestCriticalRiskRequiresApproval(t *testing.T) {
 	svc := New(nil)
 	req := AnalyzeRequest{
-		IsAuth:        true,
-		IsCrypto:      true,
-		IsDBMigration: true,
-		IsAPIContract: true,
-		IsConfig:      true,
+		IsAuth:         true,
+		IsCrypto:       true,
+		IsDBMigration:  true,
+		IsAPIContract:  true,
+		IsConfig:       true,
 		SymbolsChanged: []string{"a", "b", "c", "d", "e", "f"},
 	}
 	_, score, _ := svc.AnalyzeChange(req)

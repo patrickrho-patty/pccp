@@ -13,10 +13,10 @@ func TestContextEvaluationClean(t *testing.T) {
 	manifest := &ContextManifest{
 		Items: []ContextItem{
 			{
-				ID:         "item-1",
-				Source:     "repository",
-				Content:    "func main() { fmt.Println(\"hello\") }",
-				TrustLabel: TrustRepository,
+				ID:             "item-1",
+				Source:         "repository",
+				Content:        "func main() { fmt.Println(\"hello\") }",
+				TrustLabel:     TrustRepository,
 				Classification: "internal",
 			},
 		},
@@ -38,10 +38,10 @@ func TestContextEvaluationPII(t *testing.T) {
 	manifest := &ContextManifest{
 		Items: []ContextItem{
 			{
-				ID:         "item-1",
-				Source:     "repository",
-				Content:    "주민번호: 901225-1234567",
-				TrustLabel: TrustRepository,
+				ID:             "item-1",
+				Source:         "repository",
+				Content:        "주민번호: 901225-1234567",
+				TrustLabel:     TrustRepository,
 				Classification: "internal",
 			},
 		},
@@ -60,9 +60,9 @@ func TestContextEvaluationRestricted(t *testing.T) {
 	manifest := &ContextManifest{
 		Items: []ContextItem{
 			{
-				ID:            "item-1",
-				Content:       "clean code",
-				TrustLabel:    TrustRepository,
+				ID:             "item-1",
+				Content:        "clean code",
+				TrustLabel:     TrustRepository,
 				Classification: "restricted",
 			},
 		},
@@ -81,9 +81,9 @@ func TestContextEvaluationUntrusted(t *testing.T) {
 	manifest := &ContextManifest{
 		Items: []ContextItem{
 			{
-				ID:         "item-1",
-				Content:    "external content",
-				TrustLabel: TrustExternalUntrusted,
+				ID:             "item-1",
+				Content:        "external content",
+				TrustLabel:     TrustExternalUntrusted,
 				Classification: "internal",
 			},
 		},

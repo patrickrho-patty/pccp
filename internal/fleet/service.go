@@ -21,14 +21,14 @@ func New(db *gorm.DB) *Service {
 
 // HarnessInventory returns a live inventory of connected harness instances (PRD §14.1).
 type HarnessInventory struct {
-	Harness      models.Harness    `json:"harness"`
-	Device       models.Device     `json:"device,omitempty"`
-	User         *models.User      `json:"user,omitempty"`
-	Sessions     []models.Session  `json:"sessions,omitempty"`
-	RiskScore    float64           `json:"risk_score"`
-	IsActive     bool              `json:"is_active"`
-	OpenApprovals int              `json:"open_approvals"`
-	SecurityFindings int           `json:"security_findings"`
+	Harness          models.Harness   `json:"harness"`
+	Device           models.Device    `json:"device,omitempty"`
+	User             *models.User     `json:"user,omitempty"`
+	Sessions         []models.Session `json:"sessions,omitempty"`
+	RiskScore        float64          `json:"risk_score"`
+	IsActive         bool             `json:"is_active"`
+	OpenApprovals    int              `json:"open_approvals"`
+	SecurityFindings int              `json:"security_findings"`
 }
 
 // GetFleetInventory returns the full harness fleet inventory.
@@ -93,36 +93,36 @@ func (s *Service) GetFleetInventory(orgID string) ([]HarnessInventory, error) {
 type FleetAction string
 
 const (
-	ActionReauth          FleetAction = "request_reauthentication"
-	ActionForcePolicy     FleetAction = "force_policy_refresh"
-	ActionForceConfig     FleetAction = "force_config_refresh"
-	ActionRequireUpgrade  FleetAction = "require_client_upgrade"
-	ActionMoveRing        FleetAction = "move_release_ring"
-	ActionSuspendModel    FleetAction = "suspend_model_access"
-	ActionReduceTools     FleetAction = "reduce_tool_capabilities"
-	ActionDisableMCP      FleetAction = "disable_mcp_server"
-	ActionChangeQuota     FleetAction = "change_quota"
-	ActionPauseExecution  FleetAction = "pause_agent_execution"
-	ActionTerminateSession FleetAction = "terminate_session"
-	ActionRevokeCert      FleetAction = "revoke_harness_certificate"
-	ActionQuarantine      FleetAction = "quarantine_device"
-	ActionIsolateSandbox  FleetAction = "isolate_sandbox"
-	ActionInvalidatePriv  FleetAction = "invalidate_privilege"
-	ActionForensicSnapshot FleetAction = "request_forensic_snapshot"
-	ActionCreateIncident  FleetAction = "create_incident"
-	ActionSendAdminMsg    FleetAction = "send_admin_message"
+	ActionReauth            FleetAction = "request_reauthentication"
+	ActionForcePolicy       FleetAction = "force_policy_refresh"
+	ActionForceConfig       FleetAction = "force_config_refresh"
+	ActionRequireUpgrade    FleetAction = "require_client_upgrade"
+	ActionMoveRing          FleetAction = "move_release_ring"
+	ActionSuspendModel      FleetAction = "suspend_model_access"
+	ActionReduceTools       FleetAction = "reduce_tool_capabilities"
+	ActionDisableMCP        FleetAction = "disable_mcp_server"
+	ActionChangeQuota       FleetAction = "change_quota"
+	ActionPauseExecution    FleetAction = "pause_agent_execution"
+	ActionTerminateSession  FleetAction = "terminate_session"
+	ActionRevokeCert        FleetAction = "revoke_harness_certificate"
+	ActionQuarantine        FleetAction = "quarantine_device"
+	ActionIsolateSandbox    FleetAction = "isolate_sandbox"
+	ActionInvalidatePriv    FleetAction = "invalidate_privilege"
+	ActionForensicSnapshot  FleetAction = "request_forensic_snapshot"
+	ActionCreateIncident    FleetAction = "create_incident"
+	ActionSendAdminMsg      FleetAction = "send_admin_message"
 	ActionEmergencyLockdown FleetAction = "emergency_lockdown"
 )
 
 // PerformAction executes a fleet action on a harness.
 type ActionRequest struct {
- 	OrganizationID string `json:"organization_i_d"`
- 	HarnessID      string `json:"harness_i_d"`
- 	Action         FleetAction `json:"action"`
- 	Reason         string `json:"reason"`
- 	PerformedBy    string `json:"performed_by"`  // admin user ID
- 	SessionID      string `json:"session_i_d"`  // for session-specific actions
- 	Parameters     map[string]interface{} `json:"parameters"`
+	OrganizationID string                 `json:"organization_i_d"`
+	HarnessID      string                 `json:"harness_i_d"`
+	Action         FleetAction            `json:"action"`
+	Reason         string                 `json:"reason"`
+	PerformedBy    string                 `json:"performed_by"` // admin user ID
+	SessionID      string                 `json:"session_i_d"`  // for session-specific actions
+	Parameters     map[string]interface{} `json:"parameters"`
 }
 
 // PerformAction executes a fleet action and records it in the audit trail.
@@ -220,15 +220,15 @@ func (s *Service) PerformAction(req ActionRequest) error {
 
 // SessionInspector returns detailed session information (PRD §14.3).
 type SessionInspector struct {
-	Session    models.Session       `json:"session"`
-	User       *models.User         `json:"user,omitempty"`
-	Harness    *models.Harness      `json:"harness,omitempty"`
-	Repository *models.Repository   `json:"repository,omitempty"`
-	Baseline   *models.RepoBaseline `json:"baseline,omitempty"`
-	Actions    []models.ActionEnvelope `json:"actions"`
-	ChangeSets []models.ChangeSet   `json:"change_sets"`
+	Session          models.Session           `json:"session"`
+	User             *models.User             `json:"user,omitempty"`
+	Harness          *models.Harness          `json:"harness,omitempty"`
+	Repository       *models.Repository       `json:"repository,omitempty"`
+	Baseline         *models.RepoBaseline     `json:"baseline,omitempty"`
+	Actions          []models.ActionEnvelope  `json:"actions"`
+	ChangeSets       []models.ChangeSet       `json:"change_sets"`
 	SecurityFindings []models.SecurityFinding `json:"security_findings"`
-	OpenApprovals []models.Approval `json:"open_approvals"`
+	OpenApprovals    []models.Approval        `json:"open_approvals"`
 }
 
 // InspectSession returns detailed information about a live session.

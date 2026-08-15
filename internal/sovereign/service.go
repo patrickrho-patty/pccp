@@ -12,7 +12,7 @@ import (
 // Service implements sovereign/air-gapped deployment features (PRD §34.4, §9.7, §5).
 type Service struct {
 	mu           sync.RWMutex
-	trustBundles map[string]*TrustBundle  // orgID → local trust bundle
+	trustBundles map[string]*TrustBundle // orgID → local trust bundle
 	updates      map[string]*OfflineUpdate
 }
 
@@ -26,29 +26,29 @@ func New() *Service {
 
 // TrustBundle represents a local trust bundle for air-gapped operation (PRD §9.7).
 type TrustBundle struct {
-	OrganizationID    string   `json:"organization_id"`
-	LocalCAIdentity   string   `json:"local_ca_identity"`
-	LocalCAPublicKey  string   `json:"local_ca_public_key"`
-	ModelSigningKeys  []string `json:"model_signing_keys"`
-	RevocationList    []string `json:"revocation_list"`
+	OrganizationID        string            `json:"organization_id"`
+	LocalCAIdentity       string            `json:"local_ca_identity"`
+	LocalCAPublicKey      string            `json:"local_ca_public_key"`
+	ModelSigningKeys      []string          `json:"model_signing_keys"`
+	RevocationList        []string          `json:"revocation_list"`
 	ReferenceMeasurements map[string]string `json:"reference_measurements"` // component → expected hash
-	ImportedAt        string   `json:"imported_at"`
-	ExpiresAt         string   `json:"expires_at"`
+	ImportedAt            string            `json:"imported_at"`
+	ExpiresAt             string            `json:"expires_at"`
 }
 
 // OfflineUpdate represents an update package for air-gapped deployment.
 type OfflineUpdate struct {
-	ID            string            `json:"id"`
-	Version       string            `json:"version"`
-	Type          string            `json:"type"` // server, relay, pia, model, policy
-	Hash          string            `json:"hash"`
-	Signature     string            `json:"signature"`
-	Size          int64             `json:"size"`
-	CreatedAt     string            `json:"created_at"`
-	ImportedAt    string            `json:"imported_at,omitempty"`
-	AppliedAt     string            `json:"applied_at,omitempty"`
-	Status        string            `json:"status"` // pending_import, imported, applied, failed
-	Checksum      string            `json:"checksum"`
+	ID         string `json:"id"`
+	Version    string `json:"version"`
+	Type       string `json:"type"` // server, relay, pia, model, policy
+	Hash       string `json:"hash"`
+	Signature  string `json:"signature"`
+	Size       int64  `json:"size"`
+	CreatedAt  string `json:"created_at"`
+	ImportedAt string `json:"imported_at,omitempty"`
+	AppliedAt  string `json:"applied_at,omitempty"`
+	Status     string `json:"status"` // pending_import, imported, applied, failed
+	Checksum   string `json:"checksum"`
 }
 
 // ImportTrustBundle imports a trust bundle for air-gapped operation (PRD §9.7).

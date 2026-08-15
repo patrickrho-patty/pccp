@@ -98,10 +98,10 @@ func TestModelKeyRelease(t *testing.T) {
 	svc.VerifyEvidence(&evidence[0], ref)
 
 	result := svc.EvaluateKeyRelease(ModelKeyReleaseRequest{
-		EndpointID:         "ep-1",
-		OrganizationID:     "org-1",
-		ModelPackageID:     "pmp-1",
-		AssuranceLevel:     Level1Software,
+		EndpointID:          "ep-1",
+		OrganizationID:      "org-1",
+		ModelPackageID:      "pmp-1",
+		AssuranceLevel:      Level1Software,
 		AttestationEvidence: evidence,
 	})
 	if !result.Granted {

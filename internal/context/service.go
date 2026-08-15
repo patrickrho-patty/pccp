@@ -29,46 +29,46 @@ func New(db *gorm.DB, secSvc *security.Service) *Service {
 type TrustLabel string
 
 const (
-	TrustPolicyApproved   TrustLabel = "TRUSTED_POLICY"
-	TrustRepository       TrustLabel = "TRUSTED_REPOSITORY"
-	TrustAuthorized       TrustLabel = "AUTHORIZED_INTERNAL"
-	TrustUserSupplied     TrustLabel = "USER_SUPPLIED"
+	TrustPolicyApproved    TrustLabel = "TRUSTED_POLICY"
+	TrustRepository        TrustLabel = "TRUSTED_REPOSITORY"
+	TrustAuthorized        TrustLabel = "AUTHORIZED_INTERNAL"
+	TrustUserSupplied      TrustLabel = "USER_SUPPLIED"
 	TrustExternalUntrusted TrustLabel = "EXTERNAL_UNTRUSTED"
-	TrustModelGenerated   TrustLabel = "MODEL_GENERATED"
-	TrustUnknown          TrustLabel = "UNKNOWN"
+	TrustModelGenerated    TrustLabel = "MODEL_GENERATED"
+	TrustUnknown           TrustLabel = "UNKNOWN"
 )
 
 // ContextItem represents a single item being considered for model context.
 type ContextItem struct {
-	ID            string    `json:"id"`
-	Source        string    `json:"source"`        // repository, document, chat, etc.
-	Repository    string    `json:"repository,omitempty"`
-	Commit        string    `json:"commit,omitempty"`
-	Path          string    `json:"path,omitempty"`
-	Symbol        string    `json:"symbol,omitempty"`
-	Content       string    `json:"content"`
-	TokenEstimate int       `json:"token_estimate"`
-	Classification string   `json:"classification"` // public, internal, confidential, restricted
-	TrustLabel    TrustLabel `json:"trust_label"`
-	ReasonForInclusion string `json:"reason_for_inclusion"`
-	Transformations []string `json:"transformations,omitempty"`
-	ProvenanceDigest string  `json:"provenance_digest,omitempty"`
+	ID                 string     `json:"id"`
+	Source             string     `json:"source"` // repository, document, chat, etc.
+	Repository         string     `json:"repository,omitempty"`
+	Commit             string     `json:"commit,omitempty"`
+	Path               string     `json:"path,omitempty"`
+	Symbol             string     `json:"symbol,omitempty"`
+	Content            string     `json:"content"`
+	TokenEstimate      int        `json:"token_estimate"`
+	Classification     string     `json:"classification"` // public, internal, confidential, restricted
+	TrustLabel         TrustLabel `json:"trust_label"`
+	ReasonForInclusion string     `json:"reason_for_inclusion"`
+	Transformations    []string   `json:"transformations,omitempty"`
+	ProvenanceDigest   string     `json:"provenance_digest,omitempty"`
 }
 
 // ContextManifest is a manifest of context items before disclosure (DARI §41.2).
 type ContextManifest struct {
-	Items    []ContextItem `json:"items"`
-	TotalTokens int        `json:"total_tokens"`
-	Classification string   `json:"highest_classification"`
+	Items          []ContextItem `json:"items"`
+	TotalTokens    int           `json:"total_tokens"`
+	Classification string        `json:"highest_classification"`
 }
 
 // ContextDecision is the relay's per-item decision (DARI §41.4).
 type ContextDecision struct {
-	ItemID    string         `json:"item_id"`
-	Decision  string         `json:"decision"` // allow, metadata_only, allow_transformed, require_approval, deny
-	Reason    string         `json:"reason"`
-	Transformed string       `json:"transformed,omitempty"` // redacted content
-	RuleIDs   []string       `json:"rule_ids,omitempty"`
+	ItemID      string   `json:"item_id"`
+	Decision    string   `json:"decision"` // allow, metadata_only, allow_transformed, require_approval, deny
+	Reason      string   `json:"reason"`
+	Transformed string   `json:"transformed,omitempty"` // redacted content
+	RuleIDs     []string `json:"rule_ids,omitempty"`
 }
 
 // EvaluateManifest inspects all context items and returns per-item decisions.

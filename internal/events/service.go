@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -18,10 +18,10 @@ import (
 // All dashboards, audit, provenance, billing, security, and analytics
 // derive from common events rather than duplicative logging.
 type Service struct {
-	db       *gorm.DB
+	db         *gorm.DB
 	signingKey ed25519.PrivateKey
-	mu       sync.Mutex
-	sequences map[string]uint64 // session_id → sequence number
+	mu         sync.Mutex
+	sequences  map[string]uint64 // session_id → sequence number
 }
 
 // New creates a new event service.
@@ -39,23 +39,23 @@ func New(db *gorm.DB) (*Service, error) {
 
 // EventEnvelope is the canonical event envelope (PRD §39.1).
 type EventEnvelope struct {
-	EventID       string          `json:"event_id"`
-	EventType     string          `json:"event_type"`
-	SchemaVersion int             `json:"schema_version"`
-	OccurredAt    string          `json:"occurred_at"`
-	ReceivedAt    string          `json:"received_at"`
-	OrganizationID string         `json:"organization_id"`
-	Actor         EventActor      `json:"actor"`
-	SessionID     string          `json:"session_id,omitempty"`
-	ProjectID     string          `json:"project_id,omitempty"`
-	RepositoryID  string          `json:"repository_id,omitempty"`
-	TraceID       string          `json:"trace_id,omitempty"`
-	Classification string         `json:"classification"`
-	Payload       json.RawMessage `json:"payload,omitempty"`
-	SequenceNum   uint64          `json:"sequence_num,omitempty"`
-	PrevEventDigest string        `json:"prev_event_digest,omitempty"`
-	EventDigest   string          `json:"event_digest"`
-	Signature     string          `json:"signature,omitempty"`
+	EventID         string          `json:"event_id"`
+	EventType       string          `json:"event_type"`
+	SchemaVersion   int             `json:"schema_version"`
+	OccurredAt      string          `json:"occurred_at"`
+	ReceivedAt      string          `json:"received_at"`
+	OrganizationID  string          `json:"organization_id"`
+	Actor           EventActor      `json:"actor"`
+	SessionID       string          `json:"session_id,omitempty"`
+	ProjectID       string          `json:"project_id,omitempty"`
+	RepositoryID    string          `json:"repository_id,omitempty"`
+	TraceID         string          `json:"trace_id,omitempty"`
+	Classification  string          `json:"classification"`
+	Payload         json.RawMessage `json:"payload,omitempty"`
+	SequenceNum     uint64          `json:"sequence_num,omitempty"`
+	PrevEventDigest string          `json:"prev_event_digest,omitempty"`
+	EventDigest     string          `json:"event_digest"`
+	Signature       string          `json:"signature,omitempty"`
 }
 
 // EventActor identifies who caused the event.
@@ -67,16 +67,16 @@ type EventActor struct {
 
 // Emit creates, signs, and persists an event on the durable event spine.
 type EmitRequest struct {
- 	EventType      string `json:"event_type"`
- 	OrganizationID string `json:"organization_i_d"`
- 	UserID         string `json:"user_i_d"`
- 	HarnessID      string `json:"harness_i_d"`
- 	ActorType      string `json:"actor_type"`
- 	SessionID      string `json:"session_i_d"`
- 	ProjectID      string `json:"project_i_d"`
- 	RepositoryID   string `json:"repository_i_d"`
- 	Classification string `json:"classification"`
- 	Payload        interface{} `json:"payload"`
+	EventType      string      `json:"event_type"`
+	OrganizationID string      `json:"organization_i_d"`
+	UserID         string      `json:"user_i_d"`
+	HarnessID      string      `json:"harness_i_d"`
+	ActorType      string      `json:"actor_type"`
+	SessionID      string      `json:"session_i_d"`
+	ProjectID      string      `json:"project_i_d"`
+	RepositoryID   string      `json:"repository_i_d"`
+	Classification string      `json:"classification"`
+	Payload        interface{} `json:"payload"`
 }
 
 // Emit creates a signed event and writes it to the event spine.
@@ -125,12 +125,12 @@ func (s *Service) Emit(req EmitRequest) (*EventEnvelope, error) {
 			HarnessID: req.HarnessID,
 			ActorType: req.ActorType,
 		},
-		SessionID:     req.SessionID,
-		ProjectID:     req.ProjectID,
-		RepositoryID:  req.RepositoryID,
-		Classification: req.Classification,
-		Payload:       payloadBytes,
-		SequenceNum:   seq,
+		SessionID:       req.SessionID,
+		ProjectID:       req.ProjectID,
+		RepositoryID:    req.RepositoryID,
+		Classification:  req.Classification,
+		Payload:         payloadBytes,
+		SequenceNum:     seq,
 		PrevEventDigest: prevDigest,
 	}
 
@@ -143,7 +143,7 @@ func (s *Service) Emit(req EmitRequest) (*EventEnvelope, error) {
 
 	// Persist as an audit event (immutable record)
 	auditEvent := &models.AuditEvent{
-		Base: models.Base{ID: eventID},
+		Base:           models.Base{ID: eventID},
 		OrganizationID: req.OrganizationID,
 		EventType:      req.EventType,
 		ActorID:        req.UserID,
@@ -165,13 +165,13 @@ func (s *Service) Emit(req EmitRequest) (*EventEnvelope, error) {
 
 // Query retrieves events by various filters.
 type QueryFilter struct {
- 	OrganizationID string `json:"organization_i_d"`
- 	EventType      string `json:"event_type"`
- 	SessionID      string `json:"session_i_d"`
- 	UserID         string `json:"user_i_d"`
- 	HarnessID      string `json:"harness_i_d"`
- 	Since          string `json:"since"`  // RFC3339 timestamp
- 	Limit          int `json:"limit"`
+	OrganizationID string `json:"organization_i_d"`
+	EventType      string `json:"event_type"`
+	SessionID      string `json:"session_i_d"`
+	UserID         string `json:"user_i_d"`
+	HarnessID      string `json:"harness_i_d"`
+	Since          string `json:"since"` // RFC3339 timestamp
+	Limit          int    `json:"limit"`
 }
 
 // Query returns events matching the filter.
@@ -203,37 +203,37 @@ func (s *Service) Query(filter QueryFilter) ([]models.AuditEvent, error) {
 
 // Core event type constants (PRD §39.2).
 const (
-	TypeIdentityLifecycle       = "cp.identity.lifecycle"
-	TypeHarnessLifecycle        = "cp.harness.lifecycle"
-	TypeHarnessAttestation      = "cp.harness.attestation"
-	TypeSessionLifecycle        = "cp.session.lifecycle"
-	TypePromptExchange          = "cp.prompt.exchange"
-	TypeContextDecision         = "cp.context.decision"
-	TypeActionRequest           = "cp.action.request"
-	TypePolicyDecision          = "cp.policy.decision"
-	TypeApprovalLifecycle       = "cp.approval.lifecycle"
-	TypeToolRequest             = "cp.tool.request"
-	TypeMCPRequest              = "cp.mcp.request"
-	TypeNetworkGrant            = "cp.network.grant"
-	TypeRuntimeEvent            = "cp.runtime.event"
-	TypeModelRequest            = "cp.model.request"
+	TypeIdentityLifecycle        = "cp.identity.lifecycle"
+	TypeHarnessLifecycle         = "cp.harness.lifecycle"
+	TypeHarnessAttestation       = "cp.harness.attestation"
+	TypeSessionLifecycle         = "cp.session.lifecycle"
+	TypePromptExchange           = "cp.prompt.exchange"
+	TypeContextDecision          = "cp.context.decision"
+	TypeActionRequest            = "cp.action.request"
+	TypePolicyDecision           = "cp.policy.decision"
+	TypeApprovalLifecycle        = "cp.approval.lifecycle"
+	TypeToolRequest              = "cp.tool.request"
+	TypeMCPRequest               = "cp.mcp.request"
+	TypeNetworkGrant             = "cp.network.grant"
+	TypeRuntimeEvent             = "cp.runtime.event"
+	TypeModelRequest             = "cp.model.request"
 	TypeModelEndpointAttestation = "cp.model.endpoint.attestation"
-	TypeModelLifecycle          = "cp.model.lifecycle"
-	TypeGitChange               = "cp.git.change"
-	TypeProvenanceSpan          = "cp.provenance.span"
-	TypeSecurityFinding         = "cp.security.finding"
-	TypeIncidentLifecycle       = "cp.incident.lifecycle"
-	TypeCommunicationMessage    = "cp.communication.message"
-	TypeCommunicationPresence   = "cp.communication.presence"
-	TypeFileTransfer            = "cp.file.transfer"
-	TypeBroadcastLifecycle      = "cp.broadcast.lifecycle"
-	TypeUsageRecord             = "cp.usage.record"
-	TypeEntitlementLifecycle    = "cp.entitlement.lifecycle"
-	TypeWorkMetric              = "cp.work.metric"
-	TypeEvaluationSnapshot      = "cp.evaluation.snapshot"
-	TypeEvidenceBundle          = "cp.evidence.bundle"
-	TypeAdminAction             = "cp.admin.action"
-	TypeConfigLifecycle         = "cp.config.lifecycle"
+	TypeModelLifecycle           = "cp.model.lifecycle"
+	TypeGitChange                = "cp.git.change"
+	TypeProvenanceSpan           = "cp.provenance.span"
+	TypeSecurityFinding          = "cp.security.finding"
+	TypeIncidentLifecycle        = "cp.incident.lifecycle"
+	TypeCommunicationMessage     = "cp.communication.message"
+	TypeCommunicationPresence    = "cp.communication.presence"
+	TypeFileTransfer             = "cp.file.transfer"
+	TypeBroadcastLifecycle       = "cp.broadcast.lifecycle"
+	TypeUsageRecord              = "cp.usage.record"
+	TypeEntitlementLifecycle     = "cp.entitlement.lifecycle"
+	TypeWorkMetric               = "cp.work.metric"
+	TypeEvaluationSnapshot       = "cp.evaluation.snapshot"
+	TypeEvidenceBundle           = "cp.evidence.bundle"
+	TypeAdminAction              = "cp.admin.action"
+	TypeConfigLifecycle          = "cp.config.lifecycle"
 )
 
 func (s *Service) nextSequence(sessionID string) uint64 {
