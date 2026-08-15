@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -80,10 +80,10 @@ func (s *Service) DecideApproval(approvalID, reviewerID, decision, reason string
 // CheckToolAuthorization determines if a tool use is allowed.
 // Per DARI invariant 5: no tool proposal grants authority by itself.
 type ToolAuthResult struct {
-	Allowed     bool   `json:"allowed"`
-	RequiresApproval bool `json:"requires_approval"`
-	ApprovalID  string `json:"approval_id,omitempty"`
-	Reason      string `json:"reason,omitempty"`
+	Allowed          bool   `json:"allowed"`
+	RequiresApproval bool   `json:"requires_approval"`
+	ApprovalID       string `json:"approval_id,omitempty"`
+	Reason           string `json:"reason,omitempty"`
 }
 
 // CheckToolAuthorization checks whether a tool use is permitted.
@@ -166,12 +166,12 @@ func (s *Service) ListPendingApprovals(orgID string) ([]models.Approval, error) 
 // SeedDefaultTools registers the default tool set for an organization.
 func (s *Service) SeedDefaultTools(orgID string) error {
 	defaults := []struct {
-		Name        string
-		NameKo      string
-		Category    string
-		ToolClass   string
-		Danger      string
-		NeedsAppr   bool
+		Name      string
+		NameKo    string
+		Category  string
+		ToolClass string
+		Danger    string
+		NeedsAppr bool
 	}{
 		{"file.read", "파일 읽기", "read", "read", "low", false},
 		{"file.write", "파일 쓰기", "write", "write", "medium", false},

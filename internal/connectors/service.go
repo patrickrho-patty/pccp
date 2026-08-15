@@ -20,31 +20,31 @@ type Service struct {
 type ConnectorType string
 
 const (
-	TypeJira      ConnectorType = "jira"
-	TypeGitHub    ConnectorType = "github"
-	TypeGitLab    ConnectorType = "gitlab"
-	TypeSlack     ConnectorType = "slack"
-	TypeKakaoWork ConnectorType = "kakaowork"
-	TypeTeams     ConnectorType = "teams"
+	TypeJira       ConnectorType = "jira"
+	TypeGitHub     ConnectorType = "github"
+	TypeGitLab     ConnectorType = "gitlab"
+	TypeSlack      ConnectorType = "slack"
+	TypeKakaoWork  ConnectorType = "kakaowork"
+	TypeTeams      ConnectorType = "teams"
 	TypeServiceNow ConnectorType = "servicenow"
-	TypeJenkins   ConnectorType = "jenkins"
+	TypeJenkins    ConnectorType = "jenkins"
 )
 
 // Connector represents a configured enterprise integration.
 type Connector struct {
-	ID             string         `json:"id"`
-	OrganizationID string         `json:"organization_id"`
-	Type           ConnectorType  `json:"type"`
-	Name           string         `json:"name"`
-	NameKo         string         `json:"name_ko"`
-	BaseURL        string         `json:"base_url"`
-	AuthType       string         `json:"auth_type"` // api_key, oauth, bearer
-	AuthToken      string         `json:"-"`         // never serialized
+	ID             string            `json:"id"`
+	OrganizationID string            `json:"organization_id"`
+	Type           ConnectorType     `json:"type"`
+	Name           string            `json:"name"`
+	NameKo         string            `json:"name_ko"`
+	BaseURL        string            `json:"base_url"`
+	AuthType       string            `json:"auth_type"` // api_key, oauth, bearer
+	AuthToken      string            `json:"-"`         // never serialized
 	Config         map[string]string `json:"config,omitempty"`
-	Status         string         `json:"status"` // active, disabled, error
-	LastError      string         `json:"last_error,omitempty"`
-	LastSyncAt     string         `json:"last_sync_at,omitempty"`
-	CreatedAt      string         `json:"created_at"`
+	Status         string            `json:"status"` // active, disabled, error
+	LastError      string            `json:"last_error,omitempty"`
+	LastSyncAt     string            `json:"last_sync_at,omitempty"`
+	CreatedAt      string            `json:"created_at"`
 }
 
 // New creates a new connectors service.
@@ -106,15 +106,15 @@ func (s *Service) Disable(id string) error {
 
 // IssueLink represents a linked issue from an external system (PRD §32.3).
 type IssueLink struct {
-	ConnectorID  string `json:"connector_id"`
-	IssueType    string `json:"issue_type"` // jira_issue, github_issue, gitlab_issue
-	ExternalID   string `json:"external_id"`
-	ExternalURL  string `json:"external_url"`
-	Title        string `json:"title"`
-	Status       string `json:"status"`
-	Assignee     string `json:"assignee,omitempty"`
-	SessionID    string `json:"session_id,omitempty"`
-	ChangeSetID  string `json:"change_set_id,omitempty"`
+	ConnectorID string `json:"connector_id"`
+	IssueType   string `json:"issue_type"` // jira_issue, github_issue, gitlab_issue
+	ExternalID  string `json:"external_id"`
+	ExternalURL string `json:"external_url"`
+	Title       string `json:"title"`
+	Status      string `json:"status"`
+	Assignee    string `json:"assignee,omitempty"`
+	SessionID   string `json:"session_id,omitempty"`
+	ChangeSetID string `json:"change_set_id,omitempty"`
 }
 
 // FetchIssues retrieves issues from an external system.

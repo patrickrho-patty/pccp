@@ -115,8 +115,20 @@ func NewProfileRegistry() *ProfileRegistry {
 		id: "dari.federation/1", deps: []string{"dari/1"},
 		exact: []string{"trust-bundle-import", "rollback-protection", "quarantine", "issuer-audience-validation", "policy-intersection", "residency", "cross-domain-receipts", "staleness"},
 	}}, true, "")
-	r.Register(RegisteredProfile{Handler: &staticProfile{id: "dari.collab/1", deps: []string{"dari/1"}}}, false, "Task 18 runtime gate not passed: no encrypted ordered delivery or resumable file transfer")
-	r.Register(RegisteredProfile{Handler: &staticProfile{id: "dari.media/1", deps: []string{"dari/1", "dari.collab/1"}}}, false, "Task 18 runtime gate not passed: no governed media runtime")
+	// dari.collab/1 + dari.media/1 (Task 18): runtimes implemented in
+	// internal/daricollab + internal/darimedia with in-process vectors
+	// passing (encrypted ordered delivery, tamper rejection, resumable
+	// resync, scanned file transfer; authorized chained media with
+	// cancellation receipts). Deployment evidence outstanding —
+	// DEGRADED omitting the non-critical live-deployment-evidence.
+	r.Register(RegisteredProfile{Handler: &staticProfile{
+		id: "dari.collab/1", deps: []string{"dari/1"},
+		exact: []string{"encrypted-ordered-delivery", "tamper-rejection", "resumable-resync", "presence", "scanned-file-transfer", "membership-key-rotation"},
+	}}, true, "")
+	r.Register(RegisteredProfile{Handler: &staticProfile{
+		id: "dari.media/1", deps: []string{"dari/1", "dari.collab/1"},
+		exact: []string{"authorized-sessions", "chained-ordered-chunks", "cancellation", "usage-accounting", "terminal-receipts"},
+	}}, true, "")
 	return r
 }
 

@@ -42,10 +42,11 @@ func TestProfileNegotiationMatrix(t *testing.T) {
 		t.Fatalf("critical UNSUPPORTED must fail negotiation, got %v", err)
 	}
 
-	// Non-critical unsupported: explicit result, no failure.
-	res, err = reg.Negotiate([]ProfileOffer{{Profile: "dari.collab/1", Capabilities: []CapabilityOffer{{ID: "chat", Critical: 0}}}})
-	if err != nil || res[0].Status != ProfileUnsupported {
-		t.Fatalf("non-critical unsupported must be explicit: %+v %v", res[0], err)
+	// Non-critical capability outside the implemented set: explicit
+	// DEGRADED omission, no failure.
+	res, err = reg.Negotiate([]ProfileOffer{{Profile: "dari.collab/1", Capabilities: []CapabilityOffer{{ID: "live-deployment-evidence", Critical: 0}}}})
+	if err != nil || res[0].Status != ProfileDegraded {
+		t.Fatalf("non-critical omission must be DEGRADED: %+v %v", res[0], err)
 	}
 
 	// Unknown profile → UNSUPPORTED.

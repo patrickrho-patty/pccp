@@ -1,4 +1,3 @@
-
 // TestMessageStringRegistryComplete pins the registry: every named
 // message type must render its name (no UNKNOWN drift).
 package dari

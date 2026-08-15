@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -27,52 +27,52 @@ func New(db *gorm.DB) *Service {
 type RuntimeMode string
 
 const (
-	ModeManagedLocal   RuntimeMode = "managed_local"    // signed Harness invokes approved local tools
-	ModeRemoteSandbox  RuntimeMode = "remote_sandbox"   // disposable isolated workspace controlled by CP
-	ModeCustomerPool   RuntimeMode = "customer_pool"    // on-prem/private execution workers
-	ModeAirGapped      RuntimeMode = "air_gapped"       // local-only government execution
-	ModeReviewOnly     RuntimeMode = "review_only"      // no execution
+	ModeManagedLocal  RuntimeMode = "managed_local"  // signed Harness invokes approved local tools
+	ModeRemoteSandbox RuntimeMode = "remote_sandbox" // disposable isolated workspace controlled by CP
+	ModeCustomerPool  RuntimeMode = "customer_pool"  // on-prem/private execution workers
+	ModeAirGapped     RuntimeMode = "air_gapped"     // local-only government execution
+	ModeReviewOnly    RuntimeMode = "review_only"    // no execution
 )
 
 // Sandbox represents a sandboxed execution environment.
 type Sandbox struct {
-	ID              string      `json:"id"`
-	OrganizationID  string      `json:"organization_id"`
-	SessionID       string      `json:"session_id,omitempty"`
-	UserID          string      `json:"user_id,omitempty"`
-	Mode            RuntimeMode `json:"mode"`
+	ID             string      `json:"id"`
+	OrganizationID string      `json:"organization_id"`
+	SessionID      string      `json:"session_id,omitempty"`
+	UserID         string      `json:"user_id,omitempty"`
+	Mode           RuntimeMode `json:"mode"`
 	// Image/attestation
-	BaseImage       string      `json:"base_image"`
-	ImageDigest     string      `json:"image_digest"`
-	Attestation     string      `json:"attestation,omitempty"`
+	BaseImage   string `json:"base_image"`
+	ImageDigest string `json:"image_digest"`
+	Attestation string `json:"attestation,omitempty"`
 	// Runtime
-	Host            string      `json:"host,omitempty"`
-	Pool            string      `json:"pool,omitempty"`
-	ResourceLimits  string      `json:"resource_limits,omitempty"` // JSON
-	NetworkPolicy   string      `json:"network_policy,omitempty"`  // JSON: allowed destinations
+	Host           string `json:"host,omitempty"`
+	Pool           string `json:"pool,omitempty"`
+	ResourceLimits string `json:"resource_limits,omitempty"` // JSON
+	NetworkPolicy  string `json:"network_policy,omitempty"`  // JSON: allowed destinations
 	// State
-	Status          string      `json:"status"` // pending, defined, running, paused, destroyed, failed
+	Status string `json:"status"` // pending, defined, running, paused, destroyed, failed
 	// RuntimeProvider records the HONEST provisioning outcome: the
 	// runtime that actually hosts the sandbox, or "none (...)" when
 	// definition-only.
-	RuntimeProvider string      `json:"runtime_provider,omitempty"`
-	StartedAt       string      `json:"started_at,omitempty"`
-	DestroyedAt     string      `json:"destroyed_at,omitempty"`
+	RuntimeProvider string `json:"runtime_provider,omitempty"`
+	StartedAt       string `json:"started_at,omitempty"`
+	DestroyedAt     string `json:"destroyed_at,omitempty"`
 	// Forensics
-	HasSnapshot     bool        `json:"has_snapshot"`
-	DestroyEvidence string      `json:"destroy_evidence,omitempty"` // proof of destruction
+	HasSnapshot     bool   `json:"has_snapshot"`
+	DestroyEvidence string `json:"destroy_evidence,omitempty"` // proof of destruction
 }
 
 // CreateSandbox creates a new sandbox instance.
 type CreateRequest struct {
- 	OrganizationID string `json:"organization_i_d"`
- 	SessionID      string `json:"session_i_d"`
- 	UserID         string `json:"user_i_d"`
- 	Mode           RuntimeMode `json:"mode"`
+	OrganizationID string      `json:"organization_i_d"`
+	SessionID      string      `json:"session_i_d"`
+	UserID         string      `json:"user_i_d"`
+	Mode           RuntimeMode `json:"mode"`
 	BaseImage      string
- 	ImageDigest    string `json:"image_digest"`
- 	NetworkPolicy  map[string]interface{} `json:"network_policy"`
- 	ResourceLimits map[string]interface{} `json:"resource_limits"`
+	ImageDigest    string                 `json:"image_digest"`
+	NetworkPolicy  map[string]interface{} `json:"network_policy"`
+	ResourceLimits map[string]interface{} `json:"resource_limits"`
 }
 
 // CreateSandbox provisions a new sandbox.
@@ -286,17 +286,17 @@ func IsModeAllowed(projectAllowedModes []RuntimeMode, requested RuntimeMode) boo
 // RemoteSandboxBaseline returns the baseline configuration for remote sandboxes (PRD §31.2).
 func RemoteSandboxBaseline() map[string]interface{} {
 	return map[string]interface{}{
-		"immutable_base_image":  true,
-		"ephemeral_encrypted":   true,
-		"non_root":              true,
-		"no_host_socket":        true,
-		"no_broad_network":      true,
-		"resource_limits":       true,
-		"external_audit_agent":  true,
-		"short_lived_creds":     true,
-		"artifact_export_gate":  true,
-		"destroy_after_close":   true,
-		"key_discard":           true,
+		"immutable_base_image": true,
+		"ephemeral_encrypted":  true,
+		"non_root":             true,
+		"no_host_socket":       true,
+		"no_broad_network":     true,
+		"resource_limits":      true,
+		"external_audit_agent": true,
+		"short_lived_creds":    true,
+		"artifact_export_gate": true,
+		"destroy_after_close":  true,
+		"key_discard":          true,
 	}
 }
 

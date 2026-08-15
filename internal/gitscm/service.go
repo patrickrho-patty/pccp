@@ -24,18 +24,18 @@ func New(db *gorm.DB) *Service {
 
 // CreateBaseline records an immutable task baseline at session start (PRD §18.3).
 type BaselineRequest struct {
- 	OrganizationID string `json:"organization_i_d"`
- 	RepositoryID   string `json:"repository_i_d"`
- 	Branch         string `json:"branch"`
- 	CommitSHA      string `json:"commit_s_h_a"`
- 	CommitMessage  string `json:"commit_message"`
- 	AuthorName     string `json:"author_name"`
- 	AuthorEmail    string `json:"author_email"`
- 	CommittedAt    string `json:"committed_at"`
- 	WorktreeStatus string `json:"worktree_status"`  // git status output
- 	SessionID      string `json:"session_i_d"`
- 	SubmodulesJSON string `json:"submodules_j_s_o_n"`
- 	DependencyLock string `json:"dependency_lock"`  // package-lock.json/go.sum hashes
+	OrganizationID string `json:"organization_i_d"`
+	RepositoryID   string `json:"repository_i_d"`
+	Branch         string `json:"branch"`
+	CommitSHA      string `json:"commit_s_h_a"`
+	CommitMessage  string `json:"commit_message"`
+	AuthorName     string `json:"author_name"`
+	AuthorEmail    string `json:"author_email"`
+	CommittedAt    string `json:"committed_at"`
+	WorktreeStatus string `json:"worktree_status"` // git status output
+	SessionID      string `json:"session_i_d"`
+	SubmodulesJSON string `json:"submodules_j_s_o_n"`
+	DependencyLock string `json:"dependency_lock"` // package-lock.json/go.sum hashes
 }
 
 // CreateBaseline creates a repository baseline.
@@ -76,10 +76,10 @@ func (s *Service) GetBaseline(baselineID string) (*models.RepoBaseline, error) {
 type BranchProtection string
 
 const (
-	BranchProtectionStandard  BranchProtection = "standard"
-	BranchProtectionProtected BranchProtection = "protected"
-	BranchProtectionLocked    BranchProtection = "locked"
-	BranchProtectionRelease   BranchProtection = "release"
+	BranchProtectionStandard   BranchProtection = "standard"
+	BranchProtectionProtected  BranchProtection = "protected"
+	BranchProtectionLocked     BranchProtection = "locked"
+	BranchProtectionRelease    BranchProtection = "release"
 	BranchProtectionProduction BranchProtection = "production"
 )
 
@@ -139,12 +139,12 @@ func (s *Service) IsEditAllowed(repoID, branchName string) (bool, string, error)
 
 // RecordCommitBinding links a git commit to a change set (PRD §18.6).
 type CommitBindingRequest struct {
- 	OrganizationID string `json:"organization_i_d"`
- 	RepositoryID   string `json:"repository_i_d"`
- 	CommitSHA      string `json:"commit_s_h_a"`
- 	ChangeSetID    string `json:"change_set_i_d"`
- 	SessionID      string `json:"session_i_d"`
- 	Branch         string `json:"branch"`
+	OrganizationID string `json:"organization_i_d"`
+	RepositoryID   string `json:"repository_i_d"`
+	CommitSHA      string `json:"commit_s_h_a"`
+	ChangeSetID    string `json:"change_set_i_d"`
+	SessionID      string `json:"session_i_d"`
+	Branch         string `json:"branch"`
 }
 
 // RecordCommitBinding creates a binding between a commit and provenance.
@@ -177,26 +177,26 @@ func (s *Service) LookupCommitProvenance(orgID, repoID, commitSHA string) ([]mod
 type SCMType string
 
 const (
-	SCMGitHub   SCMType = "github"
-	SCMGitLab   SCMType = "gitlab"
-	SCMGitea    SCMType = "gitea"
+	SCMGitHub    SCMType = "github"
+	SCMGitLab    SCMType = "gitlab"
+	SCMGitea     SCMType = "gitea"
 	SCMBitbucket SCMType = "bitbucket"
-	SCMGit      SCMType = "git"
+	SCMGit       SCMType = "git"
 )
 
 // RegisterRepository registers a new repository under a project.
 type RegisterRepoRequest struct {
- 	OrganizationID  string `json:"organization_i_d"`
- 	ProjectID       string `json:"project_i_d"`
- 	Name            string `json:"name"`
- 	FullName        string `json:"full_name"`
- 	CloneURL        string `json:"clone_u_r_l"`
- 	SCMType         SCMType `json:"s_c_m_type"`
- 	SCMProvider     string `json:"s_c_m_provider"`  // e.g. "github.example.com"
- 	DefaultBranch   string `json:"default_branch"`
- 	Sensitivity     string `json:"sensitivity"`  // public, internal, confidential, restricted
- 	CodeOwnersJSON  string `json:"code_owners_j_s_o_n"`
- 	CIConfigRef     string `json:"c_i_config_ref"`
+	OrganizationID string  `json:"organization_i_d"`
+	ProjectID      string  `json:"project_i_d"`
+	Name           string  `json:"name"`
+	FullName       string  `json:"full_name"`
+	CloneURL       string  `json:"clone_u_r_l"`
+	SCMType        SCMType `json:"s_c_m_type"`
+	SCMProvider    string  `json:"s_c_m_provider"` // e.g. "github.example.com"
+	DefaultBranch  string  `json:"default_branch"`
+	Sensitivity    string  `json:"sensitivity"` // public, internal, confidential, restricted
+	CodeOwnersJSON string  `json:"code_owners_j_s_o_n"`
+	CIConfigRef    string  `json:"c_i_config_ref"`
 }
 
 // RegisterRepository creates a new repository record.
@@ -241,13 +241,13 @@ func (s *Service) ListRepositoriesByProject(orgID, projectID string) ([]models.R
 
 // RepositoryHeatmapData represents repository sensitivity heatmap data (PRD §33.5).
 type RepositoryHeatmapData struct {
-	RepositoryID   string  `json:"repository_id"`
-	RepositoryName string  `json:"repository_name"`
-	Sensitivity    string  `json:"sensitivity"`
-	AISessions     int     `json:"ai_sessions"`
-	ChangesMade    int     `json:"changes_made"`
-	SecurityFindings int   `json:"security_findings"`
-	RiskScore      float64 `json:"risk_score"`
+	RepositoryID     string  `json:"repository_id"`
+	RepositoryName   string  `json:"repository_name"`
+	Sensitivity      string  `json:"sensitivity"`
+	AISessions       int     `json:"ai_sessions"`
+	ChangesMade      int     `json:"changes_made"`
+	SecurityFindings int     `json:"security_findings"`
+	RiskScore        float64 `json:"risk_score"`
 }
 
 // GetRepositoryHeatmap returns sensitivity heatmap data for all repos in an org.
@@ -278,13 +278,13 @@ func (s *Service) GetRepositoryHeatmap(orgID string) ([]RepositoryHeatmapData, e
 		}
 
 		result = append(result, RepositoryHeatmapData{
-			RepositoryID:   repo.ID,
-			RepositoryName: repo.Name,
-			Sensitivity:    repo.Sensitivity,
-			AISessions:     int(sessionCount),
-			ChangesMade:    int(changeCount),
+			RepositoryID:     repo.ID,
+			RepositoryName:   repo.Name,
+			Sensitivity:      repo.Sensitivity,
+			AISessions:       int(sessionCount),
+			ChangesMade:      int(changeCount),
 			SecurityFindings: int(findingCount),
-			RiskScore:      riskScore,
+			RiskScore:        riskScore,
 		})
 	}
 	return result, nil
