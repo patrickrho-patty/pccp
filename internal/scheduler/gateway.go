@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -61,6 +62,7 @@ type Gateway struct {
 	rewriter   *ModelRewriter
 	media      MediaControl
 	queueTTL   time.Duration
+	classes    *ClassResolver // nil = no issuer configured (fail-closed to batch)
 }
 
 // NewGateway builds the ingress over a dispatcher and optional rewriter.
@@ -74,6 +76,13 @@ func NewGateway(d *Dispatcher, rw *ModelRewriter) *Gateway {
 // Rewriter exposes the model rewriter (admin wiring).
 func (g *Gateway) Rewriter() *ModelRewriter { return g.rewriter }
 
+// SetTrafficIssuer installs the public key that signs traffic-class
+// envelopes (the relay's service identity). Until set, every request is
+// fail-closed to the lowest class — headers never elevate (spec §13.14).
+func (g *Gateway) SetTrafficIssuer(pub ed25519.PublicKey) {
+	g.classes = NewClassResolver(pub)
+}
+
 // SetQueueTTL bounds how long a request may park in the global queue
 // before the gateway expires it with a retryable 503. Default 1 minute.
 func (g *Gateway) SetQueueTTL(d time.Duration) { g.queueTTL = d }
@@ -85,6 +94,7 @@ type chatRequest struct {
 	MaxTokens   int             `json:"max_tokens"`
 	MaxOutput   int             `json:"max_completion_tokens"`
 	Temperature float64         `json:"temperature"`
+	Stream      bool            `json:"stream"`
 }
 
 // HandleChatCompletions is the OpenAI-compatible ingress.
@@ -141,9 +151,12 @@ func (g *Gateway) handleIngress(w http.ResponseWriter, r *http.Request, anthropi
 	if tenant == "" {
 		tenant = "default"
 	}
-	class := r.Header.Get("X-Traffic-Class")
-	if class == "" {
-		class = string(queue.ClassInteractiveNormal)
+	// The traffic class is resolved from the signed envelope only.
+	// X-Traffic-Class headers are ignored entirely — a client cannot
+	// self-assert priority (spec §13.14). No envelope = batch.
+	class := string(queue.ClassBatch)
+	if g.classes != nil {
+		class = g.classes.Resolve(decodeTrafficEnvelope(r))
 	}
 
 	inputTokens, mediaTokens := g.measureInput(req.Messages)
@@ -169,6 +182,16 @@ func (g *Gateway) handleIngress(w http.ResponseWriter, r *http.Request, anthropi
 		TTL:                  g.queueTTL,
 		Payload:              RequestPayload{Model: resolved, Messages: req.Messages},
 	}
+	if req.Stream {
+		ch, deltas, err := g.dispatcher.SubmitStream(qr)
+		if err != nil {
+			writeGatewayError(w, http.StatusTooManyRequests, err.Error())
+			return
+		}
+		g.serveStream(w, r, resolved, ch, deltas, id)
+		return
+	}
+
 	ch, err := g.dispatcher.Submit(qr)
 	if err != nil {
 		writeGatewayError(w, http.StatusTooManyRequests, err.Error())
@@ -414,9 +437,9 @@ func (g *Gateway) HandleEmbeddings(w http.ResponseWriter, r *http.Request) {
 	if tenant == "" {
 		tenant = "default"
 	}
-	class := r.Header.Get("X-Traffic-Class")
-	if class == "" {
-		class = "batch"
+	class := string(queue.ClassBatch)
+	if g.classes != nil {
+		class = g.classes.Resolve(decodeTrafficEnvelope(r))
 	}
 	inputTokens := len(rawBody)/4 + 1
 	expected := g.dispatcher.Estimator().Estimate(inputTokens, 0, 1024)
@@ -447,4 +470,96 @@ func (g *Gateway) HandleEmbeddings(w http.ResponseWriter, r *http.Request) {
 		g.dispatcher.Cancel(id)
 		writeGatewayError(w, http.StatusServiceUnavailable, "request cancelled")
 	}
+}
+
+// serveStream emits SSE deltas as they arrive and terminates with the
+// final completion chunk (OpenAI streaming contract, spec §14 row 1).
+func (g *Gateway) serveStream(w http.ResponseWriter, r *http.Request, model string, ch <-chan InferenceResult, deltas <-chan string, id string) {
+	flusher, _ := w.(http.Flusher)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	writeSSE := func(data string) {
+		if _, err := w.Write([]byte(data)); err != nil {
+			return
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	for {
+		select {
+		case delta, ok := <-deltas:
+			if !ok {
+				deltas = nil
+				continue
+			}
+			payload, _ := json.Marshal(map[string]interface{}{
+				"id": id, "object": "chat.completion.chunk", "model": model,
+				"choices": []map[string]interface{}{{"index": 0, "delta": map[string]string{"content": delta}, "finish_reason": nil}},
+			})
+			writeSSE("data: " + string(payload) + "\n\n")
+		case res, ok := <-ch:
+			if !ok {
+				return
+			}
+			// Drain any deltas still buffered before the terminal chunk:
+			// the result and deltas channels are both ready at completion,
+			// and ordering must be preserved (select would race them).
+			if deltas != nil {
+				for {
+					select {
+					case delta, more := <-deltas:
+						if !more {
+							deltas = nil
+							break
+						}
+						payload, _ := json.Marshal(map[string]interface{}{
+							"id": id, "object": "chat.completion.chunk", "model": model,
+							"choices": []map[string]interface{}{{"index": 0, "delta": map[string]string{"content": delta}, "finish_reason": nil}},
+						})
+						writeSSE("data: " + string(payload) + "\n\n")
+					default:
+						deltas = nil
+						break
+					}
+					if deltas == nil {
+						break
+					}
+				}
+			}
+			finish := "error"
+			if !res.Cancelled && res.Err == "" {
+				finish = res.Finish
+			}
+			payload, _ := json.Marshal(map[string]interface{}{
+				"id": id, "object": "chat.completion.chunk", "model": model,
+				"choices": []map[string]interface{}{{"index": 0, "delta": map[string]string{}, "finish_reason": finish}},
+				"usage":   res.Usage,
+			})
+			writeSSE("data: " + string(payload) + "\n\n")
+			writeSSE("data: [DONE]\n\n")
+			return
+		case <-r.Context().Done():
+			g.dispatcher.Cancel(id)
+			return
+		}
+	}
+}
+
+// decodeTrafficEnvelope parses the X-Traffic-Envelope header (base64 JSON
+// of a signed TrafficEnvelope). Returns nil when absent or malformed —
+// the resolver's fail-closed default applies.
+func decodeTrafficEnvelope(r *http.Request) *TrafficEnvelope {
+	raw := r.Header.Get("X-Traffic-Envelope")
+	if raw == "" {
+		return nil
+	}
+	var env TrafficEnvelope
+	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+		return nil
+	}
+	return &env
 }

@@ -36,10 +36,21 @@ type Forwarder interface {
 	Send(workerAddr string, payload InferencePayload) (InferenceResult, error)
 }
 
+// StreamForwarder is a Forwarder that also emits token deltas as they
+// arrive (spec §14 row 1 streaming; relay F1 pattern).
+type StreamForwarder interface {
+	Forwarder
+	SendStream(workerAddr string, payload InferencePayload, onDelta func(string)) (InferenceResult, error)
+}
+
 // pendingWaiter is a submitter blocked on completion or cancellation.
+// deltas (optional) delivers streamed token deltas; it is closed exactly
+// once when the request terminates.
 type pendingWaiter struct {
-	ch     chan InferenceResult
-	cancel chan struct{}
+	ch         chan InferenceResult
+	cancel     chan struct{}
+	deltas     chan string
+	deltasDone bool // guarded by Dispatcher.fwMu
 }
 
 // dispatchWake is a non-blocking signal that the dispatch loop should run.
@@ -71,6 +82,25 @@ func (d *Dispatcher) Submit(qr queue.Request) (<-chan InferenceResult, error) {
 	return w.ch, nil
 }
 
+// SubmitStream is Submit with streaming: token deltas flow to the caller
+// as the forwarder emits them; the result channel still delivers exactly
+// one terminal result. The deltas channel closes when the request ends.
+func (d *Dispatcher) SubmitStream(qr queue.Request) (<-chan InferenceResult, <-chan string, error) {
+	if err := d.queue.Enqueue(qr); err != nil {
+		return nil, nil, err
+	}
+	w := &pendingWaiter{
+		ch:     make(chan InferenceResult, 1),
+		cancel: make(chan struct{}, 1),
+		deltas: make(chan string, 64),
+	}
+	d.fwMu.Lock()
+	d.pending[qr.ID] = w
+	d.fwMu.Unlock()
+	d.wakeDispatch()
+	return w.ch, w.deltas, nil
+}
+
 // Cancel removes a queued or pending request and completes its waiter with
 // a cancellation result. Reports whether the request existed.
 func (d *Dispatcher) Cancel(id string) bool {
@@ -86,8 +116,25 @@ func (d *Dispatcher) Cancel(id string) bool {
 		case w.ch <- InferenceResult{Cancelled: true}:
 		default:
 		}
+		d.closeDeltas(w)
 	}
 	return removed || ok
+}
+
+// closeDeltas closes the waiter's delta stream exactly once.
+func (d *Dispatcher) closeDeltas(w *pendingWaiter) {
+	if w.deltas == nil {
+		return
+	}
+	d.fwMu.Lock()
+	done := w.deltasDone
+	if !done {
+		w.deltasDone = true
+	}
+	d.fwMu.Unlock()
+	if !done {
+		close(w.deltas)
+	}
 }
 
 // RunDispatchLoop processes free-worker events until ctx ends. Each event
@@ -166,7 +213,22 @@ func (d *Dispatcher) execute(ctx context.Context, bound *Dispatch) {
 		Messages:  rp.Messages,
 		MaxTokens: req.MaxOutputTokens,
 	}
-	res, err := fw.Send(addr, payload)
+
+	// Streaming when the submitter wants deltas AND the forwarder speaks
+	// StreamForwarder; otherwise one-shot Send.
+	waiter := d.waiterFor(req.ID)
+	var res InferenceResult
+	var err error
+	if sf, ok := fw.(StreamForwarder); ok && waiter != nil && waiter.deltas != nil {
+		res, err = sf.SendStream(addr, payload, func(delta string) {
+			select {
+			case waiter.deltas <- delta:
+			default: // bounded buffer full: drop, keep streaming
+			}
+		})
+	} else {
+		res, err = fw.Send(addr, payload)
+	}
 	d.selector.ReleaseLoad(workerID)
 	if err != nil {
 		res = InferenceResult{Err: err.Error()}
@@ -179,6 +241,17 @@ func (d *Dispatcher) execute(ctx context.Context, bound *Dispatch) {
 		}
 	}
 	d.submitResult(req.ID, res)
+	if waiter != nil {
+		d.closeDeltas(waiter)
+	}
+}
+
+// waiterFor returns the pending waiter for a request (nil when the
+// submitter already cancelled).
+func (d *Dispatcher) waiterFor(id string) *pendingWaiter {
+	d.fwMu.Lock()
+	defer d.fwMu.Unlock()
+	return d.pending[id]
 }
 
 func (d *Dispatcher) forwarderFor() Forwarder {
@@ -196,6 +269,11 @@ func (d *Dispatcher) SetForwarder(f Forwarder) {
 	d.wakeDispatch()
 }
 
+// SetStreamForwarder installs a streaming-capable forwarder.
+func (d *Dispatcher) SetStreamForwarder(sf StreamForwarder) {
+	d.SetForwarder(sf)
+}
+
 // submitResult delivers (exactly once) a terminal result to the waiter.
 func (d *Dispatcher) submitResult(id string, res InferenceResult) {
 	d.fwMu.Lock()
@@ -209,5 +287,6 @@ func (d *Dispatcher) submitResult(id string, res InferenceResult) {
 		case w.ch <- res:
 		default:
 		}
+		d.closeDeltas(w)
 	}
 }

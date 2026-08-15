@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"log"
@@ -63,6 +64,18 @@ func main() {
 		time.Duration(cfg.LeaseGraceSeconds)*time.Second,
 		evidenceKey,
 	)
+
+	// Traffic-envelope verification: the relay's service public key signs
+	// the class claim on every governed request (spec §13.14). Without
+	// it, the gateway fails every request closed to batch.
+	if hexKey := os.Getenv("PCCP_SCHED_TRAFFIC_ISSUER_PUBKEY_HEX"); hexKey != "" {
+		raw, err := hex.DecodeString(hexKey)
+		if err != nil || len(raw) != ed25519.PublicKeySize {
+			log.Fatalf("scheduler: invalid PCCP_SCHED_TRAFFIC_ISSUER_PUBKEY_HEX")
+		}
+		svc.Serving.Gateway.SetTrafficIssuer(ed25519.PublicKey(raw))
+		log.Printf("scheduler: traffic-envelope issuer configured")
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

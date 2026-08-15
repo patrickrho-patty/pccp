@@ -3,6 +3,7 @@ package scheduler
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,22 @@ func newTestGateway() (*Gateway, *Dispatcher) {
 	d := NewDispatcher(nil)
 	g := NewGateway(d, nil)
 	return g, d
+}
+
+// setTestTraffic attaches a signed traffic envelope for the given class.
+func setTestTraffic(t *testing.T, g *Gateway, req *http.Request, tenant, class string) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.SetTrafficIssuer(pub)
+	env := NewTrafficEnvelope(req.Header.Get("X-Correlation-ID"), tenant, class, time.Minute)
+	if err := env.Sign(priv); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(env)
+	req.Header.Set("X-Traffic-Envelope", string(raw))
 }
 
 // newServingGateway wires a dispatcher with one worker, a fake forwarder,
@@ -36,7 +53,7 @@ func TestGatewayChatCompletionsCompletes(t *testing.T) {
 	body := `{"model":"ko-coder","messages":[{"role":"user","content":"안녕하세요"}],"max_tokens":100}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "tenant-1")
-	req.Header.Set("X-Traffic-Class", "interactive-paid")
+	setTestTraffic(t, g, req, "tenant-1", "interactive-paid")
 	w := httptest.NewRecorder()
 	g.HandleChatCompletions(w, req)
 
@@ -204,6 +221,7 @@ func TestGatewayCancellationPropagates(t *testing.T) {
 	body := `{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":10}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "t1")
+	setTestTraffic(t, g, req, "t1", "interactive-paid")
 	ctx, cancel := context.WithCancel(req.Context())
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()

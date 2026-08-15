@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/tls"
+	"encoding/hex"
 	"flag"
 	"log"
 	"os"
@@ -53,6 +54,12 @@ func main() {
 	svc, err := relay.New(database, cfg.ControlPlaneURL, relayID)
 	if err != nil {
 		log.Fatalf("failed to create relay: %v", err)
+	}
+
+	// Print the relay's traffic-issuer public key: the scheduler verifies
+	// traffic envelopes against it (PCCP_SCHED_TRAFFIC_ISSUER_PUBKEY_HEX).
+	if pub, err := svc.TrafficIssuerPublicKey(); err == nil {
+		log.Printf("relay: traffic issuer public key = %s", hex.EncodeToString(pub))
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

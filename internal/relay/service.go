@@ -479,6 +479,10 @@ func (s *Service) defaultForwarder(ctx context.Context, req InferenceRequest, en
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("X-Tenant-ID", req.OrganizationID)
 		httpReq.Header.Set("X-Exchange-ID", req.ExchangeID)
+		if env, err := s.signTrafficEnvelope(req.OrganizationID, req.ExchangeID); err == nil {
+			raw, _ := json.Marshal(env)
+			httpReq.Header.Set("X-Traffic-Envelope", string(raw))
+		}
 		resp, err := s.httpClient.Do(httpReq)
 		if err != nil {
 			return nil, fmt.Errorf("relay: scheduler gateway failed: %w", err)

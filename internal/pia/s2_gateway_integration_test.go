@@ -107,9 +107,25 @@ func TestS2GatewayNoWorkerFailsClosed(t *testing.T) {
 
 	svc.Serving.Gateway.SetQueueTTL(200 * time.Millisecond)
 	svc.Serving.Gateway.Rewriter().SetAlias("any-model", "nowhere-model")
+
+	// A signed interactive envelope so the request is held (not shed),
+	// then expires — proving the no-worker path fails closed, never
+	// bypasses to a phantom endpoint (spec §13.15).
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.Serving.Gateway.SetTrafficIssuer(pub)
+	env := scheduler.NewTrafficEnvelope("r1", "t1", "interactive-paid", time.Minute)
+	if err := env.Sign(priv); err != nil {
+		t.Fatal(err)
+	}
+	envJSON, _ := json.Marshal(env)
+
 	body := `{"model":"any-model","messages":[{"role":"user","content":"hi"}],"max_tokens":10}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "t1")
+	req.Header.Set("X-Traffic-Envelope", string(envJSON))
 	w := httptest.NewRecorder()
 	svc.Serving.Gateway.HandleChatCompletions(w, req)
 
