@@ -41,7 +41,9 @@ func NewScheduler(trust Trust, policy PolicySource, ttl, grace time.Duration, ev
 func (s *Scheduler) wireServingStack() {
 	router := NewCostRouter(DefaultRouterConfig())
 	router.SetKV(s.KV)
-	router.SetReceipts(NewReceiptStore(1024))
+	receipts := NewReceiptStore(1024)
+	receipts.SetSigningKey(s.Evidence.key)
+	router.SetReceipts(receipts)
 	router.SetGang(NewGangRegistry())
 	router.SetSLOResolver(NewSLOResolver())
 	router.SetPredictor(NewLatencyPredictor(DefaultPredictorConfig()))

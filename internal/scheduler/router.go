@@ -1,6 +1,9 @@
 package scheduler
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -306,11 +309,50 @@ func containsStr(s []string, v string) bool {
 // (spec §13.6): worker, overlap tokens, affinity decision, class. The
 // scheduler signs with its evidence key; the CP API queries them (S10).
 type RoutingReceipt struct {
-	Decision    RouteDecision `json:"decision"`
-	Model       string        `json:"model"`
-	Namespace   string        `json:"namespace"`
-	InputTokens int           `json:"input_tokens"`
-	AtUnixMs    int64         `json:"at_unix_ms"`
+	Decision     RouteDecision `json:"decision"`
+	Model        string        `json:"model"`
+	Namespace    string        `json:"namespace"`
+	InputTokens  int           `json:"input_tokens"`
+	AtUnixMs     int64         `json:"at_unix_ms"`
+	SignatureHex string        `json:"signature_hex,omitempty"`
+}
+
+// Sign binds the receipt with the given key (canonical body = the JSON
+// fields excluding the signature).
+func (r *RoutingReceipt) Sign(priv ed25519.PrivateKey) error {
+	body := RoutingReceipt{
+		Decision:    r.Decision,
+		Model:       r.Model,
+		Namespace:   r.Namespace,
+		InputTokens: r.InputTokens,
+		AtUnixMs:    r.AtUnixMs,
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	r.SignatureHex = hex.EncodeToString(ed25519.Sign(priv, raw))
+	return nil
+}
+
+// Verify checks the receipt signature.
+func (r *RoutingReceipt) Verify(pub ed25519.PublicKey) bool {
+	if r.SignatureHex == "" {
+		return false
+	}
+	sig, err := hex.DecodeString(r.SignatureHex)
+	if err != nil {
+		return false
+	}
+	body := RoutingReceipt{
+		Decision:    r.Decision,
+		Model:       r.Model,
+		Namespace:   r.Namespace,
+		InputTokens: r.InputTokens,
+		AtUnixMs:    r.AtUnixMs,
+	}
+	raw, _ := json.Marshal(body)
+	return ed25519.Verify(pub, raw, sig)
 }
 
 // ReceiptStore holds placement receipts (bounded ring; drained by
@@ -319,6 +361,7 @@ type ReceiptStore struct {
 	mu  sync.Mutex
 	log []RoutingReceipt
 	max int
+	key ed25519.PrivateKey // signing key (nil = unsigned)
 }
 
 // NewReceiptStore builds a bounded receipt store.
@@ -329,10 +372,30 @@ func NewReceiptStore(max int) *ReceiptStore {
 	return &ReceiptStore{max: max}
 }
 
-// Add appends a receipt.
+// SetSigningKey installs the receipt signing key (evidence key).
+func (rs *ReceiptStore) SetSigningKey(priv ed25519.PrivateKey) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	rs.key = priv
+}
+
+// PublicKey exposes the verification key (nil when unsigned).
+func (rs *ReceiptStore) PublicKey() ed25519.PublicKey {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.key == nil {
+		return nil
+	}
+	return rs.key.Public().(ed25519.PublicKey)
+}
+
+// Add appends a receipt (signing when a key is installed).
 func (rs *ReceiptStore) Add(r RoutingReceipt) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
+	if rs.key != nil {
+		_ = r.Sign(rs.key)
+	}
 	rs.log = append(rs.log, r)
 	if len(rs.log) > rs.max {
 		rs.log = rs.log[len(rs.log)-rs.max:]
