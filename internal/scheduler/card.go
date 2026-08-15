@@ -22,6 +22,7 @@ type WorkerCard struct {
 	CardVersion         uint32   `json:"card_version"`
 	WorkerID            string   `json:"worker_id"`
 	EnrollmentID        string   `json:"enrollment_id"`
+	PPCFingerprint      string   `json:"ppc_fingerprint"`
 	NodeID              string   `json:"node_id"`
 	Hostname            string   `json:"hostname"`
 	IP                  string   `json:"ip"`
@@ -60,6 +61,7 @@ func (c *WorkerCard) SigningBytes() []byte {
 	dst = lpU32(dst, c.CardVersion)
 	dst = lpString(dst, c.WorkerID)
 	dst = lpString(dst, c.EnrollmentID)
+	dst = lpString(dst, c.PPCFingerprint)
 	dst = lpString(dst, c.NodeID)
 	dst = lpString(dst, c.Hostname)
 	dst = lpString(dst, c.IP)
