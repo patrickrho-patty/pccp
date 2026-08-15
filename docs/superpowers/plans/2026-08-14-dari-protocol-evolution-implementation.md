@@ -52,11 +52,11 @@ The following earlier planning documents are retained as publication history, no
 
 ## Current implementation status (2026-08-15, closing update)
 
-22 of 24 tasks complete. Per-task status:
+24 of 24 tasks complete (2026-08-15). Per-task status:
 - Tasks 1–20: COMPLETE (papers, normative contract, legacy freeze, kernel objects F.2–F.14, profile machinery, web/federation/collab/media runtimes, live hot path with stage enforcement + no-mock-fallback + event spine, enterprise controls incl. exception workflow + rollout, executable tool/SCM/sandbox/connector boundaries, black-box conformance runner + manifest.json, rename).
 - Task 21–22: COMPLETE (connector + repository-wide DARI rename with frozen legacy surface, registry reconciliation, gates enforced).
 - Task 23: COMPLETE — Apache-2.0 selected by the steward (2026-08-15); LICENSE + GOVERNANCE.md (origin/attribution, contribution mechanics, fair compatibility language) committed.
-- Task 24 (release gate): PENDING — final step.
+- Task 24: COMPLETE — 24/24. Gate evidence: gofmt/vet/build/test clean in both repos; live e2e (offline + real-model) PASS; conformance runner + manifest PASS; legacy literal gate satisfied; protected files untouched; Apache-2.0 + GOVERNANCE.md committed.
 
 Deployment-evidence debts (recorded honestly in conformance/manifest.json as DEGRADED omissions, all non-critical): browser deployment evidence (dari.web/1), partner interconnect (dari.federation/1), live multi-peer collab/media deployments, tokenizer-exact accounting (estimator is marked estimated), PIA-side PMP load verification.
 
@@ -1287,7 +1287,7 @@ git commit -m "docs: publish DARI open-spec governance and attribution"
 
 The release gate is two-repository: a clean root checkout is insufficient while `patty-code-pccp` has uncommitted source or placeholder authentication. Gate D cannot pass until both repositories have owning-repository commits and the nested status is empty.
 
-- [ ] **Step 1: Format and test root source**
+- [x] **Step 1: Format and test root source**
 
 ```bash
 while IFS= read -r file; do
@@ -1297,13 +1297,13 @@ go test ./... -count=1
 go vet ./...
 ```
 
-- [ ] **Step 2: Test Patty Code from the correct module root**
+- [x] **Step 2: Test Patty Code from the correct module root**
 
 ```bash
 (cd patty-code-pccp && go test ./... -count=1)
 ```
 
-- [ ] **Step 3: Run security and compatibility gates**
+- [x] **Step 3: Run security and compatibility gates**
 
 ```bash
 go test ./conformance -count=1
@@ -1311,7 +1311,7 @@ go test ./internal/dari ./internal/relay ./internal/policy ./internal/provenance
 go test ./... -count=1
 ```
 
-- [ ] **Step 4: Reconcile claims and rebuild the papers**
+- [x] **Step 4: Reconcile claims and rebuild the papers**
 
 Update `docs/plans/DARI/arxiv/implementation-claim-matrix.tsv` only from passing runtime/conformance evidence: move C3–C8 and the collaboration/media rows to `implemented` only when their named gates pass, record exact test/manifest identifiers, and keep primitive benchmark values unchanged. Remove internal source file paths from publication prose; describe evidence by subsystem and public artifact instead.
 
@@ -1323,7 +1323,7 @@ pdfinfo docs/plans/DARI/arxiv/DARI_arXiv.pdf
 pdfinfo docs/plans/DARI/arxiv/DARI_arXiv_KO.pdf
 ```
 
-- [ ] **Step 5: Check literals, diff integrity, and protected files**
+- [x] **Step 5: Check literals, diff integrity, and protected files**
 
 ```bash
 rg -n --hidden --glob '!.git/**' --glob '!**/node_modules/**' --glob '!**/*.pdf' '(PAPER|Paper|paper/1|paper\.[a-z]|internal/paper|paperproto)' . > /tmp/dari-legacy-matches-final.txt
@@ -1336,7 +1336,7 @@ git diff --stat
 
 Confirm only the bounded compatibility/lineage locations from Task 22 match, every normative-document match is compatibility-only, no protected environment/secrets file changed, no unrelated user work is staged, and no LaTeX temporary file was added.
 
-- [ ] **Step 6: Commit verification fixes only when checks required source changes**
+- [x] **Step 6: Commit verification fixes only when checks required source changes**
 
 ```bash
 git commit -m "chore: verify DARI migration and compatibility"
