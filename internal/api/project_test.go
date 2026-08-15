@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"github.com/patrickrho-patty/pccp/internal/policy"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -21,7 +22,7 @@ func projectTestServer(t *testing.T) (*Server, *gorm.DB) {
 		&models.Organization{}, &models.User{}, &models.Project{}, &models.ProjectMember{},
 		&models.Repository{}, &models.Session{}, &models.ChangeRequest{},
 		&models.AuditEvent{}, &models.ServiceSigningKey{}, &models.PolicyEpoch{},
-		&models.PolicyPack{}, &models.UsageRecord{}, &models.ChangeSet{},
+		&models.PolicyPack{}, &models.UsageRecord{}, &models.ChangeSet{}, &models.CapabilityLease{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
 			t.Fatal(err)
@@ -76,6 +77,10 @@ func TestArchivedProjectBlocksNewSessionsAndRestores(t *testing.T) {
 	proj := models.Project{Name: "p2", Slug: "p2", Status: "active"}
 	proj.OrganizationID = org.ID
 	db.Create(&proj)
+	// Governed open requires an active policy epoch (web/02 A1).
+	if _, err := srv.policy.CreatePolicyEpochFull(policy.EpochRequest{OrganizationID: org.ID, AllowedModels: []string{"patty-code-standard"}}); err != nil {
+		t.Fatalf("seed epoch: %v", err)
+	}
 
 	// Archive
 	rec := doJSON(t, srv, "DELETE", "/api/projects/"+proj.ID, "", org.ID)

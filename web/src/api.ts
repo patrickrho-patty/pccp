@@ -188,6 +188,18 @@ export const api = {
 
   // Sessions
   listSessions: () => request<any[]>('/api/sessions'),
+  listSessionsPaged: (query: string) =>
+    request<{ data: any[]; total: number; page: number; size: number }>(`/api/sessions?${query}`),
+  openSession: (data: any) =>
+    request<any>('/api/sessions', { method: 'POST', body: JSON.stringify(data) }),
+  sessionAction: (id: string, action: string) =>
+    request<any>(`/api/sessions/${id}/${action}`, { method: 'POST' }),
+  bulkSessions: (ids: string[], action: string) =>
+    request<any>('/api/sessions/bulk', { method: 'POST', body: JSON.stringify({ ids, action }) }),
+  getSessionDetail: (id: string) => request<any>(`/api/sessions/${id}/detail`),
+  getSessionDecisions: (id: string) => request<any>(`/api/sessions/${id}/decisions`),
+  getSessionReplay: (id: string) => request<any>(`/api/sessions/${id}/replay`),
+  getSessionVisibility: (id: string) => request<any>(`/api/sessions/${id}/visibility`),
   // Server-side paginated sessions (web/01): total count + page slice.
   listSessionsPage: (page: number, size = 25, search = '') =>
     request<{ data: any[]; total: number; page: number; size: number }>(

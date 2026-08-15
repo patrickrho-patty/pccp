@@ -12,6 +12,7 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/db"
 	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"github.com/patrickrho-patty/pccp/internal/policy"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -89,6 +90,15 @@ func TestAPISessionLifecycle(t *testing.T) {
 		Status: "active", Locale: "ko-KR",
 	}
 	database.Create(&user)
+
+	// Governed open requires an active policy epoch (web/02 A1).
+	polSvc, err := policy.New(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := polSvc.CreatePolicyEpochFull(policy.EpochRequest{OrganizationID: org.ID, AllowedModels: []string{"pmp_test"}}); err != nil {
+		t.Fatalf("seed epoch: %v", err)
+	}
 
 	body := map[string]interface{}{
 		"organization_id": org.ID,

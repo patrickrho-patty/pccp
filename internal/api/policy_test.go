@@ -22,7 +22,7 @@ func policyTestServer(t *testing.T) (*Server, *gorm.DB) {
 		&models.Organization{}, &models.User{}, &models.PolicyRule{}, &models.PolicyEpoch{},
 		&models.PolicyPack{}, &models.PolicyTemplate{}, &models.PolicyAcknowledgement{},
 		&models.PolicyException{}, &models.AuditEvent{}, &models.ServiceSigningKey{},
-		&models.Session{}, &models.Harness{}, &models.Project{},
+		&models.Session{}, &models.Harness{}, &models.Project{}, &models.CapabilityLease{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
 			t.Fatal(err)

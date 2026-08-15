@@ -265,6 +265,11 @@ func (s *Server) setupRouter() {
 			r.Get("/{id}/usage", s.handleGetSessionUsage)
 			r.Get("/{id}/timeline", s.handleGetSessionTimeline)
 			r.Get("/{id}/exchanges", s.handleGetSessionExchanges)
+			r.Get("/{id}/detail", s.handleGetSessionDetail)
+			r.Get("/{id}/decisions", s.handleGetSessionDecisions)
+			r.Get("/{id}/replay", s.handleGetSessionReplay)
+			r.Get("/{id}/visibility", s.handleGetSessionVisibility)
+			r.Post("/bulk", s.handleBulkSessions)
 		})
 
 		// Model registry
@@ -1735,10 +1740,42 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		if search != "" {
 			q = q.Where("title LIKE ? OR session_id LIKE ? OR harness_id LIKE ? OR user_id LIKE ? OR project_id LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%", "%"+search+"%", "%"+search+"%")
 		}
+		// Server-side filters (web/02 B4): status, model class, user,
+		// project, time range.
+		if v := r.URL.Query().Get("status"); v != "" {
+			q = q.Where("status = ?", v)
+		}
+		if v := r.URL.Query().Get("model"); v != "" {
+			q = q.Where("model_class = ?", v)
+		}
+		if v := r.URL.Query().Get("user"); v != "" {
+			q = q.Where("user_id = ?", v)
+		}
+		if v := r.URL.Query().Get("project"); v != "" {
+			q = q.Where("project_id = ?", v)
+		}
+		if v := r.URL.Query().Get("range"); v != "" {
+			switch v {
+			case "24h":
+				q = q.Where("created_at >= ?", time.Now().Add(-24*time.Hour).Format(time.RFC3339))
+			case "7d":
+				q = q.Where("created_at >= ?", time.Now().Add(-7*24*time.Hour).Format(time.RFC3339))
+			case "30d":
+				q = q.Where("created_at >= ?", time.Now().Add(-30*24*time.Hour).Format(time.RFC3339))
+			}
+		}
+		switch r.URL.Query().Get("sort") {
+		case "duration":
+			q = q.Order("created_at ASC")
+		case "title":
+			q = q.Order("title ASC")
+		default:
+			q = q.Order("created_at DESC")
+		}
 		var total int64
 		q.Count(&total)
 		var sessions []models.Session
-		q.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&sessions)
+		q.Offset((page - 1) * size).Limit(size).Find(&sessions)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"data": sessions, "total": total, "page": page, "size": size})
 		return
 	}
@@ -1775,6 +1812,19 @@ func (s *Server) handleOpenSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A2: repository sessions must anchor to an immutable baseline —
+	// provenance binds to exact repo state (§18.3).
+	if req.RepositoryID != "" && req.BaselineID == "" {
+		writeError(w, http.StatusBadRequest, "저장소 세션은 베이스라인이 필요합니다 · repository sessions require a baseline (commit SHA + tree digest)")
+		return
+	}
+	if req.BaselineID != "" && req.RepositoryID != "" {
+		var baseline models.RepoBaseline
+		if err := s.db.Where("id = ? AND repository_id = ?", req.BaselineID, req.RepositoryID).First(&baseline).Error; err != nil {
+			writeError(w, http.StatusBadRequest, "베이스라인을 찾을 수 없습니다 · baseline not found for repository")
+			return
+		}
+	}
 	// Archive freeze (projects B4, §33.13-style): an archived project
 	// rejects new sessions until restored.
 	if req.ProjectID != "" {
@@ -1801,6 +1851,30 @@ func (s *Server) handleOpenSession(w http.ResponseWriter, r *http.Request) {
 		}
 		sess.PolicyEpochID = epoch.EpochID
 		s.db.Save(sess)
+		// A1: bind a capability lease — the session is "governed" only
+		// when a live lease over the active epoch exists (refuse open
+		// when none can be issued).
+		var allowedModels []string
+		_ = json.Unmarshal([]byte(epoch.AllowedModelsJSON), &allowedModels)
+		lease, lerr := s.policy.IssueCapabilityLease(policy.IssueLeaseRequest{
+			OrganizationID: orgID,
+			SubjectPeerID:  req.HarnessID,
+			UserID:         req.UserID,
+			SessionID:      sess.SessionID,
+			PolicyEpochID:  epoch.EpochID,
+			AllowedModels:  allowedModels,
+			Validity:       time.Duration(sess.SessionTTL) * time.Second,
+		})
+		if lerr != nil {
+			writeError(w, http.StatusForbidden, "활성 정책에 대한 임대 발급 실패 · cannot issue capability lease for the active epoch")
+			return
+		}
+		sess.LeaseID = lease.LeaseID
+		s.db.Save(sess)
+	} else {
+		// Fail closed: no active epoch = no governed session.
+		writeError(w, http.StatusForbidden, "활성 정책 epoch 없음 · no active policy epoch — session refused")
+		return
 	}
 	s.ext().Realtime.NotifySessionUpdate(orgID, sess.SessionID, "active")
 	s.db.Create(&models.AuditEvent{

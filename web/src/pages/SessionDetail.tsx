@@ -2,84 +2,187 @@ import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../api'
 import { StatCard } from '../components/StatCard'
-import { formatRelative } from '../utils/format'
+import { FavoriteStar } from '../hooks/useFavorites'
 
-function authHeaders() { const token = localStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }
+const STATUS_META: Record<string, { ko: string; badge: string }> = {
+  pending: { ko: '대기', badge: 'bg-gray-100 text-gray-600 border-gray-200' },
+  active: { ko: '활성', badge: 'bg-green-50 text-green-700 border-green-200' },
+  idle: { ko: '유휴', badge: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
+  paused: { ko: '일시정지', badge: 'bg-amber-50 text-amber-700 border-amber-200' },
+  closed: { ko: '종료', badge: 'bg-gray-100 text-gray-500 border-gray-200' },
+  terminated: { ko: '강제종료', badge: 'bg-red-50 text-red-700 border-red-200' },
+}
 
-// SessionDetail (00 A7 /{entity}/:id) — deep-linkable session view with
-// status, usage, provenance entry, and lifecycle actions.
+// SessionDetail (web/02 B5) — deep-linkable inspector built on the
+// consolidated /detail endpoint (UX6), with the per-exchange decision
+// log (B2), replay timeline (B6), cost rollup (B7), and visibility
+// badge (B8).
 export default function SessionDetail() {
   const { id } = useParams<{ id: string }>()
-  const [session, setSession] = useState<any>(null)
-  const [usage, setUsage] = useState<any>(null)
+  const [detail, setDetail] = useState<any>(null)
+  const [decisions, setDecisions] = useState<any>(null)
+  const [replay, setReplay] = useState<any>(null)
+  const [visibility, setVisibility] = useState<any>(null)
+  const [tab, setTab] = useState('timeline')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (!id) return
-    api.listSessions().then((d: any[]) => {
-      const sess = (Array.isArray(d) ? d : []).find((s: any) => s.id === id || s.session_id === id)
-      setSession(sess || null)
-      setLoading(false)
-    }).catch(() => setLoading(false))
-    fetch(`/api/sessions/${id}/usage`, { headers: authHeaders() })
-      .then(r => r.json()).then(setUsage).catch(() => {})
+    setLoading(true)
+    Promise.all([
+      api.getSessionDetail(id),
+      api.getSessionDecisions(id),
+      api.getSessionReplay(id),
+      api.getSessionVisibility(id),
+    ]).then(([d, dec, rep, vis]) => {
+      setDetail(d)
+      setDecisions(dec)
+      setReplay(rep)
+      setVisibility(vis)
+    }).catch(() => {}).finally(() => setLoading(false))
   }, [id])
 
   if (loading) return <div className="text-gray-400 p-8 text-center">로딩 중...</div>
-  if (!session) return (
+  if (!detail?.session) return (
     <div>
-      <Link to="/sessions" className="text-sm text-blue-600 hover:underline mb-4 inline-block">← 세션 목록</Link>
+      <Link to="/sessions" className="text-xs text-blue-600 hover:underline">← 세션 목록</Link>
       <p className="text-gray-400 p-8 text-center">세션을 찾을 수 없습니다</p>
     </div>
   )
 
-  const statusBadge = (s: string) =>
-    s === 'active' ? 'badge-green' : s === 'idle' ? 'badge-yellow' : s === 'terminated' ? 'badge-red' : 'badge-gray'
+  const sess = detail.session
+  const meta = STATUS_META[sess.status] || STATUS_META.pending
+  const usage = (detail.usage || []) as any[]
+  const totalTokens = usage.reduce((acc: number, r: any) =>
+    acc + (r.metric_type === 'tokens_in' || r.metric_type === 'tokens_out' ? r.quantity : 0), 0)
+  const totalCost = usage.reduce((acc: number, r: any) => acc + (r.cost_micros || 0), 0)
+
+  const act = async (action: string) => {
+    await api.sessionAction(id!, action).catch(() => {})
+    const fresh = await api.getSessionDetail(id!)
+    setDetail(fresh)
+  }
 
   return (
-    <div>
-      <Link to="/sessions" className="text-sm text-blue-600 hover:underline mb-4 inline-block">← 세션 목록</Link>
-      <div className="card mb-6 flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">{session.title || '제목 없음'}</h1>
-          <p className="text-xs text-gray-400 mt-1 font-mono">{session.session_id}</p>
+    <div className="p-6 space-y-4 page-enter">
+      <Link to="/sessions" className="text-xs text-blue-600 hover:underline">← 세션 목록</Link>
+
+      <div className="card p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-lg font-bold flex items-center gap-2">
+              {sess.title || '제목 없음'} <FavoriteStar entity="sessions" id={sess.id} />
+            </h1>
+            <p className="text-[11px] text-gray-400 font-mono">{sess.session_id}</p>
+            <p className="text-[11px] text-gray-500 mt-1">
+              하네스 {sess.harness_id} · {sess.model_class || '모델 미지정'} · 보호 {sess.protection_profile || 'P0'}
+              {sess.lease_id ? <span className="text-green-600"> · lease ✓</span> : <span className="text-red-500"> · lease ✗</span>}
+              {sess.policy_epoch_id && <span className="text-gray-400"> · epoch {sess.policy_epoch_id.slice(0, 10)}</span>}
+            </p>
+          </div>
+          <div className="flex gap-2 items-center">
+            <span className={`text-[10px] px-2 py-0.5 rounded-full border ${meta.badge}`}>{meta.ko}</span>
+            {visibility && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full border bg-blue-50 text-blue-700 border-blue-200" title={visibility.label}>
+                열람 {visibility.level}
+              </span>
+            )}
+            {sess.status === 'active' && <button className="btn-sm btn-secondary" onClick={() => act('pause')}>일시정지</button>}
+            {(sess.status === 'paused' || sess.status === 'idle') && <button className="btn-sm btn-secondary" onClick={() => act('resume')}>재개</button>}
+            {sess.status !== 'closed' && sess.status !== 'terminated' && <button className="btn-sm btn-danger" onClick={() => act('close')}>종료</button>}
+          </div>
         </div>
-        <div className="flex gap-2 items-center">
-          <span className={statusBadge(session.status)}>{session.status}</span>
-          <span className="badge-gray">{session.protection_profile || 'P0'}</span>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+          <StatCard label="토큰" value={totalTokens} accent="blue" />
+          <StatCard label="비용 (µ¢)" value={totalCost} accent="green" />
+          <StatCard label="익스체인지" value={(detail.exchanges || []).length} accent="purple" />
+          <StatCard label="변경셋" value={(detail.change_sets || []).length} accent="orange" />
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-3 stat-grid mb-6">
-        <StatCard label="입력 토큰" value={usage?.input_tokens ?? '-'} accent="blue" />
-        <StatCard label="출력 토큰" value={usage?.output_tokens ?? '-'} accent="green" />
-        <StatCard label="총 토큰" value={usage?.total_tokens ?? '-'} accent="purple" />
-        <StatCard label="모델 클래스" value={session.model_class || '-'} accent="gray" />
+      <div className="flex gap-1 border-b border-gray-200">
+        {[
+          { id: 'timeline', label: '타임라인' },
+          { id: 'decisions', label: '정책 결정' },
+          { id: 'changes', label: '변경셋' },
+          { id: 'findings', label: '보안 발견' },
+          { id: 'replay', label: '리플레이' },
+        ].map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`px-3 py-2 text-xs ${tab === t.id ? 'border-b-2 border-blue-600 text-blue-600 font-semibold' : 'text-gray-500 hover:text-gray-700'}`}>
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      <div className="card mb-4">
-        <h3 className="text-sm font-semibold mb-3">세션 정보 · Session</h3>
-        <div className="grid grid-cols-2 gap-4 text-sm">
-          <div><span className="text-gray-500">하네스:</span> <Link to={`/harnesses/${session.harness_id}`} className="text-blue-600 hover:underline font-mono text-xs">{session.harness_id}</Link></div>
-          <div><span className="text-gray-500">사용자:</span> <Link to={`/users/${session.user_id}`} className="text-blue-600 hover:underline">{session.user_id}</Link></div>
-          <div><span className="text-gray-500">프로젝트:</span> {session.project_id ? <Link to={`/projects/${session.project_id}`} className="text-blue-600 hover:underline">{session.project_id}</Link> : '-'}</div>
-          <div><span className="text-gray-500">저장소:</span> {session.repository_id ? <Link to={`/repositories/${session.repository_id}`} className="text-blue-600 hover:underline">{session.repository_id}</Link> : '-'}</div>
-          <div><span className="text-gray-500">브랜치:</span> <span className="font-mono text-xs">{session.branch || '-'}</span></div>
-          <div><span className="text-gray-500">정책 에포크:</span> <span className="font-mono text-xs">{session.policy_epoch_id?.slice(0, 20) || '-'}</span></div>
-          <div><span className="text-gray-500">열림:</span> {formatRelative(session.opened_at)}</div>
-          <div><span className="text-gray-500">마지막 활동:</span> {formatRelative(session.last_activity_at || session.opened_at)}</div>
+      {tab === 'timeline' && (
+        <div className="card p-4 space-y-1">
+          {(detail.actions || []).length === 0 && <p className="text-[11px] text-gray-400">액션 기록 없음</p>}
+          {(detail.actions || []).slice(0, 100).map((a: any, i: number) => (
+            <div key={i} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+              <span className="text-gray-700">{a.action_type || a.type || a.kind} — {(a.description || a.summary || '').slice(0, 80)}</span>
+              <span className="text-gray-400">{(a.occurred_at || '').slice(0, 16)}</span>
+            </div>
+          ))}
         </div>
-      </div>
+      )}
 
-      <div className="flex gap-2">
-        <Link to={`/sessions/${session.session_id || session.id}/provenance`} className="btn-sm btn-secondary">🔗 프로바이던스 체인 →</Link>
-        {session.status === 'active' && (
-          <button className="btn-sm btn-secondary" onClick={async () => { await api.pauseSession(session.session_id || session.id); window.location.reload() }}>⏸ 일시정지</button>
-        )}
-        {(session.status === 'active' || session.status === 'paused') && (
-          <button className="btn-sm btn-danger" onClick={async () => { await api.closeSession(session.session_id || session.id); window.location.reload() }}>종료 · Close</button>
-        )}
-      </div>
+      {tab === 'decisions' && (
+        <div className="card p-4 space-y-1">
+          <p className="text-[10px] text-gray-400 mb-2">익스체인지별 정책 판정 로그 (B2) — 판정 근거는 epoch 정책 + 보안 파이프라인에서 산출됩니다.</p>
+          {(decisions?.decisions || []).length === 0 && <p className="text-[11px] text-gray-400">판정 로그 없음</p>}
+          {(decisions?.decisions || []).map((d: any) => (
+            <div key={d.exchange_id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+              <span className="text-gray-700 font-mono">{d.exchange_id?.slice(0, 14)}</span>
+              <span className={d.verdict === 'allowed' ? 'text-green-600' : d.verdict === 'denied' ? 'text-red-600' : 'text-gray-400'}>
+                {d.verdict}
+              </span>
+              <span className="text-gray-400">{d.input_tokens}/{d.output_tokens} tok · {d.at?.slice(0, 16)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'changes' && (
+        <div className="card p-4 space-y-1">
+          {(detail.change_sets || []).length === 0 && <p className="text-[11px] text-gray-400">변경셋 없음</p>}
+          {(detail.change_sets || []).map((c: any) => (
+            <div key={c.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+              <span className="text-gray-700">{c.summary || c.message || '변경'}</span>
+              <span className="text-gray-400">{c.attribution_state || ''}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'findings' && (
+        <div className="card p-4 space-y-1">
+          {(detail.findings || []).length === 0 && <p className="text-[11px] text-gray-400">보안 발견 없음</p>}
+          {(detail.findings || []).map((f: any) => (
+            <div key={f.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+              <span className="text-gray-700">{f.title || f.finding_type || '발견'}</span>
+              <span className="text-gray-400">{f.severity}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'replay' && (
+        <div className="card p-4 space-y-1">
+          <p className="text-[10px] text-gray-400 mb-2">
+            리플레이 (B6) — 베이스라인 {replay?.baseline_id ? replay.baseline_id.slice(0, 10) : '없음'}에서 시작하는 통치 이벤트 시퀀스.
+          </p>
+          {(replay?.events || []).length === 0 && <p className="text-[11px] text-gray-400">리플레이 이벤트 없음</p>}
+          {(replay?.events || []).map((ev: any, i: number) => (
+            <div key={i} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+              <span className="text-gray-700">
+                <span className="text-gray-400 font-mono">{ev.at?.slice(11, 19)}</span> {ev.kind}
+              </span>
+              <span className="text-gray-400">{ev.payload?.id?.slice(0, 10) || ''}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
