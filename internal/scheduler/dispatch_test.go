@@ -8,6 +8,8 @@ import (
 func mkWorker(id, model string, seqs uint64) WorkerEntry {
 	return WorkerEntry{
 		Card: WorkerCard{
+			CardVersion:       2,
+			DariAddr:          "10.0.0.1:9444",
 			WorkerID:          id,
 			ModelName:         model,
 			MaxConcurrentSeqs: seqs,

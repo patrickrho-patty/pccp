@@ -19,37 +19,42 @@ const CardDomain = "DARI-WORKER-CARD-v1\x00"
 // the canonical signature; every field the scheduler consumes must be a
 // member — an unsigned field is a forgeable field.
 type WorkerCard struct {
-	CardVersion         uint32   `json:"card_version"`
-	WorkerID            string   `json:"worker_id"`
-	EnrollmentID        string   `json:"enrollment_id"`
-	PPCFingerprint      string   `json:"ppc_fingerprint"`
-	NodeID              string   `json:"node_id"`
-	Hostname            string   `json:"hostname"`
-	IP                  string   `json:"ip"`
-	Region              string   `json:"region,omitempty"`
-	Zone                string   `json:"zone,omitempty"`
-	EngineKind          string   `json:"engine_kind"`
-	EngineVersion       string   `json:"engine_version"`
-	EngineURL           string   `json:"engine_url"`
-	ReachabilityMode    string   `json:"reachability_mode"`
-	MeasuredGrade       string   `json:"measured_grade"`
-	ModelName           string   `json:"model_name"`
-	ModelVersion        string   `json:"model_version"`
-	Precision           string   `json:"precision"`
-	ContextLength       uint64   `json:"context_length"`
-	MaxConcurrentSeqs   uint64   `json:"max_concurrent_seqs"`
-	Modalities          []string `json:"modalities"`
-	TP                  uint32   `json:"tp"`
-	DP                  uint32   `json:"dp"`
-	EP                  uint32   `json:"ep"`
-	AcceleratorFamily   string   `json:"accelerator_family"`
-	GPUSKU              string   `json:"gpu_sku"`
-	GPUCount            uint32   `json:"gpu_count"`
-	HBMGB               uint32   `json:"hbm_gb"`
-	Status              string   `json:"status"`
-	LastHeartbeatUnixMs int64    `json:"last_heartbeat_unix_ms"`
-	LeaseExpiryUnixMs   int64    `json:"lease_expiry_unix_ms"`
-	SignatureHex        string   `json:"signature_hex,omitempty"`
+	CardVersion       uint32   `json:"card_version"`
+	WorkerID          string   `json:"worker_id"`
+	EnrollmentID      string   `json:"enrollment_id"`
+	PPCFingerprint    string   `json:"ppc_fingerprint"`
+	NodeID            string   `json:"node_id"`
+	Hostname          string   `json:"hostname"`
+	IP                string   `json:"ip"`
+	Region            string   `json:"region,omitempty"`
+	Zone              string   `json:"zone,omitempty"`
+	EngineKind        string   `json:"engine_kind"`
+	EngineVersion     string   `json:"engine_version"`
+	EngineURL         string   `json:"engine_url"`
+	ReachabilityMode  string   `json:"reachability_mode"`
+	MeasuredGrade     string   `json:"measured_grade"`
+	ModelName         string   `json:"model_name"`
+	ModelVersion      string   `json:"model_version"`
+	Precision         string   `json:"precision"`
+	ContextLength     uint64   `json:"context_length"`
+	MaxConcurrentSeqs uint64   `json:"max_concurrent_seqs"`
+	Modalities        []string `json:"modalities"`
+	TP                uint32   `json:"tp"`
+	DP                uint32   `json:"dp"`
+	EP                uint32   `json:"ep"`
+	AcceleratorFamily string   `json:"accelerator_family"`
+	GPUSKU            string   `json:"gpu_sku"`
+	GPUCount          uint32   `json:"gpu_count"`
+	HBMGB             uint32   `json:"hbm_gb"`
+	// v2 dispatch fields (S2): the DARI address the scheduler dials to
+	// send inference work, and the live sequence load for the layer-2
+	// signal. Absent on v1 cards.
+	DariAddr            string `json:"dari_addr,omitempty"`
+	ActiveSeqs          uint64 `json:"active_seqs,omitempty"`
+	Status              string `json:"status"`
+	LastHeartbeatUnixMs int64  `json:"last_heartbeat_unix_ms"`
+	LeaseExpiryUnixMs   int64  `json:"lease_expiry_unix_ms"`
+	SignatureHex        string `json:"signature_hex,omitempty"`
 }
 
 // SigningBytes renders the canonical byte string bound by the card
@@ -85,6 +90,10 @@ func (c *WorkerCard) SigningBytes() []byte {
 	dst = lpString(dst, c.GPUSKU)
 	dst = lpU32(dst, c.GPUCount)
 	dst = lpU32(dst, c.HBMGB)
+	if c.CardVersion >= 2 {
+		dst = lpString(dst, c.DariAddr)
+		dst = lpU64(dst, c.ActiveSeqs)
+	}
 	dst = lpString(dst, c.Status)
 	dst = lpU64(dst, uint64(c.LastHeartbeatUnixMs))
 	dst = lpU64(dst, uint64(c.LeaseExpiryUnixMs))
@@ -151,4 +160,14 @@ func lpU64(dst []byte, value uint64) []byte {
 	var buf [8]byte
 	binary.BigEndian.PutUint64(buf[:], value)
 	return append(dst, buf[:]...)
+}
+
+// Servable reports whether the card can receive inference dispatch:
+// v2 cards need a DARI dispatch address (fail-closed — no address, no
+// route).
+func (c *WorkerCard) Servable() bool {
+	if c.CardVersion < 2 {
+		return false
+	}
+	return c.DariAddr != ""
 }

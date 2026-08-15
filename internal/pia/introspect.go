@@ -23,6 +23,7 @@ type EngineInfo struct {
 	Precision         string
 	ContextLength     uint64
 	MaxConcurrentSeqs uint64
+	RunningSeqs       uint64
 	Modalities        []string
 	EngineVersion     string
 }
@@ -69,9 +70,14 @@ func introspectEngine(baseURL string) (EngineInfo, error) {
 	if err == nil {
 		defer metricsResp.Body.Close()
 		body, _ := io.ReadAll(io.LimitReader(metricsResp.Body, 1<<20))
-		info.MaxConcurrentSeqs = parseMetricUint(string(body), "vllm:num_requests_running")
-		if info.MaxConcurrentSeqs == 0 {
-			info.MaxConcurrentSeqs = parseMetricUint(string(body), "sglang:running_requests")
+		info.RunningSeqs = parseMetricUint(string(body), "vllm:num_requests_running")
+		if info.RunningSeqs == 0 {
+			info.RunningSeqs = parseMetricUint(string(body), "sglang:running_requests")
+		}
+		if vllmMax := parseMetricUint(string(body), "vllm:num_requests_waiting"); info.MaxConcurrentSeqs == 0 {
+			// Default capacity from waiting+running when the engine
+			// reports no explicit max.
+			info.MaxConcurrentSeqs = info.RunningSeqs + vllmMax
 		}
 	}
 	return info, nil

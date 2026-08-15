@@ -246,7 +246,8 @@ func (a *WorkerAgent) Close() {
 func (a *WorkerAgent) buildCard() (scheduler.WorkerCard, error) {
 	cfg := a.cfg
 	card := scheduler.WorkerCard{
-		CardVersion:      1,
+		CardVersion:      2,
+		DariAddr:         os.Getenv("PCCP_PIA_DARI_ADDR"),
 		WorkerID:         cfg.Credential.SubjectPeerID,
 		EnrollmentID:     cfg.Credential.Serial,
 		EngineKind:       cfg.EngineKind,
@@ -271,6 +272,7 @@ func (a *WorkerAgent) buildCard() (scheduler.WorkerCard, error) {
 		card.Status = "degraded"
 		log.Printf("pia worker: engine introspection failed: %v", err)
 	} else {
+		card.ActiveSeqs = engine.RunningSeqs
 		card.ModelName = engine.ModelName
 		card.ModelVersion = engine.ModelVersion
 		card.Precision = engine.Precision

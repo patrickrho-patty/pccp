@@ -68,6 +68,9 @@ func (s *WorkerSelector) Select(model string) (string, bool) {
 		if e.Quarantined || e.Lapsed {
 			continue
 		}
+		if !e.Card.Servable() {
+			continue
+		}
 		if now.After(e.LeasedUntil) {
 			continue
 		}
@@ -109,12 +112,17 @@ type Dispatch struct {
 // Dispatcher owns the global queue and worker selection, and implements
 // the overload gate on fleet signals. Workers call Assign when a slot
 // frees; the dispatcher releases the next eligible request or nothing.
+// Submit/Cancel manage the pending-waiter side of the dispatch loop.
 type Dispatcher struct {
 	mu       sync.Mutex
 	queue    *queue.Queue
 	selector *WorkerSelector
 	policy   OverloadPolicy
 	est      *OutputEstimator
+
+	fwMu      sync.Mutex
+	forwarder Forwarder
+	pending   map[string]*pendingWaiter
 }
 
 // NewDispatcher builds a dispatcher with default overload policy and a
@@ -124,17 +132,21 @@ func NewDispatcher(q *queue.Queue) *Dispatcher {
 		q = queue.New(queue.DefaultLimits())
 	}
 	return &Dispatcher{
-		queue:  q,
-		policy: DefaultOverloadPolicy(),
-		est:    NewOutputEstimator(DefaultEstimatorConfig()),
+		queue:   q,
+		policy:  DefaultOverloadPolicy(),
+		est:     NewOutputEstimator(DefaultEstimatorConfig()),
+		pending: make(map[string]*pendingWaiter),
 	}
 }
 
 // Queue exposes the underlying global queue (enqueue path).
 func (d *Dispatcher) Queue() *queue.Queue { return d.queue }
 
-// SetSelector installs the worker selector.
-func (d *Dispatcher) SetSelector(s *WorkerSelector) { d.selector = s }
+// SetSelector installs the worker selector and wakes the dispatch loop.
+func (d *Dispatcher) SetSelector(s *WorkerSelector) {
+	d.selector = s
+	d.wakeDispatch()
+}
 
 // Estimator exposes the output-length estimator (usage/telemetry hooks).
 func (d *Dispatcher) Estimator() *OutputEstimator { return d.est }
@@ -176,7 +188,11 @@ func (d *Dispatcher) FleetSignalsFromRegistry() FleetSignals {
 func (d *Dispatcher) Assign(workerID string) *Dispatch {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	return d.assignLocked(workerID)
+}
 
+// assignLocked is Assign with the dispatcher lock already held.
+func (d *Dispatcher) assignLocked(workerID string) *Dispatch {
 	// Gate first: the fleet's health decides whether ANY new work flows
 	// (spec §12.3.7 layer 1). Sheddable work was rejected at ingress; a
 	// saturated fleet simply holds interactive work (bounded by TTL).
@@ -217,11 +233,11 @@ func (d *Dispatcher) Assign(workerID string) *Dispatch {
 }
 
 // RejectSheddable removes queued requests of shed classes during overload
-// (multi-level load shedding, spec §14 row 38). Called on gate transitions.
+// (multi-level load shedding, spec §14 row 38). Called on gate transitions;
+// each removed request maps to a retryable 429 on the wire.
 func (d *Dispatcher) RejectSheddable() int {
-	// Walk the queue's classes; batch/background entries are dropped with
-	// a retryable outcome. queue.Cancel reports each removal.
-	return 0 // class-level drop implemented in S2.5 overload wiring
+	removed := d.queue.DropClass(queue.ClassBatch, queue.ClassBackgroundAgent)
+	return len(removed)
 }
 
 // ServedModels returns the distinct models served by healthy, non-expired
@@ -245,4 +261,63 @@ func (d *Dispatcher) ServedModels() []string {
 		}
 	}
 	return out
+}
+
+// FreeWorkers returns every worker with at least one free slot.
+func (s *WorkerSelector) FreeWorkers() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	now := time.Now()
+	var out []string
+	for id, e := range s.workers {
+		if e.Quarantined || e.Lapsed || now.After(e.LeasedUntil) {
+			continue
+		}
+		if !e.Card.Servable() {
+			continue
+		}
+		if s.load[id].CanAccept() {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// WorkerAddr returns the card's DARI dispatch address for a worker.
+func (s *WorkerSelector) WorkerAddr(workerID string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e, ok := s.workers[workerID]
+	if !ok {
+		return "", false
+	}
+	return e.Card.DariAddr, e.Card.DariAddr != ""
+}
+
+// ReserveLoad atomically marks one more active sequence on a worker.
+// Returns false when the worker has no capacity left (double-check the
+// bind before forwarding).
+func (s *WorkerSelector) ReserveLoad(workerID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l := s.load[workerID]
+	if !l.CanAccept() {
+		return false
+	}
+	l.Active++
+	s.load[workerID] = l
+	return true
+}
+
+// ReleaseLoad marks one active sequence finished on a worker and wakes
+// the dispatch loop (a slot freed).
+func (s *WorkerSelector) ReleaseLoad(workerID string) {
+	s.mu.Lock()
+	l := s.load[workerID]
+	if l.Active > 0 {
+		l.Active--
+	}
+	s.load[workerID] = l
+	s.mu.Unlock()
+	dispatchWake <- struct{}{}
 }

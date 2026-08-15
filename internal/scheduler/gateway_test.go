@@ -2,11 +2,13 @@ package scheduler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newTestGateway() (*Gateway, *Dispatcher) {
@@ -15,9 +17,22 @@ func newTestGateway() (*Gateway, *Dispatcher) {
 	return g, d
 }
 
-func TestGatewayChatCompletionsEnqueues(t *testing.T) {
+// newServingGateway wires a dispatcher with one worker, a fake forwarder,
+// and the running dispatch loop — the production serving shape.
+func newServingGateway(t *testing.T) (*Gateway, *Dispatcher) {
+	t.Helper()
 	g, d := newTestGateway()
-	g.Rewriter().SetAlias("ko-coder", "patty-kocoder-v1")
+	d.SetForwarder(&fakeForwarder{result: InferenceResult{Text: "응답", Finish: "stop", Usage: map[string]int{"prompt_tokens": 10, "completion_tokens": 5}}})
+	sel := NewWorkerSelector()
+	sel.Upsert(mkWorker("w1", "model-a", 4), 1)
+	d.SetSelector(sel)
+	startLoop(t, d)
+	return g, d
+}
+
+func TestGatewayChatCompletionsCompletes(t *testing.T) {
+	g, _ := newServingGateway(t)
+	g.Rewriter().SetAlias("ko-coder", "model-a")
 	body := `{"model":"ko-coder","messages":[{"role":"user","content":"안녕하세요"}],"max_tokens":100}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "tenant-1")
@@ -25,19 +40,21 @@ func TestGatewayChatCompletionsEnqueues(t *testing.T) {
 	w := httptest.NewRecorder()
 	g.HandleChatCompletions(w, req)
 
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202 (late binding)", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 with body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]interface{}
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	id, _ := resp["id"].(string)
-	if id == "" {
-		t.Fatal("no request id in response")
-	}
-	if d.Queue().Pending() != 1 {
-		t.Fatalf("queue depth = %d, want 1", d.Queue().Pending())
+	if len(resp.Choices) != 1 || resp.Choices[0].Message.Content != "응답" {
+		t.Fatalf("completion = %+v, want the forwarder's result", resp)
 	}
 }
 
@@ -55,28 +72,41 @@ func TestGatewayRejectsUnknownModel(t *testing.T) {
 }
 
 func TestGatewayModelRewriteApplied(t *testing.T) {
+	// The forwarder records the model it was asked to serve — after
+	// rewriting, the worker receives the RESOLVED catalog ID, not the alias.
+	fw := &fakeForwarder{result: InferenceResult{Text: "ok", Finish: "stop"}}
 	g, d := newTestGateway()
+	d.SetForwarder(fw)
+	sel := NewWorkerSelector()
+	sel.Upsert(mkWorker("w1", "patty-kocoder-v1", 4), 1)
+	d.SetSelector(sel)
+	startLoop(t, d)
 	g.Rewriter().SetAlias("ko-coder", "patty-kocoder-v1")
+
 	body := `{"model":"ko-coder","messages":[{"role":"user","content":"hi"}],"max_tokens":10}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "t1")
 	w := httptest.NewRecorder()
 	g.HandleChatCompletions(w, req)
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("status = %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
-	// The queued payload carries the RESOLVED catalog ID, not the alias.
-	out, ok := d.Queue().Next()
-	if !ok || out.Request == nil {
-		t.Fatal("nothing queued")
-	}
-	if out.Request.Payload != "patty-kocoder-v1" {
-		t.Fatalf("queued model = %v, want resolved catalog ID", out.Request.Payload)
+	// The response echoes the resolved model.
+	if !strings.Contains(w.Body.String(), "patty-kocoder-v1") {
+		t.Fatalf("response missing resolved model: %s", w.Body.String())
 	}
 }
 
 func TestGatewayCorrelationIDDeterminism(t *testing.T) {
-	g, _ := newTestGateway()
+	// Both split targets are served; the response model field exposes the
+	// split decision. Same correlation ID must pick the same target.
+	g, d := newTestGateway()
+	d.SetForwarder(&fakeForwarder{result: InferenceResult{Text: "ok", Finish: "stop"}})
+	sel := NewWorkerSelector()
+	sel.Upsert(mkWorker("w1", "a", 4), 1)
+	sel.Upsert(mkWorker("w2", "b", 4), 2)
+	d.SetSelector(sel)
+	startLoop(t, d)
 	g.Rewriter().SetSplit("ab", map[string]int{"a": 50, "b": 50})
 	mk := func(corr string) string {
 		body := `{"model":"ab","messages":[{"role":"user","content":"x"}],"max_tokens":5}`
@@ -153,42 +183,39 @@ func TestGatewayModelDiscovery(t *testing.T) {
 }
 
 func TestGatewayAnthropicFormatAccepted(t *testing.T) {
-	g, d := newTestGateway()
-	g.Rewriter().SetAlias("ko-coder", "patty-kocoder-v1")
+	g, _ := newServingGateway(t)
+	g.Rewriter().SetAlias("ko-coder", "model-a")
 	body := `{"model":"ko-coder","max_tokens":50,"messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "t1")
 	req.Header.Set("anthropic-version", "2023-06-01")
 	w := httptest.NewRecorder()
 	g.HandleAnthropicMessages(w, req)
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202", w.Code)
-	}
-	if d.Queue().Pending() != 1 {
-		t.Fatal("anthropic-format request not enqueued")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
 }
 
 func TestGatewayCancellationPropagates(t *testing.T) {
 	g, d := newTestGateway()
+	// No worker at all: the request parks in the queue; the client's
+	// disconnect must pull it out (no zombie work; spec §14 row 1).
 	g.Rewriter().SetAlias("m", "model-a")
 	body := `{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":10}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "t1")
+	ctx, cancel := context.WithCancel(req.Context())
+	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel() // the caller disconnects mid-queue
+	}()
 	g.HandleChatCompletions(w, req)
-	if d.Queue().Pending() != 1 {
-		t.Fatal("request not queued")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 after client disconnect", w.Code)
 	}
-	// The caller disconnects: the request must leave the queue (no zombie
-	// work; spec §14 row 1 cancellation).
-	id := w.Body.String()
-	var resp struct {
-		ID string `json:"id"`
-	}
-	json.Unmarshal([]byte(id), &resp)
-	g.Cancel(resp.ID)
 	if d.Queue().Pending() != 0 {
-		t.Fatal("cancelled request still queued")
+		t.Fatal("disconnected request still queued")
 	}
 }

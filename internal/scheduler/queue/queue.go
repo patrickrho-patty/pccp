@@ -470,3 +470,30 @@ func effectiveDeadline(o Ordering, r Request, seq int64) time.Time {
 		return r.ArrivedAt
 	}
 }
+
+// DropClass removes every queued request of the given classes and returns
+// the removed requests (multi-level load shedding: retryable overload
+// responses for shed work, spec §14 row 38).
+func (q *Queue) DropClass(classes ...Class) []Request {
+	drop := make(map[Class]bool, len(classes))
+	for _, c := range classes {
+		drop[c] = true
+	}
+	var removed []Request
+	for _, c := range classOrder {
+		b := q.bands[c]
+		if !drop[c] {
+			continue
+		}
+		for _, tenant := range b.order {
+			f := b.flows[tenant]
+			for len(f.items) > 0 {
+				item := heap.Pop(&f.items).(*queued)
+				req := item.req
+				q.release(b, f, req)
+				removed = append(removed, req)
+			}
+		}
+	}
+	return removed
+}

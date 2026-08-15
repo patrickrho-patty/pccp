@@ -164,17 +164,45 @@ func (g *Gateway) handleIngress(w http.ResponseWriter, r *http.Request, anthropi
 		TTL:                  time.Minute,
 		Payload:              resolved,
 	}
-	if err := g.dispatcher.Queue().Enqueue(qr); err != nil {
+	ch, err := g.dispatcher.Submit(qr)
+	if err != nil {
 		writeGatewayError(w, http.StatusTooManyRequests, err.Error())
 		return
 	}
 
+	// The caller's connection parks here until dispatch completes
+	// (late binding: the request binds to a worker when capacity frees,
+	// llm-d's blocked-handler design). TTL bounds the wait; the client's
+	// disconnect cancels via the request context.
+	select {
+	case res := <-ch:
+		g.writeCompletion(w, resolved, res)
+	case <-time.After(qr.TTL):
+		g.dispatcher.Cancel(id)
+		writeGatewayError(w, http.StatusServiceUnavailable, "queued request expired; retry")
+	case <-r.Context().Done():
+		g.dispatcher.Cancel(id)
+		writeGatewayError(w, http.StatusServiceUnavailable, "request cancelled")
+	}
+}
+
+// writeCompletion renders a terminal inference result to the caller.
+func (g *Gateway) writeCompletion(w http.ResponseWriter, model string, res InferenceResult) {
+	if res.Cancelled {
+		writeGatewayError(w, http.StatusServiceUnavailable, "request cancelled")
+		return
+	}
+	if res.Err != "" {
+		writeGatewayError(w, http.StatusInternalServerError, res.Err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":     id,
-		"status": "queued",
-		"model":  resolved,
+		"id":      dari.GenerateID("gw-cmp"),
+		"object":  "chat.completion",
+		"model":   model,
+		"choices": []map[string]interface{}{{"index": 0, "message": map[string]string{"role": "assistant", "content": res.Text}, "finish_reason": res.Finish}},
+		"usage":   res.Usage,
 	})
 }
 

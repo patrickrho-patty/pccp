@@ -68,9 +68,9 @@ func TestRewriteFallbackChain(t *testing.T) {
 	rw := NewModelRewriter(nil)
 	// canary model A with fallback to stable B; if A is withdrawn, B serves.
 	rw.SetRule("canary-model", RewriteRule{
-		Targets:      []string{"canary-v2", "stable-v1"},
-		Unavailable:  map[string]bool{"canary-v2": true},
-		Strategy:     StrategyFallback,
+		Targets:     []string{"canary-v2", "stable-v1"},
+		Unavailable: map[string]bool{"canary-v2": true},
+		Strategy:    StrategyFallback,
 	})
 	got, err := rw.Resolve("canary-model", 1)
 	if err != nil {
