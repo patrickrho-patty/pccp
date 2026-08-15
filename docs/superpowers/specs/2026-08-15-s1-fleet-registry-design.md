@@ -16,6 +16,23 @@ recover → observe**, with DARI governance wrapped around every decision. Refer
 implementations live in `tools/dynamo` (Rust, NVIDIA) and `tools/llm-d` (Go,
 kubernetes-sigs); we adopt their ideas and proven solutions, not their source.
 
+**Data-path layers (the governance gate is preserved, never bypassed):**
+
+```
+Harness (enrolled) ──DARI──► DARI Relay ──► pccp-scheduler ──► PIA ──► engine (localhost)
+                             (governance     (S1 registry,      (worker    (never
+                              gate: auth,     S2 admission/      identity,  exposed)
+                              lease, policy,  queue, S3 router,  adapters)
+                              DLP, verdicts,  S4 predictor, S5,
+                              evidence)       S7 autoscale brain)
+```
+
+The Relay is the layer Dynamo/llm-d lack (they trust their mesh/RBAC instead). It stays
+in front of the scheduler for every request. S2's unified gateway + admission is the
+Relay's evolved role on this governed path (the Relay already performs admission and
+fair scheduling: "fair scheduler admission on the governed path"). Distribution
+(S1–S12) happens *behind* the gate; §13.15 fail-closed holds.
+
 The full vision decomposes into 11 sub-projects, each with its own
 spec → plan → implementation cycle:
 
