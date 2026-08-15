@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"flag"
 	"log"
 	"net/http"
@@ -104,6 +105,23 @@ func main() {
 		}
 	}()
 
+	// Revocation feed poll (offline PPC verification stays authoritative; the
+	// feed refreshes the revocation view. CP down = last view kept).
+	if cpURL := os.Getenv("PCCP_SCHED_CP_URL"); cpURL != "" {
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					pollRevocations(cpURL, os.Getenv("PCCP_SCHED_CP_TOKEN"), svc)
+				}
+			}
+		}()
+	}
+
 	// Shutdown.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -111,4 +129,36 @@ func main() {
 	log.Println("scheduler: shutting down")
 	cancel()
 	httpSrv.Close()
+}
+
+// pollRevocations fetches the CP revocation feed and applies it to the
+// scheduler's revocation view.
+func pollRevocations(cpURL, token string, svc *scheduler.Scheduler) {
+	req, err := http.NewRequest(http.MethodGet, cpURL+"/api/scheduler/revocations", nil)
+	if err != nil {
+		log.Printf("scheduler: revocation poll: %v", err)
+		return
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("scheduler: revocation poll failed (CP down?): %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("scheduler: revocation poll status %d", resp.StatusCode)
+		return
+	}
+	var feed struct {
+		RevokedPeerIDs []string `json:"revoked_peer_ids"`
+		RevokedSerials []string `json:"revoked_serials"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&feed); err != nil {
+		log.Printf("scheduler: revocation poll decode: %v", err)
+		return
+	}
+	svc.UpdateRevocations(feed.RevokedSerials, feed.RevokedPeerIDs)
 }

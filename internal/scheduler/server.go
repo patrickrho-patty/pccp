@@ -29,6 +29,12 @@ func (s *Scheduler) Admit(req AdmissionRequest) AdmissionResult {
 	return s.Admission.Admit(req)
 }
 
+// UpdateRevocations applies a revocation-feed refresh (serials and peer IDs)
+// from the Control Plane.
+func (s *Scheduler) UpdateRevocations(serials, peerIDs []string) {
+	s.Admission.revoked.Replace(serials, peerIDs)
+}
+
 // Sweep evicts expired workers and emits evidence for each eviction.
 func (s *Scheduler) Sweep(now time.Time) []string {
 	evicted := s.Registry.Sweep(now)

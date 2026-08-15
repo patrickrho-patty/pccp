@@ -241,6 +241,14 @@ func (s *Server) setupRouter() {
 			r.Post("/{id}/drain", s.handleDrainEndpoint)
 		})
 
+		// Scheduler (fleet registry) — DARI scheduler §9
+		r.Route("/scheduler", func(r chi.Router) {
+			r.Get("/config-public-key", s.handleSchedulerConfigPublicKey)
+			r.Post("/configs", s.handleSignWorkerConfig)
+			r.Get("/revocations", s.handleSchedulerRevocations)
+			r.Get("/workers", s.handleSchedulerWorkersProxy)
+		})
+
 		// Policy
 		r.Route("/policy", func(r chi.Router) {
 			r.Get("/epochs", s.handleListEpochs)

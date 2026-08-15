@@ -27,6 +27,7 @@ const (
 	DomainLease        KeyDomain = "lease"         // capability/endpoint lease signing
 	DomainModelDecrypt KeyDomain = "model_decrypt" // model package decryption
 	DomainCommsE2EE    KeyDomain = "comms_e2ee"    // communication end-to-end encryption
+	DomainConfig       KeyDomain = "config"        // PIA worker config signing
 )
 
 // KeyEntry represents a managed key.
@@ -73,6 +74,16 @@ func (s *Service) GenerateKey(domain KeyDomain, validity time.Duration) (*KeyEnt
 	s.mu.Unlock()
 
 	return entry, nil
+}
+
+// GetOrCreateKey returns the active key for a domain, generating one on
+// first use. Unlike RotateKey it never rotates on subsequent calls — callers
+// that sign configs must keep a stable key so verifiers' bundles stay valid.
+func (s *Service) GetOrCreateKey(domain KeyDomain, validity time.Duration) (*KeyEntry, error) {
+	if key, err := s.GetActiveKey(domain); err == nil {
+		return key, nil
+	}
+	return s.GenerateKey(domain, validity)
 }
 
 // GetKey retrieves a key by ID.
