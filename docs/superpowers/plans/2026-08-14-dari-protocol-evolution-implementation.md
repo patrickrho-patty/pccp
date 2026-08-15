@@ -55,8 +55,8 @@ The following earlier planning documents are retained as publication history, no
 22 of 24 tasks complete. Per-task status:
 - Tasks 1–20: COMPLETE (papers, normative contract, legacy freeze, kernel objects F.2–F.14, profile machinery, web/federation/collab/media runtimes, live hot path with stage enforcement + no-mock-fallback + event spine, enterprise controls incl. exception workflow + rollout, executable tool/SCM/sandbox/connector boundaries, black-box conformance runner + manifest.json, rename).
 - Task 21–22: COMPLETE (connector + repository-wide DARI rename with frozen legacy surface, registry reconciliation, gates enforced).
-- Task 23 (open-spec governance): BLOCKED at the license decision gate — Step 1 requires an explicit license choice by the steward; attribution/contribution/compatibility mechanics draft awaits that decision.
-- Task 24 (release gate): PENDING — run after Task 23.
+- Task 23: COMPLETE — Apache-2.0 selected by the steward (2026-08-15); LICENSE + GOVERNANCE.md (origin/attribution, contribution mechanics, fair compatibility language) committed.
+- Task 24 (release gate): PENDING — final step.
 
 Deployment-evidence debts (recorded honestly in conformance/manifest.json as DEGRADED omissions, all non-critical): browser deployment evidence (dari.web/1), partner interconnect (dari.federation/1), live multi-peer collab/media deployments, tokenizer-exact accounting (estimator is marked estimated), PIA-side PMP load verification.
 
@@ -1240,23 +1240,23 @@ git commit -m "docs: complete repository-wide DARI naming migration"
 - Consumes: completed DARI naming and Patty Co., Ltd. attribution.
 - Produces: an independently implementable open-spec repository whose origin, stewardship, contribution process, security contact, citation, and conformance-language rules are explicit.
 
-- [ ] **Step 1: Stop at the code/spec license decision gate**
+- [x] **Step 1: Stop at the code/spec license decision gate**
 
 Do not invent or infer a license. Present the user/legal reviewer with separate choices for implementation code and specification text, including patent implications and whether the “DARI Compatible” name needs a trademark policy. Record the approved exact SPDX identifiers, license-file layout, and specification license before creating license files or changing file headers.
 
-- [ ] **Step 2: Add factual origin and citation metadata**
+- [x] **Step 2: Add factual origin and citation metadata**
 
 `NOTICE`, `AUTHORS.md`, and `CITATION.cff` state that DARI was originated by Patty Co., Ltd. They must not imply that every later contributor is a Patty employee or that independent implementations are Patty products.
 
-- [ ] **Step 3: Define contribution and governance mechanics**
+- [x] **Step 3: Define contribution and governance mechanics**
 
 `GOVERNANCE.md` defines the initial Patty stewardship period, public proposal/review process, registry allocation process, versioning authority, security-errata process, and a path to broader maintainership. `CONTRIBUTING.md` links schema, vector, conformance, and compatibility requirements. `SECURITY.md` provides the disclosure process without embedding credentials or private addresses from environment files.
 
-- [ ] **Step 4: Define fair compatibility language**
+- [x] **Step 4: Define fair compatibility language**
 
 Permit independent projects to describe themselves as “DARI compatible” only for profiles present in their machine-readable conformance manifest. Reserve wording that implies Patty certification or endorsement unless Patty has actually issued it.
 
-- [ ] **Step 5: Verify attribution and license consistency**
+- [x] **Step 5: Verify attribution and license consistency**
 
 ```bash
 rg -n 'Patty Co\., Ltd\.|DARI compatible|conformance|steward' NOTICE AUTHORS.md GOVERNANCE.md CONTRIBUTING.md SECURITY.md CITATION.cff DARI.md
@@ -1266,7 +1266,7 @@ git diff --check -- NOTICE AUTHORS.md GOVERNANCE.md CONTRIBUTING.md SECURITY.md 
 
 Expected: required attribution/governance terms are present and `Patty Research` has no matches.
 
-- [ ] **Step 6: Commit after the license decision has been recorded**
+- [x] **Step 6: Commit after the license decision has been recorded**
 
 ```bash
 git add NOTICE AUTHORS.md GOVERNANCE.md CONTRIBUTING.md SECURITY.md CITATION.cff DARI.md docs/plans/DARI/DARI_Protocol_Specification_v1.0.md
