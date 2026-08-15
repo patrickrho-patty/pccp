@@ -19,20 +19,51 @@ type CredentialRevocations struct {
 	mu      sync.RWMutex
 	epoch   uint64
 	serials map[string]uint64
+	db      *gorm.DB
 }
 
-func newCredentialRevocations() *CredentialRevocations {
-	return &CredentialRevocations{serials: make(map[string]uint64)}
+// newCredentialRevocations builds the in-process view; with a DB it
+// REBUILDS the epoch + serial set from the durable ledger so
+// revocation survives restarts (DARI §F.7 — a restarted relay must
+// never accept a credential revoked before it went down).
+func newCredentialRevocations(db *gorm.DB) *CredentialRevocations {
+	r := &CredentialRevocations{serials: make(map[string]uint64), db: db}
+	if db == nil {
+		return r
+	}
+	var rows []models.CredentialRevocationRecord
+	if err := db.Find(&rows).Error; err != nil {
+		return r // fail-safe: in-memory view only; connect-time DB status still enforced
+	}
+	for _, row := range rows {
+		r.serials[row.Serial] = row.RevokedEpoch
+		if row.RevokedEpoch > r.epoch {
+			r.epoch = row.RevokedEpoch
+		}
+	}
+	return r
 }
 
-func (r *CredentialRevocations) revoke(serial string) uint64 {
+func (r *CredentialRevocations) revoke(serial, reason string) uint64 {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.epoch++
+	epoch := r.epoch
 	if serial != "" {
 		r.serials[serial] = r.epoch
 	}
-	return r.epoch
+	db := r.db
+	r.mu.Unlock()
+	if serial != "" && db != nil {
+		// Write-through; a failed persist logs via the caller's audit
+		// path but never un-revokes the live view (fail-closed).
+		db.Create(&models.CredentialRevocationRecord{
+			Serial:       serial,
+			RevokedEpoch: epoch,
+			Reason:       reason,
+			RevokedAtRFC: time.Now().Format(time.RFC3339),
+		})
+	}
+	return epoch
 }
 
 func (r *CredentialRevocations) snapshot() (uint64, map[string]uint64) {

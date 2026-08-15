@@ -117,6 +117,11 @@ export const api = {
 
   // Sessions
   listSessions: () => request<any[]>('/api/sessions'),
+  // Server-side paginated sessions (web/01): total count + page slice.
+  listSessionsPage: (page: number, size = 25, search = '') =>
+    request<{ data: any[]; total: number; page: number; size: number }>(
+      `/api/sessions?page=${page}&size=${size}${search ? `&search=${encodeURIComponent(search)}` : ''}`
+    ),
   openSession: (data: any) =>
     request<any>('/api/sessions', { method: 'POST', body: JSON.stringify(data) }),
   closeSession: (id: string) =>

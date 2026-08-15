@@ -1,0 +1,34 @@
+{
+  "profile": "dari/1",
+  "comment": "Kernel conformance vectors. Runtime execution lives in internal/dari (Go) and the black-box runner (conformance/runner_test.go F.14 cases 1-13): deterministic CBOR, attached-payload equality, AAD binding, grant attenuation matrix, state freshness, decision aggregation deny-override, receipt attestations, selective disclosure, effect idempotency/REPLAY_CONFLICT, profile negotiation, no-legacy-fallback.",
+  "domains": {
+    "kernel_object_digest": "DARI-OBJECT-v1\\u0000",
+    "evidence_event": "DARI-EVIDENCE-EVENT-v1\\u0000",
+    "evidence_chain_start": "DARI-EVIDENCE-CHAIN-START-v1\\u0000",
+    "exchange_identity": "DARI-EXCHANGE-IDENTITY-v1\\u0000",
+    "grant": "DARI-GRANT-v1\\u0000",
+    "decision": "DARI-DECISION-v1\\u0000"
+  },
+  "object_types": {
+    "authorization_grant": "0x0202",
+    "governed_exchange": "0x0303",
+    "authorization_decision": "0x0304",
+    "signed_state_checkpoint": "0x0305",
+    "effect_prepare": "0x0610",
+    "evidence_receipt": "0x0307"
+  },
+  "runner_cases": {
+    "1": "non-canonical CBOR rejection",
+    "2": "payload substitution",
+    "3": "auth failures (AAD binding)",
+    "4": "attenuation failures",
+    "5": "stale checkpoint",
+    "6": "decision failures (deny override)",
+    "7": "receipt fidelity",
+    "8": "disclosure failures",
+    "9": "effect idempotency + replay conflict",
+    "10": "profile negotiation",
+    "11": "no legacy fallback",
+    "13": "unresolved status shape"
+  }
+}

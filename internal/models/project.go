@@ -78,6 +78,9 @@ type Session struct {
 	IdleTTL           int    `json:"idle_ttl,omitempty"`    // seconds
 	OpenedAt          string `gorm:"type:timestamp" json:"opened_at,omitempty"`
 	ClosedAt          string `gorm:"type:timestamp" json:"closed_at,omitempty"`
+	// LastActivityAt is the last governed-exchange touch (web/02 A4
+	// idle detection); empty falls back to OpenedAt.
+	LastActivityAt string `gorm:"type:timestamp" json:"last_activity_at,omitempty"`
 }
 
 // PromptExchange records a prompt-response cycle within a session.

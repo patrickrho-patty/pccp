@@ -37,6 +37,9 @@ func (pl *DARIListener) authAckPayload() []byte {
 		"relay_id":         pl.svc.relayID,
 		"policy_issuer":    "pccp-policy",
 		"policy_issuer_pk": hex.EncodeToString(pl.svc.Policy().SigningPublicKey()),
+		// Receipt signer (B3): the connector verifies pushed evidence
+		// receipts under this key (persisted service identity).
+		"receipt_signer_pk": hex.EncodeToString(pl.svc.Provenance().SigningPublicKey()),
 	}
 	data, _ := json.Marshal(payload)
 	return data
@@ -54,7 +57,7 @@ type sessionOpenRequest struct {
 // catalog snapshot is epoch-bound), then CATALOG_SNAPSHOT, then
 // LEASE_ISSUE, then SESSION_GRANT. The connector's connect() consumes
 // exactly this sequence before its first AI_OPEN.
-func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportConn, connID string, so sessionOpenRequest) {
+func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportConn, connID string, so sessionOpenRequest, harnessVersion string) {
 	if so.SessionID == "" {
 		pl.sendJSONError(conn, connID, "session_open missing session_id")
 		return
@@ -62,6 +65,12 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 	orgID := pl.orgForPeer(connID)
 	if orgID == "" {
 		pl.sendJSONError(conn, connID, "authenticated peer has no organization")
+		return
+	}
+	// D5: the org's forced harness version refuses sub-minimum
+	// connectors at session setup (the audit trail carries the floor).
+	if minV := pl.svc.ForcedHarnessVersion(orgID); minV != "" && harnessVersion != "" && versionBelow(harnessVersion, minV) {
+		pl.sendJSONError(conn, connID, "harness version "+harnessVersion+" is below the organization minimum "+minV)
 		return
 	}
 	if so.UserID == "" {
@@ -88,6 +97,11 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 		// Bootstrap: the FIRST epoch for a fresh organization allows the
 		// bootstrapped package. Never widens an existing epoch.
 		epoch, err = pl.svc.Policy().CreatePolicyEpoch(orgID, []string{pkg.PackageID}, "immediate")
+		if err == nil {
+			// A new epoch invalidates every cached governance snapshot
+			// immediately (bounded staleness never outlives the epoch).
+			pl.svc.hotState.InvalidateAll()
+		}
 		if err != nil {
 			pl.sendJSONError(conn, connID, "bootstrap epoch creation failed: "+err.Error())
 			return
@@ -261,11 +275,50 @@ func ensureModelServingForDB(db *gorm.DB, orgID, model string) (*models.ModelPac
 		return nil, fmt.Errorf("no model requested")
 	}
 	var pkg models.ModelPackage
-	if err := db.Where("model_id = ?", model).First(&pkg).Error; err == nil {
-		if pkg.State != "published" {
-			return nil, fmt.Errorf("model %s is %s (not published)", model, pkg.State)
+	if err := db.Where("model_id = ?", model).First(&pkg).Error; err != nil {
+		if !devBootstrap() {
+			return nil, fmt.Errorf("model %s not registered (fail closed)", model)
 		}
-	} else if devBootstrap() {
+		provisioned, perr := provisionModelServingForDB(db, orgID, model)
+		if perr != nil {
+			return nil, perr
+		}
+		return provisioned, nil
+	}
+	if pkg.State != "published" {
+		return nil, fmt.Errorf("model %s is %s (not published)", model, pkg.State)
+	}
+	return ensureServingChainForDB(db, orgID, &pkg)
+}
+
+// ensureServingChainForDB resolves or fail-closes the endpoint +
+// endpoint-lease for an already-registered package.
+func ensureServingChainForDB(db *gorm.DB, orgID string, pkg *models.ModelPackage) (*models.ModelPackage, error) {
+	var endpoint models.InferenceEndpoint
+	if err := db.Where("organization_id = ? AND model_package_id = ? AND status = 'active'",
+		orgID, pkg.PackageID).First(&endpoint).Error; err != nil {
+		return nil, fmt.Errorf("no active endpoint for %s (fail closed)", pkg.PackageID)
+	}
+	var epLease models.EndpointLease
+	if err := db.Where("endpoint_id = ? AND status = 'active' AND not_after > ?",
+		endpoint.EndpointID, time.Now().Format(time.RFC3339)).
+		First(&epLease).Error; err != nil {
+		return nil, fmt.Errorf("no valid endpoint lease for %s (fail closed)", endpoint.EndpointID)
+	}
+	return pkg, nil
+}
+
+// provisionModelServingForDB registers the FULL serving chain for a
+// model (published package → org endpoint → endpoint lease) with no
+// dev-bootstrap env: operators, the benchmark, and first-run bring-up
+// call it explicitly through RegisterModelServing. Idempotent — every
+// step reuses an existing row.
+func provisionModelServingForDB(db *gorm.DB, orgID, model string) (*models.ModelPackage, error) {
+	if model == "" {
+		return nil, fmt.Errorf("no model requested")
+	}
+	var pkg models.ModelPackage
+	if err := db.Where("model_id = ?", model).First(&pkg).Error; err != nil {
 		pkg = models.ModelPackage{
 			PackageID: "pmp-" + model,
 			ModelID:   model,
@@ -276,16 +329,10 @@ func ensureModelServingForDB(db *gorm.DB, orgID, model string) (*models.ModelPac
 		if err := db.Create(&pkg).Error; err != nil {
 			return nil, fmt.Errorf("register model package: %w", err)
 		}
-	} else {
-		return nil, fmt.Errorf("model %s not registered (fail closed)", model)
 	}
-
 	var endpoint models.InferenceEndpoint
 	if err := db.Where("organization_id = ? AND model_package_id = ? AND status = 'active'",
 		orgID, pkg.PackageID).First(&endpoint).Error; err != nil {
-		if !devBootstrap() {
-			return nil, fmt.Errorf("no active endpoint for %s (fail closed)", pkg.PackageID)
-		}
 		endpoint = models.InferenceEndpoint{
 			OrganizationID: orgID,
 			EndpointID:     "ep-" + pkg.PackageID,
@@ -299,14 +346,10 @@ func ensureModelServingForDB(db *gorm.DB, orgID, model string) (*models.ModelPac
 			return nil, fmt.Errorf("register endpoint: %w", err)
 		}
 	}
-
 	var epLease models.EndpointLease
 	if err := db.Where("endpoint_id = ? AND status = 'active' AND not_after > ?",
 		endpoint.EndpointID, time.Now().Format(time.RFC3339)).
 		First(&epLease).Error; err != nil {
-		if !devBootstrap() {
-			return nil, fmt.Errorf("no valid endpoint lease for %s (fail closed)", endpoint.EndpointID)
-		}
 		now := time.Now()
 		epLease = models.EndpointLease{
 			EndpointID:     endpoint.EndpointID,
@@ -324,6 +367,14 @@ func ensureModelServingForDB(db *gorm.DB, orgID, model string) (*models.ModelPac
 		}
 	}
 	return &pkg, nil
+}
+
+// RegisterModelServing onboards a model's serving chain (published
+// package → active org endpoint → active endpoint lease) WITHOUT the
+// dev-bootstrap env. Operators, tests, and the benchmark call this
+// explicitly; the session path stays fail-closed for unknown models.
+func (s *Service) RegisterModelServing(orgID, model string) (*models.ModelPackage, error) {
+	return provisionModelServingForDB(s.db, orgID, model)
 }
 
 // epochAllowsPackage reports whether the epoch's allow-list contains
@@ -411,6 +462,17 @@ func (pl *DARIListener) ingestChangeSet(conn *dari.TransportConn, connID, harnes
 	// a client-supplied OrganizationID is never trusted (cross-tenant
 	// provenance injection).
 	orgID := pl.orgForPeer(connID)
+	// D3 defense-in-depth: an active change freeze blocks AI writes.
+	// The connector's dispatch gate already refuses them; a connector
+	// that ignores the freeze has its changesets rejected here too.
+	if frozen, reason, ferr := pl.svc.ActiveChangeFreeze(orgID); ferr == nil && frozen {
+		errPayload, _ := json.Marshal(map[string]string{
+			"error":         "change freeze active — AI changeset rejected",
+			"freeze_reason": reason,
+		})
+		conn.SendMessage(dari.MsgChangeSetNack, nil, errPayload, record.LaneID, record.LaneSequence+1)
+		return
+	}
 	_, err := pl.svc.provenance.CreateChangeSet(provenance.CreateChangeSetRequest{
 		OrganizationID: orgID,
 		SessionID:      env.SessionID,

@@ -66,7 +66,7 @@ type peerCredentialSigningBody struct {
 // PeerCredentialIssuer creates and signs PPCs for a trust domain.
 type PeerCredentialIssuer struct {
 	// IssuerID is the identity of this issuer (e.g. "pccp-ca").
-	IssuerID string `json:"issuer_i_d"`
+	IssuerID string `json:"issuer_id"`
 	// PrivateKey is the Ed25519 CA signing key.
 	PrivateKey ed25519.PrivateKey `json:"private_key"`
 	// PublicKey is the corresponding CA public key.
@@ -88,7 +88,7 @@ func NewPeerCredentialIssuer(issuerID string) (*PeerCredentialIssuer, error) {
 
 // IssueRequest is the input to issue a new PPC.
 type IssueRequest struct {
-	SubjectPeerID           string            `json:"subject_peer_i_d"`
+	SubjectPeerID           string            `json:"subject_peer_id"`
 	Organization            string            `json:"organization"`
 	Profile                 PeerProfile       `json:"profile"`
 	PublicKey               ed25519.PublicKey `json:"public_key"`

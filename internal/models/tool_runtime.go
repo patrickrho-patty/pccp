@@ -101,6 +101,10 @@ func AllModels() []interface{} {
 		// Policy
 		&PolicyEpoch{},
 		&CapabilityLease{},
+		// Durable service identities + revocations + sandboxes
+		&ServiceSigningKey{},
+		&CredentialRevocationRecord{},
+		&SandboxRecord{},
 		// Provenance
 		&ActionEnvelope{},
 		&ChangeSet{},

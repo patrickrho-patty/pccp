@@ -2,6 +2,8 @@ package relay
 
 import (
 	"encoding/json"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
@@ -107,4 +109,66 @@ func (s *Service) GatherGovernanceState(orgID, repoID, modelID string) Governanc
 	// relay can query, so the snapshot carries no sandbox rows until
 	// they do. The wire field remains for that push.
 	return view
+}
+
+// ForcedHarnessVersion returns the org's active minimum harness
+// version from the audit trail (empty when none is forced).
+func (s *Service) ForcedHarnessVersion(orgID string) string {
+	var events []models.AuditEvent
+	s.db.Where("organization_id = ? AND event_type = ?", orgID, "cp.korean.forced_harness_version").
+		Order("occurred_at DESC").Limit(1).Find(&events)
+	for _, e := range events {
+		var v koreanForcedVersion
+		_ = json.Unmarshal([]byte(e.Details), &v)
+		return v.MinVersion
+	}
+	return ""
+}
+
+// versionBelow reports whether v sorts below minV as a dotted numeric
+// version (leading v is tolerated; non-numeric segments compare
+// lexicographically). Unparseable inputs never block.
+func versionBelow(v, minV string) bool {
+	norm := func(s string) []string {
+		s = strings.TrimPrefix(strings.TrimPrefix(s, "v"), "V")
+		return strings.Split(s, ".")
+	}
+	a, b := norm(v), norm(minV)
+	for i := 0; i < len(a) && i < len(b); i++ {
+		ai, aerr := strconv.Atoi(a[i])
+		bi, berr := strconv.Atoi(b[i])
+		if aerr != nil || berr != nil {
+			if aerr != berr {
+				// Mixed numeric/non-numeric: the non-numeric side
+				// (dev builds) sorts below a numeric floor.
+				return aerr != nil
+			}
+			if a[i] != b[i] {
+				return a[i] < b[i]
+			}
+			continue
+		}
+		if ai != bi {
+			return ai < bi
+		}
+	}
+	return false
+}
+
+// ActiveChangeFreeze reports whether the org has an active change
+// freeze (latest audit-trail event wins) and its reason.
+func (s *Service) ActiveChangeFreeze(orgID string) (bool, string, error) {
+	var events []models.AuditEvent
+	s.db.Where("organization_id = ? AND event_type IN (?, ?)", orgID,
+		"cp.korean.change_freeze_started", "cp.korean.change_freeze_ended").
+		Order("occurred_at DESC").Limit(1).Find(&events)
+	for _, e := range events {
+		if e.EventType == "cp.korean.change_freeze_started" {
+			var f koreanFreeze
+			_ = json.Unmarshal([]byte(e.Details), &f)
+			return true, f.FreezeReason, nil
+		}
+		return false, "", nil
+	}
+	return false, "", nil
 }

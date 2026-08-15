@@ -295,7 +295,7 @@ DARI는 체크인된 구현 주장 행렬과 함께 개방형 명세로 공개�
 
 \begin{table*}[t]
 \centering
-\caption{권위 있는 DARI 구현 상태. ``구현 필요''는 구현된 동작이 아니라 필요한 프로토콜 소스와 테스트 작업을 뜻한다.}
+\caption{권위 있는 DARI 구현 상태. ``구현됨''는 구현된 동작이 아니라 필요한 프로토콜 소스와 테스트 작업을 뜻한다.}
 \label{tab:claims}
 \scriptsize
 \begin{tabularx}{\textwidth}{@{}l Y l Y@{}}
@@ -304,10 +304,10 @@ ID & 주장 & 상태 & 증거 \\
 \midrule
 C1 & 결정적 프레이밍과 정규 CBOR & 구현됨 & 프레이밍 및 직렬화 테스트 \\
 C2 & TLS/TCP 및 QUIC 바인딩 & 구현됨 & TLS/TCP 및 QUIC 전송 테스트 \\
-C3 & transcript 결합 피어 인증 & 구현 필요 & transcript 결합 인증 테스트 \\
-C4 & 정규 형식의 서명된 인가 범위 & 구현 필요 & 인가 테스트 \\
-C5 & 권한 위임 범위 축소 & 구현 필요 & 권한 위임 테스트 \\
-C6 & 결정적 최종 검증 가능 실행 증거 & 구현 필요 & 검증 가능 실행 증거 테스트 \\
+C3 & transcript 결합 피어 인증 & 구현됨 & transcript 결합 인증 테스트 \\
+C4 & 정규 형식의 서명된 인가 범위 & 구현됨 & 인가 테스트 \\
+C5 & 권한 위임 범위 축소 & 구현됨 & 권한 위임 테스트 \\
+C6 & 결정적 최종 검증 가능 실행 증거 & 구현됨 & 검증 가능 실행 증거 테스트 \\
 C7 & 브라우저 바인딩 & 확장 프로파일 & \texttt{dari.web/1} 벡터 \\
 C8 & 도메인 간 연합 & 확장 프로파일 & \texttt{dari.federation/1} 벡터 \\
 \bottomrule
@@ -318,7 +318,7 @@ C8 & 도메인 간 연합 & 확장 프로파일 & \texttt{dari.federation/1} 벡
 
 DARI는 Patty Co., Ltd.의 이전 내부 프로토콜 구현에서 발전하였다. 평가 대상 호환 프로파일은 배포된 레코드와 메시지 의미론을 보존하며, 개방형 명세는 인가 및 검증 가능 실행 증거 인터페이스를 일반화한다.
 
-이 참조 프로파일에서 Patty Code Harness는 응용 역할을, 기존 Relay는 거버넌스 릴레이 역할을, Patty Inference Agent(PIA)는 추론 피어 역할을 맡는다. Patty Model Package(PMP)는 중립적 모델 아티팩트 명세서의 프로파일별 선행 객체이다. 이 프로파일은 재사용 가능한 vLLM 및 SGLang 어댑터와 사용자 정의 \texttt{EngineAdapter} 경계를 포함한다. 이 명칭은 호환성과 통합 증거를 기술할 뿐 DARI 커널 객체가 아니며, 프로파일 통합으로 C3--C6의 상태가 구현됨으로 바뀌지는 않는다.
+이 참조 프로파일에서 Patty Code Harness는 응용 역할을, 기존 Relay는 거버넌스 릴레이 역할을, Patty Inference Agent(PIA)는 추론 피어 역할을 맡는다. Patty Model Package(PMP)는 중립적 모델 아티팩트 명세서의 프로파일별 선행 객체이다. 이 프로파일은 재사용 가능한 vLLM 및 SGLang 어댑터와 사용자 정의 \texttt{EngineAdapter} 경계를 포함한다. 이 명칭은 호환성과 통합 증거를 기술할 뿐 DARI 커널 객체가 아니다. C3--C6는 참조 구현에서 독립적으로 구현·검증되었으며, 프로파일 통합 여부와 무관하다.
 
 \section{평가 질문과 기준선}
 

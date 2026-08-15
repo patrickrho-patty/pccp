@@ -1,9 +1,9 @@
 claim_id	claim	status	evidence
-C1	Deterministic framing and canonical CBOR	implemented	internal/dari tests
-C2	TLS/TCP and QUIC bindings	implemented	internal/dari transport tests
-C3	Transcript-bound peer authentication	implementation-required	internal/relay/peer_authenticator_test.go
-C4	Canonical signed authorization scope	implementation-required	internal/dari/authorization_test.go
-C5	Delegated authorization attenuation	implementation-required	internal/dari/delegation_test.go
-C6	Deterministic final receipt	implementation-required	internal/dari/receipt_test.go
-C7	Browser binding	extension-profile	dari.web/1 vectors
-C8	Cross-domain federation	extension-profile	dari.federation/1 vectors
+C1	Deterministic framing and canonical CBOR	implemented	internal/dari tests + conformance runner F.14-1
+C2	TLS/TCP and QUIC bindings	implemented	internal/dari transport tests + WT carrier (webbinding)
+C3	Transcript-bound peer authentication	implemented	internal/relay/peer_authenticator_test.go + connector proof.go (nested) + live e2e
+C4	Canonical signed authorization scope	implemented	internal/dari/authorization_test.go + grant verify on GovernInference + live e2e
+C5	Delegated authorization attenuation	implemented	internal/dari/authorization_test.go (13-vector matrix) + conformance F.14-4
+C6	Deterministic final receipt	implemented	internal/dari/effects_evidence_test.go + live F.9 chain root (internal/relay/close_test.go)
+C7	Browser binding	extension-profile	dari.web/1 vectors (internal/webbinding) — deployment evidence pending, manifest DEGRADED
+C8	Cross-domain federation	extension-profile	dari.federation/1 vectors (internal/darifederation incl. quarantine) — partner interconnect pending, manifest DEGRADED

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/patrickrho-patty/pccp/internal/keys"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
@@ -23,27 +24,27 @@ type Service struct {
 
 // New creates a new provenance service.
 func New(db *gorm.DB, relayID string) (*Service, error) {
-	_, priv, err := ed25519.GenerateKey(nil)
+	priv, err := keys.LoadOrCreate(db, "provenance-receipts")
 	if err != nil {
-		return nil, fmt.Errorf("provenance: generate signing key: %w", err)
+		return nil, fmt.Errorf("provenance: load signing key: %w", err)
 	}
 	return &Service{db: db, signingKey: priv, relayID: relayID}, nil
 }
 
 // RecordAction creates a signed ActionEnvelope for a governed action.
 type RecordActionRequest struct {
-	OrganizationID string      `json:"organization_i_d"`
-	SessionID      string      `json:"session_i_d"`
-	ExchangeID     string      `json:"exchange_i_d"`
-	UserID         string      `json:"user_i_d"`
-	HarnessID      string      `json:"harness_i_d"`
-	ModelPackageID string      `json:"model_package_i_d"`
-	EndpointID     string      `json:"endpoint_i_d"`
-	ProjectID      string      `json:"project_i_d"`
-	RepositoryID   string      `json:"repository_i_d"`
+	OrganizationID string      `json:"organization_id"`
+	SessionID      string      `json:"session_id"`
+	ExchangeID     string      `json:"exchange_id"`
+	UserID         string      `json:"user_id"`
+	HarnessID      string      `json:"harness_id"`
+	ModelPackageID string      `json:"model_package_id"`
+	EndpointID     string      `json:"endpoint_id"`
+	ProjectID      string      `json:"project_id"`
+	RepositoryID   string      `json:"repository_id"`
 	Branch         string      `json:"branch"`
-	PolicyEpochID  string      `json:"policy_epoch_i_d"`
-	LeaseID        string      `json:"lease_i_d"`
+	PolicyEpochID  string      `json:"policy_epoch_id"`
+	LeaseID        string      `json:"lease_id"`
 	ActionType     string      `json:"action_type"`
 	ActionPayload  interface{} `json:"action_payload"`
 	VerdictResult  string      `json:"verdict_result"`
@@ -121,16 +122,16 @@ func (s *Service) RecordAction(req RecordActionRequest) (*models.ActionEnvelope,
 
 // CreateChangeSet records a code patch with full provenance lineage.
 type CreateChangeSetRequest struct {
-	OrganizationID   string `json:"organization_i_d"`
-	SessionID        string `json:"session_i_d"`
-	ExchangeID       string `json:"exchange_i_d"`
-	RepositoryID     string `json:"repository_i_d"`
+	OrganizationID   string `json:"organization_id"`
+	SessionID        string `json:"session_id"`
+	ExchangeID       string `json:"exchange_id"`
+	RepositoryID     string `json:"repository_id"`
 	Branch           string `json:"branch"`
 	BaselineID       string
-	UserID           string   `json:"user_i_d"`
-	HarnessID        string   `json:"harness_i_d"`
-	ModelPackageID   string   `json:"model_package_i_d"`
-	EndpointID       string   `json:"endpoint_i_d"`
+	UserID           string   `json:"user_id"`
+	HarnessID        string   `json:"harness_id"`
+	ModelPackageID   string   `json:"model_package_id"`
+	EndpointID       string   `json:"endpoint_id"`
 	FilesChanged     []string `json:"files_changed"`
 	DiffSummary      string   `json:"diff_summary"`
 	LinesAdded       int      `json:"lines_added"`
@@ -173,9 +174,9 @@ func (s *Service) CreateChangeSet(req CreateChangeSetRequest) (*models.ChangeSet
 
 // CreateProvenanceSpan maps a code region to its origin (PRD §19, Appendix B.1).
 type CreateSpanRequest struct {
-	OrganizationID   string   `json:"organization_i_d"`
-	RepositoryID     string   `json:"repository_i_d"`
-	ChangeSetID      string   `json:"change_set_i_d"`
+	OrganizationID   string   `json:"organization_id"`
+	RepositoryID     string   `json:"repository_id"`
+	ChangeSetID      string   `json:"change_set_id"`
 	FilePath         string   `json:"file_path"`
 	CommitSHA        string   `json:"commit_s_h_a"`
 	SymbolLang       string   `json:"symbol_lang"`
@@ -184,11 +185,11 @@ type CreateSpanRequest struct {
 	EndLine          int      `json:"end_line"`
 	AttributionState string   `json:"attribution_state"`
 	Confidence       float64  `json:"confidence"`
-	SessionID        string   `json:"session_i_d"`
-	UserID           string   `json:"user_i_d"`
-	HarnessID        string   `json:"harness_i_d"`
-	ModelPackageID   string   `json:"model_package_i_d"`
-	EndpointID       string   `json:"endpoint_i_d"`
+	SessionID        string   `json:"session_id"`
+	UserID           string   `json:"user_id"`
+	HarnessID        string   `json:"harness_id"`
+	ModelPackageID   string   `json:"model_package_id"`
+	EndpointID       string   `json:"endpoint_id"`
 	ContextRefs      []string `json:"context_refs"`
 	ParentSpanRefs   []string `json:"parent_span_refs"`
 }
@@ -250,18 +251,18 @@ func (s *Service) BindCommit(orgID, repoID, commitSHA, changeSetID, sessionID, b
 
 // IssueEvidenceReceipt creates a signed evidence receipt for a completed exchange (DARI §34).
 type IssueReceiptRequest struct {
-	OrganizationID string `json:"organization_i_d"`
-	ExchangeID     string `json:"exchange_i_d"`
-	SessionID      string `json:"session_i_d"`
+	OrganizationID string `json:"organization_id"`
+	ExchangeID     string `json:"exchange_id"`
+	SessionID      string `json:"session_id"`
 	FinalState     string `json:"final_state"`
 	FirstEventSeq  uint64 `json:"first_event_seq"`
 	LastEventSeq   uint64 `json:"last_event_seq"`
 	ChainRoot      string `json:"chain_root"`
 	ProvenanceRoot string `json:"provenance_root"`
-	PolicyEpochID  string `json:"policy_epoch_i_d"`
+	PolicyEpochID  string `json:"policy_epoch_id"`
 	LeaseDigest    string `json:"lease_digest"`
-	ModelPackageID string `json:"model_package_i_d"`
-	EndpointID     string `json:"endpoint_i_d"`
+	ModelPackageID string `json:"model_package_id"`
+	EndpointID     string `json:"endpoint_id"`
 }
 
 // IssueEvidenceReceipt creates and signs an evidence receipt.
@@ -493,4 +494,10 @@ func (s *Service) computeSpanDigest(span *models.ProvenanceSpan) string {
 		span.StartLine, span.EndLine, span.AttributionState, span.SessionID)
 	h := sha256.Sum256([]byte(data))
 	return "sha256:" + hex.EncodeToString(h[:])
+}
+
+// SigningPublicKey returns the receipt signer's public half (pushed
+// to connectors in AUTH_ACK so they verify receipts locally).
+func (s *Service) SigningPublicKey() ed25519.PublicKey {
+	return s.signingKey.Public().(ed25519.PublicKey)
 }

@@ -48,7 +48,7 @@ export default function Login() {
     if (samlResponse) {
       api.ssoSAMLCallback(samlResponse, params.get('RelayState') || '')
         .then((resp: any) => {
-          setSsoNotice(`SAML 어설션 확인됨 (${resp?.email || resp?.user_i_d || 'unknown'}). 단, 콘솔 세션 발급 연결은 아직 준비 중입니다 (§8.2) — 이메일/비밀번호로 로그인하세요.`)
+          setSsoNotice(`SAML 어설션 확인됨 (${resp?.email || resp?.user_id || 'unknown'}). 단, 콘솔 세션 발급 연결은 아직 준비 중입니다 (§8.2) — 이메일/비밀번호로 로그인하세요.`)
         })
         .catch(err => setSsoError('SAML 콜백 실패: ' + err.message))
         .finally(cleanup)

@@ -24,8 +24,8 @@ func New(db *gorm.DB) *Service {
 
 // CreateBaseline records an immutable task baseline at session start (PRD §18.3).
 type BaselineRequest struct {
-	OrganizationID string `json:"organization_i_d"`
-	RepositoryID   string `json:"repository_i_d"`
+	OrganizationID string `json:"organization_id"`
+	RepositoryID   string `json:"repository_id"`
 	Branch         string `json:"branch"`
 	CommitSHA      string `json:"commit_s_h_a"`
 	CommitMessage  string `json:"commit_message"`
@@ -33,7 +33,7 @@ type BaselineRequest struct {
 	AuthorEmail    string `json:"author_email"`
 	CommittedAt    string `json:"committed_at"`
 	WorktreeStatus string `json:"worktree_status"` // git status output
-	SessionID      string `json:"session_i_d"`
+	SessionID      string `json:"session_id"`
 	SubmodulesJSON string `json:"submodules_j_s_o_n"`
 	DependencyLock string `json:"dependency_lock"` // package-lock.json/go.sum hashes
 }
@@ -139,11 +139,11 @@ func (s *Service) IsEditAllowed(repoID, branchName string) (bool, string, error)
 
 // RecordCommitBinding links a git commit to a change set (PRD §18.6).
 type CommitBindingRequest struct {
-	OrganizationID string `json:"organization_i_d"`
-	RepositoryID   string `json:"repository_i_d"`
+	OrganizationID string `json:"organization_id"`
+	RepositoryID   string `json:"repository_id"`
 	CommitSHA      string `json:"commit_s_h_a"`
-	ChangeSetID    string `json:"change_set_i_d"`
-	SessionID      string `json:"session_i_d"`
+	ChangeSetID    string `json:"change_set_id"`
+	SessionID      string `json:"session_id"`
 	Branch         string `json:"branch"`
 }
 
@@ -186,8 +186,8 @@ const (
 
 // RegisterRepository registers a new repository under a project.
 type RegisterRepoRequest struct {
-	OrganizationID string  `json:"organization_i_d"`
-	ProjectID      string  `json:"project_i_d"`
+	OrganizationID string  `json:"organization_id"`
+	ProjectID      string  `json:"project_id"`
 	Name           string  `json:"name"`
 	FullName       string  `json:"full_name"`
 	CloneURL       string  `json:"clone_u_r_l"`

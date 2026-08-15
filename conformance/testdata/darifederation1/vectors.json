@@ -1,0 +1,14 @@
+{
+  "profile": "dari.federation/1",
+  "comment": "Federation conformance vectors. Runtime execution lives in internal/darifederation (Go): TestBilateralValidation, TestPolicyIntersectionNarrowerWins, TestResidencyEnforcement, TestCrossDomainReceiptVerification, TestStaleBundle (federation_test.go) + rollback/fork vectors in the black-box runner; TestQuarantineBlocksBundleAccept pins the operator control.",
+  "domains": {
+    "trust_bundle": "DARI-FEDERATION-BUNDLE-v1\\u0000",
+    "bilateral_validation": "DARI-FEDERATION-BILATERAL-v1\\u0000"
+  },
+  "controls": [
+    "quarantine",
+    "high_water_monotonicity",
+    "stale_bundle_rejection",
+    "baseline_provisioning"
+  ]
+}

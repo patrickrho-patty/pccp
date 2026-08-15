@@ -175,6 +175,11 @@ func (pl *DARIListener) handleConn(ctx context.Context, netConn net.Conn) {
 			"max_exchanges":   1000,
 			"max_payload_len": uint64(dari.MaxPayloadLen),
 		},
+		// D5: deployment-wide harness floor (operator-set during
+		// coordinated upgrades). A connector below the floor refuses
+		// to continue the handshake; per-org floors additionally
+		// refuse at session setup.
+		MinHarnessVersion: os.Getenv("PCCP_MIN_HARNESS_VERSION"),
 	}
 
 	if err := conn.SendHelloAck(ack); err != nil {
@@ -319,6 +324,13 @@ func (pl *DARIListener) RevokeCredential(serial string, epoch uint64) {
 	pl.mu.Unlock()
 
 	for _, conn := range toClose {
+		// Graceful revocation notice first (the connector's reader can
+		// surface WHY the transport died + discard its lease), then the
+		// hard close.
+		if tc, ok := conn.(*dari.TransportConn); ok {
+			payload, _ := json.Marshal(map[string]string{"reason": "credential_revoked"})
+			_ = tc.SendMessage(dari.MsgLeaseRevoke, nil, payload, 0, 1)
+		}
 		_ = conn.Close()
 	}
 }
@@ -360,7 +372,7 @@ func (pl *DARIListener) handleApplicationMessages(ctx context.Context, conn *dar
 				pl.setSession(connID, so.SessionID)
 			}
 			log.Printf("relay: dari SESSION_OPEN from %s session=%s", connID, so.SessionID)
-			pl.setupSession(ctx, conn, connID, so)
+			pl.setupSession(ctx, conn, connID, so, hello.ImplementationVersion)
 
 		case record.Kind == dari.KindMessage && msgType == dari.MsgAIOpen:
 			log.Printf("relay: dari AI_OPEN from %s, governing", connID)
@@ -503,7 +515,7 @@ func (pl *DARIListener) DeliverSovereignAdvisory(body []byte) int {
 	pl.mu.Unlock()
 	sent := 0
 	for _, conn := range conns {
-		if err := conn.SendMessage(dari.MsgBroadcast, nil, body, 0, 2); err == nil {
+		if err := conn.SendMessage(dari.MsgSovereignAdvisory, nil, body, 0, 2); err == nil {
 			sent++
 		}
 	}
@@ -582,6 +594,16 @@ func (pl *DARIListener) governAIOpen(ctx context.Context, conn *dari.TransportCo
 		"output_tokens": outTok,
 		"total_tokens":  inTok + outTok,
 	})
+	// F.6: push the signed Authorization Decision (RELAY_VERDICT)
+	// before completion — the connector verifies it under the AUTH_ACK
+	// policy issuer key and refuses the stream on a DENY/expired
+	// decision (decision-before-consumption).
+	if len(resp.DecisionCOSE) > 0 {
+		if err := conn.SendMessage(dari.MsgRelayVerdict, nil, resp.DecisionCOSE, reqRecord.LaneID, reqRecord.LaneSequence+1); err != nil {
+			log.Printf("relay: verdict push to %s failed: %v", connID, err)
+		}
+	}
+
 	// B3: push the evidence receipt BEFORE AI_COMPLETE — the
 	// connector's stream reader terminates on AI_COMPLETE, so the
 	// receipt must already be in flight for the ack to happen.

@@ -86,6 +86,7 @@ const (
 	// MsgActionEnvelope carries a connector-built action record for
 	// the audit stream (cross-repo registry; see relay/paper_wire.go).
 	MsgActionEnvelope MessageType = 0x0703
+	MsgChangeSetNack  MessageType = 0x0704
 )
 
 // Chat / presence (0x0800–0x08FF)
@@ -108,6 +109,7 @@ const (
 	// MsgAdminCommandResult is the connector's execution-evidence
 	// reply to an admin directive (cross-repo registry).
 	MsgAdminCommandResult MessageType = 0x0B02
+	MsgSovereignAdvisory  MessageType = 0x0B03
 )
 
 // Session-governance extensions (0x0D00–0x0DFF) — the extension
@@ -237,6 +239,10 @@ func (mt MessageType) String() string {
 		return "ACTION_ENVELOPE"
 	case MsgAdminCommandResult:
 		return "ADMIN_COMMAND_RESULT"
+	case MsgSovereignAdvisory:
+		return "SOVEREIGN_ADVISORY"
+	case MsgChangeSetNack:
+		return "CHANGESET_NACK"
 	case MsgPolicyEpochPush:
 		return "POLICY_EPOCH"
 	case MsgDLPRulePack:

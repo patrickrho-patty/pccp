@@ -37,6 +37,7 @@ const FILTER_CONFIG: FilterConfig = {
 
 export default function Sessions() {
   const [sessions, setSessions] = useState<any[]>([])
+  const [totalCount, setTotalCount] = useState(0)
   const [users, setUsers] = useState<any[]>([])
   const [projects, setProjects] = useState<any[]>([])
   const [repos, setRepos] = useState<any[]>([])
@@ -57,7 +58,12 @@ export default function Sessions() {
   const [form, setForm] = useState({ user_id: '', project_id: '', repository_id: '', branch: '', title: '', task_purpose: '', model_class: 'patty-code-standard' })
 
   const load = () => {
-    api.listSessions().then(data => setSessions(Array.isArray(data) ? data : []))
+    // Server-side pagination (web/01 B): fetch the active page + the
+    // authoritative total from the API instead of the full table.
+    api.listSessionsPage(page).then(res => {
+      setSessions(Array.isArray(res?.data) ? res.data : [])
+      setTotalCount(typeof res?.total === 'number' ? res.total : (res?.data?.length ?? 0))
+    }).catch(() => {})
     api.listUsers().then(data => setUsers(Array.isArray(data) ? data : []))
     api.listProjects().then(data => setProjects(Array.isArray(data) ? data : []))
     api.listRepositories().then(data => setRepos(Array.isArray(data) ? data : []))
@@ -69,10 +75,12 @@ export default function Sessions() {
     // Auto-refresh for live updates
     const interval = setInterval(load, 10000)
     return () => clearInterval(interval)
-  }, [])
+  }, [page])
 
   const filtered = useFilteredData(sessions, filters, FILTER_CONFIG)
-  const paged = filtered.slice((page - 1) * pageSize, page * pageSize)
+  // Server-side pagination (web/01 B): `sessions` already IS the
+  // server's page slice; local filters refine within it.
+  const paged = filtered
   const { selectedIndex } = useRowNav(paged.length, (i) => toggleExpand(paged[i]))
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -277,7 +285,7 @@ export default function Sessions() {
           </table>
         )}
       </div>
-      <Pagination total={filtered.length} page={page} pageSize={pageSize} onPageChange={setPage} />
+      <Pagination total={Math.max(totalCount, filtered.length)} page={page} pageSize={pageSize} onPageChange={setPage} />
 
       {/* Session Inspector Modal */}
       {inspectorSession && (

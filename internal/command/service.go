@@ -39,8 +39,8 @@ type CommandRule struct {
 
 // CommandRequest is a parsed command to be evaluated.
 type CommandRequest struct {
-	OrganizationID  string   `json:"organization_i_d"`
-	SessionID       string   `json:"session_i_d"`
+	OrganizationID  string   `json:"organization_id"`
+	SessionID       string   `json:"session_id"`
 	Executable      string   `json:"executable"`
 	Arguments       []string `json:"arguments"`
 	WorkingDir      string   `json:"working_dir"`

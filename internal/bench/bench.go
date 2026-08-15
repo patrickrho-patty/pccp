@@ -229,6 +229,20 @@ func runDARIArm(ctx context.Context, turns int, sched Schedule) (Result, error) 
 	}
 	cred, _ := hex.DecodeString(credHex)
 
+	// Explicit onboarding (audit finding: the fail-closed serving
+	// hardening broke the bench unless PCCP_DEV_BOOTSTRAP was set).
+	// Register the serving chain + policy epoch through the real
+	// service APIs — the same calls an operator makes, no env escape.
+	pkg, err := svc.RegisterModelServing("org-bench", "bench-model")
+	if err != nil {
+		return res, fmt.Errorf("bench onboarding: %w", err)
+	}
+	if _, err := svc.Policy().GetActiveEpoch("org-bench"); err != nil {
+		if _, cerr := svc.Policy().CreatePolicyEpoch("org-bench", []string{pkg.PackageID}, "immediate"); cerr != nil {
+			return res, fmt.Errorf("bench epoch: %w", cerr)
+		}
+	}
+
 	var ttfts, itls, totals, colds, warms []float64
 	var wireBytes int64
 	chunks := 0
