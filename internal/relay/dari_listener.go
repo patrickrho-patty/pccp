@@ -503,7 +503,7 @@ func (pl *DARIListener) DeliverSovereignAdvisory(body []byte) int {
 	pl.mu.Unlock()
 	sent := 0
 	for _, conn := range conns {
-		if err := conn.SendMessage(dari.MsgBroadcast, nil, body, 0, 2); err == nil {
+		if err := conn.SendMessage(dari.MsgSovereignAdvisory, nil, body, 0, 2); err == nil {
 			sent++
 		}
 	}

@@ -42,3 +42,6 @@ docs/plans/DARI/arxiv/*.tar.gz
 docs/plans/DARI/arxiv/Makefile
 tmp-relay
 pccp-relay
+
+# Nested git worktrees
+.worktrees/

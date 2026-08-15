@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -43,6 +44,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/inference", s.handleInference)
 	mux.HandleFunc("/v1/provenance/changesets", s.handleListChangeSets)
 	mux.HandleFunc("/v1/harnesses/revoke", s.handleRevokeHarness)
+	mux.HandleFunc("/v1/broadcasts", s.handleBroadcast)
+	mux.HandleFunc("/v1/admin/directives", s.handleAdminDirective)
+	mux.HandleFunc("/v1/sovereign/advisories", s.handleSovereignAdvisory)
 	// dari.web/1 constrained WebSocket fallback carrier (Task 13). The
 	// governance handler routes AI_OPEN envelopes through the SAME
 	// GovernInference path as the native transport.
@@ -280,4 +284,82 @@ func splitPath(path string) []string {
 		parts = append(parts, current)
 	}
 	return parts
+}
+
+// handleBroadcast pushes a governed broadcast to the org's online
+// DARI sessions (E2 production wiring: the comms surfaces are no
+// longer relay-side dead code).
+func (s *Server) handleBroadcast(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var req struct {
+		OrgID    string `json:"org_id"`
+		Severity string `json:"severity"`
+		Body     string `json:"body"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.OrgID == "" || req.Body == "" {
+		writeError(w, http.StatusBadRequest, "org_id and body are required")
+		return
+	}
+	if req.Severity == "" {
+		req.Severity = "info"
+	}
+	body := BuildBroadcastMessage("", "pccp-policy", req.Body, req.Severity, time.Now())
+	sent := s.svc.BroadcastToOrg(req.OrgID, body)
+	writeJSON(w, http.StatusOK, map[string]any{"delivered": sent})
+}
+
+// handleAdminDirective signs + delivers an admin directive to the
+// target harness (E5). Signature verification happens connector-side
+// under the AUTH_ACK policy issuer key.
+func (s *Server) handleAdminDirective(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var req struct {
+		OrgID       string `json:"org_id"`
+		Target      string `json:"target"`
+		CommandType string `json:"command_type"`
+		Reason      string `json:"reason"`
+		IssuedBy    string `json:"issued_by"`
+		PayloadB64  string `json:"payload_b64"`
+		NotAfterMs  int64  `json:"not_after_ms"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Target == "" || req.CommandType == "" {
+		writeError(w, http.StatusBadRequest, "target and command_type are required")
+		return
+	}
+	payload, err := base64.StdEncoding.DecodeString(req.PayloadB64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "payload_b64 is not valid base64")
+		return
+	}
+	body, err := s.svc.BuildAdminDirective(req.OrgID, req.CommandType, req.Target, req.Reason, req.IssuedBy, payload, req.NotAfterMs, time.Now())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing failed")
+		return
+	}
+	sent := s.svc.DeliverDirectiveToHarness(req.Target, body)
+	writeJSON(w, http.StatusOK, map[string]any{"delivered": sent})
+}
+
+// handleSovereignAdvisory pushes an offline advisory to every
+// connected session (E3 air-gap mode).
+func (s *Server) handleSovereignAdvisory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var req struct {
+		Body string `json:"body"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Body == "" {
+		writeError(w, http.StatusBadRequest, "body is required")
+		return
+	}
+	sent := s.svc.DeliverSovereignAdvisoryToAll([]byte(req.Body))
+	writeJSON(w, http.StatusOK, map[string]any{"delivered": sent})
 }

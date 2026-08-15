@@ -57,6 +57,7 @@ code,name,family,description
 0x0B00,BROADCAST,broadcast,Broadcast message
 0x0B01,ADMIN_DIRECTIVE,broadcast,Administrative directive
 0x0B02,ADMIN_COMMAND_RESULT,broadcast,Connector admin-command execution evidence
+0x0B03,SOVEREIGN_ADVISORY,comms,Relay-pushed offline sovereign advisory (E3 air-gap)
 0x0C00,TELEMETRY,telemetry,Telemetry event
 0x0C01,METER_USAGE,telemetry,Metering event
 0x0D00,MODEL_CATALOG_REQUEST,models,Model catalog request
