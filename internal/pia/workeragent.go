@@ -31,6 +31,10 @@ type WorkerAgentConfig struct {
 	Zone           string
 	Heartbeat      time.Duration
 	ReconnectDelay time.Duration
+	// KVJournal (optional) is the worker's KV event broker (spec §13.11):
+	// records append locally and are published to the scheduler, which
+	// dedups by (worker, seq).
+	KVJournal *KVJournal
 }
 
 // WorkerAgent is the PIA worker identity (DARI scheduler §4): it connects to
@@ -120,6 +124,7 @@ func (a *WorkerAgent) runConnection(ctx context.Context) error {
 				a.setOutcome(hb.Outcome, hb.Reason)
 				return fmt.Errorf("heartbeat denied: %s", hb.Reason)
 			}
+			a.publishKVJournal(conn)
 		}
 	}
 }
@@ -315,4 +320,39 @@ func buildAuthProof(cred *dari.PeerCredential, subjectPriv ed25519.PrivateKey, h
 		ChallengeID:        challenge.ChallengeID,
 		RevocationEvidence: dari.EncodeRevocationEpoch(epoch),
 	}, nil
+}
+
+// publishKVJournal sends the journal's newest records to the scheduler
+// as a KV_JOURNAL batch (spec §13.11). A nil journal is a no-op.
+func (a *WorkerAgent) publishKVJournal(conn *dari.TransportConn) {
+	if a.cfg.KVJournal == nil {
+		return
+	}
+	recs := a.cfg.KVJournal.Replay()
+	if len(recs) == 0 {
+		return
+	}
+	// Batch everything the scheduler has not acknowledged yet; the
+	// scheduler dedups by (worker, seq), so replays are idempotent.
+	var blocks []scheduler.KVBlock
+	var lastSeq uint64
+	for _, r := range recs {
+		lastSeq = r.Seq
+		blocks = append(blocks, scheduler.KVBlock{
+			Namespace: a.cfg.SignedConfig.Config.TenantID,
+			Hash:      r.Key,
+			Tokens:    r.Tokens,
+		})
+	}
+	payload, err := json.Marshal(map[string]interface{}{
+		"seq":    lastSeq,
+		"blocks": blocks,
+	})
+	if err != nil {
+		log.Printf("pia worker: marshal KV journal: %v", err)
+		return
+	}
+	if err := conn.SendMessage(dari.MsgKVJournal, nil, payload, 0, 1); err != nil {
+		log.Printf("pia worker: publish KV journal: %v", err)
+	}
 }

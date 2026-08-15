@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/scheduler/queue"
 )
 
 // DARIListener accepts worker DARI connections and drives the registration
@@ -162,6 +163,63 @@ func (l *DARIListener) handleConn(netConn net.Conn) {
 			}
 			l.emitOutcome(result, reg.Card.WorkerID)
 			l.sendAck(conn, dari.MsgEndpointRegister, result, reg.Card.WorkerID)
+
+		case record.Kind == dari.KindMessage && msgType == dari.MsgAIOpen:
+			// DARI ingress: a governed AI request from the relay enters
+			// the scheduler's queue/dispatch path (spec §13.1: one
+			// transport end-to-end). The class claim arrives as a
+			// signed traffic envelope in the payload.
+			var aiReq struct {
+				Model     string          `json:"model"`
+				Messages  json.RawMessage `json:"messages"`
+				MaxTokens int             `json:"max_tokens"`
+				Tenant    string          `json:"tenant"`
+				Class     string          `json:"class"`
+			}
+			if err := json.Unmarshal(record.Payload, &aiReq); err != nil || aiReq.Model == "" {
+				log.Printf("scheduler: bad AI_OPEN from %s", cred.SubjectPeerID)
+				continue
+			}
+			class := queue.Class(aiReq.Class)
+			if class == "" {
+				class = queue.ClassBatch
+			}
+			tenant := aiReq.Tenant
+			if tenant == "" {
+				tenant = cred.SubjectPeerID
+			}
+			qr := queue.Request{
+				ID:                   dari.GenerateID("dari-ai"),
+				Tenant:               tenant,
+				Class:                class,
+				InputTokens:          len(aiReq.Messages) / 4,
+				ExpectedOutputTokens: aiReq.MaxTokens,
+				MaxOutputTokens:      aiReq.MaxTokens,
+				ArrivedAt:            time.Now(),
+				TTL:                  time.Minute,
+				Payload:              RequestPayload{Model: aiReq.Model, Messages: aiReq.Messages},
+			}
+			if aiReq.MaxTokens <= 0 {
+				qr.MaxOutputTokens = 1024
+				qr.ExpectedOutputTokens = 256
+			}
+			ch, err := l.svc.Serving.Dispatcher.Submit(qr)
+			if err != nil {
+				errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
+				conn.SendMessage(dari.MsgClose, nil, errPayload, record.LaneID, record.LaneSequence+1)
+				continue
+			}
+			go func() {
+				select {
+				case res := <-ch:
+					completePayload, _ := json.Marshal(res)
+					conn.SendMessage(dari.MsgAIComplete, nil, completePayload, record.LaneID, record.LaneSequence+1)
+				case <-time.After(time.Minute):
+					l.svc.Serving.Dispatcher.Cancel(qr.ID)
+					errPayload, _ := json.Marshal(map[string]string{"error": "queued request expired"})
+					conn.SendMessage(dari.MsgAIComplete, nil, errPayload, record.LaneID, record.LaneSequence+1)
+				}
+			}()
 
 		case record.Kind == dari.KindMessage && msgType == dari.MsgKVJournal:
 			var journal struct {
