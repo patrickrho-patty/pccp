@@ -1,6 +1,7 @@
-import { ReactNode, useState, useEffect, useRef } from 'react'
+import { ReactNode, useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { CommandPalette } from './CommandPalette'
 
 type NavItem = {
   path: string
@@ -95,90 +96,83 @@ const navSections: NavSection[] = [
   },
 ]
 
-function GlobalSearch() {
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<any[]>([])
-  const [showResults, setShowResults] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
+// Collapsible sub-menus (00 A2) — sections expand/collapse with a
+// buttery height transition; the collapsed set persists per operator.
+const COLLAPSE_KEY = 'pccp_nav_collapsed'
 
-  // ⌘K / Ctrl+K focuses the global search (Plan A8 — command palette)
+function useCollapsedSections() {
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault()
-        inputRef.current?.focus()
-        inputRef.current?.select()
-      }
-      if (e.key === 'Escape') inputRef.current?.blur()
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [])
-
-  const search = async (q: string) => {
-    setQuery(q)
-    if (q.length < 2) { setResults([]); return }
-    const headers = { Authorization: `Bearer ${localStorage.getItem('pccp_token') || ''}` }
     try {
-      const [users, harnesses, sessions, models, repos] = await Promise.all([
-        fetch('/api/users', { headers }).then(r => r.json()).catch(() => []),
-        fetch('/api/harnesses', { headers }).then(r => r.json()).catch(() => []),
-        fetch('/api/sessions', { headers }).then(r => r.json()).catch(() => []),
-        fetch('/api/models', { headers }).then(r => r.json()).catch(() => []),
-        fetch('/api/repositories', { headers }).then(r => r.json()).catch(() => []),
-      ])
-      const ql = q.toLowerCase()
-      const matches: any[] = []
-      ;(Array.isArray(users) ? users : []).filter((u: any) =>
-        (u.name_ko || '').toLowerCase().includes(ql) || (u.email || '').toLowerCase().includes(ql)
-      ).slice(0, 3).forEach((u: any) => matches.push({ type: '사용자', label: u.name_ko || u.name, sub: u.email, path: `/users/${u.id}` }))
-      ;(Array.isArray(harnesses) ? harnesses : []).filter((h: any) =>
-        (h.harness_id || '').toLowerCase().includes(ql)
-      ).slice(0, 3).forEach((h: any) => matches.push({ type: '하네스', label: h.harness_id?.slice(0, 25), sub: h.status, path: `/harnesses/${h.id}` }))
-      ;(Array.isArray(sessions) ? sessions : []).filter((s: any) =>
-        (s.title || s.session_id || '').toLowerCase().includes(ql)
-      ).slice(0, 3).forEach((s: any) => matches.push({ type: '세션', label: s.title || '제목 없음', sub: s.session_id?.slice(0, 20), path: '/sessions' }))
-      ;(Array.isArray(models) ? models : []).filter((m: any) =>
-        (m.display_name || m.model_id || '').toLowerCase().includes(ql)
-      ).slice(0, 3).forEach((m: any) => matches.push({ type: '모델', label: m.display_name || m.model_id, sub: m.engine_type, path: '/models' }))
-      ;(Array.isArray(repos) ? repos : []).filter((r: any) =>
-        (r.name || '').toLowerCase().includes(ql)
-      ).slice(0, 3).forEach((r: any) => matches.push({ type: '저장소', label: r.name, sub: r.scm_provider, path: `/repositories/${r.id}` }))
-      setResults(matches)
-    } catch {}
+      const raw = localStorage.getItem(COLLAPSE_KEY)
+      setCollapsed(new Set(raw ? JSON.parse(raw) : []))
+    } catch { setCollapsed(new Set()) }
+  }, [])
+  const toggle = (key: string) => {
+    setCollapsed(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...next]))
+      return next
+    })
   }
+  return { collapsed, toggle }
+}
 
-  return (
-    <div className="relative max-w-2xl mx-auto">
-      <input
-        ref={inputRef}
-        className="w-full px-3 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 focus:bg-white transition-colors"
-        placeholder="🔍 전역 검색 (⌘K) · Search users, harnesses, sessions..."
-        value={query}
-        onChange={e => search(e.target.value)}
-        onFocus={() => setShowResults(true)}
-        onBlur={() => setTimeout(() => setShowResults(false), 200)}
-      />
-      {showResults && results.length > 0 && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-30 max-h-80 overflow-y-auto">
-          {results.map((r, i) => (
-            <Link key={i} to={r.path} className="flex items-center gap-3 px-3 py-2 hover:bg-blue-50 border-b border-gray-50 last:border-0">
-              <span className="text-[10px] font-semibold text-gray-400 w-12">{r.type}</span>
-              <div className="flex-1">
-                <div className="text-sm font-medium">{r.label}</div>
-                {r.sub && <div className="text-xs text-gray-400">{r.sub}</div>}
-              </div>
-            </Link>
-          ))}
-        </div>
-      )}
-    </div>
-  )
+// Theme + density toggles (00 A9) — persisted; density compacts the
+// card/table rhythm for dense-data operators.
+function useThemePrefs() {
+  const [theme, setTheme] = useState<'light' | 'dark'>(() =>
+    (localStorage.getItem('pccp_theme') as 'light' | 'dark') || 'light')
+  const [density, setDensity] = useState<'comfortable' | 'compact'>(() =>
+    (localStorage.getItem('pccp_density') as 'comfortable' | 'compact') || 'comfortable')
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem('pccp_theme', theme)
+  }, [theme])
+  useEffect(() => {
+    document.documentElement.setAttribute('data-density', density)
+    localStorage.setItem('pccp_density', density)
+  }, [density])
+
+  return { theme, setTheme, density, setDensity }
 }
 
 export default function Layout({ children }: { children: ReactNode }) {
   const { logout } = useAuth()
   const location = useLocation()
+  const { collapsed, toggle } = useCollapsedSections()
+  const { theme, setTheme, density, setDensity } = useThemePrefs()
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+
+  // ⌘K / Ctrl+K toggles the command palette; "/" focuses search when
+  // not typing in an input (00 A8/A13).
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen(o => !o)
+        return
+      }
+      if (e.key === '/' && !(e.metaKey || e.ctrlKey)) {
+        const tag = (e.target as HTMLElement)?.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+        e.preventDefault()
+        setPaletteOpen(true)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  const sectionHasActive = (section: NavSection) =>
+    section.items.some(item =>
+      location.pathname === item.path ||
+      (item.path !== '/' && location.pathname.startsWith(item.path))
+    )
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -195,33 +189,44 @@ export default function Layout({ children }: { children: ReactNode }) {
           </div>
         </div>
 
-        {/* Nav sections */}
+        {/* Nav sections — collapsible sub-menus */}
         <nav className="flex-1 overflow-y-auto py-2 sidebar-scroll">
-          {navSections.map((section) => (
-            <div key={section.titleEn} className="mb-1">
-              <div className="px-4 py-1.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
-                {section.title}
+          {navSections.map((section) => {
+            const isCollapsed = collapsed.has(section.titleEn)
+            return (
+              <div key={section.titleEn} className="mb-0.5">
+                <button
+                  onClick={() => toggle(section.titleEn)}
+                  className={`w-full flex items-center justify-between px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+                    sectionHasActive(section) ? 'text-blue-300' : 'text-gray-500 hover:text-gray-300'
+                  }`}
+                >
+                  <span>{section.title}</span>
+                  <span className={`text-[8px] transition-transform duration-200 ${isCollapsed ? '' : 'rotate-90'}`}>▶</span>
+                </button>
+                <div className={`nav-submenu overflow-hidden ${isCollapsed ? 'max-h-0' : 'max-h-96'}`}>
+                  {section.items.map((item) => {
+                    const isActive = location.pathname === item.path ||
+                      (item.path !== '/' && location.pathname.startsWith(item.path))
+                    return (
+                      <Link
+                        key={item.path}
+                        to={item.path}
+                        className={`flex items-center gap-2.5 px-4 py-1.5 text-xs transition-colors ${
+                          isActive
+                            ? 'bg-blue-600/20 text-blue-300 border-l-2 border-blue-400'
+                            : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200 border-l-2 border-transparent'
+                        }`}
+                      >
+                        <span className="text-sm leading-none">{item.icon}</span>
+                        <span>{item.label}</span>
+                      </Link>
+                    )
+                  })}
+                </div>
               </div>
-              {section.items.map((item) => {
-                const isActive = location.pathname === item.path ||
-                  (item.path !== '/' && location.pathname.startsWith(item.path))
-                return (
-                  <Link
-                    key={item.path}
-                    to={item.path}
-                    className={`flex items-center gap-2.5 px-4 py-1.5 text-xs transition-colors ${
-                      isActive
-                        ? 'bg-blue-600/20 text-blue-300 border-l-2 border-blue-400'
-                        : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200 border-l-2 border-transparent'
-                    }`}
-                  >
-                    <span className="text-sm leading-none">{item.icon}</span>
-                    <span>{item.label}</span>
-                  </Link>
-                )
-              })}
-            </div>
-          ))}
+            )
+          })}
         </nav>
 
         {/* Footer */}
@@ -234,14 +239,40 @@ export default function Layout({ children }: { children: ReactNode }) {
 
       {/* Main content */}
       <main className="main-content flex-1 overflow-y-auto main-scroll">
-        {/* Global Search Bar */}
-        <div className="bg-white border-b border-gray-200 px-6 py-2 sticky top-0 z-20">
-          <GlobalSearch />
+        {/* Top bar: search + theme/density toggles */}
+        <div className="bg-white border-b border-gray-200 px-6 py-2 sticky top-0 z-20 flex items-center gap-3">
+          <input
+            ref={searchInputRef}
+            readOnly
+            onFocus={e => { e.currentTarget.blur(); setPaletteOpen(true) }}
+            onClick={() => setPaletteOpen(true)}
+            className="w-full max-w-2xl px-3 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg cursor-pointer hover:border-blue-300 transition-colors"
+            placeholder="🔍 검색 또는 페이지 이동 · Press ⌘K or /"
+          />
+          <div className="flex items-center gap-1 ml-auto">
+            <button
+              onClick={() => setDensity(density === 'compact' ? 'comfortable' : 'compact')}
+              title="밀도 전환 · Density"
+              className="text-xs px-2 py-1 rounded border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
+            >
+              {density === 'compact' ? '≡ 조밀' : '☰ 넓게'}
+            </button>
+            <button
+              onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+              title="테마 전환 · Theme"
+              className="text-xs px-2 py-1 rounded border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
+            >
+              {theme === 'light' ? '🌙 다크' : '☀️ 라이트'}
+            </button>
+          </div>
         </div>
-        <div className="p-6 max-w-[1600px] mx-auto">
+        {/* Page-enter motion (00 A3) — re-animates on route change */}
+        <div key={location.pathname} className="p-6 max-w-[1600px] mx-auto page-enter">
           {children}
         </div>
       </main>
+
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   )
 }

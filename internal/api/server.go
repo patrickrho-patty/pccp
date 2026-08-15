@@ -365,6 +365,10 @@ func (s *Server) setupRouter() {
 
 		// Dashboard
 		r.Get("/dashboard", s.handleDashboard)
+
+		// Unified search (00-cross-cutting A11) — one endpoint across
+		// entities for the command palette + cross-entity actions.
+		r.Get("/search", s.handleGlobalSearch)
 	})
 
 	// Serve the React frontend (static files with SPA fallback)
@@ -2966,6 +2970,116 @@ func (s *Server) handleSecurityCheck(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
 	result := s.security.CheckContext(orgID, req.Text)
 	writeJSON(w, http.StatusOK, result)
+}
+
+// handleGlobalSearch implements the unified search service (00
+// cross-cutting A11): one query fans out across users, harnesses,
+// projects, repositories, sessions, models, endpoints, business units,
+// and findings. Results carry a route path for the command palette and
+// a cross-entity action where one exists (e.g. start a 1:1 chat with a
+// user, view a harness's sessions).
+func (s *Server) handleGlobalSearch(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(q) < 2 {
+		writeJSON(w, http.StatusOK, []map[string]interface{}{})
+		return
+	}
+	like := "%" + q + "%"
+	const limit = 5
+	results := make([]map[string]interface{}, 0, 30)
+	add := func(typ, icon, id, label, sub, path string, action map[string]interface{}) {
+		if id == "" {
+			return
+		}
+		row := map[string]interface{}{"type": typ, "type_icon": icon, "id": id, "label": label, "sub": sub, "path": path}
+		if action != nil {
+			row["action"] = action
+		}
+		results = append(results, row)
+	}
+	scope := func(col string) string {
+		if orgID == "" {
+			return ""
+		}
+		return " AND " + col + " = '" + orgID + "'"
+	}
+
+	// Users → detail route + cross-actions (1:1 chat, sessions).
+	var users []models.User
+	s.db.Where("name LIKE ? OR name_ko LIKE ? OR email LIKE ?"+scope("organization_id"), like, like, like).
+		Order("created_at DESC").Limit(limit).Find(&users)
+	for _, u := range users {
+		add("user", "◉", u.ID, firstNonEmpty(u.NameKo, u.Name, u.Email), u.Email, "/users/"+u.ID,
+			map[string]interface{}{"type": "chat", "href": "/communications?user=" + u.ID})
+	}
+
+	var harnesses []models.Harness
+	s.db.Where("harness_id LIKE ? OR binary_version LIKE ?"+scope("organization_id"), like, like).
+		Order("created_at DESC").Limit(limit).Find(&harnesses)
+	for _, h := range harnesses {
+		add("harness", "⬡", h.ID, h.HarnessID, h.Status+" · v"+h.BinaryVersion, "/harnesses/"+h.ID, nil)
+	}
+
+	var projects []models.Project
+	s.db.Where("name LIKE ? OR name_ko LIKE ? OR slug LIKE ?"+scope("organization_id"), like, like, like).
+		Order("created_at DESC").Limit(limit).Find(&projects)
+	for _, p := range projects {
+		add("project", "▣", p.ID, firstNonEmpty(p.NameKo, p.Name), p.Slug, "/projects/"+p.ID, nil)
+	}
+
+	var repos []models.Repository
+	s.db.Where("name LIKE ? OR clone_url LIKE ? OR scm_provider LIKE ?"+scope("organization_id"), like, like, like).
+		Order("created_at DESC").Limit(limit).Find(&repos)
+	for _, rp := range repos {
+		add("repository", "▤", rp.ID, rp.Name, rp.CloneURL, "/repositories/"+rp.ID, nil)
+	}
+
+	var sessions []models.Session
+	s.db.Where("title LIKE ? OR session_id LIKE ?"+scope("organization_id"), like, like).
+		Order("created_at DESC").Limit(limit).Find(&sessions)
+	for _, sess := range sessions {
+		add("session", "◐", sess.ID, firstNonEmpty(sess.Title, sess.SessionID), sess.Status, "/sessions/"+sess.SessionID, nil)
+	}
+
+	var pkgs []models.ModelPackage
+	s.db.Where("name LIKE ? OR model_id LIKE ?"+scope("organization_id"), like, like).
+		Order("created_at DESC").Limit(limit).Find(&pkgs)
+	for _, m := range pkgs {
+		add("model", "◆", m.ID, firstNonEmpty(m.Name, m.ModelID), m.Family, "/models/"+m.ID, nil)
+	}
+
+	var eps []models.InferenceEndpoint
+	s.db.Where("endpoint_id LIKE ? OR model_id LIKE ?"+scope("organization_id"), like, like).
+		Order("created_at DESC").Limit(limit).Find(&eps)
+	for _, e := range eps {
+		add("endpoint", "◇", e.ID, e.EndpointID, e.Status, "/endpoints/"+e.ID, nil)
+	}
+
+	var bus []models.BusinessUnit
+	s.db.Where("name LIKE ? OR name_ko LIKE ?"+scope("organization_id"), like, like).
+		Order("created_at DESC").Limit(limit).Find(&bus)
+	for _, b := range bus {
+		add("business_unit", "▦", b.ID, firstNonEmpty(b.NameKo, b.Name), b.Type, "/users", nil)
+	}
+
+	var findings []models.SecurityFinding
+	s.db.Where("title LIKE ? OR title_ko LIKE ? OR finding_type LIKE ?"+scope("organization_id"), like, like, like).
+		Order("occurred_at DESC").Limit(limit).Find(&findings)
+	for _, f := range findings {
+		add("finding", "🛡", f.ID, firstNonEmpty(f.TitleKo, f.Title), f.FindingType+" · "+f.Severity, "/findings/"+f.ID, nil)
+	}
+
+	writeJSON(w, http.StatusOK, results)
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {

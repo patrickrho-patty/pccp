@@ -21,6 +21,10 @@ import ProjectDetail from './pages/ProjectDetail'
 import Repositories from './pages/Repositories'
 import RepositoryDetail from './pages/RepositoryDetail'
 import Sessions from './pages/Sessions'
+import SessionDetail from './pages/SessionDetail'
+import ModelDetail from './pages/ModelDetail'
+import EndpointDetail from './pages/EndpointDetail'
+import FindingDetail from './pages/FindingDetail'
 import Policy from './pages/Policy'
 import Provenance from './pages/Provenance'
 import Audit from './pages/Audit'
@@ -104,7 +108,11 @@ function AppContent() {
           <Route path="/repositories/:id" element={<RepositoryDetail />} />
           <Route path="/live" element={<LiveView />} />
           <Route path="/sessions" element={<Sessions />} />
+          <Route path="/sessions/:id" element={<SessionDetail />} />
           <Route path="/sessions/:id/provenance" element={<Provenance />} />
+          <Route path="/models/:id" element={<ModelDetail />} />
+          <Route path="/endpoints/:id" element={<EndpointDetail />} />
+          <Route path="/findings/:id" element={<FindingDetail />} />
           <Route path="/fleet" element={<Fleet />} />
           <Route path="/explorer" element={<CodeExplorer />} />
           <Route path="/analytics" element={<Analytics />} />

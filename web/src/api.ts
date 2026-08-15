@@ -84,8 +84,18 @@ export const api = {
   deleteBusinessUnit: (id: string) =>
     request<any>(`/api/business-units/${id}`, { method: 'DELETE' }),
 
+  // Unified search (00 A11)
+  search: (q: string) => request<any[]>(`/api/search?q=${encodeURIComponent(q)}`),
+
   // Harnesses
-  listHarnesses: () => request<any[]>('/api/harnesses'),
+  listHarnesses: (params?: Record<string, string>) =>
+    request<any>(`/api/harnesses${params ? '?' + new URLSearchParams(params).toString() : ''}`),
+  getHarness: (id: string) => request<any>(`/api/harnesses/${id}`),
+  getHarnessDetail: (id: string) => request<any>(`/api/harnesses/${id}/detail`),
+  harnessHeartbeat: (data: any) =>
+    request<any>('/api/harnesses/heartbeat', { method: 'POST', body: JSON.stringify(data) }),
+  issueEnrollmentCode: (userId: string) =>
+    request<{ enrollment_code: string; expires_at: string }>(`/api/users/${userId}/enrollment-code`, { method: 'POST' }),
   enrollHarness: (data: any) =>
     request<any>('/api/harnesses/enroll', { method: 'POST', body: JSON.stringify(data) }),
   revokeHarness: (id: string, reason: string) =>
@@ -96,7 +106,24 @@ export const api = {
     request<any>(`/api/harnesses/${id}/reactivate`, { method: 'POST' }),
 
   // Projects
-  listProjects: () => request<any[]>('/api/projects'),
+  listProjects: (params?: Record<string, string>) =>
+    request<any>(`/api/projects${params ? '?' + new URLSearchParams(params).toString() : ''}`),
+  getProject: (id: string) => request<any>(`/api/projects/${id}`),
+  getProjectDetail: (id: string) => request<any>(`/api/projects/${id}/detail`),
+  listProjectMembers: (id: string) => request<any[]>(`/api/projects/${id}/members`),
+  addProjectMember: (id: string, data: any) =>
+    request<any>(`/api/projects/${id}/members`, { method: 'POST', body: JSON.stringify(data) }),
+  removeProjectMember: (id: string, userId: string) =>
+    request<any>(`/api/projects/${id}/members/${userId}`, { method: 'DELETE' }),
+  restoreProject: (id: string) =>
+    request<any>(`/api/projects/${id}/restore`, { method: 'POST' }),
+  projectArchiveImpact: (id: string) => request<any>(`/api/projects/${id}/archive-impact`),
+  projectUsage: (id: string) => request<any>(`/api/projects/${id}/usage`),
+  projectChangeRequests: (id: string) => request<any[]>(`/api/projects/${id}/change-requests`),
+  decideChangeRequest: (id: string, approve: boolean, reason?: string) =>
+    request<any>(`/api/change-requests/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve, reason }) }),
+  bindProjectPolicyPack: (id: string, policyPackId: string) =>
+    request<any>(`/api/projects/${id}/policy-pack`, { method: 'POST', body: JSON.stringify({ policy_pack_id: policyPackId }) }),
   createProject: (data: any) =>
     request<any>('/api/projects', { method: 'POST', body: JSON.stringify(data) }),
   updateProject: (id: string, data: any) =>
@@ -105,7 +132,20 @@ export const api = {
     request<any>(`/api/projects/${id}`, { method: 'DELETE' }),
 
   // Repositories
-  listRepositories: () => request<any[]>('/api/repositories'),
+  listRepositories: (params?: Record<string, string>) =>
+    request<any>(`/api/repositories${params ? '?' + new URLSearchParams(params).toString() : ''}`),
+  getRepository: (id: string) => request<any>(`/api/repositories/${id}`),
+  syncRepository: (id: string) =>
+    request<any>(`/api/repositories/${id}/sync`, { method: 'POST' }),
+  repoTree: (id: string, path?: string) =>
+    request<any[]>(`/api/repositories/${id}/tree${path ? '?path=' + encodeURIComponent(path) : ''}`),
+  repoFile: (id: string, path: string) =>
+    request<any>(`/api/repositories/${id}/file?path=${encodeURIComponent(path)}`),
+  repoBaselines: (id: string) => request<any[]>(`/api/repositories/${id}/baselines`),
+  repoBranches: (id: string) => request<any[]>(`/api/repositories/${id}/branches`),
+  repoWebhookInfo: (id: string) => request<any>(`/api/repositories/${id}/webhook`),
+  rotateWebhookSecret: (id: string) =>
+    request<any>(`/api/repositories/${id}/webhook/rotate`, { method: 'POST' }),
   registerRepository: (data: any) =>
     request<any>('/api/repositories', { method: 'POST', body: JSON.stringify(data) }),
   updateRepository: (id: string, data: any) =>
@@ -153,6 +193,33 @@ export const api = {
   listEpochs: () => request<any[]>('/api/policy/epochs'),
   createEpoch: (data: any) =>
     request<any>('/api/policy/epochs', { method: 'POST', body: JSON.stringify(data) }),
+  getEpochDiff: (epochId: string, against: string) =>
+    request<any>(`/api/policy/epochs/${epochId}/diff?against=${encodeURIComponent(against)}`),
+  listEpochAcks: (epochId: string) => request<any>(`/api/policy/epochs/${epochId}/acks`),
+  ackEpoch: (epochId: string) =>
+    request<any>(`/api/policy/epochs/${epochId}/ack`, { method: 'POST' }),
+  requireEpochAck: (epochId: string) =>
+    request<any>(`/api/policy/epochs/${epochId}/require-ack`, { method: 'POST' }),
+  getEffectivePolicy: (scope?: { project_id?: string; repo_id?: string }) =>
+    request<any>(`/api/policy/effective${scope?.project_id ? `?project_id=${scope.project_id}` : ''}${scope?.repo_id ? `${scope?.project_id ? '&' : '?'}repo_id=${scope.repo_id}` : ''}`),
+  listPolicyPacks: () => request<any[]>('/api/policy/packs'),
+  createPolicyPack: (data: any) =>
+    request<any>('/api/policy/packs', { method: 'POST', body: JSON.stringify(data) }),
+  importPolicyPack: (data: any) =>
+    request<any>('/api/policy/packs/import', { method: 'POST', body: JSON.stringify(data) }),
+  exportPolicyPack: (id: string) => request<any>(`/api/policy/packs/${id}/export`),
+  assignPolicyPack: (id: string, scope: string, scopeId: string) =>
+    request<any>(`/api/policy/packs/${id}/assign`, { method: 'POST', body: JSON.stringify({ scope, scope_id: scopeId }) }),
+  listPolicyTemplates: () => request<any[]>('/api/policy/templates'),
+  savePolicyTemplate: (data: any) =>
+    request<any>('/api/policy/templates', { method: 'POST', body: JSON.stringify(data) }),
+  deletePolicyTemplate: (id: string) =>
+    request<any>(`/api/policy/templates/${id}`, { method: 'DELETE' }),
+  listPolicyExceptions: () => request<any[]>('/api/policy/exceptions'),
+  createPolicyException: (data: any) =>
+    request<any>('/api/policy/exceptions', { method: 'POST', body: JSON.stringify(data) }),
+  decidePolicyException: (id: string, approve: boolean, decidedBy?: string) =>
+    request<any>(`/api/policy/exceptions/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve, decided_by: decidedBy }) }),
 
   // Policy Rules (governance rules — PRD §13)
   listPolicyRules: () => request<any[]>('/api/policy/rules'),
@@ -160,15 +227,49 @@ export const api = {
     request<any>('/api/policy/rules', { method: 'POST', body: JSON.stringify(data) }),
   deletePolicyRule: (id: string) =>
     request<any>(`/api/policy/rules/${id}`, { method: 'DELETE' }),
+  approvePolicyRule: (id: string) =>
+    request<any>(`/api/policy/rules/${id}/approve`, { method: 'POST' }),
+  rejectPolicyRule: (id: string) =>
+    request<any>(`/api/policy/rules/${id}/reject`, { method: 'POST' }),
+  bulkPolicyRules: (ids: string[], enabled: boolean) =>
+    request<any>('/api/policy/rules/bulk', { method: 'POST', body: JSON.stringify({ ids, enabled }) }),
 
   // Audit
   listAudit: () => request<any[]>('/api/audit'),
+  // Incidents (Security SOC)
+  simulatePolicy: (ruleIds: string[]) =>
+    request<any>('/api/incidents/simulate-policy', { method: 'POST', body: JSON.stringify({ rule_ids: ruleIds }) }),
 
 
   // Security
   securityCheck: (text: string) =>
     request<any>('/api/security/check', { method: 'POST', body: JSON.stringify({ text }) }),
   securityRules: () => request<any[]>('/api/security/rules'),
+  securityFindings: (params?: Record<string, string>) =>
+    request<any>(`/api/security/findings${params ? '?' + new URLSearchParams(params).toString() : ''}`),
+  securityFindingDetail: (id: string) => request<any>(`/api/security/findings/${id}`),
+  updateSecurityFinding: (id: string, data: any) =>
+    request<any>(`/api/security/findings/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  bulkSecurityFindings: (ids: string[], status: string) =>
+    request<any>('/api/security/findings/bulk', { method: 'POST', body: JSON.stringify({ ids, status }) }),
+  suppressFinding: (id: string, data: any) =>
+    request<any>(`/api/security/findings/${id}/suppress`, { method: 'POST', body: JSON.stringify(data) }),
+  reopenFinding: (id: string) =>
+    request<any>(`/api/security/findings/${id}/reopen`, { method: 'POST' }),
+  scanSession: (sessionId: string) =>
+    request<any>('/api/security/scan-session', { method: 'POST', body: JSON.stringify({ session_id: sessionId }) }),
+  lockdownImpact: (scope?: string, projectId?: string) =>
+    request<any>(`/api/security/lockdown-impact?scope=${scope || 'org'}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ''}`),
+  securityLockdown: (data: any) =>
+    request<any>('/api/security/lockdown', { method: 'POST', body: JSON.stringify(data) }),
+  securityAlerts: () => request<any[]>('/api/security/alerts'),
+  createSecurityAlert: (data: any) =>
+    request<any>('/api/security/alerts', { method: 'POST', body: JSON.stringify(data) }),
+  deleteSecurityAlert: (id: string) =>
+    request<any>(`/api/security/alerts/${id}`, { method: 'DELETE' }),
+  securityLexicon: () => request<any>('/api/security/lexicon'),
+  updateSecurityLexicon: (data: any) =>
+    request<any>('/api/security/lexicon', { method: 'PUT', body: JSON.stringify(data) }),
 
   // Fleet
   fleetInventory: () => request<any[]>('/api/fleet/inventory'),
@@ -215,6 +316,10 @@ export const api = {
   listIncidents: () => request<any[]>('/api/incidents'),
   createIncident: (data: any) =>
     request<any>('/api/incidents', { method: 'POST', body: JSON.stringify(data) }),
+  containIncident: (data: any) =>
+    request<any>('/api/incidents/contain', { method: 'POST', body: JSON.stringify(data) }),
+  resolveIncident: (id: string, resolution: string) =>
+    request<any>(`/api/incidents/${id}/resolve`, { method: 'POST', body: JSON.stringify({ resolution }) }),
 
   // Korean
   governanceBrief: () => request<any>('/api/korean/governance-brief'),
