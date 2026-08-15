@@ -323,3 +323,178 @@ insights, not the deployment.)
 
 FP8 model (+ experimentally validated FP8 KV), MTP on, 128K hard context, images
 yes / video no, ~25–35% fleet headroom rather than running at theoretical saturation.
+
+## 13. Efficiency & Differentiation Register
+
+Where our implementation beats the references at the same feature — and how we build
+it, in Go, inside PCCP. Every claim below was validated against the vendored sources
+(cited); wording is adjusted where validation disproved an earlier claim. Each item
+binds its sub-project's future spec.
+
+### 13.1 One signed transport end-to-end; no frontend tier
+
+**Claim (corrected):** Dynamo 1.3's serving frontend is Rust (`lib/llm/src/http/service.rs`
+— "forwards the incoming OAI Chat Request … to the backend"); no Python hop. llm-d's
+path is Gateway → Envoy → EPP → pod. Neither carries a signed transport.
+**Ours:** DARI ingress → scheduler → PIA → engine-localhost. The wins are (a) one
+CBOR/COSE transport with signed correlation IDs end-to-end — no protocol translation
+layers, (b) co-located last hop, (c) no independently scaling frontend tier to fail.
+**Go application:** the scheduler's DARI listener reuses `internal/dari` (same paper
+server as the relay); token streams relay as DARI frames via `io.Copy` on framed
+payloads — CBOR marshalled once at ingress, never re-encoded mid-path. PIA↔engine
+stays HTTP because engines define that boundary; it terminates at localhost.
+
+### 13.2 Engine-agnostic scheduler core
+
+**Claim:** Dynamo leaks backend differences into its router and **explicitly does not
+support conditional disaggregation on SGLang** (docs: "SGLang | Not supported yet",
+`developer-guide/advanced-customizations/conditional-disaggregation.md`).
+**Ours:** the scheduler core consumes only capability cards; all engine specifics live
+behind PIA adapters (`adapters/vllm`, `adapters/sglang` — pattern exists). Because we
+own the prefill/decode decision logic (S6), SGLang conditional disaggregation becomes
+our choice to make, not upstream's.
+**Go application:** `internal/scheduler` imports only the card schema; adapters
+implement one Go interface (`EngineAdapter`) in PIA. New engine = one adapter file.
+
+### 13.3 In-process Bayesian latency prediction (S4)
+
+**Claim:** llm-d trains XGBoost in batch via sidecars; predictions are a per-request
+**network hop** to a prediction server with a fallback path
+(`docs/architecture/advanced/latency-predictor.md`); models emit point estimates, and
+"heterogeneous pools are not yet modeled".
+**Ours:** online Bayesian linear models with predictive **variance → P(SLO violation)**,
+updated O(p²) per completion, prediction = local lookup. No retrain cycles, no sidecar,
+no predictor-outage fallback mode, and risk-aware (not just mean-aware) routing.
+**Go application:** `internal/scheduler/predictor` — precision-form online updates
+(pure `math` stdlib, no ML dependencies), ~15 features, updated by a goroutine
+consuming completion events from the DARI channel.
+
+### 13.4 Tenant-scoped KV namespaces (S3)
+
+**Claim:** llm-d's KV indexer has no tenant concept (`docs/architecture/advanced/
+kv-management/kv-indexer.md`); Dynamo's `cache_namespace` field exists but is not a
+tenant-governance mechanism. Shared KV across tenants is a data-side channel.
+**Ours:** tenant → cache-namespace mapping enforced by signed policy; the S3 KV index
+keys on `(namespace, block_hash)`; policy may pin tenants to exclusive workers.
+**Go application:** `cache_namespace` on the card + admission check in the scheduler;
+namespace partition is a registry-policy lookup, no hot-path branching.
+
+### 13.5 Token-debited weighted DRR (S2)
+
+**Claim (corrected):** llm-d fairness plugins are `round-robin-fairness-policy` and
+`global-strict-fairness-policy` (`flow-control.md`) — request-cycling, not
+token-debited; token load exists only as an endpoint *scorer* (`token-load-scorer`,
+`scheduling.md`).
+**Ours:** deficit in **tokens**, debit = `input_tokens + expected_output_tokens` at
+admission, quantum scaled by class weight. Fairness tracks actual GPU work.
+**Go application:** `internal/scheduler/queue` — classic DRR with per-flow token
+deficits (O(1) amortized dequeue), class weights from signed policy.
+
+### 13.6 Routing receipts as signed evidence (S3/S10)
+
+**Claim:** Dynamo emits `router_hint`/`routing_hashes` tracing events
+(`kv_router/push_router/selection.rs`) and llm-d emits metrics — logs, unsigned,
+non-queryable.
+**Ours:** every placement decision is a signed, queryable record: worker, overlap
+tokens, predicted TTFT/ITL + variance, affinity decision, class.
+**Go application:** reuse `internal/events` Emit (ed25519, already built) with a
+`routing.receipt` event type; stdlib `crypto/ed25519` sign ≈50µs — acceptable on the
+hot path; queried via the CP API (S10).
+
+### 13.7 Forecast-driven pre-warming + weight residency as core (S7)
+
+**Claim:** Dynamo Snapshot is "⚠️ Experimental Feature … in preview", SGLang "Highly
+experimental" (`kubernetes-operator/snapshot.md`); both systems cold-load pods on
+scale-up.
+**Ours:** the long forecast loop doesn't just predict counts — it issues signed
+lifecycle directives to pre-warm standby workers before the predicted burst;
+residency/snapshot are core paths, not preview.
+**Go application:** `internal/scheduler/warmpool` maintains the warm inventory in the
+registry; PIA executes directives (weight preload; CRIU/cuda-checkpoint invoked as
+external tooling from Go).
+
+### 13.8 Virtual engine = free digital twin (S11)
+
+**Claim:** Dynamo's simulation (`lib/mocker`, `aisimulate/`) and llm-d's simulator are
+standalone systems that re-implement engine behavior.
+**Ours:** because the engine boundary is the PIA adapter (13.2), a virtual engine
+behind the same interface means replaying production traces through the *real*
+scheduler with synthetic GPUs.
+**Go application:** `adapters/virtual` implements `EngineAdapter`, replays trace
+records, synthesizes metrics/KV events; the S1 fake-engine test stub grows into it.
+
+### 13.9 Content-aware signed heartbeat (S1)
+
+**Claim:** llm-d health = K8s probes (coarse, unsigned); Dynamo = ETCD leases
+(content-free).
+**Ours:** the heartbeat *is* the signed capability card — failure carries its own
+diagnosis (introspection failure → degraded card; measured socket state included),
+so failure handling (S8) knows *what* failed.
+**Go application:** as designed in §6–§7; card status enum + measured grade; no extra
+health system.
+
+### 13.10 Slack-filling with pause/resume (S9)
+
+**Claim (adjusted):** llm-d Async gates dispatch on capacity signals (`proposals/
+llm-d-async.md`: max-concurrency semaphores, pluggable Gate) but never yields
+in-flight work; Dynamo has migration, not pause.
+**Ours:** batch work admitted only into slack; token-level pause/resume yields to
+interactive instantly.
+**Go application:** S9 batch gateway tracks per-sequence state in PIA; pause = abort
+with KV retained, resume = re-submit reusing the warm prefix (cheap precisely because
+the KV index knows it's warm); coordination via signed DARI directives.
+
+### 13.11 KV index survives engine restarts (S3)
+
+**Claim:** Dynamo's KV state agent is vLLM-only, hosted inside the engine handler
+process, terminated on engine death, "Cross-incarnation KVCC continuity is not
+implemented", at-least-once delivery across restarts is an open TODO
+(`kv_router/publisher/state_agent.rs` header, verbatim).
+**Ours:** PIA — a separate process — owns the KV event broker with a per-incarnation
+append-only journal and sequence numbers; on engine restart PIA replays to the
+scheduler, which dedups by `(worker, seq)`. The fleet's cache map survives engine
+crashes; Dynamo's does not.
+**Go application:** `internal/pia/kvjournal` (append-only file + seq); scheduler-side
+dedup watermark per worker.
+
+### 13.12 Heterogeneous-fleet latency models (S4)
+
+**Claim:** llm-d's predictor "assumes a homogeneous inference pool … Heterogeneous
+pools are not yet modeled" (`latency-predictor.md`, verbatim).
+**Ours:** one model per serving config (card hash) with GPU SKU/precision/MTP/engine
+as one-hot features and hierarchical priors, so H100/H200/B200 mixes are first-class
+and rare configs borrow strength from similar ones.
+**Go application:** `internal/scheduler/predictor` — model store keyed by card hash;
+feature vector built from card + request fields (§12.3.3).
+
+### 13.13 Zero-hop prediction serving (S4)
+
+**Claim:** llm-d's EPP calls prediction servers over the network per request, with
+shared-volume model exchange and a heuristic fallback path (`latency-predictor.md`).
+**Ours:** predictor runs inside `pccp-scheduler` — the same process as the router.
+Prediction is a local matrix-vector multiply; there is no predictor-outage failure
+mode.
+**Go application:** single binary; completion events arrive over the existing DARI
+channel; no IPC.
+
+### 13.14 Signed traffic classes (S2)
+
+**Claim:** llm-d extracts fairness ID and priority from **client-supplied HTTP
+headers** (`x-llm-d-inference-fairness-id`, `flow-control.md`) — spoofable.
+**Ours:** tenant/priority metadata arrives in COSE-signed DARI ingress metadata and
+is checked against the tenant's issued class capabilities at admission; clients
+cannot claim classes they don't own.
+**Go application:** scheduler reads classes from the verified envelope only (never
+headers); CP-issued tenant capabilities already exist in the policy layer.
+
+### 13.15 Fail-closed admission (S2)
+
+**Claim:** llm-d's documented EPP-down behavior is `FailOpen`: Envoy "bypasses the
+extension and routes the request directly to a model-server endpoint" with **no flow
+control, fairness, or saturation gating** (`flow-control.md`).
+**Ours:** there is no bypass path. The scheduler is the only route to a worker;
+scheduler down = DARI handshake fails = requests are rejected with retry signaling —
+governance never silently disappears.
+**Go application:** architectural (single ingress path); overload responses reuse the
+existing DARI error envelope with retry metadata.
+
