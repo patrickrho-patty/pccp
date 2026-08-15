@@ -52,7 +52,21 @@ The following earlier planning documents are retained as publication history, no
 
 ## Current implementation status
 
-This is the release-readiness source of truth. Tasks 1–5 are complete in the root repository (`7f04ee1` and its preceding commits) and have passing targeted tests/build checks; Task 4's normative appendix now includes the reviewed wire schemas, state/effect semantics, profile contracts, and negative cases. Task 6 has a partial root implementation, but it is **not release-complete**: the nested `patty-code-pccp` checkout is dirty and still contains placeholder provider proof bytes, and trust-bundle injection, revocation propagation, and the exact Appendix-F wire vectors remain open. Tasks 7–19 (runtime behavior), Tasks 20–23 (rename/governance), and Task 24 (release gate) remain unchecked until their runtime, deployment, and conformance evidence exists. A clean root checkout or passing root unit tests does not imply a complete DARI product while the nested client or any listed runtime task remains unfinished.
+This is the release-readiness source of truth. **Status update (2026-08-15):**
+
+- **Tasks 1–5: complete** (papers, normative appendix, legacy byte freeze; golden vectors re-pinned after the rename).
+- **Task 6: complete on the live path.** Transcript-bound AUTH_PROOF verified end-to-end against the real relay binary (enrollment via `/v1/enroll`, CA trust bundle injected in `cmd/pccp-relay`, canonical map-order-free HELLO/ACK transcript encodings, RFC-8152 array-form Sig_structure); revocation propagation wired (`Service.RevokeHarness` → `ApplyRevocationSnapshot` → active-stream termination + epoch advance, admin endpoint, reconnect-termination evidence in the live e2e). Residual: standalone Appendix-F.3 fixture *files* (behavior is pinned by conformance + live tests).
+- **Task 7 (signed Authorization Grant): implemented** — F.4 object, canonical signing, scope normalization, session-grant issuance on SESSION_GRANT, legacy-lease adapter, GovernInference grant verification (fail-closed). Live e2e asserts the grant.
+- **Task 8 (attenuation): implemented** — full 10-step F.4 algorithm with the required broadening-rejection matrix (14 negative cases), replay ledger, IssueChildGrant.
+- **Task 9 (decisions/obligations/checkpoints): implemented** — F.6 decision + aggregation + obligation state machine; F.7 checkpoint + freshness + rollback ledger; live ALLOW/DENY decision issuance per governed exchange.
+- **Task 10 (receipt attestations + selective disclosure): implemented** — F.8 attestation scope rules; F.9 segmented-MMR commitment + disclosure prover/verifier (tamper/duplicate/geometry rejections).
+- **Task 11 (transactional effects): implemented** — F.10 object family + executor state machine (idempotency, REPLAY_CONFLICT, terminal freeze, retry-owner, status shapes).
+- **Task 21+22 (rename): complete** — repository-wide PAPER→DARI with frozen legacy surface in `legacy_paper1.go`, registry reconciliation, legacy-allowlist gate enforced, arXiv artifacts rebuilt as DARI_*.
+- **Profile negotiation machinery (map §3/F.13): implemented** — kernel + implemented extensions register as passed; web/federation/collab/media correctly return UNSUPPORTED with recorded reasons.
+- **Tasks 13, 14, 18 (web/federation/collab/media runtimes): NOT implemented** — and per the map, schema-only release is forbidden; they remain UNSUPPORTED until their named vectors exist.
+- **Tasks 15–17 (pipeline hardening, enterprise controls, tools/SCM/sandbox live wiring): partial** — live DLP, session-status enforcement, heartbeats, audit hash chain, provenance ingestion, and governed streaming are wired; the full 14-stage pipeline hardening, SSO/SCIM, KMS/HSM, retention, and real SCM/sandbox runtimes remain open.
+- **Task 19 (black-box conformance runner): partial** — kernel-level negative matrices exist (attenuation, checkpoints, decisions, effects, disclosure, negotiation); the stateful two-implementation runner does not.
+- **Task 24 (release gate): not passed.
 
 The plan never converts a schema, registry entry, feature flag, generated client, or documentation row into product support. Every task below ends with executable behavior, durable state where needed, operator controls, telemetry, negative tests, and a commit in the owning repository.
 
