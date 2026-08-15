@@ -3,7 +3,6 @@ package pia
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
 	"testing"
@@ -151,7 +150,3 @@ func schedulerDARIAddr(t *testing.T, svc *scheduler.Scheduler) string {
 	time.Sleep(50 * time.Millisecond)
 	return addr
 }
-
-// Ensure the test compiles even if helpers change: unused-import guards.
-var _ = rand.Reader
-var _ = time.Second
