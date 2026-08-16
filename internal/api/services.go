@@ -3,6 +3,8 @@ package api
 import (
 	"errors"
 	"fmt"
+	"github.com/patrickrho-patty/pccp/internal/config"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -1575,8 +1577,43 @@ func (s *Server) wrapSovTimeProof(ext *AdditionalServices) http.HandlerFunc {
 
 func (s *Server) wrapRealtimeStatus(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		probe := func(addr string) string {
+			if addr == "" {
+				return "unknown"
+			}
+			conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+			if err != nil {
+				return "down"
+			}
+			conn.Close()
+			return "ok"
+		}
+		// Spine/metering/catalog: real DB liveness (rows exist + recent
+		// writes), not decoration.
+		count := func(table string, ageCol string) (int64, bool) {
+			var n int64
+			q := s.db.Table(table)
+			if ageCol != "" {
+				q = q.Where(ageCol+" > ?", time.Now().Add(-24*time.Hour).Format(time.RFC3339))
+			}
+			if err := q.Count(&n).Error; err != nil {
+				return 0, false
+			}
+			return n, true
+		}
+		spineN, spineOK := count("audit_events", "occurred_at")
+		meterN, meterOK := count("usage_records", "created_at")
+		catalogN, catalogOK := count("catalog_models", "")
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"connected_clients": ext.Realtime.ConnectedClients(),
+			"relay_status":      probe(config.RelayProbeAddr()),
+			"pia":               probe(config.PIAProbeAddr()),
+			"event_spine":       map[bool]string{true: "ok", false: "down"}[spineOK],
+			"event_spine_count": spineN,
+			"metering":          map[bool]string{true: "ok", false: "unknown"}[meterOK],
+			"metering_count":    meterN,
+			"catalog":           map[bool]string{true: "ok", false: "unknown"}[catalogOK],
+			"catalog_count":     catalogN,
 		})
 	}
 }
