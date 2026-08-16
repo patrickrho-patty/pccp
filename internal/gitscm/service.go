@@ -27,14 +27,14 @@ type BaselineRequest struct {
 	OrganizationID string `json:"organization_id"`
 	RepositoryID   string `json:"repository_id"`
 	Branch         string `json:"branch"`
-	CommitSHA      string `json:"commit_s_h_a"`
+	CommitSHA      string `json:"commit_sha"`
 	CommitMessage  string `json:"commit_message"`
 	AuthorName     string `json:"author_name"`
 	AuthorEmail    string `json:"author_email"`
 	CommittedAt    string `json:"committed_at"`
 	WorktreeStatus string `json:"worktree_status"` // git status output
 	SessionID      string `json:"session_id"`
-	SubmodulesJSON string `json:"submodules_j_s_o_n"`
+	SubmodulesJSON string `json:"submodules_json"`
 	DependencyLock string `json:"dependency_lock"` // package-lock.json/go.sum hashes
 }
 
@@ -141,7 +141,7 @@ func (s *Service) IsEditAllowed(repoID, branchName string) (bool, string, error)
 type CommitBindingRequest struct {
 	OrganizationID string `json:"organization_id"`
 	RepositoryID   string `json:"repository_id"`
-	CommitSHA      string `json:"commit_s_h_a"`
+	CommitSHA      string `json:"commit_sha"`
 	ChangeSetID    string `json:"change_set_id"`
 	SessionID      string `json:"session_id"`
 	Branch         string `json:"branch"`
@@ -190,13 +190,13 @@ type RegisterRepoRequest struct {
 	ProjectID      string  `json:"project_id"`
 	Name           string  `json:"name"`
 	FullName       string  `json:"full_name"`
-	CloneURL       string  `json:"clone_u_r_l"`
-	SCMType        SCMType `json:"s_c_m_type"`
-	SCMProvider    string  `json:"s_c_m_provider"` // e.g. "github.example.com"
+	CloneURL       string  `json:"clone_url"`
+	SCMType        SCMType `json:"scm_type"`
+	SCMProvider    string  `json:"scm_provider"` // e.g. "github.example.com"
 	DefaultBranch  string  `json:"default_branch"`
 	Sensitivity    string  `json:"sensitivity"` // public, internal, confidential, restricted
-	CodeOwnersJSON string  `json:"code_owners_j_s_o_n"`
-	CIConfigRef    string  `json:"c_i_config_ref"`
+	CodeOwnersJSON string  `json:"code_owners_json"`
+	CIConfigRef    string  `json:"ci_config_ref"`
 }
 
 // RegisterRepository creates a new repository record.

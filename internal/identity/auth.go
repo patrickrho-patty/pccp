@@ -171,6 +171,28 @@ func (a *AuthService) Login(email, password string) (string, error) {
 	return signed, nil
 }
 
+// IssueToken signs a console-session JWT for the supplied identity.
+// Login uses it after password verification; the SSO callbacks use it
+// after identity-provider verification — both produce the SAME claim
+// shape so the auth middleware accepts either path.
+func (a *AuthService) IssueToken(email, orgID, role string) (string, error) {
+	if role == "" {
+		role = "member"
+	}
+	claims := &Claims{
+		Email:          email,
+		OrganizationID: orgID,
+		Role:           role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Issuer:    "pccp",
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(a.secret)
+}
+
 // VerifyToken validates a JWT token and returns the claims.
 func (a *AuthService) VerifyToken(tokenStr string) (*Claims, error) {
 	tokenStr = strings.TrimPrefix(tokenStr, "Bearer ")

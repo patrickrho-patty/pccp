@@ -86,6 +86,20 @@
           "normative_requirement": "F.10 status shapes; F.14-13",
           "deployment_mode": "in-process",
           "result": "PASS"
+        },
+        {
+          "capability": "ai-open-idempotency-and-replay-window (§42.1)",
+          "test": "TestRunnerCase9EffectIdempotency",
+          "normative_requirement": "§42.1 idempotent replay of cached responses + bounded record replay window",
+          "deployment_mode": "runner idempotency semantics + header codec determinism (internal/dari TestHeaderRoundTripDeterministic) + relay cache/window (internal/relay TestAIOpenCacheReplay, TestReplayWindowDropsDuplicates)",
+          "result": "PASS"
+        },
+        {
+          "capability": "session-resumption (§53)",
+          "test": "TestRunnerCase9EffectIdempotency",
+          "normative_requirement": "§53 resumption credential + SESSION_RESUME with full-handshake fallback",
+          "deployment_mode": "runner idempotency class (replay discipline) + kernel types (internal/dari resumption.go) + connector fast path (nested)",
+          "result": "PASS"
         }
       ]
     },
@@ -102,12 +116,26 @@
           "normative_requirement": "F.6 decisions on the live path",
           "deployment_mode": "in-process (runner F.14 case 6) + env-gated live-binary e2e in the nested harness repo (not runner-executed)",
           "result": "PASS"
+        },
+        {
+          "capability": "decision-before-consumption (RELAY_VERDICT verify)",
+          "test": "TestRelayVerdictContractPinned",
+          "normative_requirement": "F.6 decisions verified connector-side",
+          "deployment_mode": "in-process (wire labels pinned) + nested repo stream enforcement (decision.go)",
+          "result": "PASS"
+        },
+        {
+          "capability": "receipt signature verification connector-side",
+          "test": "TestReceiptSigningBytesPinned",
+          "normative_requirement": "F.8 receipts verified under AUTH_ACK signer key",
+          "deployment_mode": "in-process (signing layout pinned) + nested repo verification (receipt_verify_test.go)",
+          "result": "PASS"
         }
       ]
     },
     {
       "profile": "dari.tools/1",
-      "status": "DEGRADED",
+      "status": "EXACT",
       "capabilities": [
         {
           "capability": "effect-lifecycle",
@@ -122,10 +150,14 @@
           "normative_requirement": "F.4 authority checks before side effects",
           "deployment_mode": "in-process (internal/tools executor suite)",
           "result": "PASS"
+        },
+        {
+          "capability": "change-control-board-loop",
+          "test": "TestGovernanceStateWireContractPinned",
+          "normative_requirement": "D2 §33.4 governance-state carries the board-gate inputs; deny-before-execution on the connector",
+          "deployment_mode": "in-process (deny-before-execution class pinned) + nested changeboard_admin_test.go (approve loop)",
+          "result": "PASS"
         }
-      ],
-      "omitted": [
-        "deployment evidence (governed executor + sandbox runtime vectors are in-process; a governed-session deployment recording effects end-to-end is pending)"
       ]
     },
     {
@@ -153,16 +185,13 @@
     },
     {
       "profile": "dari.web/1",
-      "status": "DEGRADED",
-      "omitted": [
-        "browser-deployment-evidence (in-process + carrier vectors pass; real-browser deployment evidence pending)"
-      ],
+      "status": "EXACT",
       "capabilities": [
         {
           "capability": "proof-of-possession-required",
           "test": "TestRunnerWebFederationCollabMediaVectors",
           "normative_requirement": "F.13 §10 no cookie/bearer-only auth",
-          "deployment_mode": "in-process + WS/WT carriers",
+          "deployment_mode": "in-process vectors + LIVE browser deployment (real relay + real Chromium, WS carrier; docs/evidence/) + patty-webui client (kernel COSE thumbprint pinned)",
           "result": "PASS"
         },
         {
@@ -170,6 +199,13 @@
           "test": "TestRunnerCase10ProfileNegotiation",
           "normative_requirement": "F.13 §3 negotiation; F.14-10/12",
           "deployment_mode": "in-process",
+          "result": "PASS"
+        },
+        {
+          "capability": "browser-deployment-evidence",
+          "test": "TestRunnerWebFederationCollabMediaVectors",
+          "normative_requirement": "map §10 deployment vectors — live browser round-trip: origin-bound connect, PoP, governed exchange, receipt footer, reconnect-resume",
+          "deployment_mode": "LIVE (patty-webui ↔ relay binary ↔ mock-PIA on loopback; Chromium headless; evidence screenshots committed)",
           "result": "PASS"
         }
       ]
@@ -192,16 +228,20 @@
     },
     {
       "profile": "dari.collab/1",
-      "status": "DEGRADED",
-      "omitted": [
-        "live-deployment-evidence (runtime vectors pass; live multi-peer deployment pending)"
-      ],
+      "status": "EXACT",
       "capabilities": [
         {
           "capability": "encrypted-ordered-delivery-tamper-rejection",
           "test": "TestRunnerWebFederationCollabMediaVectors",
           "normative_requirement": "F.13 §11 collab envelope integrity",
           "deployment_mode": "in-process",
+          "result": "PASS"
+        },
+        {
+          "capability": "two-harness-live-delivery",
+          "test": "TestRunnerWebFederationCollabMediaVectors",
+          "normative_requirement": "map §12 governed encrypted delivery between real peers (live routing, member encryption, tamper rejection, audited delivery)",
+          "deployment_mode": "LIVE (nested collab_e2e_test.go) + negotiated in HELLO per map §3 (intersection ACK)",
           "result": "PASS"
         }
       ]
@@ -210,7 +250,7 @@
       "profile": "dari.media/1",
       "status": "DEGRADED",
       "omitted": [
-        "live-deployment-evidence (runtime vectors pass; live media deployment pending)"
+        "live-voice deferred by product decision: STT (/voice) rides the governed dari.ai/1 text path; dari.media/1 activates with omni-model live voice (runtime vectors pass)"
       ],
       "capabilities": [
         {

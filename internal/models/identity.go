@@ -171,7 +171,10 @@ func (CredentialRevocationRecord) TableName() string { return "credential_revoca
 // admin UI read THIS table — not audit-event reconstruction.
 type SandboxRecord struct {
 	Base
-	OrganizationID  string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
+	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
+	// RepositoryID scopes the sandbox policy (E4): a row bound to a
+	// repo enforces its execution mode for governed work in that repo.
+	RepositoryID    string `gorm:"type:varchar(64);index" json:"repository_id,omitempty"`
 	SessionID       string `gorm:"type:varchar(64);index" json:"session_id,omitempty"`
 	UserID          string `gorm:"type:varchar(64)" json:"user_id,omitempty"`
 	Mode            string `gorm:"type:varchar(32)" json:"mode"`

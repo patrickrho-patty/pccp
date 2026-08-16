@@ -6,11 +6,14 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/patrickrho-patty/pccp/internal/config"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -140,6 +143,9 @@ func (s *Server) setupRouter() {
 
 	// Health check
 	r.Get("/health", s.handleHealth)
+	// SRE component probes: REAL reachability checks for the relay +
+	// PIA (TCP dial with timeout; unconfigured = honestly unknown).
+	r.Get("/api/sre/probes", s.handleSREProbes)
 
 	// OpenAI-compatible inference adapter (§38.5)
 	r.Post("/v1/chat/completions", s.handleCompatChatCompletions)
@@ -159,6 +165,18 @@ func (s *Server) setupRouter() {
 	// real SCM webhooks; each delivery is verified against the repo's
 	// HMAC secret before any state is touched.
 	r.Post("/webhooks/scm/{repoId}", s.handleScmWebhook)
+	// SSO login endpoints (PUBLIC — they run BEFORE a console session
+	// exists; identity verification is the IdP's signature/JWKS check,
+	// and the callbacks mint the session themselves).
+	{
+		ext := s.ext()
+		r.Route("/api/sso", func(r chi.Router) {
+			r.Post("/saml/redirect", s.wrapSSOSAMLRedirect(ext))
+			r.Post("/saml/callback", s.wrapSSOSAMLCallback(ext))
+			r.Get("/oidc/auth-url", s.wrapSSOOIDCAuthURL(ext))
+			r.Post("/oidc/callback", s.wrapSSOOIDCCallback(ext))
+		})
+	}
 
 	// Authenticated API routes
 	r.Route("/api", func(r chi.Router) {
@@ -225,6 +243,9 @@ func (s *Server) setupRouter() {
 			r.Post("/", s.handleCreateProject)
 			r.Get("/{id}", s.handleGetProject)
 			r.Get("/{id}/detail", s.handleGetProjectDetail)
+			r.Get("/{id}/members", s.handleListProjectMembers)
+			r.Post("/{id}/members", s.handleAddProjectMember)
+			r.Delete("/{id}/members/{userId}", s.handleRemoveProjectMember)
 			r.Put("/{id}", s.handleUpdateProject)
 			r.Delete("/{id}", s.handleDeleteProject)
 			r.Post("/{id}/restore", s.handleRestoreProject)
@@ -232,9 +253,6 @@ func (s *Server) setupRouter() {
 			r.Put("/{id}/tool-allowlist", s.wrapProjectToolAllowlist(s.ext()))
 			r.Get("/{id}/archive-impact", s.handleProjectArchiveImpact)
 			r.Get("/{id}/usage", s.handleProjectUsage)
-			r.Get("/{id}/members", s.handleListProjectMembers)
-			r.Post("/{id}/members", s.handleAddProjectMember)
-			r.Delete("/{id}/members/{userId}", s.handleRemoveProjectMember)
 			r.Get("/{id}/change-requests", s.handleListProjectChangeRequests)
 			r.Post("/{id}/policy-pack", s.handleBindProjectPolicyPack)
 		})
@@ -371,6 +389,7 @@ func (s *Server) setupRouter() {
 			r.Get("/security", s.handleGetSecurityMetrics)
 			r.Get("/scorecard", s.handleGetScorecard)
 			r.Get("/export", s.handleExportMetrics)
+			r.Get("/cost", s.handleGetCostAnalysis)
 		})
 
 		// Security
@@ -459,6 +478,12 @@ func (s *Server) setupRouter() {
 			r.Get("/violations", s.handleListEnterpriseViolations)
 			r.Put("/violations/{id}", s.handleResolveViolation)
 			r.Post("/features/seed", s.handleSeedEnterpriseFeatures)
+			// D2 change-control review queue: pending connector
+			// submissions (governed action envelopes) + approve/reject
+			// via signed relay directives.
+			r.Get("/submissions", s.handleListChangeSubmissions)
+			r.Post("/submissions/{id}/approve", s.handleReviewChangeSubmission)
+			r.Post("/submissions/{id}/reject", s.handleReviewChangeSubmission)
 			r.Post("/demo-seed", s.handleSeedDemoData)
 		})
 
@@ -472,6 +497,7 @@ func (s *Server) setupRouter() {
 			r.Post("/evidence-bundle", s.handleAuditEvidenceBundle)
 			r.Get("/siem", s.handleAuditSIEMConfig)
 			r.Put("/siem", s.handleAuditSIEMConfig)
+			r.Get("/export", s.handleExportAuditEvents)
 		})
 
 		// Additional service routes
@@ -538,6 +564,35 @@ const sessionSweepInterval = time.Minute
 // sweepSessions transitions sessions past their idle window to idle
 // and auto-closes sessions past their TTL (web/02 A4 — the status
 // machine's idle state was previously unreachable).
+// bridgeSpineToRealtime polls the durable event spine for governed
+// exchange + security events and forwards them to the realtime hub.
+// 2s cadence: live enough for an activity feed, bounded DB load.
+func (s *Server) bridgeSpineToRealtime() {
+	last := time.Now().Add(-time.Minute)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		var events []models.AuditEvent
+		if err := s.db.Where(
+			"(event_type LIKE ? OR event_type LIKE ?) AND occurred_at > ?",
+			"cp.exchange.%", "cp.security%", last.Format(time.RFC3339Nano),
+		).Order("occurred_at ASC").Limit(200).Find(&events).Error; err != nil {
+			continue
+		}
+		for _, e := range events {
+			switch {
+			case strings.HasPrefix(e.EventType, "cp.exchange."):
+				s.ext().Realtime.NotifyExchangeEvent(e.OrganizationID, e.ResourceType, e.ResourceID, strings.TrimPrefix(e.EventType, "cp.exchange."), 0)
+			default:
+				s.ext().Realtime.NotifySecurityFinding(e.OrganizationID, "info", e.EventType)
+			}
+			if t, err := time.Parse(time.RFC3339Nano, e.OccurredAt); err == nil {
+				last = t
+			}
+		}
+	}
+}
+
 func (s *Server) sweepSessions() {
 	now := time.Now()
 	// active → idle: last activity older than IdleTTL.
@@ -604,6 +659,11 @@ func (s *Server) ListenAndServe(addr string) error {
 			}
 		}
 	}()
+	// Spine→hub bridge: the relay (a separate process) writes governed
+	// exchange events to the durable spine (audit trail); this poller
+	// fans them into the realtime hub so the admin SSE actually
+	// carries LIVE exchange activity (web/21).
+	go s.bridgeSpineToRealtime()
 	log.Printf("api: listening on %s", addr)
 	srv := &http.Server{
 		Addr:         addr,
@@ -747,46 +807,66 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	profile := req.Profile
-	switch profile {
+	if req.Profile == "" {
+		req.Profile = "enterprise"
+	}
+	switch req.Profile {
 	case "enterprise", "public", "sovereign":
 	default:
-		profile = "enterprise"
-	}
-
-	// Create default org
-	org, err := s.identity.CreateOrganization(req.OrgName, req.OrgName, "default", profile)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusBadRequest, "profile must be enterprise, public, or sovereign")
 		return
 	}
-	// Profile/pack choice is recorded honestly (web/26 A/B).
-	if req.PolicyPack != "" {
-		s.db.Create(&models.OrgSetting{
-			Base:           models.Base{ID: models.GenerateID("os")},
-			OrganizationID: org.ID, Key: "bootstrap.policy_pack", Value: req.PolicyPack,
-		})
-	}
-	s.db.Create(&models.OrgSetting{
-		Base:           models.Base{ID: models.GenerateID("os")},
-		OrganizationID: org.ID, Key: "bootstrap.profile", Value: profile,
-	})
-	s.db.Create(&models.OrgSetting{
-		Base:           models.Base{ID: models.GenerateID("os")},
-		OrganizationID: org.ID, Key: "bootstrap.demo_data", Value: fmt.Sprintf("%v", req.DemoData),
-	})
 
-	// Bootstrap admin
+	// Idempotent org: reuse an existing org by exact name instead of
+	// minting a new one on every re-bootstrap (the audit's data-integrity
+	// finding — repeat bootstraps used to spam orgs).
+	var org models.Organization
+	if err := s.db.Where("name = ?", req.OrgName).First(&org).Error; err == nil {
+		// Existing org: honor a profile change only when the org has no
+		// sessions yet (an in-use org's profile is an operator decision,
+		// not a bootstrap re-run).
+		var sessions int64
+		s.db.Model(&models.Session{}).Where("organization_id = ?", org.ID).Count(&sessions)
+		if org.Profile != req.Profile && sessions == 0 {
+			s.db.Model(&org).Update("profile", req.Profile)
+			org.Profile = req.Profile
+		}
+	} else {
+		created, cerr := s.identity.CreateOrganization(req.OrgName, req.OrgName, "default", req.Profile)
+		if cerr != nil {
+			writeError(w, http.StatusInternalServerError, cerr.Error())
+			return
+		}
+		org = *created
+	}
+
+	// Bootstrap admin (idempotent per identity.BootstrapAdmin)
 	if err := s.auth.BootstrapAdmin(req.Email, req.Password, org.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
+	// Profile/pack choice is recorded honestly (web/26 A/B).
+	s.db.Where("organization_id = ? AND key = ?", org.ID, "bootstrap.profile").
+		Delete(&models.OrgSetting{})
+	s.db.Create(&models.OrgSetting{
+		Base:           models.Base{ID: models.GenerateID("os")},
+		OrganizationID: org.ID, Key: "bootstrap.profile", Value: org.Profile,
+	})
+	if req.PolicyPack != "" {
+		s.db.Where("organization_id = ? AND key = ?", org.ID, "bootstrap.policy_pack").
+			Delete(&models.OrgSetting{})
+		s.db.Create(&models.OrgSetting{
+			Base:           models.Base{ID: models.GenerateID("os")},
+			OrganizationID: org.ID, Key: "bootstrap.policy_pack", Value: req.PolicyPack,
+		})
+	}
+
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"organization_id": org.ID,
-		"message":         "부트스트랩 완료",
-		"profile":         profile,
+		"profile":         org.Profile,
 		"demo_data":       req.DemoData,
+		"message":         "부트스트랩 완료",
 	})
 }
 
@@ -2196,6 +2276,13 @@ func (s *Server) handleGetSessionExchanges(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
+	// TODO(web audit): nothing writes models.PromptExchange today, so this
+	// query returns an empty set. The required write location is
+	// internal/relay/service.go GovernInference — the completion point of
+	// every governed exchange (it has the exchange ID, model/endpoint,
+	// token counts, verdict, and latency this table needs). The API server
+	// is not in that path and must not fabricate rows; land the write in
+	// the relay, then this endpoint serves them as-is.
 	var exchanges []models.PromptExchange
 	s.db.Where("session_id = ?", sess.SessionID).Order("created_at ASC").Find(&exchanges)
 	writeJSON(w, http.StatusOK, exchanges)
@@ -2621,7 +2708,9 @@ func (s *Server) handleIssueLease(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleVerifyAuditChain(w http.ResponseWriter, r *http.Request) {
 	orgID := r.URL.Query().Get("org")
 	if orgID == "" {
-		orgID = "default"
+		// Default to the caller's org — the literal "default" never
+		// matched a real organization and verified zero events.
+		orgID = getOrgID(r)
 	}
 	report, err := audit.VerifyChain(s.db, orgID)
 	if err != nil {
@@ -2668,6 +2757,40 @@ func (s *Server) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
 	var events []models.AuditEvent
 	q.Order("occurred_at DESC").Limit(200).Find(&events)
 	writeJSON(w, http.StatusOK, events)
+}
+
+// handleExportAuditEvents streams the org's audit trail as CSV (up to
+// 10k events) with the same filters as the paginated list endpoint.
+func (s *Server) handleExportAuditEvents(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	q := s.db.Model(&models.AuditEvent{})
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	if search := r.URL.Query().Get("search"); search != "" {
+		q = q.Where("action LIKE ? OR event_type LIKE ? OR resource_id LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%")
+	}
+	if eventType := r.URL.Query().Get("type"); eventType != "" {
+		q = q.Where("event_type = ?", eventType)
+	}
+	if result := r.URL.Query().Get("result"); result != "" {
+		q = q.Where("result = ?", result)
+	}
+	var events []models.AuditEvent
+	q.Order("occurred_at DESC").Limit(10000).Find(&events)
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="audit_export_`+time.Now().Format("20060102_150405")+`.csv"`)
+	cw := csv.NewWriter(w)
+	if err := cw.Write([]string{"occurred_at", "event_type", "actor_type", "actor_id", "action", "resource_type", "resource_id", "result", "details"}); err != nil {
+		return
+	}
+	for _, e := range events {
+		if err := cw.Write([]string{e.OccurredAt, e.EventType, e.ActorType, e.ActorID, e.Action, e.ResourceType, e.ResourceID, e.Result, e.Details}); err != nil {
+			return
+		}
+	}
+	cw.Flush()
 }
 
 // --- Communications Handlers ---
@@ -2802,6 +2925,39 @@ func (s *Server) handleUpdatePresence(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
+// deliverBroadcastToRelay pushes a broadcast to the org's live harness
+// sessions via the relay admin channel (POST {relay_admin_url}/v1/broadcasts,
+// which fans out over live DARI sessions). The env is read per call;
+// when unset or unreachable it returns 0 and the broadcast stays
+// DB-recorded only.
+func deliverBroadcastToRelay(orgID, severity, body string) int {
+	base := strings.TrimSuffix(config.RelayAdminURL(), "/")
+	if base == "" {
+		return 0
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"org_id":   orgID,
+		"severity": severity,
+		"body":     body,
+	})
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Post(base+"/v1/broadcasts", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return 0
+	}
+	var out struct {
+		Delivered int `json:"delivered"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&out) != nil {
+		return 0
+	}
+	return out.Delivered
+}
+
 func (s *Server) handleSendBroadcast(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Severity    string `json:"severity"`
@@ -2821,11 +2977,17 @@ func (s *Server) handleSendBroadcast(w http.ResponseWriter, r *http.Request) {
 	if req.TargetType == "" {
 		req.TargetType = "all"
 	}
+	if req.Severity == "" {
+		req.Severity = "info"
+	}
 	bc, err := s.comms.SendBroadcast(orgID, req.Severity, req.Title, req.TitleKo, req.Body, req.BodyKo, req.TargetType, req.TargetID, req.RequiresAck)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Persist first, then attempt live delivery; the audit event records
+	// how many live sessions actually received it.
+	delivered := deliverBroadcastToRelay(orgID, req.Severity, req.Body)
 	s.db.Create(&models.AuditEvent{
 		OrganizationID: getOrgID(r),
 		EventType:      "cp.comms.broadcast_sent",
@@ -2833,9 +2995,10 @@ func (s *Server) handleSendBroadcast(w http.ResponseWriter, r *http.Request) {
 		Action:         "send_broadcast",
 		ResourceType:   "broadcast",
 		ResourceID:     bc.ID,
-		Details:        fmt.Sprintf("severity: %s, title: %s", req.Severity, req.Title),
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
+		Details: fmt.Sprintf("severity: %s, title: %s, live deliveries: %d",
+			req.Severity, req.Title, delivered),
+		Result:     "success",
+		OccurredAt: time.Now().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusCreated, bc)
 }
@@ -2898,6 +3061,91 @@ func (s *Server) handleExportMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(data)
+}
+
+// modelCostRow is one model's server-computed cost line.
+type modelCostRow struct {
+	ModelPackageID string  `json:"model_package_id"`
+	ModelName      string  `json:"model_name,omitempty"`
+	TokensIn       int64   `json:"tokens_in"`
+	TokensOut      int64   `json:"tokens_out"`
+	CostKRW        float64 `json:"cost_krw"`
+	Priced         bool    `json:"priced"` // false when the package has no unit price configured
+}
+
+// handleGetCostAnalysis computes per-model cost for the org server-side:
+// UsageRecord token sums × the ModelPackage's KRW-per-1K price fields.
+// Packages without a configured price report priced=false ("단가 미설정")
+// — never a fabricated number.
+func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	days := 30
+	if d, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && d > 0 {
+		days = d
+	}
+	since := time.Now().AddDate(0, 0, -days).Format(time.RFC3339)
+
+	var sums []struct {
+		ModelPackageID string
+		MetricType     string
+		Total          int64
+	}
+	if err := s.db.Model(&models.UsageRecord{}).
+		Select("model_package_id, metric_type, SUM(quantity) as total").
+		Where("organization_id = ? AND occurred_at >= ? AND metric_type IN ('tokens_in','tokens_out') AND model_package_id != ''", orgID, since).
+		Group("model_package_id, metric_type").Scan(&sums).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var pkgs []models.ModelPackage
+	s.db.Find(&pkgs)
+	pkgBy := make(map[string]models.ModelPackage, len(pkgs))
+	for _, p := range pkgs {
+		pkgBy[p.PackageID] = p
+	}
+
+	byPkg := make(map[string]*modelCostRow)
+	order := []string{}
+	for _, sm := range sums {
+		mc, ok := byPkg[sm.ModelPackageID]
+		if !ok {
+			mc = &modelCostRow{ModelPackageID: sm.ModelPackageID}
+			byPkg[sm.ModelPackageID] = mc
+			order = append(order, sm.ModelPackageID)
+		}
+		if sm.MetricType == "tokens_in" {
+			mc.TokensIn = sm.Total
+		} else {
+			mc.TokensOut = sm.Total
+		}
+	}
+
+	rowsOut := make([]modelCostRow, 0, len(order))
+	totalKRW := 0.0
+	anyPriced := false
+	for _, pid := range order {
+		mc := byPkg[pid]
+		if p, ok := pkgBy[pid]; ok {
+			mc.ModelName = p.Name
+			if p.PriceInputPer1K > 0 || p.PriceOutputPer1K > 0 {
+				mc.Priced = true
+				mc.CostKRW = float64(mc.TokensIn)/1000*p.PriceInputPer1K + float64(mc.TokensOut)/1000*p.PriceOutputPer1K
+			}
+		}
+		if mc.Priced {
+			anyPriced = true
+			totalKRW += mc.CostKRW
+		}
+		rowsOut = append(rowsOut, *mc)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"days":           days,
+		"models":         rowsOut,
+		"total_cost_krw": totalKRW,
+		"any_priced":     anyPriced,
+	})
 }
 
 // --- Fleet Handlers ---
@@ -3737,6 +3985,7 @@ func (s *Server) handleAddProjectMember(w http.ResponseWriter, r *http.Request) 
 		ProjectID:      id,
 		UserID:         req.UserID,
 		Role:           req.Role,
+		GrantedBy:      "console",
 	}
 	if err := s.db.Where("project_id = ? AND user_id = ?", id, req.UserID).
 		Assign(models.ProjectMember{Role: req.Role}).
@@ -4023,9 +4272,11 @@ func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var updates struct {
-		Name        *string `json:"name,omitempty"`
-		NameKo      *string `json:"name_ko,omitempty"`
-		Description *string `json:"description,omitempty"`
+		Name             *string  `json:"name,omitempty"`
+		NameKo           *string  `json:"name_ko,omitempty"`
+		Description      *string  `json:"description,omitempty"`
+		PriceInputPer1K  *float64 `json:"price_input_per_1k,omitempty"`
+		PriceOutputPer1K *float64 `json:"price_output_per_1k,omitempty"`
 	}
 	decodeJSON(r, &updates)
 	if updates.Name != nil {
@@ -4033,6 +4284,12 @@ func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 	}
 	if updates.NameKo != nil {
 		pkg.NameKo = *updates.NameKo
+	}
+	if updates.PriceInputPer1K != nil {
+		pkg.PriceInputPer1K = *updates.PriceInputPer1K
+	}
+	if updates.PriceOutputPer1K != nil {
+		pkg.PriceOutputPer1K = *updates.PriceOutputPer1K
 	}
 	s.db.Save(&pkg)
 	writeJSON(w, http.StatusOK, pkg)
@@ -4139,6 +4396,7 @@ func (s *Server) handleUpdateSecurityPolicy(w http.ResponseWriter, r *http.Reque
 		RuleID  string `json:"rule_id"`
 		Enabled *bool  `json:"enabled"`
 		Action  string `json:"action"`
+		Pattern string `json:"pattern"`
 	}
 	if err := decodeJSON(r, &updates); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -4149,7 +4407,7 @@ func (s *Server) handleUpdateSecurityPolicy(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	orgID := getOrgID(r)
-	if err := s.security.SetRule(orgID, updates.RuleID, updates.Enabled, updates.Action); err != nil {
+	if err := s.security.SetRule(orgID, updates.RuleID, updates.Enabled, updates.Action, updates.Pattern); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -5308,14 +5566,20 @@ func (s *Server) handleSeedEnterpriseFeatures(w http.ResponseWriter, r *http.Req
 	liveFeatures := map[string]bool{
 		"change_freeze":       true, // workflow gate (governed)
 		"model_recall":        true, // workflow gate (governed)
-		"mandatory_ack":       true, // workflow gate (governed)
-		"sandbox_execution":   true, // sandbox policy (governed E4)
 		"command_auth":        true, // tool registry gate (governed C3)
 		"network_egress":      true, // network grants (governed C4)
 		"mcp_allowlist":       true, // tool registry covers MCP (C3)
 		"ai_attribution":      true, // provenance emission + ingestion (B1/B2)
 		"audit_export":        true, // evidence receipts + ack loop (B3)
 		"data_classification": true, // DLP finding classification on live path
+		// NOT live yet — flips true when P3a lands (separate work):
+		// "sandbox_execution": the governance push carries no sandbox
+		// rows, so nothing enforces mandatory sandboxing today.
+		"sandbox_execution": false,
+		// NOT live yet — flips true when P3a lands (separate work):
+		// "mandatory_ack": broadcast acks are recorded but never
+		// checked/enforced by any gate.
+		"mandatory_ack": false,
 	}
 
 	inserted := 0
@@ -5351,4 +5615,101 @@ func (s *Server) handleSeedEnterpriseFeatures(w http.ResponseWriter, r *http.Req
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "seeded", "count": inserted, "note": "features seed by actual enforcement state; unwired capabilities are 'planned'"})
+}
+
+// handleListChangeSubmissions returns pending change-control
+// submissions surfaced by governed harnesses (ActionEnvelope rows of
+// type changeboard.submit, newest first).
+func (s *Server) handleListChangeSubmissions(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var envs []models.ActionEnvelope
+	q := s.db.Where("action_type = ?", "changeboard.submit").Order("occurred_at DESC").Limit(100)
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Find(&envs)
+	out := make([]map[string]any, 0, len(envs))
+	for _, e := range envs {
+		var payload map[string]any
+		_ = json.Unmarshal([]byte(e.ActionPayload), &payload)
+		out = append(out, map[string]any{
+			"envelope_id": e.ID, "harness_id": e.HarnessID, "session_id": e.SessionID,
+			"occurred_at": e.OccurredAt, "payload": payload,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleReviewChangeSubmission approves/rejects a pending submission by
+// delivering a SIGNED admin directive through the relay admin channel;
+// the connector's dispatcher verifies + executes against its durable
+// board. The envelope_id is echoed as the directive's correlation id.
+func (s *Server) handleReviewChangeSubmission(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	decision := "changeboard.approve"
+	if strings.HasSuffix(r.URL.Path, "/reject") {
+		decision = "changeboard.reject"
+	}
+	var env models.ActionEnvelope
+	if err := s.db.Where("id = ?", id).First(&env).Error; err != nil {
+		writeError(w, http.StatusNotFound, "submission not found")
+		return
+	}
+	base := strings.TrimSuffix(config.RelayAdminURL(), "/")
+	if base == "" {
+		writeError(w, http.StatusPreconditionFailed, "live review requires the relay admin channel (config relay_admin_url)")
+		return
+	}
+	var payload map[string]any
+	_ = json.Unmarshal([]byte(env.ActionPayload), &payload)
+	subID, _ := payload["submission_id"].(string)
+	directivePayload, _ := json.Marshal(map[string]string{"submission_id": subID})
+	body, _ := json.Marshal(map[string]any{
+		"org_id":       env.OrganizationID,
+		"target":       env.HarnessID,
+		"command_type": decision,
+		"reason":       "reviewed via console",
+		"issued_by":    "console:" + getOrgID(r),
+		"payload_b64":  base64.StdEncoding.EncodeToString(directivePayload),
+	})
+	resp, err := http.Post(base+"/v1/admin/directives", "application/json", bytes.NewReader(body))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "relay directive delivery failed: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		writeError(w, http.StatusBadGateway, "relay rejected directive: "+resp.Status)
+		return
+	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: getOrgID(r), EventType: "cp.governance.submission_reviewed",
+		ActorType: "admin", Action: decision, ResourceType: "change_submission",
+		ResourceID: subID, Details: "harness=" + env.HarnessID,
+		Result: "delivered", OccurredAt: time.Now().Format(time.RFC3339),
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "directive delivered", "submission": subID})
+}
+
+// handleSREProbes performs live reachability probes for the SRE
+// console's component cards: the relay's DARI/admin listener and the
+// PIA serving endpoint. Addresses come from env; an unset address is
+// reported as "unconfigured" — never a fake green dot.
+func (s *Server) handleSREProbes(w http.ResponseWriter, r *http.Request) {
+	probe := func(addr string) map[string]any {
+		if addr == "" {
+			return map[string]any{"status": "unconfigured", "addr": ""}
+		}
+		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		if err != nil {
+			return map[string]any{"status": "down", "addr": addr, "error": err.Error()}
+		}
+		conn.Close()
+		return map[string]any{"status": "up", "addr": addr}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"relay": probe(config.RelayProbeAddr()),
+		"pia":   probe(config.PIAProbeAddr()),
+		"cp":    map[string]any{"status": "up"}, // this handler answering IS the probe
+	})
 }

@@ -175,24 +175,29 @@ func (s *Service) CreateChangeSet(req CreateChangeSetRequest) (*models.ChangeSet
 
 // CreateProvenanceSpan maps a code region to its origin (PRD §19, Appendix B.1).
 type CreateSpanRequest struct {
-	OrganizationID   string   `json:"organization_id"`
-	RepositoryID     string   `json:"repository_id"`
-	ChangeSetID      string   `json:"change_set_id"`
-	FilePath         string   `json:"file_path"`
-	CommitSHA        string   `json:"commit_s_h_a"`
-	SymbolLang       string   `json:"symbol_lang"`
-	SymbolName       string   `json:"symbol_name"`
-	StartLine        int      `json:"start_line"`
-	EndLine          int      `json:"end_line"`
-	AttributionState string   `json:"attribution_state"`
-	Confidence       float64  `json:"confidence"`
-	SessionID        string   `json:"session_id"`
-	UserID           string   `json:"user_id"`
-	HarnessID        string   `json:"harness_id"`
-	ModelPackageID   string   `json:"model_package_id"`
-	EndpointID       string   `json:"endpoint_id"`
-	ContextRefs      []string `json:"context_refs"`
-	ParentSpanRefs   []string `json:"parent_span_refs"`
+	OrganizationID string `json:"organization_id"`
+	RepositoryID   string `json:"repository_id"`
+	ChangeSetID    string `json:"change_set_id"`
+	FilePath       string `json:"file_path"`
+	CommitSHA      string `json:"commit_sha"`
+	// ASTFingerprint binds the span to the content region (B1/B2);
+	// SemanticFingerprint binds it to the logical symbol so the span
+	// survives rename/move (§19.4). Both hex-encoded digests.
+	ASTFingerprint      string   `json:"ast_fingerprint,omitempty"`
+	SemanticFingerprint string   `json:"semantic_fingerprint,omitempty"`
+	SymbolLang          string   `json:"symbol_lang"`
+	SymbolName          string   `json:"symbol_name"`
+	StartLine           int      `json:"start_line"`
+	EndLine             int      `json:"end_line"`
+	AttributionState    string   `json:"attribution_state"`
+	Confidence          float64  `json:"confidence"`
+	SessionID           string   `json:"session_id"`
+	UserID              string   `json:"user_id"`
+	HarnessID           string   `json:"harness_id"`
+	ModelPackageID      string   `json:"model_package_id"`
+	EndpointID          string   `json:"endpoint_id"`
+	ContextRefs         []string `json:"context_refs"`
+	ParentSpanRefs      []string `json:"parent_span_refs"`
 }
 
 // CreateProvenanceSpan creates a provenance span.
@@ -201,24 +206,26 @@ func (s *Service) CreateProvenanceSpan(req CreateSpanRequest) (*models.Provenanc
 	parentRefs, _ := json.Marshal(req.ParentSpanRefs)
 
 	span := &models.ProvenanceSpan{
-		OrganizationID:   req.OrganizationID,
-		RepositoryID:     req.RepositoryID,
-		ChangeSetID:      req.ChangeSetID,
-		FilePath:         req.FilePath,
-		CommitSHA:        req.CommitSHA,
-		SymbolLang:       req.SymbolLang,
-		SymbolName:       req.SymbolName,
-		StartLine:        req.StartLine,
-		EndLine:          req.EndLine,
-		AttributionState: req.AttributionState,
-		Confidence:       req.Confidence,
-		SessionID:        req.SessionID,
-		UserID:           req.UserID,
-		HarnessID:        req.HarnessID,
-		ModelPackageID:   req.ModelPackageID,
-		EndpointID:       req.EndpointID,
-		ContextRefsJSON:  string(contextRefs),
-		ParentSpanRefs:   string(parentRefs),
+		OrganizationID:      req.OrganizationID,
+		RepositoryID:        req.RepositoryID,
+		ChangeSetID:         req.ChangeSetID,
+		FilePath:            req.FilePath,
+		CommitSHA:           req.CommitSHA,
+		ASTFingerprint:      req.ASTFingerprint,
+		SemanticFingerprint: req.SemanticFingerprint,
+		SymbolLang:          req.SymbolLang,
+		SymbolName:          req.SymbolName,
+		StartLine:           req.StartLine,
+		EndLine:             req.EndLine,
+		AttributionState:    req.AttributionState,
+		Confidence:          req.Confidence,
+		SessionID:           req.SessionID,
+		UserID:              req.UserID,
+		HarnessID:           req.HarnessID,
+		ModelPackageID:      req.ModelPackageID,
+		EndpointID:          req.EndpointID,
+		ContextRefsJSON:     string(contextRefs),
+		ParentSpanRefs:      string(parentRefs),
 	}
 
 	span.SpanDigest = s.computeSpanDigest(span)
@@ -498,10 +505,19 @@ type ProvenanceChain struct {
 	Receipts   []models.EvidenceReceipt `json:"receipts"`
 }
 
+// buildReceiptSigningData is the CANONICAL receipt signing layout
+// (connector mirrors it byte-for-byte in provenancewire):
+// exchangeID|finalState|chainRootHex|relayIdentity|policyEpochID|modelPackageID|issuedAtUnixMs.
+// The timestamp is the unix-ms INTEGER — RFC3339 strings are zone-
+// dependent and lossy to reconstruct; the integer round-trips exactly.
 func (s *Service) buildReceiptSigningData(receipt *models.EvidenceReceipt) []byte {
-	data := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", receipt.ExchangeID, receipt.FinalState,
+	issuedMs := int64(0)
+	if t, err := time.Parse(time.RFC3339, receipt.IssuedAt); err == nil {
+		issuedMs = t.UnixMilli()
+	}
+	data := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%d", receipt.ExchangeID, receipt.FinalState,
 		receipt.ChainRoot, receipt.RelayIdentity, receipt.PolicyEpochID,
-		receipt.ModelPackageID, receipt.IssuedAt)
+		receipt.ModelPackageID, issuedMs)
 	return []byte(data)
 }
 

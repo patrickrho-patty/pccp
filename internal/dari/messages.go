@@ -29,12 +29,13 @@ const (
 
 // Sessions / capability leases (0x0200–0x02FF)
 const (
-	MsgSessionOpen  MessageType = 0x0200
-	MsgSessionGrant MessageType = 0x0201
-	MsgSessionClose MessageType = 0x0202
-	MsgLeaseIssue   MessageType = 0x0210
-	MsgLeaseRevoke  MessageType = 0x0211
-	MsgLeaseRenew   MessageType = 0x0212
+	MsgSessionOpen   MessageType = 0x0200
+	MsgSessionGrant  MessageType = 0x0201
+	MsgSessionClose  MessageType = 0x0202
+	MsgLeaseIssue    MessageType = 0x0210
+	MsgLeaseRevoke   MessageType = 0x0211
+	MsgLeaseRenew    MessageType = 0x0212
+	MsgSessionResume MessageType = 0x0213
 )
 
 // Governance / approvals (0x0300–0x03FF)
@@ -119,6 +120,7 @@ const (
 	// reply to an admin directive (cross-repo registry).
 	MsgAdminCommandResult MessageType = 0x0B02
 	MsgSovereignAdvisory  MessageType = 0x0B03
+	MsgCollabEnvelope     MessageType = 0x0B10
 )
 
 // Session-governance extensions (0x0D00–0x0DFF) — the extension
@@ -170,6 +172,8 @@ func (mt MessageType) String() string {
 		return "SESSION_CLOSE"
 	case MsgLeaseIssue:
 		return "LEASE_ISSUE"
+	case MsgSessionResume:
+		return "SESSION_RESUME"
 	case MsgLeaseRevoke:
 		return "LEASE_REVOKE"
 	case MsgLeaseRenew:
@@ -256,6 +260,8 @@ func (mt MessageType) String() string {
 		return "ADMIN_COMMAND_RESULT"
 	case MsgSovereignAdvisory:
 		return "SOVEREIGN_ADVISORY"
+	case MsgCollabEnvelope:
+		return "COLLAB_ENVELOPE"
 	case MsgChangeSetNack:
 		return "CHANGESET_NACK"
 	case MsgPolicyEpochPush:

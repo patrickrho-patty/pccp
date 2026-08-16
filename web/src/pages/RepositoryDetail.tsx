@@ -6,7 +6,7 @@ import { Modal, ModalFooter } from '../components/Modal'
 import { formatRelative } from '../utils/format'
 import { showToast } from '../components/Toast'
 
-function authHeaders() { const token = localStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }
+function authHeaders(): Record<string, string> { const token = localStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }
 
 // RepositoryDetail (repositories C3) — file browser, branches +
 // protection, baselines, sensitivity heatmap, sessions, findings, and

@@ -21,7 +21,7 @@ type Service struct {
 
 // Client represents a connected WebSocket client.
 type Client struct {
-	ID            string          `json:"i_d"`
+	ID            string          `json:"id"`
 	UserID        string          `json:"user_id"`
 	OrgID         string          `json:"org_id"`
 	Conn          *websocket.Conn `json:"conn"`
@@ -222,6 +222,19 @@ func (s *Service) NotifyChatMessage(orgID, conversationID, senderName, content s
 		"conversation_id": conversationID,
 		"sender":          senderName,
 		"content":         content,
+	})
+}
+
+// NotifyExchangeEvent pushes a governed-exchange lifecycle event
+// (open/decision/dlp/forward/complete) to the org's live consoles.
+// Payload carries counts + statuses only — never token content
+// (payload protection: admin visibility does not exempt P0).
+func (s *Service) NotifyExchangeEvent(orgID, sessionID, exchangeID, state string, evidenceEvents int) {
+	s.BroadcastToOrg(orgID, "exchange.update", map[string]any{
+		"session_id":      sessionID,
+		"exchange_id":     exchangeID,
+		"state":           state,
+		"evidence_events": evidenceEvents,
 	})
 }
 

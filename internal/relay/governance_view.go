@@ -28,6 +28,7 @@ type koreanFreeze struct {
 type koreanRecall struct {
 	ModelPackageID string `json:"model_package_id"`
 	Reason         string `json:"reason"`
+	Replacement    string `json:"replacement"`
 }
 
 // koreanForcedVersion mirrors the ForcedVersion JSON.
@@ -65,7 +66,8 @@ func (s *Service) GatherGovernanceState(orgID, repoID, modelID string) Governanc
 
 	// Recalls: the latest per model.
 	var recallEvents []models.AuditEvent
-	s.db.Where("organization_id = ? AND event_type = ?", orgID, "cp.korean.emergency_model_recall").
+	s.db.Where("organization_id = ? AND event_type IN ?", orgID,
+		[]string{"cp.korean.emergency_model_recall", "cp.model.recalled"}).
 		Order("occurred_at DESC").Limit(50).Find(&recallEvents)
 	seen := map[string]bool{}
 	for _, e := range recallEvents {
@@ -75,7 +77,7 @@ func (s *Service) GatherGovernanceState(orgID, repoID, modelID string) Governanc
 			continue
 		}
 		seen[r.ModelPackageID] = true
-		view.Recalls = append(view.Recalls, GovernanceRecallView{Model: r.ModelPackageID, Reason: r.Reason})
+		view.Recalls = append(view.Recalls, GovernanceRecallView{Model: r.ModelPackageID, Reason: r.Reason, Replacement: r.Replacement})
 	}
 
 	// Forced harness version: the latest event wins.
@@ -104,10 +106,50 @@ func (s *Service) GatherGovernanceState(orgID, repoID, modelID string) Governanc
 		view.Tools = append(view.Tools, GovernanceToolView{ToolID: t.Name, Status: status})
 	}
 
-	// Sandbox definitions: the control-plane sandbox service is
-	// definition-only today (audit-fixed); policies persist nowhere the
-	// relay can query, so the snapshot carries no sandbox rows until
-	// they do. The wire field remains for that push.
+	// D1 (§33.6): mandatory acknowledgement requirements — enabled
+	// policy rules in the session domain become blocking acks the
+	// connector must surface before high-risk work.
+	var rules []models.PolicyRule
+	s.db.Where("organization_id = ? AND enabled = ?", orgID, true).Find(&rules)
+	for _, rule := range rules {
+		switch rule.Domain {
+		case "session":
+			// Ack-class rule (mandatory_ack): blocking until acknowledged.
+			view.Acks = append(view.Acks, GovernanceAckView{
+				PolicyEpochID: rule.TemplateID,
+				SummaryKo:     rule.Name + ": " + rule.Description,
+				Blocking:      true,
+			})
+		case "scm", "data":
+			// Coding-standard-class rule (§33.11): block pattern from
+			// the rule's ConfigJSON "block_pattern" when present.
+			bp := configBlockPattern(rule.ConfigJSON)
+			if bp == "" {
+				continue
+			}
+			view.Standards = append(view.Standards, GovernanceStandardView{
+				RuleID:        rule.TemplateID,
+				BlockPattern:  bp,
+				Description:   rule.NameEn,
+				DescriptionKo: rule.Name + ": " + rule.Description,
+			})
+		}
+	}
+
+	// E4: sandbox policies from the durable sandbox_records table.
+	var sandboxes []models.SandboxRecord
+	s.db.Where("organization_id = ? AND status IN ('running','defined','pending') AND repository_id != ''", orgID).Find(&sandboxes)
+	for _, sb := range sandboxes {
+		risk := "STANDARD"
+		if sb.Mode == "air_gapped" || sb.Mode == "review_only" {
+			risk = "SENSITIVE"
+		}
+		view.Sandboxes = append(view.Sandboxes, GovernanceSandboxView{
+			RepositoryID: sb.RepositoryID,
+			Mode:         sb.Mode,
+			RiskClass:    risk,
+		})
+	}
 	return view
 }
 
@@ -171,4 +213,20 @@ func (s *Service) ActiveChangeFreeze(orgID string) (bool, string, error) {
 		return false, "", nil
 	}
 	return false, "", nil
+}
+
+// configBlockPattern extracts the "block_pattern" field from a rule's
+// ConfigJSON (empty when absent).
+func configBlockPattern(cfg string) string {
+	if cfg == "" {
+		return ""
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(cfg), &m) != nil {
+		return ""
+	}
+	if v, ok := m["block_pattern"].(string); ok {
+		return v
+	}
+	return ""
 }

@@ -65,7 +65,7 @@ type AttestationEvidence struct {
 type CollectRequest struct {
 	EndpointID    string            `json:"endpoint_id"`
 	NodeIdentity  string            `json:"node_identity"`
-	GPUIDs        []string          `json:"g_p_u_i_ds"`
+	GPUIDs        []string          `json:"gpu_ids"`
 	RequiredTypes []AttestationType `json:"required_types"`
 	RequiredLevel AssuranceLevel    `json:"required_level"`
 }

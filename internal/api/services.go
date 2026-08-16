@@ -1,8 +1,10 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -45,7 +47,7 @@ type AdditionalServices struct {
 	Command     *command.Service     `json:"command"`
 	Incident    *incident.Service    `json:"incident"`
 	Korean      *korean.Service      `json:"korean"`
-	MCP         *mcp.Service         `json:"m_c_p"`
+	MCP         *mcp.Service         `json:"mcp"`
 	Network     *network.Service     `json:"network"`
 	Privacy     *privacy.Service     `json:"privacy"`
 	Reporting   *reporting.Service   `json:"reporting"`
@@ -57,12 +59,12 @@ type AdditionalServices struct {
 	Compliance  *compliance.Service  `json:"compliance"`
 	ConfigMgmt  *configmgmt.Service  `json:"config_mgmt"`
 	Connectors  *connectors.Service  `json:"connectors"`
-	GPUOps      *gpuops.Service      `json:"g_p_u_ops"`
+	GPUOps      *gpuops.Service      `json:"gpu_ops"`
 	KeyMgmt     *keymgmt.Service     `json:"key_mgmt"`
-	MCPMarket   *mcpmarket.Service   `json:"m_c_p_market"`
+	MCPMarket   *mcpmarket.Service   `json:"mcp_market"`
 	Realtime    *realtime.Service    `json:"realtime"`
 	Sovereign   *sovereign.Service   `json:"sovereign"`
-	SSO         *sso.Service         `json:"s_s_o"`
+	SSO         *sso.Service         `json:"sso"`
 	Catalog     *catalog.Service     `json:"catalog"`
 	PublicCloud *publiccloud.Service `json:"public_cloud"`
 }
@@ -199,6 +201,7 @@ func (s *Server) setupAdditionalRoutes(r chi.Router, ext *AdditionalServices) {
 		r.Post("/", s.wrapToolsRegister(ext))
 		r.Get("/presets", s.wrapToolsPresets(ext))
 		r.Put("/{id}", s.wrapToolsUpdate(ext))
+		r.Delete("/{id}", s.wrapToolsDelete(ext))
 		r.Post("/seed-defaults", s.wrapToolsSeed(ext))
 		r.Get("/approvals", s.wrapToolsPendingApprovals(ext))
 		r.Post("/approvals/{id}/decide", s.wrapToolsDecideApproval(ext))
@@ -273,12 +276,10 @@ func (s *Server) setupAdditionalRoutes(r chi.Router, ext *AdditionalServices) {
 		r.Post("/seed", s.wrapMarketSeed(ext))
 	})
 
-	// SSO
+	// SSO: SCIM stays behind admin auth (token-authenticated per the
+	// SCIM handler); the login endpoints mount PUBLICLY in server.go
+	// (pre-login they must be reachable without a console JWT).
 	r.Route("/sso", func(r chi.Router) {
-		r.Post("/saml/redirect", s.wrapSSOSAMLRedirect(ext))
-		r.Post("/saml/callback", s.wrapSSOSAMLCallback(ext))
-		r.Get("/oidc/auth-url", s.wrapSSOOIDCAuthURL(ext))
-		r.Post("/oidc/callback", s.wrapSSOOIDCCallback(ext))
 		r.Post("/scim", s.wrapSSOSCIM(ext))
 	})
 
@@ -831,38 +832,7 @@ func (s *Server) wrapToolsSeed(ext *AdditionalServices) http.HandlerFunc {
 }
 
 // wrapToolsUpdate patches a tool's registry fields (web/14 UX13 with
-// audit for the approval toggle).
-func (s *Server) wrapToolsUpdate(ext *AdditionalServices) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		orgID := getOrgID(r)
-		id := chi.URLParam(r, "id")
-		var req struct {
-			RequiresApproval *bool  `json:"requires_approval"`
-			DangerLevel      string `json:"danger_level"`
-			Category         string `json:"category"`
-			ToolClass        string `json:"tool_class"`
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
-		tool, err := ext.Tools.UpdateTool(orgID, id, req.RequiresApproval, req.DangerLevel, req.Category, req.ToolClass)
-		if err != nil {
-			writeError(w, http.StatusNotFound, err.Error())
-			return
-		}
-		if req.RequiresApproval != nil {
-			s.db.Create(&models.AuditEvent{
-				OrganizationID: orgID, EventType: "cp.tool.updated", ActorType: "admin",
-				Action: "update_tool", ResourceType: "tool", ResourceID: id,
-				Details:    fmt.Sprintf(`{"requires_approval":%v}`, *req.RequiresApproval),
-				Result:     "success",
-				OccurredAt: time.Now().Format(time.RFC3339),
-			})
-		}
-		writeJSON(w, http.StatusOK, tool)
-	}
-}
+
 
 // wrapToolsPresets returns the classification presets + guidance (D).
 func (s *Server) wrapToolsPresets(ext *AdditionalServices) http.HandlerFunc {
@@ -907,14 +877,41 @@ func (s *Server) wrapProjectToolAllowlist(ext *AdditionalServices) http.HandlerF
 func (s *Server) wrapToolsPendingApprovals(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID := getOrgID(r)
-		approvals, _ := ext.Tools.ListPendingApprovals(orgID)
-		writeJSON(w, http.StatusOK, approvals)
+		approvals, err := ext.Tools.ListPendingApprovals(orgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		// Enrich each row with the tool name for display; the Approval
+		// row itself carries only a tool reference.
+		tools, _ := ext.Tools.ListTools(orgID)
+		nameByID := make(map[string]string, len(tools))
+		for _, t := range tools {
+			nameByID[t.ID] = t.Name
+		}
+		out := make([]map[string]interface{}, 0, len(approvals))
+		for _, a := range approvals {
+			toolName := strings.TrimSuffix(a.ApprovalType, "_approval")
+			if n, ok := nameByID[a.ActionID]; ok {
+				toolName = n
+			}
+			out = append(out, map[string]interface{}{
+				"id":            a.ID,
+				"action_id":     a.ActionID,
+				"approval_type": a.ApprovalType,
+				"decision":      a.Decision,
+				"tool_name":     toolName,
+				"created_at":    a.CreatedAt,
+			})
+		}
+		writeJSON(w, http.StatusOK, out)
 	}
 }
 
 func (s *Server) wrapToolsDecideApproval(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
+		orgID := getOrgID(r)
 		var req struct {
 			ReviewerID string `json:"reviewer_id"`
 			Decision   string `json:"decision"`
@@ -924,8 +921,89 @@ func (s *Server) wrapToolsDecideApproval(ext *AdditionalServices) http.HandlerFu
 			writeError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
-		ext.Tools.DecideApproval(id, req.ReviewerID, req.Decision, req.Reason)
+		if req.Decision != "approved" && req.Decision != "denied" && req.Decision != "rejected" {
+			writeError(w, http.StatusBadRequest, "decision must be approved or denied")
+			return
+		}
+		approval, err := ext.Tools.DecideApproval(id, req.ReviewerID, req.Decision, req.Reason)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.db.Create(&models.AuditEvent{
+			OrganizationID: orgID,
+			EventType:      "cp.tools.approval_decided",
+			ActorType:      "admin",
+			Action:         "decide_tool_approval",
+			ResourceType:   "tool_approval",
+			ResourceID:     approval.ID,
+			Details:        fmt.Sprintf("decision: %s, tool ref: %s, reason: %s", req.Decision, approval.ActionID, req.Reason),
+			Result:         "success",
+			OccurredAt:     time.Now().Format(time.RFC3339),
+		})
 		writeJSON(w, http.StatusOK, map[string]string{"status": "decided"})
+	}
+}
+
+func (s *Server) wrapToolsUpdate(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		orgID := getOrgID(r)
+		var req struct {
+			Name             *string `json:"name,omitempty"`
+			NameKo           *string `json:"name_ko,omitempty"`
+			Category         *string `json:"category,omitempty"`
+			ToolClass        *string `json:"tool_class,omitempty"`
+			DangerLevel      *string `json:"danger_level,omitempty"`
+			RequiresApproval *bool   `json:"requires_approval,omitempty"`
+			Status           *string `json:"status,omitempty"`
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		tool, err := ext.Tools.UpdateTool(orgID, id, req.Name, req.NameKo, req.Category, req.ToolClass,
+			req.DangerLevel, req.RequiresApproval, req.Status)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.db.Create(&models.AuditEvent{
+			OrganizationID: orgID,
+			EventType:      "cp.tools.updated",
+			ActorType:      "admin",
+			Action:         "update_tool",
+			ResourceType:   "tool",
+			ResourceID:     tool.ID,
+			Details:        fmt.Sprintf("tool: %s, requires_approval: %t, status: %s", tool.Name, tool.RequiresApproval, tool.Status),
+			Result:         "success",
+			OccurredAt:     time.Now().Format(time.RFC3339),
+		})
+		writeJSON(w, http.StatusOK, tool)
+	}
+}
+
+func (s *Server) wrapToolsDelete(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		orgID := getOrgID(r)
+		tool, err := ext.Tools.DeleteTool(orgID, id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.db.Create(&models.AuditEvent{
+			OrganizationID: orgID,
+			EventType:      "cp.tools.deleted",
+			ActorType:      "admin",
+			Action:         "delete_tool",
+			ResourceType:   "tool",
+			ResourceID:     tool.ID,
+			Details:        fmt.Sprintf("tool: %s unregistered from org registry", tool.Name),
+			Result:         "success",
+			OccurredAt:     time.Now().Format(time.RFC3339),
+		})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 	}
 }
 
@@ -1314,8 +1392,57 @@ func (s *Server) wrapSSOSAMLCallback(ext *AdditionalServices) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, resp)
+		// Complete the login: bind the verified identity to an org,
+		// provision the user if first login, and issue the SAME console
+		// JWT the password path issues.
+		orgID, oerr := s.orgForSSOIssuer(resp.Issuer)
+		if oerr != nil {
+			writeError(w, http.StatusUnauthorized, oerr.Error())
+			return
+		}
+		user, perr := ext.SSO.ProvisionUserFromSSO(orgID, resp)
+		if perr != nil {
+			writeError(w, http.StatusInternalServerError, perr.Error())
+			return
+		}
+		token, terr := s.auth.IssueToken(user.Email, orgID, "member")
+		if terr != nil {
+			writeError(w, http.StatusInternalServerError, terr.Error())
+			return
+		}
+		s.db.Create(&models.AuditEvent{
+			OrganizationID: orgID, EventType: "cp.auth.sso_login",
+			ActorType: "user", Action: "sso_login", ResourceType: "user",
+			ResourceID: user.ID, Details: "method=saml email=" + user.Email,
+			Result: "success", OccurredAt: time.Now().Format(time.RFC3339),
+		})
+		writeJSON(w, http.StatusOK, map[string]string{"token": token, "email": user.Email, "org_id": orgID})
 	}
+}
+
+// orgForSSOIssuer resolves which organization an IdP assertion belongs
+// to: the org whose SSOConfig references the issuer; a single-org
+// deployment binds any issuer to that org; otherwise refused (an
+// unbound IdP must never mint sessions).
+func (s *Server) orgForSSOIssuer(issuer string) (string, error) {
+	var orgs []models.Organization
+	s.db.Find(&orgs)
+	var matches []models.Organization
+	for _, o := range orgs {
+		if issuer != "" && strings.Contains(o.SSOConfig, issuer) {
+			matches = append(matches, o)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0].ID, nil
+	}
+	if len(matches) > 1 {
+		return "", errors.New("sso: issuer bound to multiple organizations — configuration error")
+	}
+	if len(orgs) == 1 {
+		return orgs[0].ID, nil
+	}
+	return "", errors.New("sso: no organization bound to this identity provider")
 }
 
 func (s *Server) wrapSSOOIDCAuthURL(ext *AdditionalServices) http.HandlerFunc {
@@ -1341,12 +1468,42 @@ func (s *Server) wrapSSOOIDCCallback(ext *AdditionalServices) http.HandlerFunc {
 			RedirectURI string `json:"redirect_uri"`
 		}
 		decodeJSON(r, &req)
-		resp, err := ext.SSO.HandleOIDCCallback(req.Code, req.RedirectURI)
+		tok, err := ext.SSO.HandleOIDCCallback(req.Code, req.RedirectURI)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, resp)
+		// Verify the ID token (JWKS-checked) and build the identity —
+		// an unverified token never mints a session.
+		resp, verr := ext.SSO.ParseOIDCIDToken(tok.IDToken)
+		if verr != nil {
+			writeError(w, http.StatusUnauthorized, verr.Error())
+			return
+		}
+		// Complete the login (single-org binding; issuer-scoped orgs
+		// resolve through the token's issuer claim when present).
+		orgID, oerr := s.orgForSSOIssuer("")
+		if oerr != nil {
+			writeError(w, http.StatusUnauthorized, oerr.Error())
+			return
+		}
+		user, perr := ext.SSO.ProvisionOIDCUser(orgID, resp)
+		if perr != nil {
+			writeError(w, http.StatusInternalServerError, perr.Error())
+			return
+		}
+		token, terr := s.auth.IssueToken(user.Email, orgID, "member")
+		if terr != nil {
+			writeError(w, http.StatusInternalServerError, terr.Error())
+			return
+		}
+		s.db.Create(&models.AuditEvent{
+			OrganizationID: orgID, EventType: "cp.auth.sso_login",
+			ActorType: "user", Action: "sso_login", ResourceType: "user",
+			ResourceID: user.ID, Details: "method=oidc email=" + user.Email,
+			Result: "success", OccurredAt: time.Now().Format(time.RFC3339),
+		})
+		writeJSON(w, http.StatusOK, map[string]string{"token": token, "email": user.Email, "org_id": orgID})
 	}
 }
 

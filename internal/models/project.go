@@ -107,16 +107,21 @@ type PromptExchange struct {
 	CreatedAt2     string `gorm:"column:created_at_2;type:timestamp" json:"created_at_2,omitempty"`
 }
 
-// ProjectMember is a real membership/role binding (projects B1) — the
+// ProjectMember is the real membership/role binding (projects B1): the
 // roster that entitlement (§13) and analytics read, replacing the
-// previous session-derived member count.
+// previous session-derived member count. Org-scoped with a composite
+// unique (project, user) — one grant per user per project.
 type ProjectMember struct {
 	Base
 	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
 	ProjectID      string `gorm:"type:varchar(64);uniqueIndex:idx_pm_proj_user,priority:1;index;not null" json:"project_id"`
 	UserID         string `gorm:"type:varchar(64);uniqueIndex:idx_pm_proj_user,priority:2;index;not null" json:"user_id"`
-	Role           string `gorm:"type:varchar(32);default:'member'" json:"role"` // owner, admin, member, viewer
+	Role           string `gorm:"type:varchar(32);default:'member'" json:"role"` // owner, admin, maintainer, member, viewer
+	GrantedBy      string `gorm:"type:varchar(64)" json:"granted_by,omitempty"`
 }
+
+// TableName pins the table name explicitly.
+func (ProjectMember) TableName() string { return "project_members" }
 
 // ChangeRequest is an AI change-control queue item (projects B7, PRD
 // §33.4): high-risk changesets route here for human decision instead

@@ -39,6 +39,7 @@ type Sandbox struct {
 	ID string `json:"id"`
 	// DBID is the durable row ID (sandbox_records).
 	DBID           string      `json:"db_id,omitempty"`
+	RepositoryID   string      `json:"repository_id,omitempty"`
 	CPULimit       string      `json:"cpu_limit,omitempty"`
 	MemoryLimitMB  int         `json:"memory_limit_mb,omitempty"`
 	OrganizationID string      `json:"organization_id"`
@@ -77,7 +78,9 @@ type Sandbox struct {
 type CreateRequest struct {
 	OrganizationID string `json:"organization_id"`
 	SessionID      string `json:"session_id"`
-	UserID         string `json:"user_id"`
+	// RepositoryID scopes the policy to governed work in that repo (E4).
+	RepositoryID string `json:"repository_id"`
+	UserID       string `json:"user_id"`
 	// API-native spelling.
 	Mode           RuntimeMode            `json:"mode"`
 	BaseImage      string                 `json:"base_image"`
@@ -146,7 +149,7 @@ func (s *Service) CreateSandbox(req CreateRequest) (*Sandbox, error) {
 	// Durable definition (E4): the governance snapshot + UI list read
 	// this row — sandboxes survive restarts and org scoping is real.
 	rec := &models.SandboxRecord{
-		OrganizationID: req.OrganizationID, SessionID: req.SessionID, UserID: req.UserID,
+		OrganizationID: req.OrganizationID, SessionID: req.SessionID, RepositoryID: req.RepositoryID, UserID: req.UserID,
 		Mode: string(req.Mode), BaseImage: req.BaseImage, ImageDigest: req.ImageDigest,
 		CPULimit: req.CPULimit, MemoryLimitMB: req.MemoryLimitMB, NetworkPolicy: networkPolicy,
 		Status: "pending", ResourceLimitsJSON: string(resourceJSON),
@@ -298,7 +301,7 @@ func (s *Service) ListSandboxes(orgID string) ([]Sandbox, error) {
 	for _, rec := range recs {
 		out = append(out, Sandbox{
 			DBID: rec.ID, ID: rec.ID,
-			OrganizationID: rec.OrganizationID, SessionID: rec.SessionID, UserID: rec.UserID,
+			OrganizationID: rec.OrganizationID, SessionID: rec.SessionID, RepositoryID: rec.RepositoryID, UserID: rec.UserID,
 			Mode: RuntimeMode(rec.Mode), BaseImage: rec.BaseImage, ImageDigest: rec.ImageDigest,
 			CPULimit: rec.CPULimit, MemoryLimitMB: rec.MemoryLimitMB, NetworkPolicy: rec.NetworkPolicy,
 			Status: rec.Status, RuntimeProvider: rec.RuntimeProvider, ResourceLimits: rec.ResourceLimitsJSON,
@@ -312,7 +315,7 @@ func (s *Service) GetSandbox(sandboxID string) (*Sandbox, error) {
 	if err := s.db.Where("id = ?", sandboxID).First(&rec).Error; err == nil {
 		return &Sandbox{
 			DBID: rec.ID, ID: rec.ID,
-			OrganizationID: rec.OrganizationID, SessionID: rec.SessionID, UserID: rec.UserID,
+			OrganizationID: rec.OrganizationID, SessionID: rec.SessionID, RepositoryID: rec.RepositoryID, UserID: rec.UserID,
 			Mode: RuntimeMode(rec.Mode), BaseImage: rec.BaseImage, ImageDigest: rec.ImageDigest,
 			CPULimit: rec.CPULimit, MemoryLimitMB: rec.MemoryLimitMB, NetworkPolicy: rec.NetworkPolicy,
 			Status: rec.Status, RuntimeProvider: rec.RuntimeProvider, ResourceLimits: rec.ResourceLimitsJSON,

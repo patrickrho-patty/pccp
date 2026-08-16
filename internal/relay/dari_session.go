@@ -47,9 +47,11 @@ func (pl *DARIListener) authAckPayload() []byte {
 
 // sessionOpenRequest is the connector's SESSION_OPEN body.
 type sessionOpenRequest struct {
-	SessionID string `json:"session_id"`
-	UserID    string `json:"user_id"`
-	Model     string `json:"model"`
+	SessionID    string `json:"session_id"`
+	UserID       string `json:"user_id"`
+	Model        string `json:"model"`
+	RepositoryID string `json:"repository_id,omitempty"`
+	Branch       string `json:"branch,omitempty"`
 }
 
 // setupSession issues the session's lease and pushes the governance
@@ -111,6 +113,29 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 		return
 	}
 
+	// §53: mint the session's resumption credential (30-minute window)
+	// and send it with the grant — a reconnecting connector presents it
+	// on SESSION_RESUME instead of re-running full setup.
+	resumeTok := dari.GenerateResumptionToken(so.SessionID, orgID, pl.harnessForConn(connID))
+	pl.mu.Lock()
+	if pl.resumptionTokens == nil {
+		pl.resumptionTokens = map[string]*resumeState{}
+	}
+	if pl.resumeMints%128 == 0 {
+		// M5: sweep expired credentials — the map must stay bounded on
+		// a long-lived relay.
+		for sid, st := range pl.resumptionTokens {
+			if !st.cred.IsValid() {
+				delete(pl.resumptionTokens, sid)
+			}
+		}
+	}
+	pl.resumeMints++
+	// H6: the session's governance context (grant) attaches when the
+	// grant is issued below; the epoch is known now.
+	pl.resumptionTokens[so.SessionID] = &resumeState{cred: resumeTok, epoch: epoch.EpochID}
+	pl.mu.Unlock()
+
 	// Push POLICY_EPOCH (0x0D10).
 	wireEpoch, err := buildWirePolicyEpoch(epoch, pl.svc.Policy().SigningPublicKey())
 	if err != nil {
@@ -169,7 +194,7 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 	// Production governance wiring (C3/C4/D1/D3-D6/E4): push the
 	// org's governance-state snapshot so the connector's governed
 	// gates fire on real tool calls.
-	govView := pl.svc.GatherGovernanceState(orgID, "", so.Model)
+	govView := pl.svc.GatherGovernanceState(orgID, so.RepositoryID, so.Model)
 	govSnap := BuildGovernanceState(govView)
 	if govBody, gerr := encodeWire(govSnap); gerr == nil {
 		if err := conn.SendMessage(dari.MsgGovernanceState, nil, govBody, 0, 2); err != nil {
@@ -210,9 +235,24 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 	}
 	grantEnv, err := pl.svc.IssueSessionGrant(lease, harnessPub)
 	if err != nil {
+		// The minted credential is unusable without its grant — drop it
+		// so a later resume can never restore a nil-grant (weaker-
+		// authority) session. The client never received the token (it
+		// only rides SESSION_GRANT), so nothing legitimate is lost.
+		pl.mu.Lock()
+		if st := pl.resumptionTokens[so.SessionID]; st != nil && st.cred == resumeTok {
+			delete(pl.resumptionTokens, so.SessionID)
+		}
+		pl.mu.Unlock()
 		pl.sendJSONError(conn, connID, "authorization grant issuance failed: "+err.Error())
 		return
 	}
+	// H6: complete the resume state's governance context.
+	pl.mu.Lock()
+	if st := pl.resumptionTokens[so.SessionID]; st != nil {
+		st.grant = grantEnv
+	}
+	pl.mu.Unlock()
 
 	// SESSION_GRANT (0x0201) closes the setup phase and carries the
 	// signed grant on dari/1 connections.
@@ -224,11 +264,13 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 	}
 	pl.mu.Unlock()
 	grant, _ := json.Marshal(map[string]string{
-		"session_id":   so.SessionID,
-		"policy_epoch": epoch.EpochID,
-		"lease_id":     lease.LeaseID,
-		"organization": orgID,
-		"grant_hex":    GrantHexForWire(grantEnv),
+		"session_id":     so.SessionID,
+		"policy_epoch":   epoch.EpochID,
+		"lease_id":       lease.LeaseID,
+		"organization":   orgID,
+		"resume_token":   resumeTok.TokenHex(),
+		"resume_expires": resumeTok.ExpiresAt.Format(time.RFC3339),
+		"grant_hex":      GrantHexForWire(grantEnv),
 	})
 	if err := conn.SendMessage(dari.MsgSessionGrant, nil, grant, 0, 4); err != nil {
 		log.Printf("relay: session grant to %s failed: %v", connID, err)
@@ -506,20 +548,22 @@ func (pl *DARIListener) ingestSpan(conn *dari.TransportConn, connID, harnessID s
 	// provenance injection).
 	orgID := pl.orgForPeer(connID)
 	_, err := pl.svc.provenance.CreateProvenanceSpan(provenance.CreateSpanRequest{
-		OrganizationID:   orgID,
-		RepositoryID:     env.RepositoryID,
-		ChangeSetID:      env.ChangeSetID,
-		FilePath:         env.FilePath,
-		CommitSHA:        env.CommitSHA,
-		SymbolLang:       env.SymbolLang,
-		SymbolName:       env.SymbolName,
-		StartLine:        env.StartLine,
-		EndLine:          env.EndLine,
-		AttributionState: env.AttributionState,
-		Confidence:       env.Confidence,
-		SessionID:        env.SessionID,
-		UserID:           env.UserID,
-		HarnessID:        harnessID,
+		OrganizationID:      orgID,
+		RepositoryID:        env.RepositoryID,
+		ChangeSetID:         env.ChangeSetID,
+		FilePath:            env.FilePath,
+		CommitSHA:           env.CommitSHA,
+		ASTFingerprint:      hex.EncodeToString(env.ASTFingerprint[:]),
+		SemanticFingerprint: hex.EncodeToString(env.SemanticFingerprint[:]),
+		SymbolLang:          env.SymbolLang,
+		SymbolName:          env.SymbolName,
+		StartLine:           env.StartLine,
+		EndLine:             env.EndLine,
+		AttributionState:    env.AttributionState,
+		Confidence:          env.Confidence,
+		SessionID:           env.SessionID,
+		UserID:              env.UserID,
+		HarnessID:           harnessID,
 	})
 	if err != nil {
 		log.Printf("relay: span record from %s failed: %v", connID, err)

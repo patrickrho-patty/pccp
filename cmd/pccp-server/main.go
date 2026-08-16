@@ -4,8 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/patrickrho-patty/pccp/internal/api"
@@ -25,6 +27,8 @@ func main() {
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Println("PCCP Control Plane — starting up")
+	// Runtime config (pccp.toml) reloads on SIGHUP.
+	config.ListenForReload(make(chan struct{}))
 
 	// Initialize database
 	database, err := db.FromEnv()
@@ -42,6 +46,22 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create API server: %v", err)
 	}
+
+	// Catalog push on publish (web/18 B): deliver the delta to live
+	// sessions through the relay admin channel when configured.
+	server.SetModelPublishedHook(func(packageID string) {
+		base := strings.TrimSuffix(config.RelayAdminURL(), "/")
+		if base == "" {
+			log.Printf("model %s published — catalog push deferred (relay_admin_url not configured; sessions refresh at next setup)", packageID)
+			return
+		}
+		resp, err := http.Post(base+"/v1/catalog/broadcast", "application/json", nil)
+		if err != nil {
+			log.Printf("catalog broadcast for %s failed: %v", packageID, err)
+			return
+		}
+		resp.Body.Close()
+	})
 
 	// Seed demo data if requested
 	if *seed {

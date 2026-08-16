@@ -16,7 +16,8 @@ code,name,family,description
 0x0202,SESSION_CLOSE,session,Working session close
 0x0210,LEASE_ISSUE,session,Capability lease issuance
 0x0211,LEASE_REVOKE,session,Capability lease revocation
-0x0212,LEASE_RENEW,session,Capability lease renewal
+0x0212,LEASE_RENEW,sessions,Session lease renewal
+0x0213,SESSION_RESUME,sessions,§53 session resumption request/response
 0x0300,EXCHANGE_OPEN,governance,Governed exchange open
 0x0301,EXCHANGE_ACTION,governance,Exchange action
 0x0302,EXCHANGE_CLOSE,governance,Exchange close
@@ -59,6 +60,7 @@ code,name,family,description
 0x0B01,ADMIN_DIRECTIVE,broadcast,Administrative directive
 0x0B02,ADMIN_COMMAND_RESULT,broadcast,Connector admin-command execution evidence
 0x0B03,SOVEREIGN_ADVISORY,comms,Relay-pushed offline sovereign advisory (E3 air-gap)
+0x0B10,COLLAB_ENVELOPE,collab,Relay-routed dari.collab/1 envelope between org peers
 0x0C00,TELEMETRY,telemetry,Telemetry event
 0x0C01,METER_USAGE,telemetry,Metering event
 0x0D00,MODEL_CATALOG_REQUEST,models,Model catalog request

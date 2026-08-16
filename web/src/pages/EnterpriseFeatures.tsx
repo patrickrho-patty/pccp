@@ -206,7 +206,7 @@ export default function EnterpriseFeatures() {
   )
 }
 
-function authHeaders() {
+function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('pccp_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }

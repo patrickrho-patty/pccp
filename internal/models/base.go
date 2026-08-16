@@ -69,3 +69,22 @@ type ServiceSigningKey struct {
 
 // TableName overrides the table name.
 func (ServiceSigningKey) TableName() string { return "service_signing_keys" }
+
+// EffectRecordRow is the durable F.10 effect record (dari.EffectRecordRow
+// columns) — EFFECT_STATUS survives executor restarts.
+type EffectRecordRow struct {
+	Base
+	OperationID   string `gorm:"type:varchar(128);uniqueIndex;not null" json:"operation_id"`
+	State         int    `json:"state"`
+	Nonce         []byte `gorm:"type:blob" json:"nonce"`
+	PrepareDigest string `gorm:"type:varchar(128)" json:"prepare_digest"`
+	GrantDigest   string `gorm:"type:varchar(128)" json:"grant_digest"`
+	InputDigest   string `gorm:"type:varchar(128)" json:"input_digest"`
+	AuthDigest    string `gorm:"type:varchar(128)" json:"auth_digest"`
+	Executor      string `gorm:"type:varchar(128)" json:"executor"`
+	RetryOwner    string `gorm:"type:varchar(128)" json:"retry_owner"`
+	ResultCOSE    []byte `gorm:"type:blob" json:"result_cose,omitempty"`
+}
+
+// TableName overrides the table name.
+func (EffectRecordRow) TableName() string { return "effect_records" }

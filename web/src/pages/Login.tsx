@@ -39,8 +39,12 @@ export default function Login() {
         return
       }
       api.ssoOIDCCallback(code, redirectUri())
-        .then(() => {
-          setSsoNotice('OIDC 토큰 교환에 성공했습니다. 단, SSO 완료 후 콘솔 세션(JWT)을 발급하는 연결은 아직 준비 중입니다 (§8.2) — 이메일/비밀번호로 로그인하세요.')
+        .then((resp: any) => {
+          if (resp?.token) {
+            login(resp.token)
+          } else {
+            setSsoError('OIDC 로그인에 실패했습니다 (세션 토큰 미발급)')
+          }
         })
         .catch(err => setSsoError('OIDC 콜백 실패: ' + err.message))
         .finally(() => { sessionStorage.removeItem('pccp_oidc_state'); cleanup() })
@@ -49,7 +53,11 @@ export default function Login() {
     if (samlResponse) {
       api.ssoSAMLCallback(samlResponse, params.get('RelayState') || '')
         .then((resp: any) => {
-          setSsoNotice(`SAML 어설션 확인됨 (${resp?.email || resp?.user_id || 'unknown'}). 단, 콘솔 세션 발급 연결은 아직 준비 중입니다 (§8.2) — 이메일/비밀번호로 로그인하세요.`)
+          if (resp?.token) {
+            login(resp.token)
+          } else {
+            setSsoError('SAML 로그인에 실패했습니다 (세션 토큰 미발급)')
+          }
         })
         .catch(err => setSsoError('SAML 콜백 실패: ' + err.message))
         .finally(cleanup)

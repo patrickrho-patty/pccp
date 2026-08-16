@@ -399,6 +399,15 @@ func conformanceTestNames(t *testing.T) map[string]bool {
 		"TestRunnerCase11NoLegacyFallback",
 		"TestRunnerCase13UnresolvedState",
 		"TestRunnerWebFederationCollabMediaVectors",
+		"TestDLPRulePackWireContractPinned",
+		"TestDLPRulePackRidesItsOwnMessageType",
+		"TestGovernanceStateWireContractPinned",
+		"TestGovernanceStateRidesItsOwnMessageType",
+		"TestBroadcastWireContractPinned",
+		"TestAdminDirectiveSigningBytesPinned",
+		"TestSovereignAdvisoryTypePinned",
+		"TestRelayVerdictContractPinned",
+		"TestReceiptSigningBytesPinned",
 	} {
 		names[n] = true
 	}

@@ -26,7 +26,7 @@ type Client struct {
 // ClientConfig holds client connection configuration.
 type ClientConfig struct {
 	Addr             string             `json:"addr"` // relay address (host:port)
-	TLSConfig        *tls.Config        `json:"t_l_s_config"`
+	TLSConfig        *tls.Config        `json:"tls_config"`
 	PeerID           string             `json:"peer_id"`
 	OrganizationID   string             `json:"organization_id"`
 	PrivateKey       ed25519.PrivateKey `json:"private_key"`

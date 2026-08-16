@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	pccpconfig "github.com/patrickrho-patty/pccp/internal/config"
 	"log"
 	"math/big"
 	"net"
@@ -49,6 +50,14 @@ type DARIListener struct {
 	authenticator *PeerAuthenticator
 	mu            sync.Mutex
 	conns         map[string]*connState
+	// aiOpenCache + replayWindow implement §42.1 (idempotent AI_OPEN
+	// replay + bounded record-replay window) per connection.
+	aiOpenCache  *aiOpenCache
+	replayWindow *replayWindow
+	// resumptionTokens carry the §53 credential + the session's
+	// governance context (grant/epoch) for restore-on-resume.
+	resumptionTokens map[string]*resumeState
+	resumeMints      uint64
 }
 
 type credentialConnection interface {
@@ -76,6 +85,8 @@ func NewDARIListener(svc *Service, tlsConfig *tls.Config, trust ...TrustBundle) 
 		tlsConfig:     tlsConfig,
 		authenticator: NewPeerAuthenticator(bundle),
 		conns:         make(map[string]*connState),
+		aiOpenCache:   newAIOpenCache(),
+		replayWindow:  newReplayWindow(),
 	}
 }
 
@@ -166,10 +177,25 @@ func (pl *DARIListener) handleConn(ctx context.Context, netConn net.Conn) {
 
 	// Build HELLO_ACK
 	serverNonce := make([]byte, 32)
+	// Map §3 negotiation: ACK carries the INTERSECTION of the offered
+	// extension set and what the relay implements (sorted, no dupes —
+	// the canonical encoder enforces it).
+	relaySupported := map[string]uint8{
+		"dari.ai/1":           1,
+		"dari.model-supply/1": 1,
+		"dari.collab/1":       1,
+	}
+	negotiated := map[string]uint8{}
+	for ext, ver := range hello.Extensions {
+		if relaySupported[ext] == ver {
+			negotiated[ext] = ver
+		}
+	}
 	ack := &dari.HelloAckMessage{
-		CoreVersion:   1,
-		CryptoProfile: "DARI-BASE-1",
-		ServerNonce:   serverNonce,
+		CoreVersion:       1,
+		CryptoProfile:     "DARI-BASE-1",
+		ServerNonce:       serverNonce,
+		ExtensionVersions: negotiated,
 		ResourceLimits: map[string]uint64{
 			"max_sessions":    100,
 			"max_exchanges":   1000,
@@ -179,7 +205,7 @@ func (pl *DARIListener) handleConn(ctx context.Context, netConn net.Conn) {
 		// coordinated upgrades). A connector below the floor refuses
 		// to continue the handshake; per-org floors additionally
 		// refuse at session setup.
-		MinHarnessVersion: os.Getenv("PCCP_MIN_HARNESS_VERSION"),
+		MinHarnessVersion: pccpconfig.MinHarnessVersion(),
 	}
 
 	if err := conn.SendHelloAck(ack); err != nil {
@@ -303,6 +329,8 @@ func (pl *DARIListener) forgetConnection(connID string) {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
 	delete(pl.conns, connID)
+	pl.aiOpenCache.dropConn(connID)
+	pl.replayWindow.dropConn(connID)
 }
 
 // RevokeCredential advances the revocation view and immediately closes every
@@ -362,11 +390,7 @@ func (pl *DARIListener) handleApplicationMessages(ctx context.Context, conn *dar
 			conn.SendControl(dari.MsgPong, record.Header, []byte("pong"))
 
 		case record.Kind == dari.KindMessage && msgType == dari.MsgSessionOpen:
-			var so struct {
-				SessionID string `json:"session_id"`
-				UserID    string `json:"user_id"`
-				Model     string `json:"model"`
-			}
+			var so sessionOpenRequest
 			json.Unmarshal(record.Payload, &so)
 			if so.SessionID != "" {
 				pl.setSession(connID, so.SessionID)
@@ -375,8 +399,44 @@ func (pl *DARIListener) handleApplicationMessages(ctx context.Context, conn *dar
 			pl.setupSession(ctx, conn, connID, so, hello.ImplementationVersion)
 
 		case record.Kind == dari.KindMessage && msgType == dari.MsgAIOpen:
+			// §42.1 replay/idempotency: an AI_OPEN retransmission with a
+			// known idempotency key is answered with the CACHED response
+			// envelope (never re-governed, never re-metered) — REGARDLESS
+			// of the sequence it arrives with (an app-level retry stamps
+			// a fresh LaneSequence); a replay with a SEEN LaneSequence
+			// and no cached answer is dropped (bounded dedupe per §42.1
+			// record replay window).
+			if idemKey := headerString(record.Header, dari.HKIdempotencyKey); idemKey != "" {
+				if cached, ok := pl.aiOpenCache.get(connID, idemKey); ok {
+					if cached != nil {
+						log.Printf("relay: AI_OPEN idempotent replay from %s key=%s — cached response", connID, idemKey)
+						conn.SendMessage(dari.MsgAIComplete, nil, cached, record.LaneID, record.LaneSequence+1)
+						continue
+					}
+					// Nil reservation: the original turn already claimed
+					// this key — a duplicate is dropped, never re-governed.
+					log.Printf("relay: duplicate AI_OPEN from %s key=%s (no cached answer) — dropped", connID, idemKey)
+					continue
+				}
+				pl.aiOpenCache.put(connID, idemKey, nil) // reserve (filled post-govern)
+			}
+			if seen := pl.replayWindow.observe(connID, record.LaneSequence); seen {
+				log.Printf("relay: replayed record from %s seq=%d inside window — dropped", connID, record.LaneSequence)
+				continue
+			}
 			log.Printf("relay: dari AI_OPEN from %s, governing", connID)
 			pl.governAIOpen(ctx, conn, record, connID, harnessID)
+
+		case record.Kind == dari.KindMessage && msgType == dari.MsgSessionResume:
+			// §53: a reconnecting connector presents its resumption
+			// credential. Valid + inside the window → re-bound session
+			// (fresh lease, same working session) without full re-setup;
+			// anything else requires full SESSION_OPEN (fail-closed, the
+			// connector falls back automatically).
+			pl.handleSessionResume(conn, connID, record)
+
+		case record.Kind == dari.KindMessage && msgType == dari.MsgCollabEnvelope:
+			pl.routeCollabEnvelope(conn, connID, record)
 
 		case record.Kind == dari.KindMessage && msgType == dari.MsgChangeSet:
 			pl.ingestChangeSet(conn, connID, harnessID, record)
@@ -619,6 +679,12 @@ func (pl *DARIListener) governAIOpen(ctx context.Context, conn *dari.TransportCo
 
 	conn.SendMessage(dari.MsgAIComplete, nil, completePayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
 	log.Printf("relay: governed AI_COMPLETE sent to %s", connID)
+
+	// §42.1: cache the response under the request's idempotency key —
+	// a retransmission replays this exact envelope without re-governing.
+	if idemKey := headerString(reqRecord.Header, dari.HKIdempotencyKey); idemKey != "" {
+		pl.aiOpenCache.put(connID, idemKey, completePayload)
+	}
 }
 
 // pushEvidenceReceiptMessage encodes and pushes an issued receipt.
@@ -672,3 +738,147 @@ func (pl *DARIListener) ApplyRevocationSnapshot(epoch uint64, serials map[string
 }
 
 // registerListener is invoked by Service.AttachDARIListener.
+
+// routeCollabEnvelope forwards a dari.collab/1 envelope between two
+// org peers (map §12: governed encrypted delivery). The relay routes
+// the member-encrypted envelope VERBATIM — it cannot read the payload
+// (AEAD under the conversation key) — and records routed-delivery
+// evidence. Cross-org routing is refused (org = the authenticated
+// credential's organization).
+func (pl *DARIListener) routeCollabEnvelope(conn *dari.TransportConn, connID string, record *dari.Record) {
+	var routed struct {
+		ToHarness      string `json:"to_harness"`
+		FromHarness    string `json:"from_harness"`
+		ConversationID string `json:"conversation_id"`
+		Envelope       []byte `json:"envelope"`
+	}
+	if err := json.Unmarshal(record.Payload, &routed); err != nil || routed.ToHarness == "" || len(routed.Envelope) == 0 {
+		log.Printf("relay: collab envelope from %s malformed: %v", connID, err)
+		return
+	}
+	from := pl.orgForPeer(connID)
+	var src, dst models.Harness
+	if err := pl.svc.db.Where("harness_id = ?", routed.FromHarness).First(&src).Error; err != nil || src.OrganizationID != from {
+		log.Printf("relay: collab envelope from %s: sender %s not in org", connID, routed.FromHarness)
+		return
+	}
+	if err := pl.svc.db.Where("harness_id = ?", routed.ToHarness).First(&dst).Error; err != nil || dst.OrganizationID != from {
+		log.Printf("relay: collab envelope from %s: target %s not in same org (cross-tenant refused)", connID, routed.ToHarness)
+		return
+	}
+
+	// Find the target's live connection by harness identity.
+	pl.mu.Lock()
+	var out credentialConnection
+	for _, state := range pl.conns {
+		if state.cred != nil && state.cred.SubjectPeerID == routed.ToHarness {
+			if c, ok := state.conn.(*dari.TransportConn); ok {
+				out = c
+			}
+		}
+	}
+	pl.mu.Unlock()
+	if out == nil {
+		log.Printf("relay: collab envelope for %s: peer not connected", routed.ToHarness)
+		return
+	}
+	tc := out.(*dari.TransportConn)
+	if err := tc.SendMessage(dari.MsgCollabEnvelope, nil, record.Payload, 0, 2); err != nil {
+		log.Printf("relay: collab envelope delivery to %s failed: %v", routed.ToHarness, err)
+		return
+	}
+	// Governed-delivery evidence (map §12: runtime emits ordered
+	// evidence) — content stays opaque; the evidence commits digests.
+	h := sha256.Sum256(routed.Envelope)
+	pl.svc.db.Create(&models.AuditEvent{
+		OrganizationID: from,
+		EventType:      "cp.collab.envelope_routed",
+		ActorType:      "relay",
+		Action:         "route_collab_envelope",
+		ResourceType:   "collab_conversation",
+		ResourceID:     routed.ConversationID,
+		Details:        fmt.Sprintf("from=%s to=%s digest=%x", routed.FromHarness, routed.ToHarness, h[:8]),
+		Result:         "delivered",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
+}
+
+// handleSessionResume validates a §53 resumption request and answers.
+func (pl *DARIListener) handleSessionResume(conn *dari.TransportConn, connID string, record *dari.Record) {
+	var req dari.SessionResumptionRequest
+	if err := dari.UnmarshalCBOR(record.Payload, &req); err != nil {
+		pl.sendJSONError(conn, connID, "session resume: decode failed")
+		return
+	}
+	// H4: EVERY conns/token access happens under pl.mu — the map read
+	// races connection tracking writers otherwise (fatal map race).
+	pl.mu.Lock()
+	st := pl.resumptionTokens[req.WorkingSessionID]
+	connState := pl.conns[connID]
+	pl.mu.Unlock()
+
+	resp := &dari.SessionResumptionResponse{}
+	var restoreGrant *dari.GrantEnvelope
+	var restoreEpoch string
+	switch {
+	case st == nil || !st.cred.IsValid() || string(req.ResumptionToken) != string(st.cred.Token):
+		resp.Granted = false
+		resp.Reason = "resumption credential unknown or expired — full SESSION_OPEN required"
+		resp.RequiresFullRestart = true
+	default:
+		harnessID := ""
+		if connState != nil && connState.cred != nil {
+			harnessID = connState.cred.SubjectPeerID
+		}
+		orgID := pl.orgForPeer(connID)
+		if harnessID == "" || st.cred.HarnessID != harnessID || st.cred.OrgID != orgID {
+			// H5: the credential is bound to the enrolled harness AND
+			// org — a token presented from another identity never
+			// re-binds session governance.
+			resp.Granted = false
+			resp.Reason = "resumption credential bound to a different harness or organization"
+			resp.RequiresFullRestart = true
+		} else {
+			resp.Granted = true
+			resp.ResumedFromSeq = req.LastAckLaneSeq
+			restoreGrant, restoreEpoch = st.grant, st.epoch
+			pl.setSession(connID, req.WorkingSessionID)
+		}
+	}
+	if resp.Granted {
+		// H6: restore the session's governance context on this
+		// connection — a resumed AI_OPEN carries the same grant and
+		// epoch pin as the full handshake; resume is never a weaker
+		// authority path.
+		pl.mu.Lock()
+		if cs := pl.conns[connID]; cs != nil {
+			cs.grant = restoreGrant
+			cs.epoch = restoreEpoch
+		}
+		pl.mu.Unlock()
+	}
+	body, err := dari.MarshalCBOR(resp)
+	if err != nil {
+		return
+	}
+	conn.SendMessage(dari.MsgSessionResume, nil, body, record.LaneID, record.LaneSequence+1)
+}
+
+// resumeState bundles the §53 credential with the session's
+// governance context for restore-on-resume.
+type resumeState struct {
+	cred  *dari.ResumptionCredential
+	grant *dari.GrantEnvelope
+	epoch string
+}
+
+// harnessForConn resolves the authenticated harness identity for a
+// connection ("" pre-auth).
+func (pl *DARIListener) harnessForConn(connID string) string {
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
+	if st := pl.conns[connID]; st != nil && st.cred != nil {
+		return st.cred.SubjectPeerID
+	}
+	return ""
+}
