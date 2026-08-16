@@ -137,6 +137,10 @@ func (s *Server) handleBulkSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ids[] + action required")
 		return
 	}
+	if len(req.IDs) > 500 {
+		writeError(w, http.StatusBadRequest, "한 번에 최대 500개 · max 500 ids per bulk call")
+		return
+	}
 	target := ""
 	switch req.Action {
 	case "close":

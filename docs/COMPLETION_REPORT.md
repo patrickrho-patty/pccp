@@ -524,3 +524,7 @@ packages.
   (correct, one indexed query; a TTL cache would shave the hot path).
 - `AuthorizePeer`'s comment says full PPC verification is a follow-up; it is
   implemented in the handshake — comment is stale, code is current.
+- Legal holds are placed/lifted/audited, but no retention-purge job exists
+  to enforce them against (nothing is ever archived/deleted — the fail-safe
+  direction). A retention sweep would complete the §17 C loop.
+- Bulk session actions now cap at 500 ids per call (added in this pass).
