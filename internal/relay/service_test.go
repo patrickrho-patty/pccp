@@ -3,6 +3,8 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,9 +15,19 @@ import (
 )
 
 // setupGovernedTestDB opens an in-memory SQLite DB with all models migrated.
+// govDBSeq distinguishes in-memory DBs across test invocations.
+var govDBSeq atomic.Int64
+
 func setupGovernedTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file:governed_exchange_test?mode=memory&cache=shared"), &gorm.Config{})
+	// One shared-cache DB per test-invocation: a process-global counter
+	// separates -count>1 reruns (name-keyed fixtures previously hit
+	// UNIQUE constraints on the second run). Tests re-opening the
+	// helper within one invocation receive independent DBs, which is
+	// the isolation they assume anyway.
+	dsn := fmt.Sprintf("file:governed_exchange_test_%d?mode=memory&cache=shared",
+		govDBSeq.Add(1))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

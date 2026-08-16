@@ -47,6 +47,7 @@ func TestLoginThrottleLocksAfterFailures(t *testing.T) {
 }
 
 func TestMFAEnrolledLoginRequiresCode(t *testing.T) {
+	resetMFAGuards()
 	srv, db := publicOpsTestServer(t)
 	// Bootstrap an admin, then enroll MFA, then login without a code.
 	rec := doJSON(t, srv, "POST", "/api/auth/bootstrap",

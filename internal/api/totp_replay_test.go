@@ -8,6 +8,7 @@ import (
 // TestTOTPReplayRejected: a code accepted once must be refused on
 // immediate reuse within its validity window.
 func TestTOTPReplayRejected(t *testing.T) {
+	resetMFAGuards()
 	secret, err := generateTOTPSecret()
 	if err != nil {
 		t.Fatal(err)

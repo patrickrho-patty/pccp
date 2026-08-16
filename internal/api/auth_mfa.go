@@ -44,6 +44,18 @@ func init() {
 	loginThrottle.lockedAt = map[string]time.Time{}
 }
 
+// resetMFAGuards clears the in-memory throttle/replay state (tests run
+// with -count>1 in one process; production never calls this).
+func resetMFAGuards() {
+	loginThrottle.mu.Lock()
+	loginThrottle.failures = map[string]int{}
+	loginThrottle.lockedAt = map[string]time.Time{}
+	loginThrottle.mu.Unlock()
+	totpReplay.mu.Lock()
+	totpReplay.byAcct = map[string]int64{}
+	totpReplay.mu.Unlock()
+}
+
 const (
 	maxLoginFailures   = 5
 	loginLockoutWindow = 15 * time.Minute
