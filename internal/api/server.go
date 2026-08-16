@@ -713,7 +713,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "로그인 실패 / invalid credentials")
 			return
 		}
-		if !verifyTOTP(admin.MFASecret, req.MFACode) {
+		if !verifyTOTPAcct(req.Email, admin.MFASecret, req.MFACode) {
 			throttleRecordFailure(req.Email)
 			writeError(w, http.StatusUnauthorized, "MFA 코드 필요 또는 불일치 · mfa code required or mismatch")
 			return
@@ -4587,16 +4587,20 @@ func (s *Server) handleGlobalSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		results = append(results, row)
 	}
-	scope := func(col string) string {
-		if orgID == "" {
-			return ""
+	// scopedWhere builds an org-scoped query. Values are ALWAYS bound,
+	// never interpolated into SQL text (injection defense-in-depth even
+	// for claim-derived values).
+	scopedWhere := func(pattern string, likes ...interface{}) *gorm.DB {
+		if orgID != "" {
+			pattern += " AND organization_id = ?"
+			likes = append(likes, orgID)
 		}
-		return " AND " + col + " = '" + orgID + "'"
+		return s.db.Where(pattern, likes...)
 	}
 
 	// Users → detail route + cross-actions (1:1 chat, sessions).
 	var users []models.User
-	s.db.Where("name LIKE ? OR name_ko LIKE ? OR email LIKE ?"+scope("organization_id"), like, like, like).
+	scopedWhere("name LIKE ? OR name_ko LIKE ? OR email LIKE ?", like, like, like).
 		Order("created_at DESC").Limit(limit).Find(&users)
 	for _, u := range users {
 		add("user", "◉", u.ID, firstNonEmpty(u.NameKo, u.Name, u.Email), u.Email, "/users/"+u.ID,
@@ -4604,56 +4608,56 @@ func (s *Server) handleGlobalSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var harnesses []models.Harness
-	s.db.Where("harness_id LIKE ? OR binary_version LIKE ?"+scope("organization_id"), like, like).
+	scopedWhere("harness_id LIKE ? OR binary_version LIKE ?", like, like).
 		Order("created_at DESC").Limit(limit).Find(&harnesses)
 	for _, h := range harnesses {
 		add("harness", "⬡", h.ID, h.HarnessID, h.Status+" · v"+h.BinaryVersion, "/harnesses/"+h.ID, nil)
 	}
 
 	var projects []models.Project
-	s.db.Where("name LIKE ? OR name_ko LIKE ? OR slug LIKE ?"+scope("organization_id"), like, like, like).
+	scopedWhere("name LIKE ? OR name_ko LIKE ? OR slug LIKE ?", like, like, like).
 		Order("created_at DESC").Limit(limit).Find(&projects)
 	for _, p := range projects {
 		add("project", "▣", p.ID, firstNonEmpty(p.NameKo, p.Name), p.Slug, "/projects/"+p.ID, nil)
 	}
 
 	var repos []models.Repository
-	s.db.Where("name LIKE ? OR clone_url LIKE ? OR scm_provider LIKE ?"+scope("organization_id"), like, like, like).
+	scopedWhere("name LIKE ? OR clone_url LIKE ? OR scm_provider LIKE ?", like, like, like).
 		Order("created_at DESC").Limit(limit).Find(&repos)
 	for _, rp := range repos {
 		add("repository", "▤", rp.ID, rp.Name, rp.CloneURL, "/repositories/"+rp.ID, nil)
 	}
 
 	var sessions []models.Session
-	s.db.Where("title LIKE ? OR session_id LIKE ?"+scope("organization_id"), like, like).
+	scopedWhere("title LIKE ? OR session_id LIKE ?", like, like).
 		Order("created_at DESC").Limit(limit).Find(&sessions)
 	for _, sess := range sessions {
 		add("session", "◐", sess.ID, firstNonEmpty(sess.Title, sess.SessionID), sess.Status, "/sessions/"+sess.SessionID, nil)
 	}
 
 	var pkgs []models.ModelPackage
-	s.db.Where("name LIKE ? OR model_id LIKE ?"+scope("organization_id"), like, like).
+	scopedWhere("name LIKE ? OR model_id LIKE ?", like, like).
 		Order("created_at DESC").Limit(limit).Find(&pkgs)
 	for _, m := range pkgs {
 		add("model", "◆", m.ID, firstNonEmpty(m.Name, m.ModelID), m.Family, "/models/"+m.ID, nil)
 	}
 
 	var eps []models.InferenceEndpoint
-	s.db.Where("endpoint_id LIKE ? OR model_id LIKE ?"+scope("organization_id"), like, like).
+	scopedWhere("endpoint_id LIKE ? OR model_id LIKE ?", like, like).
 		Order("created_at DESC").Limit(limit).Find(&eps)
 	for _, e := range eps {
 		add("endpoint", "◇", e.ID, e.EndpointID, e.Status, "/endpoints/"+e.ID, nil)
 	}
 
 	var bus []models.BusinessUnit
-	s.db.Where("name LIKE ? OR name_ko LIKE ?"+scope("organization_id"), like, like).
+	scopedWhere("name LIKE ? OR name_ko LIKE ?", like, like).
 		Order("created_at DESC").Limit(limit).Find(&bus)
 	for _, b := range bus {
 		add("business_unit", "▦", b.ID, firstNonEmpty(b.NameKo, b.Name), b.Type, "/users", nil)
 	}
 
 	var findings []models.SecurityFinding
-	s.db.Where("title LIKE ? OR title_ko LIKE ? OR finding_type LIKE ?"+scope("organization_id"), like, like, like).
+	scopedWhere("title LIKE ? OR title_ko LIKE ? OR finding_type LIKE ?", like, like, like).
 		Order("occurred_at DESC").Limit(limit).Find(&findings)
 	for _, f := range findings {
 		add("finding", "🛡", f.ID, firstNonEmpty(f.TitleKo, f.Title), f.FindingType+" · "+f.Severity, "/findings/"+f.ID, nil)

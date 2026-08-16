@@ -64,7 +64,7 @@ export default function ProjectDetail() {
 
   const removeMember = async (userId: string, name: string) => {
     if (!await confirm({ title: '멤버 제거', message: `${name} 님을 프로젝트에서 제거하시겠습니까?`, danger: true })) return
-    try { await api.removeProjectMember(id!, userId); showToast('제거됨', 'info'); load() } catch {}
+    try { await api.removeProjectMember(id!, userId); showToast('제거됨', 'info'); load() } catch { showToast('실패했습니다 · action failed', 'error') }
   }
 
   const submitPack = async () => {
@@ -81,7 +81,7 @@ export default function ProjectDetail() {
       await api.decideChangeRequest(cr.id, approve, approve ? 'approved via console' : 'denied via console')
       showToast(approve ? '승인됨' : '거부됨', approve ? 'success' : 'info')
       load()
-    } catch {}
+    } catch { showToast('실패했습니다 · action failed', 'error') }
   }
 
   return (

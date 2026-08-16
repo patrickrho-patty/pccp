@@ -42,6 +42,13 @@ func (s *Service) CreateConversation(orgID, convType, title string, participants
 
 // SendMessage sends a message in a conversation.
 func (s *Service) SendMessage(convID, senderID, senderType, contentType, content string, parentID string) (*models.Message, error) {
+	// The conversation must exist in the caller's org: messages are
+	// org-scoped transitively through it (react/read/edit/delete all
+	// resolve the conversation's org before mutating).
+	var conv models.Conversation
+	if err := s.db.Where("id = ?", convID).First(&conv).Error; err != nil {
+		return nil, fmt.Errorf("comms: send message: conversation %s not found: %w", convID, err)
+	}
 	msg := &models.Message{
 		ConversationID:  convID,
 		SenderID:        senderID,

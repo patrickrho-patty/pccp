@@ -105,12 +105,12 @@ export default function Projects() {
 
   const handleArchive = async () => {
     if (!archiveTarget) return
-    try { await api.deleteProject(archiveTarget.id); showToast('보관됨 · 새 세션이 차단됩니다', 'info'); setArchiveTarget(null); table.reload() } catch {}
+    try { await api.deleteProject(archiveTarget.id); showToast('보관됨 · 새 세션이 차단됩니다', 'info'); setArchiveTarget(null); table.reload() } catch { showToast('실패했습니다 · action failed', 'error') }
   }
 
   const handleRestore = async (id: string) => {
     if (!await confirm({ title: '복원', message: '이 프로젝트를 복원하시겠습니까?', danger: false })) return
-    try { await api.restoreProject(id); showToast('복원됨', 'success'); table.reload() } catch {}
+    try { await api.restoreProject(id); showToast('복원됨', 'success'); table.reload() } catch { showToast('실패했습니다 · action failed', 'error') }
   }
 
   const submitMember = async () => {

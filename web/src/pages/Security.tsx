@@ -175,7 +175,7 @@ export default function Security() {
     [rules, favorites])
 
   const viewFindingDetail = async (id: string) => {
-    try { setFindingDetail(await api.securityFindingDetail(id)) } catch {}
+    try { setFindingDetail(await api.securityFindingDetail(id)) } catch { showToast('실패했습니다 · action failed', 'error') }
   }
 
   const updateFindingStatus = async (id: string, status: string) => {
@@ -183,7 +183,7 @@ export default function Security() {
       await api.updateSecurityFinding(id, { status })
       setFindingDetail(null)
       loadFindings(); loadStats()
-    } catch {}
+    } catch { showToast('실패했습니다 · action failed', 'error') }
   }
 
   const bulkFindings = async (status: string) => {
@@ -194,7 +194,7 @@ export default function Security() {
       showToast(`${ids.length}건 ${status} 처리`, 'success')
       setSelectedFindings(new Set())
       loadFindings(); loadStats()
-    } catch {}
+    } catch { showToast('실패했습니다 · action failed', 'error') }
   }
 
   const submitSuppress = async () => {
@@ -289,12 +289,12 @@ export default function Security() {
       await api.containIncident({ incident_id: inc.id, mode, organization_id: inc.organization_id, performed_by: 'admin', reason: 'SOC containment' })
       showToast('봉쇄 실행됨', 'success')
       loadIncidents()
-    } catch {}
+    } catch { showToast('실패했습니다 · action failed', 'error') }
   }
 
   const resolveIncident = async (inc: any) => {
     if (!await confirm({ title: '해결', message: '인시던트를 해결 처리하시겠습니까?', danger: false })) return
-    try { await api.resolveIncident(inc.id, 'resolved via console'); showToast('해결됨', 'success'); loadIncidents() } catch {}
+    try { await api.resolveIncident(inc.id, 'resolved via console'); showToast('해결됨', 'success'); loadIncidents() } catch { showToast('실패했습니다 · action failed', 'error') }
   }
 
   const submitAlert = async () => {

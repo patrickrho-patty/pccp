@@ -108,6 +108,15 @@ func (s *Server) handleMessageReact(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "message not found")
 		return
 	}
+	// Org scope resolves through the conversation (Message carries no
+	// org column): a cross-org message id is indistinguishable from a
+	// missing one.
+	var msgConv models.Conversation
+	if err := s.db.Where("id = ? AND organization_id = ?", msg.ConversationID, orgID).
+		First(&msgConv).Error; err != nil {
+		writeError(w, http.StatusNotFound, "message not found")
+		return
+	}
 	reactions := map[string][]string{}
 	if msg.ReactionsJSON != "" {
 		_ = json.Unmarshal([]byte(msg.ReactionsJSON), &reactions)
@@ -140,6 +149,7 @@ func (s *Server) handleMessageReact(w http.ResponseWriter, r *http.Request) {
 
 // handleMessageRead marks a message read (B2).
 func (s *Server) handleMessageRead(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
 	msgID := chi.URLParam(r, "id")
 	var req struct {
 		UserID string `json:"user_id"`
@@ -150,6 +160,15 @@ func (s *Server) handleMessageRead(w http.ResponseWriter, r *http.Request) {
 	}
 	var msg models.Message
 	if err := s.db.First(&msg, "id = ?", msgID).Error; err != nil {
+		writeError(w, http.StatusNotFound, "message not found")
+		return
+	}
+	// Org scope resolves through the conversation (Message carries no
+	// org column): a cross-org message id is indistinguishable from a
+	// missing one.
+	var msgConv models.Conversation
+	if err := s.db.Where("id = ? AND organization_id = ?", msg.ConversationID, orgID).
+		First(&msgConv).Error; err != nil {
 		writeError(w, http.StatusNotFound, "message not found")
 		return
 	}
@@ -171,6 +190,7 @@ func (s *Server) handleMessageRead(w http.ResponseWriter, r *http.Request) {
 
 // handleMessageEdit edits a message (Edited=true) (UX14).
 func (s *Server) handleMessageEdit(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
 	msgID := chi.URLParam(r, "id")
 	var req struct {
 		Content string `json:"content"`
@@ -184,6 +204,15 @@ func (s *Server) handleMessageEdit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "message not found")
 		return
 	}
+	// Org scope resolves through the conversation (Message carries no
+	// org column): a cross-org message id is indistinguishable from a
+	// missing one.
+	var msgConv models.Conversation
+	if err := s.db.Where("id = ? AND organization_id = ?", msg.ConversationID, orgID).
+		First(&msgConv).Error; err != nil {
+		writeError(w, http.StatusNotFound, "message not found")
+		return
+	}
 	msg.Content = req.Content
 	msg.Edited = true
 	s.db.Save(&msg)
@@ -192,6 +221,7 @@ func (s *Server) handleMessageEdit(w http.ResponseWriter, r *http.Request) {
 
 // handleMessageDelete soft-deletes a message (DeletedBy) (UX14).
 func (s *Server) handleMessageDelete(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
 	msgID := chi.URLParam(r, "id")
 	var req struct {
 		DeletedBy string `json:"deleted_by"`
@@ -199,6 +229,15 @@ func (s *Server) handleMessageDelete(w http.ResponseWriter, r *http.Request) {
 	_ = decodeJSON(r, &req)
 	var msg models.Message
 	if err := s.db.First(&msg, "id = ?", msgID).Error; err != nil {
+		writeError(w, http.StatusNotFound, "message not found")
+		return
+	}
+	// Org scope resolves through the conversation (Message carries no
+	// org column): a cross-org message id is indistinguishable from a
+	// missing one.
+	var msgConv models.Conversation
+	if err := s.db.Where("id = ? AND organization_id = ?", msg.ConversationID, orgID).
+		First(&msgConv).Error; err != nil {
 		writeError(w, http.StatusNotFound, "message not found")
 		return
 	}
@@ -229,7 +268,7 @@ func (s *Server) handleBroadcastAcks(w http.ResponseWriter, r *http.Request) {
 	broadcastID := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
 	var bc models.Broadcast
-	if err := s.db.First(&bc, "id = ?", broadcastID).Error; err != nil {
+	if err := s.db.First(&bc, "id = ? AND organization_id = ?", broadcastID, orgID).Error; err != nil {
 		writeError(w, http.StatusNotFound, "broadcast not found")
 		return
 	}

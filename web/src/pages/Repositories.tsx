@@ -73,7 +73,7 @@ export default function Repositories() {
 
   const handleDelete = async (r: any) => {
     if (!await confirm({ title: '삭제 확인', message: `'${r.name}' 저장소를 삭제(등록 해제)하시겠습니까?`, danger: true })) return
-    try { await api.deleteRepository(r.id); showToast('등록 해제됨', 'info'); table.reload() } catch {}
+    try { await api.deleteRepository(r.id); showToast('등록 해제됨', 'info'); table.reload() } catch { showToast('실패했습니다 · action failed', 'error') }
   }
 
   const handleSync = async (r: any) => {
@@ -270,7 +270,7 @@ export default function Repositories() {
             onClick={async () => {
               if (!await confirm({ title: '일괄 등록 해제', message: `${selectedRepos.size}개 저장소를 등록 해제하시겠습니까?`, danger: true })) return
               let ok = 0
-              for (const id of selectedRepos) { try { await api.deleteRepository(id); ok++ } catch {} }
+              for (const id of selectedRepos) { try { await api.deleteRepository(id); ok++ } catch { showToast('실패했습니다 · action failed', 'error') } }
               showToast(`${ok}/${selectedRepos.size} 해제됨`, ok === selectedRepos.size ? 'success' : 'error')
               setSelectedRepos(new Set()); table.reload()
             }}

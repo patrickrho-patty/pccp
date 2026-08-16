@@ -192,17 +192,19 @@ func (d *Dispatcher) execute(ctx context.Context, bound *Dispatch) {
 
 	fw := d.forwarderFor()
 	if fw == nil {
-		// No forwarder: cannot complete. Requeue and complete with an
-		// explicit error rather than hanging the waiter forever.
+		// No forwarder: complete the waiter with an explicit error and
+		// DROP the request. Requeueing after the client has already
+		// received the error would execute (and bill) the work twice.
 		d.selector.ReleaseLoad(workerID)
-		d.queue.Enqueue(req)
 		d.submitResult(req.ID, InferenceResult{Err: "scheduler: no forwarder configured"})
 		return
 	}
 
 	addr, ok := d.selector.WorkerAddr(workerID)
 	if !ok {
-		d.queue.Enqueue(req)
+		// Same rule: error the waiter, drop the request. The selector
+		// is drifting (worker vanished mid-binding); the client retries.
+		d.selector.ReleaseLoad(workerID)
 		d.submitResult(req.ID, InferenceResult{Err: "scheduler: worker " + workerID + " has no dispatch address"})
 		return
 	}

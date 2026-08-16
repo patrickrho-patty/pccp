@@ -220,6 +220,17 @@ func (d *Dispatcher) assignLocked(workerID string) *Dispatch {
 		return nil
 	}
 	if out.Outcome != queue.OutcomeDispatched {
+		// The dequeued head expired (or was drained): complete its
+		// waiter immediately so the parked HTTP handler unblocks with
+		// the right error instead of waiting out its own timer.
+		if out.Request != nil {
+			switch out.Outcome {
+			case queue.OutcomeExpiredTTL:
+				d.submitResult(out.Request.ID, InferenceResult{Err: "scheduler: queued request expired; retry", Cancelled: true})
+			case queue.OutcomeDrained:
+				d.submitResult(out.Request.ID, InferenceResult{Err: "scheduler: shutting down", Cancelled: true})
+			}
+		}
 		return nil
 	}
 	rp, ok := out.Request.Payload.(RequestPayload)

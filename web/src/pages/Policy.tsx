@@ -121,7 +121,7 @@ export default function Policy() {
 
   const rejectRule = async (id: string) => {
     if (!await confirm({ title: '거부', message: '이 초안을 거부하고 삭제하시겠습니까?', danger: true })) return
-    try { await api.rejectPolicyRule(id); showToast('거부됨', 'info'); reloadAll() } catch {}
+    try { await api.rejectPolicyRule(id); showToast('거부됨', 'info'); reloadAll() } catch { showToast('실패했습니다 · action failed', 'error') }
   }
 
   const toggleRule = (r: Rule) => {
@@ -140,14 +140,14 @@ export default function Policy() {
   const bulkToggle = async (enabled: boolean) => {
     const ids = [...selected].filter(id => rules.find(r => r.id === id && r.status === 'approved'))
     if (ids.length === 0) { showToast('승인된 규칙을 선택하세요', 'error'); return }
-    try { await api.bulkPolicyRules(ids, enabled); showToast(`${ids.length}개 규칙 ${enabled ? '활성화' : '비활성화'} · 에포크 재발행`, 'success'); setSelected(new Set()); reloadAll() } catch {}
+    try { await api.bulkPolicyRules(ids, enabled); showToast(`${ids.length}개 규칙 ${enabled ? '활성화' : '비활성화'} · 에포크 재발행`, 'success'); setSelected(new Set()); reloadAll() } catch { showToast('실패했습니다 · action failed', 'error') }
   }
 
   const loadEffective = async () => {
     try {
       const res: any = await api.getEffectivePolicy({ project_id: effProject || undefined, repo_id: effRepo || undefined })
       setEffective(res)
-    } catch {}
+    } catch { showToast('실패했습니다 · action failed', 'error') }
   }
   useEffect(() => { if (activeLayer !== null) loadEffective() }, [activeLayer, effProject, effRepo])
 
@@ -163,7 +163,7 @@ export default function Policy() {
 
   const requireAck = async (epoch: any) => {
     if (!await confirm({ title: '확인 캠페인 시작', message: `에포크 #${epoch.epoch_number}에 사용자 확인을 요구하시겠습니까? 미확인 사용자의 새 세션이 차단됩니다. (§33.6)`, danger: true })) return
-    try { await api.requireEpochAck(epoch.epoch_id); showToast('확인 요구 설정됨', 'success'); reloadAll() } catch {}
+    try { await api.requireEpochAck(epoch.epoch_id); showToast('확인 요구 설정됨', 'success'); reloadAll() } catch { showToast('실패했습니다 · action failed', 'error') }
   }
 
   const runSimulation = async () => {
@@ -203,7 +203,7 @@ export default function Policy() {
       a.download = `${pack.name}-v${pack.version}.json`
       a.click()
       URL.revokeObjectURL(url)
-    } catch {}
+    } catch { showToast('실패했습니다 · action failed', 'error') }
   }
 
   const importPack = async (file: File) => {
@@ -231,7 +231,7 @@ export default function Policy() {
       await api.decidePolicyException(ex.id, approve, 'admin')
       showToast(approve ? '예외 승인됨' : '예외 거부됨', 'info')
       reloadAll()
-    } catch {}
+    } catch { showToast('실패했습니다 · action failed', 'error') }
   }
 
   const saveTemplateEdit = async () => {

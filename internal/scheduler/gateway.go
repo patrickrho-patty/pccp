@@ -573,13 +573,16 @@ func (g *Gateway) resolveTenantClass(r *http.Request) (tenant string, class stri
 		// untrusted metadata but still subject to its (own) allow-list.
 		return tenant, class, nil
 	}
-	if env.TenantID != "" && env.TenantID != tenant {
+	// A validly-signed envelope carries a non-empty tenant (the relay
+	// always binds one). An empty tenant on a valid envelope is
+	// malformed — refuse rather than silently trusting the header.
+	if env.TenantID == "" {
+		return "", "", fmt.Errorf("scheduler: signed envelope carries no tenant")
+	}
+	if env.TenantID != tenant {
 		return "", "", fmt.Errorf("scheduler: tenant header %q conflicts with signed envelope tenant %q", tenant, env.TenantID)
 	}
-	if env.TenantID != "" {
-		tenant = env.TenantID
-	}
-	return tenant, env.Class, nil
+	return env.TenantID, env.Class, nil
 }
 
 func decodeTrafficEnvelope(r *http.Request) *TrafficEnvelope {

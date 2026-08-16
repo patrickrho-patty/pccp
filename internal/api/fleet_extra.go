@@ -34,6 +34,10 @@ func (s *Server) handleFleetBulkAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "action + reason + harness_ids[] required")
 		return
 	}
+	if len(req.TargetIDs) > 500 {
+		writeError(w, http.StatusBadRequest, "max 500 harnesses per bulk action")
+		return
+	}
 	orgID := getOrgID(r)
 	executed, failed := 0, 0
 	var failures []string
@@ -151,7 +155,7 @@ func (s *Server) handleFleetSnapshot(w http.ResponseWriter, r *http.Request) {
 	var device models.Device
 	s.db.Where("id = ?", harness.DeviceID).First(&device)
 	var sessions []models.Session
-	s.db.Where("harness_id = ?", harness.HarnessID).Find(&sessions)
+	s.db.Where("harness_id = ? AND organization_id = ?", harness.HarnessID, orgID).Find(&sessions)
 	var findings []models.SecurityFinding
 	s.db.Where("session_id IN (?)", s.db.Model(&models.Session{}).Select("session_id").Where("harness_id = ?", harness.HarnessID)).Find(&findings)
 	var approvals []models.Approval

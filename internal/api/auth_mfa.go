@@ -94,6 +94,52 @@ func generateTOTPSecret() (string, error) {
 	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(buf), nil
 }
 
+// totpReplay tracks the last accepted timestep per account so a code
+// cannot be replayed within its ±30s validity window (RFC 6238 §5.2).
+// Bounded like the login throttle maps.
+var totpReplay struct {
+	mu     sync.Mutex
+	byAcct map[string]int64 // email → last accepted unix timestep
+}
+
+func init() {
+	totpReplay.byAcct = map[string]int64{}
+}
+
+// verifyTOTPAcct is verifyTOTP plus replay protection: once a timestep
+// has been accepted for the account, it (and anything earlier) is
+// refused on subsequent use.
+func verifyTOTPAcct(acct, secret, code string) bool {
+	if len(code) != 6 {
+		return false
+	}
+	now := time.Now()
+	var acceptedStep int64 = -1
+	for _, off := range []int64{-30, 0, 30} {
+		want, err := totpCode(secret, now.Add(time.Duration(off)*time.Second))
+		if err != nil {
+			return false
+		}
+		if hmac.Equal([]byte(want), []byte(code)) {
+			acceptedStep = now.Unix()/30 + off/30
+			break
+		}
+	}
+	if acceptedStep < 0 {
+		return false
+	}
+	totpReplay.mu.Lock()
+	defer totpReplay.mu.Unlock()
+	if len(totpReplay.byAcct) > 100_000 {
+		totpReplay.byAcct = map[string]int64{}
+	}
+	if last, ok := totpReplay.byAcct[acct]; ok && acceptedStep <= last {
+		return false
+	}
+	totpReplay.byAcct[acct] = acceptedStep
+	return true
+}
+
 // verifyTOTP checks a code against the secret across the current step
 // and its immediate neighbors (±30s skew per RFC 6238 verification
 // practice). Constant-time comparison per candidate.
@@ -151,7 +197,7 @@ func (s *Server) handleMFASetup(w http.ResponseWriter, r *http.Request) {
 	// current factor — a stolen session alone cannot silently replace
 	// the operator's second factor.
 	if admin.MFAEnrolled {
-		if !verifyTOTP(admin.MFASecret, req.CurrentCode) {
+		if !verifyTOTPAcct(email, admin.MFASecret, req.CurrentCode) {
 			writeError(w, http.StatusUnauthorized, "현재 코드 확인 필요 · current TOTP code required to rotate MFA")
 			return
 		}

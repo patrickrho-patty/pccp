@@ -28,7 +28,7 @@ func (s *Server) handleListUserHarnesses(w http.ResponseWriter, r *http.Request)
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
 	var user models.User
-	if err := s.db.First(&user, "id = ?", id).Error; err != nil {
+	if err := s.db.First(&user, "id = ? AND organization_id = ?", id, orgID).Error; err != nil {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
 	}
@@ -111,7 +111,7 @@ func (s *Server) handleGrantUserHarness(w http.ResponseWriter, r *http.Request) 
 		Result:     "success",
 		OccurredAt: time.Now().Format(time.RFC3339),
 	})
-	s.db.First(&harness, "id = ?", req.HarnessID)
+	s.db.First(&harness, "id = ? AND organization_id = ?", req.HarnessID, orgID)
 	writeJSON(w, http.StatusOK, harness)
 }
 
@@ -277,11 +277,18 @@ func (s *Server) handleImportUsersCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	reader := csv.NewReader(file)
+	// Bounded intake: a malformed/giant upload must not balloon memory.
+	const csvMaxBytes = 5 << 20 // 5 MiB
+	limited := io.LimitReader(file, csvMaxBytes+1)
+	reader := csv.NewReader(limited)
 	reader.FieldsPerRecord = -1
 	records, err := reader.ReadAll()
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "csv parse: "+err.Error())
+		return
+	}
+	if len(records) > 50_000 {
+		writeError(w, http.StatusBadRequest, "csv row cap (50,000) exceeded")
 		return
 	}
 	type row struct {

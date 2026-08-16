@@ -87,6 +87,13 @@ func (c *HotStateCache) Get(key string, now time.Time, revocationEpoch uint64) (
 func (c *HotStateCache) Put(key string, snap *GovernanceSnapshot, revocationEpoch uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Bounded memory: harness churn otherwise grows the map without
+	// limit between revocation epochs. A coarse full reset at the cap
+	// (entries are advisory cache, rebuilt on demand) keeps worst-case
+	// memory bounded without an LRU's complexity.
+	if len(c.entries) >= 100_000 {
+		c.entries = map[string]*GovernanceSnapshot{}
+	}
 	if revocationEpoch > c.epoch {
 		// A newer revocation epoch means all prior entries are stale —
 		// drop them and rebase.

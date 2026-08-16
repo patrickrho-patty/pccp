@@ -110,10 +110,10 @@ export default function Harnesses() {
       const res: any = await api.quarantineHarness(h.id)
       showToast(res?.relay_propagated === false ? '격리됨 (릴레이 채널 미연결 — 다음 요청부터 차단)' : '격리됨 · 활성 세션 종료', 'info')
       table.reload()
-    } catch {}
+    } catch { showToast('실패했습니다 · action failed', 'error') }
   }
 
-  const handleReactivate = async (h: any) => { try { await api.reactivateHarness(h.id); showToast('재활성화됨', 'success'); table.reload() } catch {} }
+  const handleReactivate = async (h: any) => { try { await api.reactivateHarness(h.id); showToast('재활성화됨', 'success'); table.reload() } catch { showToast('실패했습니다 · action failed', 'error') } }
 
   const bulk = async (action: 'quarantine' | 'revoke') => {
     const ids = [...selectedHarnesses]
@@ -124,7 +124,7 @@ export default function Harnesses() {
         if (action === 'quarantine') await api.quarantineHarness(id)
         else await api.revokeHarness(id, 'bulk action')
         ok++
-      } catch {}
+      } catch { showToast('실패했습니다 · action failed', 'error') }
     }
     showToast(`${ok}/${ids.length} 완료`, ok === ids.length ? 'success' : 'error')
     setSelectedHarnesses(new Set())
