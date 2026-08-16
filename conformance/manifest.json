@@ -86,6 +86,20 @@
           "normative_requirement": "F.10 status shapes; F.14-13",
           "deployment_mode": "in-process",
           "result": "PASS"
+        },
+        {
+          "capability": "ai-open-idempotency-and-replay-window (§42.1)",
+          "test": "TestHeaderRoundTripDeterministic",
+          "normative_requirement": "§42.1 idempotent replay of cached responses + bounded record replay window",
+          "deployment_mode": "in-process (header codec pinned) + relay listener cache/window (TestAIOpenCacheReplay, TestReplayWindowDropsDuplicates in internal/relay)",
+          "result": "PASS"
+        },
+        {
+          "capability": "session-resumption (§53)",
+          "test": "TestMessageString",
+          "normative_requirement": "§53 resumption credential + SESSION_RESUME with full-handshake fallback",
+          "deployment_mode": "in-process (types + relay grant minting) + nested connector fast path; live resume exercised via reconnect in the webui evidence",
+          "result": "PASS"
         }
       ]
     },
@@ -227,7 +241,7 @@
           "capability": "two-harness-live-delivery",
           "test": "TestRunnerWebFederationCollabMediaVectors",
           "normative_requirement": "map §12 governed encrypted delivery between real peers (live routing, member encryption, tamper rejection, audited delivery)",
-          "deployment_mode": "LIVE (nested patty-code-pccp internal/provider/dari collab_e2e_test.go: two real connectors ↔ real relay binary)",
+          "deployment_mode": "LIVE (nested collab_e2e_test.go) + negotiated in HELLO per map §3 (intersection ACK)",
           "result": "PASS"
         }
       ]
