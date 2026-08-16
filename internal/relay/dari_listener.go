@@ -401,25 +401,28 @@ func (pl *DARIListener) handleApplicationMessages(ctx context.Context, conn *dar
 		case record.Kind == dari.KindMessage && msgType == dari.MsgAIOpen:
 			// §42.1 replay/idempotency: an AI_OPEN retransmission with a
 			// known idempotency key is answered with the CACHED response
-			// envelope (never re-governed, never re-metered); a replay
-			// with a SEEN LaneSequence inside the replay window is
-			// dropped (bounded dedupe per §42.1 record replay window).
-			if seen := pl.replayWindow.observe(connID, record.LaneSequence); seen {
-				// Replay of an observed sequence: the idempotency cache
-				// decides between replaying the cached answer and
-				// dropping a duplicate in flight.
-				if idemKey := headerString(record.Header, dari.HKIdempotencyKey); idemKey != "" {
-					if cached, ok := pl.aiOpenCache.get(connID, idemKey); ok && cached != nil {
+			// envelope (never re-governed, never re-metered) — REGARDLESS
+			// of the sequence it arrives with (an app-level retry stamps
+			// a fresh LaneSequence); a replay with a SEEN LaneSequence
+			// and no cached answer is dropped (bounded dedupe per §42.1
+			// record replay window).
+			if idemKey := headerString(record.Header, dari.HKIdempotencyKey); idemKey != "" {
+				if cached, ok := pl.aiOpenCache.get(connID, idemKey); ok {
+					if cached != nil {
 						log.Printf("relay: AI_OPEN idempotent replay from %s key=%s — cached response", connID, idemKey)
 						conn.SendMessage(dari.MsgAIComplete, nil, cached, record.LaneID, record.LaneSequence+1)
 						continue
 					}
+					// Nil reservation: the original turn already claimed
+					// this key — a duplicate is dropped, never re-governed.
+					log.Printf("relay: duplicate AI_OPEN from %s key=%s (no cached answer) — dropped", connID, idemKey)
+					continue
 				}
+				pl.aiOpenCache.put(connID, idemKey, nil) // reserve (filled post-govern)
+			}
+			if seen := pl.replayWindow.observe(connID, record.LaneSequence); seen {
 				log.Printf("relay: replayed record from %s seq=%d inside window — dropped", connID, record.LaneSequence)
 				continue
-			}
-			if idemKey := headerString(record.Header, dari.HKIdempotencyKey); idemKey != "" {
-				pl.aiOpenCache.put(connID, idemKey, nil) // reserve (filled post-govern)
 			}
 			log.Printf("relay: dari AI_OPEN from %s, governing", connID)
 			pl.governAIOpen(ctx, conn, record, connID, harnessID)

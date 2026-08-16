@@ -234,18 +234,25 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 		return
 	}
 	grantEnv, err := pl.svc.IssueSessionGrant(lease, harnessPub)
-	if err == nil {
-		// H6: complete the resume state's governance context.
+	if err != nil {
+		// The minted credential is unusable without its grant — drop it
+		// so a later resume can never restore a nil-grant (weaker-
+		// authority) session. The client never received the token (it
+		// only rides SESSION_GRANT), so nothing legitimate is lost.
 		pl.mu.Lock()
-		if st := pl.resumptionTokens[so.SessionID]; st != nil {
-			st.grant = grantEnv
+		if st := pl.resumptionTokens[so.SessionID]; st != nil && st.cred == resumeTok {
+			delete(pl.resumptionTokens, so.SessionID)
 		}
 		pl.mu.Unlock()
-	}
-	if err != nil {
 		pl.sendJSONError(conn, connID, "authorization grant issuance failed: "+err.Error())
 		return
 	}
+	// H6: complete the resume state's governance context.
+	pl.mu.Lock()
+	if st := pl.resumptionTokens[so.SessionID]; st != nil {
+		st.grant = grantEnv
+	}
+	pl.mu.Unlock()
 
 	// SESSION_GRANT (0x0201) closes the setup phase and carries the
 	// signed grant on dari/1 connections.
