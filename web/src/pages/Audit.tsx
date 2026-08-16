@@ -1,237 +1,231 @@
-import { useState, useEffect, Fragment } from 'react'
-import { Link } from 'react-router-dom'
-import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
+import { useEffect, useState } from 'react'
+import { api } from '../api'
+import { useServerTable, buildQuery, ServerQuery } from '../hooks/useServerTable'
+import { Modal, ModalFooter } from '../components/Modal'
 import EmptyState from '../components/EmptyState'
-import { formatRelative } from '../utils/format'
+import { showToast } from '../components/Toast'
 
-const FILTER_CONFIG: FilterConfig = {
-  searchFields: ['action', 'event_type', 'resource_type', 'resource_id', 'details', 'actor_id'],
-  searchPlaceholder: '이벤트, 행위자, 리소스, 상세내용으로 검색 · Search events...',
-  dateField: 'occurred_at',
-  dropdowns: [
-    {
-      key: 'event_type',
-      label: '유형',
-      options: [
-        { value: 'harness', label: '하네스 · Harness' },
-        { value: 'user', label: '사용자 · User' },
-        { value: 'session', label: '세션 · Session' },
-        { value: 'model', label: '모델 · Model' },
-        { value: 'policy', label: '정책 · Policy' },
-        { value: 'security', label: '보안 · Security' },
-        { value: 'compliance', label: '컴플라이언스 · Compliance' },
-        { value: 'cp.', label: '시스템 · System' },
-      ],
-    },
-    {
-      key: 'result',
-      label: '결과',
-      options: [
-        { value: 'success', label: '성공 · Success' },
-        { value: 'denied', label: '거부 · Denied' },
-        { value: 'failure', label: '실패 · Failed' },
-      ],
-    },
-    {
-      key: 'actor_type',
-      label: '행위자',
-      options: [
-        { value: 'admin', label: '관리자 · Admin' },
-        { value: 'system', label: '시스템 · System' },
-        { value: 'user', label: '사용자 · User' },
-      ],
-    },
-  ],
-}
+// Audit page (web/17 plan): server-side query (A), tamper-evidence
+// verification (B), legal holds (C), payload drill-down (D), SIEM
+// forwarding + evidence bundle + live tail (E).
 
 export default function Audit() {
-  const [events, setEvents] = useState<any[]>([])
-  const [filters, setFilters] = useState({
-    search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string>,
-  })
-  const [page, setPage] = useState(1)
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const pageSize = 50
+  const fetchAudit = (q: ServerQuery) =>
+    api.listAuditPaged(buildQuery(q)).then((res: any) => {
+      if (Array.isArray(res)) return res
+      return { data: res.data ?? [], total: res.total ?? 0, page: res.page, size: res.size }
+    })
+  const table = useServerTable<any>(fetchAudit, { size: 50 })
 
-  const [chainReport, setChainReport] = useState<{verified: boolean; events: number; reason?: string; first_break_id?: string} | null>(null)
-  const [verifying, setVerifying] = useState(false)
+  const [verify, setVerify] = useState<any>(null)
+  const [holds, setHolds] = useState<any[]>([])
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [payloadTarget, setPayloadTarget] = useState<any>(null)
+  const [holdOpen, setHoldOpen] = useState(false)
+  const [holdForm, setHoldForm] = useState({ resource_type: 'session', resource_id: '', reason: '' })
+  const [siemOpen, setSiemOpen] = useState(false)
+  const [siemForm, setSiemForm] = useState({ webhook: '', secret: '' })
 
-  const verifyChain = () => {
-    setVerifying(true)
-    fetch('/api/audit/verify', { headers: authHeaders() })
-      .then(r => r.json())
-      .then(setChainReport)
-      .catch(() => setChainReport({ verified: false, events: 0, reason: '확인 실패' }))
-      .finally(() => setVerifying(false))
+  const load = () => {
+    api.listAuditHolds().then((d: any[]) => setHolds(Array.isArray(d) ? d : [])).catch(() => setHolds([]))
+    api.auditSIEMConfig().then((c: any) => setSiemForm({ webhook: c?.webhook || '', secret: '' })).catch(() => {})
+  }
+  useEffect(() => { load() }, [])
+
+  const runVerify = async () => {
+    try {
+      const res = await api.verifyAuditChain()
+      setVerify(res)
+      showToast(res?.valid !== false ? '해시 체인 검증 완료' : '체인 불일치 발견!', res?.valid !== false ? 'success' : 'error')
+    } catch (e: any) { showToast(e?.message || '검증 실패', 'error') }
   }
 
-  useEffect(() => {
-    fetch('/api/audit', { headers: authHeaders() })
-      .then(r => r.json())
-      .then(data => setEvents(Array.isArray(data) ? data : []))
-      .catch(() => setEvents([]))
-  }, [])
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
-  const filtered = useFilteredData(events, filters, FILTER_CONFIG)
-  const paged = filtered.slice((page - 1) * pageSize, page * pageSize)
+  const downloadBundle = async () => {
+    if (selectedIds.size === 0) return
+    try {
+      const token = localStorage.getItem('pccp_token')
+      const resp = await fetch('/api/audit/evidence-bundle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ ids: [...selectedIds] }),
+      })
+      if (!resp.ok) throw new Error('bundle failed')
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'audit-evidence-bundle.json'
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
 
-  const resultBadge = (r: string) => r === 'success' ? 'badge-green' : r === 'denied' || r === 'failure' ? 'badge-red' : 'badge-yellow'
+  const placeHold = async () => {
+    if (!holdForm.resource_id.trim()) {
+      showToast('리소스 ID가 필요합니다', 'error')
+      return
+    }
+    try {
+      await api.placeAuditHold(holdForm.resource_type, holdForm.resource_id, holdForm.reason)
+      showToast('법적 보류 설정 완료', 'success')
+      setHoldOpen(false)
+      setHoldForm({ resource_type: 'session', resource_id: '', reason: '' })
+      load()
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
 
-  // Stats from filtered set
-  const stats = {
-    total: events.length,
-    success: events.filter(e => e.result === 'success').length,
-    denied: events.filter(e => e.result === 'denied' || e.result === 'failure').length,
-    filtered: filtered.length,
+  const liftHold = async (h: any) => {
+    try {
+      await api.liftAuditHold(h.id, '관리자 해제')
+      showToast('보류 해제 완료', 'success')
+      load()
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
+  const saveSIEM = async () => {
+    try {
+      await api.putAuditSIEMConfig(siemForm.webhook, siemForm.secret)
+      showToast('SIEM 전달 설정 완료 — 새 이벤트가 주기적으로 전달됩니다', 'success')
+      setSiemOpen(false)
+      load()
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
 
   return (
-    <div>
-      <h1 className="text-2xl font-bold mb-6">감사 로그 <span className="text-gray-400 text-lg font-normal">Audit Trail</span></h1>
-
-      {/* Chain verification (tamper evidence) */}
-      <div className="card p-4 mb-4 flex items-center justify-between">
+    <div className="p-6 space-y-4 page-enter">
+      <div className="flex items-start justify-between gap-2 flex-wrap">
         <div>
-          <div className="text-sm font-medium">해시 체인 검증 · Hash-Chain Verification</div>
-          <div className="text-xs text-gray-500 mt-0.5">
-            {chainReport === null
-              ? '감사 이벤트의 무결성을 해시 체인으로 검증합니다'
-              : chainReport.verified
-                ? `체인 무결 · ${chainReport.events}개 이벤트 검증 완료 — 위변조 없음`
-                : `체인 손상 감지 — ${chainReport.reason ?? '알 수 없는 이유'}${chainReport.first_break_id ? ` (이벤트 ${chainReport.first_break_id.slice(0, 8)}…)` : ''}`}
-          </div>
+          <h2 className="text-sm font-bold">감사 로그 · Audit</h2>
+          <p className="text-[11px] text-gray-400">서버 측 필터/페이지네이션 · 해시 체인 무결성 · 법적 보류</p>
         </div>
-        <div className="flex items-center gap-2">
-          {chainReport && (
-            <span className={chainReport.verified ? 'badge-green' : 'badge-red'}>
-              {chainReport.verified ? '무결' : '손상'}
-            </span>
+        <div className="flex gap-2 flex-wrap">
+          {selectedIds.size > 0 && (
+            <button className="btn-sm btn-secondary" onClick={downloadBundle}>증거 번들 ({selectedIds.size})</button>
           )}
-          <button onClick={verifyChain} disabled={verifying}
-            className="btn btn-secondary text-xs">{verifying ? '검증 중…' : '체인 검증'}</button>
+          <button className="btn-sm btn-secondary" onClick={() => setHoldOpen(true)}>법적 보류</button>
+          <button className="btn-sm btn-secondary" onClick={() => setSiemOpen(true)}>SIEM 전달</button>
+          <button className="btn-sm btn-primary" onClick={runVerify}>체인 검증</button>
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-4 gap-3 mb-4">
-        <div className="card py-3 text-center">
-          <div className="text-2xl font-bold cursor-pointer hover:text-blue-600" onClick={() => setFilters({ ...filters, dropdowns: {} })}>{stats.total}</div>
-          <div className="text-xs text-gray-500">전체 이벤트 · Total</div>
+      {verify && (
+        <div className={`card p-3 text-[11px] ${verify.valid === false ? 'text-red-600' : 'text-green-700'}`}>
+          체인 검증: {verify.valid === false ? '불일치!' : '무결함'} — {verify.checked || verify.total || verify.events || 0} 이벤트 확인
         </div>
-        <div className="card py-3 text-center">
-          <div className="text-2xl font-bold text-green-600 cursor-pointer hover:text-green-700" onClick={() => setFilters({ ...filters, dropdowns: { result: 'success' } })}>{stats.success}</div>
-          <div className="text-xs text-gray-500">성공 · Success</div>
-        </div>
-        <div className="card py-3 text-center">
-          <div className="text-2xl font-bold text-red-600 cursor-pointer hover:text-red-700" onClick={() => setFilters({ ...filters, dropdowns: { result: 'denied' } })}>{stats.denied}</div>
-          <div className="text-xs text-gray-500">거부/실패 · Denied</div>
-        </div>
-        <div className="card py-3 text-center">
-          <div className="text-2xl font-bold text-blue-600">{stats.filtered}</div>
-          <div className="text-xs text-gray-500">필터 결과 · Filtered</div>
-        </div>
+      )}
+
+      <div className="flex gap-2 flex-wrap items-center">
+        <input className="input text-xs w-56" placeholder="검색 (이벤트/액션/리소스)..." value={table.search}
+          onChange={e => table.setSearch(e.target.value)} />
+        <select className="input text-xs w-28" value={table.filters.type || ''}
+          onChange={e => table.setFilter('type', e.target.value)}>
+          <option value="">전체 유형</option>
+          <option value="cp.user.updated">user</option>
+          <option value="cp.session.opened">session</option>
+          <option value="cp.fleet.action">fleet</option>
+          <option value="cp.model.published">model</option>
+        </select>
+        <select className="input text-xs w-28" value={table.filters.result || ''}
+          onChange={e => table.setFilter('result', e.target.value)}>
+          <option value="">전체 결과</option>
+          <option value="success">성공</option>
+          <option value="failed">실패</option>
+        </select>
+        {table.loading && <span className="text-[10px] text-gray-400 animate-pulse">로딩...</span>}
       </div>
 
-      {/* Filters */}
-      {/* Quick time presets */}
-      <div className="flex gap-1 mb-3">
-        {[
-          { label: '오늘', labelEn: 'Today', days: 0, fromToday: true },
-          { label: '어제', labelEn: 'Yesterday', days: 1, fromToday: false },
-          { label: '최근 7일', labelEn: '7 days', days: 7, fromToday: true },
-          { label: '최근 30일', labelEn: '30 days', days: 30, fromToday: true },
-        ].map(preset => (
-          <button
-            key={preset.label}
-            onClick={() => {
-              const now = new Date()
-              const from = new Date()
-              if (preset.days === 0 && preset.fromToday) {
-                from.setHours(0, 0, 0, 0)
-              } else if (preset.days === 1 && !preset.fromToday) {
-                from.setDate(now.getDate() - 1)
-                from.setHours(0, 0, 0, 0)
-                const to = new Date()
-                to.setHours(0, 0, 0, 0)
-                setFilters({ ...filters, dateFrom: from.toISOString().slice(0, 10), dateTo: to.toISOString().slice(0, 10) })
-                return
-              } else {
-                from.setDate(now.getDate() - preset.days)
-              }
-              setFilters({ ...filters, dateFrom: from.toISOString().slice(0, 10), dateTo: now.toISOString().slice(0, 10) })
-            }}
-            className="btn-sm btn-secondary"
-          >
-            {preset.label}
-          </button>
-        ))}
-        <button
-          onClick={() => setFilters({ ...filters, dateFrom: '', dateTo: '' })}
-          className="btn-sm btn-secondary"
-        >
-          전체
-        </button>
-      </div>
-
-      <FilterBar config={FILTER_CONFIG} onChange={setFilters} />
-
-      {/* Table */}
-      <div className="card">
-        {paged.length === 0 ? (
-          <div className="text-center py-8">
-            <EmptyState icon="☰" title="표시할 감사 이벤트가 없습니다" message="관리자 활동이 기록되면 표시됩니다" />
+      <div className="space-y-1">
+        {table.rows.length === 0 && <EmptyState icon="📜" title="감사 이벤트가 없습니다" />}
+        {table.rows.map((e: any) => (
+          <div key={e.id} className="flex items-center gap-2 text-[11px] border-b border-gray-50 py-1 hover:bg-gray-50 px-1 rounded">
+            <input type="checkbox" checked={selectedIds.has(e.id)} onChange={() => toggleSelect(e.id)} />
+            <span className="text-gray-500 w-40 truncate font-mono">{e.event_type}</span>
+            <span className="text-gray-700 flex-1 truncate">{e.action}</span>
+            <span className="text-gray-400 w-24 truncate">{e.resource_type}:{e.resource_id?.slice(0, 8)}</span>
+            <span className={`w-16 ${e.result === 'success' ? 'text-green-600' : 'text-red-500'}`}>{e.result}</span>
+            <span className="text-gray-400 w-28">{(e.occurred_at || '').slice(0, 16)}</span>
+            <button className="text-[10px] px-2 py-0.5 rounded hover:bg-blue-50 text-blue-600" onClick={() => setPayloadTarget(e)}>상세</button>
           </div>
-        ) : (
-          <table className="w-full overflow-x-auto block">
-            <thead>
-              <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
-                <th className="pb-2">시간 · Time</th>
-                <th className="pb-2">이벤트 · Event</th>
-                <th className="pb-2">행위자 · Actor</th>
-                <th className="pb-2">리소스 · Resource</th>
-                <th className="pb-2">상세 · Details</th>
-                <th className="pb-2">결과 · Result</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paged.map(e => (
-                <Fragment key={e.id}>
-                <tr className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer" onClick={() => setExpandedId(expandedId === e.id ? null : e.id)}>
-                  <td className="py-2 text-xs text-gray-400 whitespace-nowrap" title={e.occurred_at?.slice(0, 19)}>{formatRelative(e.occurred_at)}</td>
-                  <td className="py-2 text-sm font-medium font-mono">{e.event_type}</td>
-                  <td className="py-2 text-sm">{e.actor_type}{e.actor_id ? ` (${e.actor_id.slice(0, 8)})` : ''}</td>
-                  <td className="py-2 text-sm">{e.resource_type}{e.resource_id ? ': ' : ''}{e.resource_id && (
-                    e.resource_type === 'user' ? <Link to={`/users/${e.resource_id}`} className="text-blue-600 hover:underline" onClick={ev => ev.stopPropagation()}>{e.resource_id.slice(0, 12)}</Link> :
-                    e.resource_type === 'harness' ? <Link to={`/harnesses/${e.resource_id}`} className="text-blue-600 hover:underline" onClick={ev => ev.stopPropagation()}>{e.resource_id.slice(0, 12)}</Link> :
-                    e.resource_type === 'project' ? <Link to={`/projects/${e.resource_id}`} className="text-blue-600 hover:underline" onClick={ev => ev.stopPropagation()}>{e.resource_id.slice(0, 12)}</Link> :
-                    e.resource_id.slice(0, 12)
-                  )}</td>
-                  <td className="py-2 text-xs text-gray-500 max-w-xs truncate">{e.details?.slice(0, 80)}</td>
-                  <td className="py-2"><span className={resultBadge(e.result)}>{e.result}</span></td>
-                </tr>
-                {expandedId === e.id && (
-                  <tr className="bg-gray-50"><td colSpan={6} className="p-4">
-                    <pre className="text-xs font-mono whitespace-pre-wrap break-all text-gray-600">{e.details || '(no details)'}</pre>
-                  </td></tr>
-                )}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
-        )}
+        ))}
       </div>
 
-      <Pagination
-        total={filtered.length}
-        page={page}
-        pageSize={pageSize}
-        onPageChange={setPage}
-      />
+      {table.total > table.size && (
+        <div className="flex items-center justify-between text-[11px] text-gray-500">
+          <span>총 {table.total}건</span>
+          <div className="flex gap-1">
+            <button className="btn-sm btn-secondary" disabled={table.page <= 1} onClick={() => table.setPage(p => Math.max(1, p - 1))}>이전</button>
+            <span className="px-2 py-1">{table.page} / {Math.ceil(table.total / table.size)}</span>
+            <button className="btn-sm btn-secondary" disabled={table.page >= Math.ceil(table.total / table.size)}
+              onClick={() => table.setPage(p => p + 1)}>다음</button>
+          </div>
+        </div>
+      )}
+
+      {holds.length > 0 && (
+        <div className="card p-4">
+          <h3 className="text-xs font-bold mb-2">법적 보류 ({holds.length})</h3>
+          {holds.map((h: any) => (
+            <div key={h.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+              <span className="text-gray-700">{h.resource_type}:{h.resource_id} — {h.reason}</span>
+              <span className="text-gray-400">{h.status}</span>
+              {h.status === 'active' && <button className="text-[10px] text-red-600" onClick={() => liftHold(h)}>해제</button>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Payload drill-down (D) */}
+      <Modal open={!!payloadTarget} title={`이벤트 상세 — ${payloadTarget?.event_type || ''}`}
+        onClose={() => setPayloadTarget(null)} size="lg"
+        footer={<ModalFooter onCancel={() => setPayloadTarget(null)} onConfirm={() => setPayloadTarget(null)} confirmLabel="닫기" />}>
+        <div className="space-y-2 text-[11px]">
+          <div className="flex justify-between"><span className="text-gray-400">리소스</span><span>{payloadTarget?.resource_type}:{payloadTarget?.resource_id}</span></div>
+          <div className="flex justify-between"><span className="text-gray-400">액션</span><span>{payloadTarget?.action}</span></div>
+          <div className="flex justify-between"><span className="text-gray-400">시각</span><span>{payloadTarget?.occurred_at}</span></div>
+          <div>
+            <div className="text-gray-400 mb-1">상세 페이로드 (JSON)</div>
+            <pre className="bg-gray-50 rounded p-2 overflow-auto max-h-60 text-[10px] font-mono whitespace-pre-wrap">
+              {(() => { try { return JSON.stringify(JSON.parse(payloadTarget?.details || '{}'), null, 2) } catch { return payloadTarget?.details || '—' } })()}
+            </pre>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Legal hold (C) */}
+      <Modal open={holdOpen} title="법적 보류 설정 (§40.5)"
+        onClose={() => setHoldOpen(false)}
+        footer={<ModalFooter onCancel={() => setHoldOpen(false)} onConfirm={placeHold} confirmLabel="설정" />}>
+        <div className="space-y-2">
+          <select className="input text-xs w-full" value={holdForm.resource_type} onChange={e => setHoldForm({ ...holdForm, resource_type: e.target.value })}>
+            <option value="session">session</option>
+            <option value="user">user</option>
+            <option value="repository">repository</option>
+            <option value="audit_event">audit_event</option>
+          </select>
+          <input className="input text-xs w-full" placeholder="리소스 ID" value={holdForm.resource_id} onChange={e => setHoldForm({ ...holdForm, resource_id: e.target.value })} />
+          <textarea className="input text-xs w-full" rows={2} placeholder="사유" value={holdForm.reason} onChange={e => setHoldForm({ ...holdForm, reason: e.target.value })} />
+        </div>
+      </Modal>
+
+      {/* SIEM config (E) */}
+      <Modal open={siemOpen} title="SIEM 전달 설정 (§32.4)"
+        onClose={() => setSiemOpen(false)}
+        footer={<ModalFooter onCancel={() => setSiemOpen(false)} onConfirm={saveSIEM} confirmLabel="저장" />}>
+        <div className="space-y-2">
+          <p className="text-[11px] text-gray-500">새 감사 이벤트가 HMAC 서명(X-PCCP-Signature)과 함께 주기적으로 전달됩니다.</p>
+          <input className="input text-xs w-full" placeholder="SIEM 웹훅 URL" value={siemForm.webhook} onChange={e => setSiemForm({ ...siemForm, webhook: e.target.value })} />
+          <input className="input text-xs w-full" type="password" placeholder="HMAC 시크릿" value={siemForm.secret} onChange={e => setSiemForm({ ...siemForm, secret: e.target.value })} />
+        </div>
+      </Modal>
     </div>
   )
-}
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('pccp_token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
 }

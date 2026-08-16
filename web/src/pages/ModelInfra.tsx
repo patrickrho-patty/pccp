@@ -153,7 +153,18 @@ function PackagesTab() {
   const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
   const [page, setPage] = useState(1)
   const [form, setForm] = useState({ package_id: '', model_id: '', name: '', name_ko: '', family: 'code', version: '1.0.0' })
+  const [impactTarget, setImpactTarget] = useState<any>(null)
+  const [impact, setImpact] = useState<any>(null)
   const pageSize = 25
+
+  const showImpact = async (m: any) => {
+    setImpactTarget(m)
+    try { setImpact(await api.modelRecallImpact(m.id)) } catch (e: any) { setImpact(null); showToast(e?.message || '실패', 'error') }
+  }
+  const setRing = async (m: any, ring: string) => {
+    try { await api.assignModelRing(m.id, ring); showToast(`링 ${ring} 배정 완료`, 'success'); load() }
+    catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
 
   const load = () => {
     fetch('/api/models', { headers: authHeaders() }).then(r => r.json()).then(d => setModels(Array.isArray(d) ? d : [])).catch(() => {})
@@ -168,7 +179,13 @@ function PackagesTab() {
     e.preventDefault()
     try { await fetch('/api/models', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, state: 'draft' }) }); setShowForm(false); showToast('모델 등록됨', 'success'); load() } catch { showToast('실패', 'error') }
   }
-  const handlePublish = async (id: string) => { try { await fetch(`/api/models/${id}/publish`, { method: 'POST', headers: authHeaders() }); load() } catch {} }
+  const handlePublish = async (id: string) => {
+    try {
+      const res = await api.publishModel(id)
+      showToast(`게시 완료 — 서명·다이제스트 검증 ${res.verified === 'true' ? '통과' : ''}`, 'success')
+      load()
+    } catch (e: any) { showToast(e?.message || '게시 실패 (검증 실패 시 거부됨)', 'error') }
+  }
   const handleRecall = async (id: string) => { if (await confirm({ title: '확인', message: '리콜하시겠습니까?', danger: true })) { await fetch(`/api/models/${id}/recall`, { method: 'POST', headers: authHeaders() }); load() } }
   const handleEdit = (m: any) => { setEditingId(m.id); setForm({ package_id: m.package_id || '', model_id: m.model_id || '', name: m.name || '', name_ko: m.name_ko || '', family: m.family || 'code', version: m.version || '1.0.0' }); setShowForm(true) }
   const getEpCount = (pkgId: string) => endpoints.filter(e => e.model_package_id === pkgId && e.status === 'active').length
@@ -215,9 +232,15 @@ function PackagesTab() {
                 <td className="py-3"><span className={stateBadge(m.state)}>{stateLabel(m.state)}</span></td>
                 <td className="py-3"><span className="badge-gray">{getEpCount(m.package_id)} PIA</span></td>
                 <td className="py-3">
-                  <div className="flex gap-2">
-                    {m.state === 'draft' && <button onClick={() => handlePublish(m.id)} className="text-green-600 text-xs hover:underline">게시</button>}
+                  <div className="flex gap-2 flex-wrap items-center">
+                    {m.state === 'draft' && <button onClick={() => handlePublish(m.id)} className="text-green-600 text-xs hover:underline" title="서명·다이제스트 검증 후 게시">게시 (검증)</button>}
                     {m.state === 'published' && <button onClick={() => handleRecall(m.id)} className="text-red-600 text-xs hover:underline">리콜</button>}
+                    <button onClick={() => showImpact(m)} className="text-orange-600 text-xs hover:underline">영향</button>
+                    <select className="input text-[10px] py-0 w-20" value={m.release || 'stable'} onChange={e => setRing(m, e.target.value)}>
+                      <option value="canary">canary</option>
+                      <option value="beta">beta</option>
+                      <option value="stable">stable</option>
+                    </select>
                     <button onClick={() => handleEdit(m)} className="text-blue-600 text-xs hover:underline">편집</button>
                   </div>
                 </td>
@@ -227,6 +250,23 @@ function PackagesTab() {
         </table>
         <Pagination total={filtered.length} page={page} pageSize={pageSize} onPageChange={setPage} />
       </div>
+
+      {impactTarget && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setImpactTarget(null)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-5" onClick={e => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold">리콜 영향 분석 — {impactTarget.package_id}</h3>
+            {impact ? (
+              <div className="mt-3 space-y-1 text-xs text-gray-600">
+                <div className="flex justify-between"><span>영향 엔드포인트</span><span className="font-semibold">{impact.affected_endpoints}</span></div>
+                <div className="flex justify-between"><span>영향 세션</span><span className="font-semibold">{impact.affected_sessions}</span></div>
+                <div className="flex justify-between"><span>사용 기록</span><span className="font-semibold">{impact.usage_records}</span></div>
+                <div className="flex justify-between"><span>현재 상태</span><span className="font-semibold">{impact.state}</span></div>
+              </div>
+            ) : <p className="mt-3 text-xs text-gray-400">로딩...</p>}
+            <div className="flex justify-end mt-4"><button className="btn-sm btn-secondary" onClick={() => setImpactTarget(null)}>닫기</button></div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -256,7 +296,7 @@ function EndpointsTab() {
           </tr></thead>
           <tbody>
             {filtered.map(e => (
-              <Fragment key={e.id || e.key || i}>
+              <Fragment key={e.id}>
                 <tr key={e.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30 cursor-pointer"
                   onClick={() => setExpandedId(expandedId === e.id ? null : e.id)}>
                   <td className="py-3">

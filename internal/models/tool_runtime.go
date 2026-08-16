@@ -119,6 +119,7 @@ func AllModels() []interface{} {
 		&ComplianceEvidence{},
 		&ComplianceRemediation{},
 		&ComplianceAssessmentRecord{},
+		&LegalHold{},
 		// Durable service identities + revocations + sandboxes
 		&ServiceSigningKey{},
 		&CredentialRevocationRecord{},

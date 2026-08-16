@@ -279,8 +279,10 @@ func (s *Server) setupRouter() {
 			r.Get("/", s.handleListModelPackages)
 			r.Post("/", s.handleRegisterModelPackage)
 			r.Get("/{id}", s.handleGetModelPackage)
-			r.Post("/{id}/publish", s.handlePublishModel)
+			r.Post("/{id}/publish", s.handlePublishModelVerified)
 			r.Post("/{id}/recall", s.handleRecallModel)
+			r.Get("/{id}/recall-impact", s.handleModelRecallImpact)
+			r.Put("/{id}/ring", s.handleModelRingAssign)
 			r.Put("/{id}", s.handleUpdateModel)
 		})
 
@@ -360,6 +362,7 @@ func (s *Server) setupRouter() {
 		// Work Intelligence
 		r.Route("/analytics", func(r chi.Router) {
 			r.Get("/usage", s.handleGetUsageSummary)
+			r.Get("/usage-extended", s.handleUsageSummaryExtended)
 			r.Get("/engineering", s.handleGetEngineeringMetrics)
 			r.Get("/security", s.handleGetSecurityMetrics)
 			r.Get("/scorecard", s.handleGetScorecard)
@@ -457,8 +460,14 @@ func (s *Server) setupRouter() {
 
 		// Audit
 		r.Route("/audit", func(r chi.Router) {
-			r.Get("/", s.handleListAuditEvents)
+			r.Get("/", s.handleListAuditEventsExtended)
 			r.Get("/verify", s.handleVerifyAuditChain)
+			r.Get("/holds", s.handleAuditHolds)
+			r.Post("/holds", s.handleAuditHolds)
+			r.Delete("/holds/{id}", s.handleAuditHoldItem)
+			r.Post("/evidence-bundle", s.handleAuditEvidenceBundle)
+			r.Get("/siem", s.handleAuditSIEMConfig)
+			r.Put("/siem", s.handleAuditSIEMConfig)
 		})
 
 		// Additional service routes
@@ -466,6 +475,13 @@ func (s *Server) setupRouter() {
 
 		// Dashboard
 		r.Get("/dashboard", s.handleDashboard)
+
+		// Code explorer (web/19)
+		r.Route("/code-explorer", func(r chi.Router) {
+			r.Get("/spans", s.handleCodeExplorerSpans)
+			r.Get("/attribution", s.handleCodeExplorerAttribution)
+			r.Get("/blast", s.handleCodeExplorerBlast)
+		})
 
 		// Unified search (00-cross-cutting A11) — one endpoint across
 		// entities for the command palette + cross-entity actions.
@@ -569,6 +585,15 @@ func (s *Server) ListenAndServe(addr string) error {
 			// and expired transfers with their stored content.
 			if n := s.sweepCommsRetention(); n > 0 {
 				log.Printf("api: comms retention purged %d items", n)
+			}
+			// SIEM forwarding (web/17 E): push unseen audit events to
+			// each org's configured SIEM webhook.
+			var siemOrgs []models.OrgSetting
+			s.db.Where("key = 'audit.siem_webhook' AND value != ''").Find(&siemOrgs)
+			for _, cfg := range siemOrgs {
+				if n := s.forwardAuditToSIEM(cfg.OrganizationID); n > 0 {
+					log.Printf("api: forwarded %d audit events to SIEM for %s", n, cfg.OrganizationID)
+				}
 			}
 		}
 	}()

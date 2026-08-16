@@ -279,6 +279,39 @@ export const api = {
 
   // Audit
   listAudit: () => request<any[]>('/api/audit'),
+  listAuditPaged: (query: string) =>
+    request<{ data: any[]; total: number; page: number; size: number }>(`/api/audit?${query}`),
+  verifyAuditChain: () => request<any>('/api/audit/verify'),
+  listAuditHolds: () => request<any[]>('/api/audit/holds'),
+  placeAuditHold: (resourceType: string, resourceId: string, reason: string) =>
+    request<any>('/api/audit/holds', { method: 'POST', body: JSON.stringify({ resource_type: resourceType, resource_id: resourceId, reason }) }),
+  liftAuditHold: (id: string, reason: string) =>
+    request<any>(`/api/audit/holds/${id}`, { method: 'DELETE', body: JSON.stringify({ reason }) }),
+  auditEvidenceBundle: (ids: string[]) =>
+    request<any>('/api/audit/evidence-bundle', { method: 'POST', body: JSON.stringify({ ids }) }),
+  auditSIEMConfig: () => request<any>('/api/audit/siem'),
+  putAuditSIEMConfig: (webhook: string, secret: string) =>
+    request<any>('/api/audit/siem', { method: 'PUT', body: JSON.stringify({ webhook, secret }) }),
+
+  // Analytics (web/16)
+  usageExtended: (rangeParam: string) =>
+    request<any>(`/api/analytics/usage-extended?range=${rangeParam}`),
+
+  // Model infra (web/18)
+  publishModel: (id: string) =>
+    request<any>(`/api/models/${id}/publish`, { method: 'POST' }),
+  recallModel: (id: string) =>
+    request<any>(`/api/models/${id}/recall`, { method: 'POST' }),
+  modelRecallImpact: (id: string) => request<any>(`/api/models/${id}/recall-impact`),
+  assignModelRing: (id: string, releaseRing: string) =>
+    request<any>(`/api/models/${id}/ring`, { method: 'PUT', body: JSON.stringify({ release_ring: releaseRing }) }),
+
+  // Code explorer (web/19)
+  codeExplorerSpans: (query: string) => request<any>(`/api/code-explorer/spans?${query}`),
+  codeExplorerAttribution: (repoId: string) =>
+    request<any[]>(`/api/code-explorer/attribution${repoId ? '?repository=' + encodeURIComponent(repoId) : ''}`),
+  codeExplorerBlast: (repoId: string, filePath: string) =>
+    request<any>(`/api/code-explorer/blast?repository=${encodeURIComponent(repoId)}&file=${encodeURIComponent(filePath)}`),
   // Incidents (Security SOC)
   simulatePolicy: (ruleIds: string[]) =>
     request<any>('/api/incidents/simulate-policy', { method: 'POST', body: JSON.stringify({ rule_ids: ruleIds }) }),
