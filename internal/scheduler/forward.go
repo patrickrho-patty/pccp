@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/scheduler/queue"
 )
@@ -143,11 +144,19 @@ func (d *Dispatcher) closeDeltas(w *pendingWaiter) {
 // bounded concurrency (one goroutine per in-flight dispatch, capped by
 // worker capacity in practice).
 func (d *Dispatcher) RunDispatchLoop(ctx context.Context) {
+	// Periodic reap: TTL expiry and drain outcomes complete waiters when
+	// the queue pops them, but pops only happen on wake events. An idle
+	// fleet would otherwise hold expired heads (and their parked
+	// waiters) until the next Submit/Assign; a slow tick keeps expiry
+	// bounded without busy-waiting.
+	reap := time.NewTicker(500 * time.Millisecond)
+	defer reap.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-dispatchWake:
+		case <-reap.C:
 		}
 		d.drainDispatch(ctx)
 	}
