@@ -183,6 +183,7 @@ type Account struct {
 	OAuthProvider string `gorm:"type:varchar(64)" json:"oauth_provider,omitempty"`
 	Locale        string `gorm:"type:varchar(10);default:'ko-KR'" json:"locale"`
 	Segment       string `gorm:"type:varchar(32)" json:"segment,omitempty"` // ops targeting tag (web/12 A8)
+	AccessToken   string `gorm:"type:varchar(64);index" json:"-"`            // portal access key (issued once, §6.6 no transferable creds)
 	Timezone      string `gorm:"type:varchar(64);default:'Asia/Seoul'" json:"timezone"`
 }
 

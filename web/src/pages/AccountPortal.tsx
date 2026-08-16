@@ -1,284 +1,190 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { showToast } from '../components/Toast'
+import EmptyState from '../components/EmptyState'
 
-// 플랜 사양 — backend publiccloud.getPlanConfig과 동일 (internal/publiccloud/service.go)
-const PLANS: { id: string; label: string; harnesses: number; active: number; normal: number; heavy: number }[] = [
-  { id: 'free', label: 'Free (무료)', harnesses: 1, active: 1, normal: 1, heavy: 0 },
-  { id: 'developer', label: 'Developer (개발자)', harnesses: 2, active: 2, normal: 5, heavy: 1 },
-  { id: 'pro', label: 'Pro (프로)', harnesses: 3, active: 2, normal: 5, heavy: 2 },
-  { id: 'team', label: 'Team (팀)', harnesses: 3, active: 3, normal: 8, heavy: 3 },
-  { id: 'enterprise', label: 'Enterprise (기업)', harnesses: 10, active: 5, normal: 10, heavy: 5 },
-]
+// Account Portal (web/24): public self-service. Access is keyed by the
+// portal access token (issued once at account creation; never stored
+// in the console). The portal never exposes transferable API
+// credentials (§6.6) and always offers a way back to the console (C).
 
-// 아직 백엔드 라우트가 없는 셀프 서비스 기능 (spec 24 §A/B — honest placeholders)
-const NOT_YET_AVAILABLE = [
-  { ko: '결제 수단 · 인보이스', en: 'Invoices / Payment', ref: '§6.6' },
-  { ko: '사용량 이력 · 페어유즈', en: 'Usage History / Fair Use', ref: '§10C.4' },
-  { ko: '보안 이벤트', en: 'Security Events', ref: '§6.6' },
-  { ko: '활성 세션 조회 · 원격 종료', en: 'Active Sessions / Remote Kill', ref: '§6.6' },
-  { ko: '계정 복구', en: 'Account Recovery', ref: '§6.6' },
-  { ko: '데이터 내보내기 · 삭제', en: 'Data Export / Delete', ref: '§6.6' },
-  { ko: '지원 요청', en: 'Support Request', ref: '§6.6' },
+const PLANS = [
+  { value: 'free', ko: '무료', en: 'Free' },
+  { value: 'developer', ko: '개발자', en: 'Developer' },
+  { value: 'pro', ko: '프로', en: 'Pro' },
+  { value: 'team', ko: '팀', en: 'Team' },
+  { value: 'enterprise', ko: '엔터프라이즈', en: 'Enterprise' },
 ]
 
 export default function AccountPortal() {
-  const [accounts, setAccounts] = useState<any[]>([])
+  const [token, setToken] = useState('')
+  const [self, setSelf] = useState<any>(null)
+  const [loading, setLoading] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
-  const [form, setForm] = useState({ email: '', display_name: '', display_name_ko: '', plan: 'developer' })
-  const [expanded, setExpanded] = useState<string | null>(null)
-  const [leases, setLeases] = useState<Record<string, any>>({})
-  const [planChange, setPlanChange] = useState<Record<string, string>>({})
+  const [createForm, setCreateForm] = useState({ email: '', display_name: '', display_name_ko: '', plan: 'free' })
+  const [newToken, setNewToken] = useState('')
+  const [planSelect, setPlanSelect] = useState('')
+  const [supportSubject, setSupportSubject] = useState('')
 
-  const load = () => {
-    api.publicAccounts()
-      .then(data => setAccounts(Array.isArray(data) ? data : []))
-      .catch(() => setAccounts([]))
+  const loadSelf = async (tk: string) => {
+    if (!tk.trim()) return
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/public/portal/self?token=${encodeURIComponent(tk.trim())}`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'invalid token')
+      setSelf(data)
+      setPlanSelect(data.subscription?.plan || '')
+    } catch (e: any) {
+      showToast(e?.message || '포털 접근 실패', 'error')
+      setSelf(null)
+    } finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [])
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const createAccount = async () => {
+    if (!createForm.email.includes('@')) {
+      showToast('유효한 이메일이 필요합니다', 'error')
+      return
+    }
     try {
-      await api.publicCreateAccount(form)
+      const res = await api.publicCreateAccount(createForm.email, createForm.display_name, createForm.display_name_ko, createForm.plan)
+      const created: any = res
+      const acc = created.account || created
+      const tok = created.portal_token
+      if (!tok) {
+        showToast('계정 생성 완료 — 포털 토큰은 생성 응답에서만 확인할 수 있습니다', 'info')
+      } else {
+        setNewToken(tok)
+        setToken(tok)
+        await loadSelf(tok)
+      }
+      void acc
       setShowCreate(false)
-      setForm({ email: '', display_name: '', display_name_ko: '', plan: 'developer' })
-      load()
-    } catch (err: any) {
-      showToast('계정 생성 실패: ' + err.message)
-    }
+    } catch (e: any) { showToast(e?.message || '생성 실패', 'error') }
   }
 
-  const handleLease = async (id: string) => {
+  const changePlan = async () => {
+    if (!token || !planSelect) return
     try {
-      const lease = await api.publicLease(id)
-      setLeases(prev => ({ ...prev, [id]: lease }))
-    } catch (err: any) {
-      showToast('리스 발급 실패: ' + err.message)
-    }
+      await fetch(`/api/public/portal/plan?token=${encodeURIComponent(token)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: planSelect }),
+      })
+      showToast('플랜 변경 완료', 'success')
+      loadSelf(token)
+    } catch { showToast('실패', 'error') }
   }
 
-  const handlePlanChange = async (id: string, plan: string) => {
+  const signOutAll = async () => {
+    if (!token) return
     try {
-      await api.publicCreateSub(id, plan)
-      showToast(`플랜이 ${plan}(으)로 변경되었습니다`)
-      setPlanChange(prev => ({ ...prev, [id]: '' }))
-      load()
-    } catch (err: any) {
-      showToast('플랜 변경 실패: ' + err.message)
-    }
+      const res = await fetch(`/api/public/portal/sign-out-all?token=${encodeURIComponent(token)}`, { method: 'POST' })
+      const out = await res.json()
+      if (!res.ok) throw new Error(out.error || 'failed')
+      showToast(`모든 세션 해지 완료 (리스 ${out.leases_revoked}개)`, 'success')
+      loadSelf(token)
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
 
-  const stateBadge = (s: string) => s === 'normal' || s === 'active' ? 'badge-green' : s === 'grace' || s === 'flagged' ? 'badge-yellow' : 'badge-red'
-
-  const fmtTime = (t?: string) => t ? t.slice(0, 19).replace('T', ' ') : ''
+  const fileSupport = async () => {
+    if (!token || !supportSubject.trim()) {
+      showToast('제목을 입력하세요', 'error')
+      return
+    }
+    try {
+      await fetch(`/api/public/portal/support?token=${encodeURIComponent(token)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subject: supportSubject.slice(0, 60), description: supportSubject }),
+      })
+      showToast('지원 요청 접수 완료', 'success')
+      setSupportSubject('')
+      loadSelf(token)
+    } catch { showToast('실패', 'error') }
+  }
 
   return (
-    <div>
-      <div className="flex justify-between items-center mb-6">
+    <div className="p-6 space-y-4 page-enter">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold">계정 포털 <span className="text-gray-400 text-lg font-normal">Account Portal</span></h1>
-          <p className="text-sm text-gray-500 mt-1">퍼블릭 클라우드 구독자 셀프 서비스 · Public Cloud Subscriber Self-Service (v2 §6.6)</p>
+          <h2 className="text-sm font-bold">계정 포털 · Account Portal</h2>
+          <p className="text-[11px] text-gray-400">퍼블릭 구독자 셀프서비스 — 포털 액세스 토큰으로 접근합니다.</p>
         </div>
-        <button onClick={() => setShowCreate(!showCreate)} className="btn-primary">
-          {showCreate ? '취소' : '+ 계정 생성'}
-        </button>
+        {/* Console switcher (C): never trap the user. */}
+        <Link to="/" className="btn-sm btn-secondary">콘솔로 돌아가기</Link>
       </div>
 
-      {showCreate && (
-        <form onSubmit={handleCreate} className="card mb-6">
-          <h2 className="text-lg font-semibold mb-4">새 퍼블릭 계정 · New Public Account</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label">이메일 · Email</label>
-              <input className="input" type="email" required value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
-            </div>
-            <div>
-              <label className="label">이름 · Name</label>
-              <input className="input" value={form.display_name} onChange={e => setForm({ ...form, display_name: e.target.value })} />
-            </div>
-            <div>
-              <label className="label">한글 이름 · Korean Name</label>
-              <input className="input" value={form.display_name_ko} onChange={e => setForm({ ...form, display_name_ko: e.target.value })} placeholder="김개발" />
-            </div>
-            <div>
-              <label className="label">플랜 · Plan</label>
-              <select className="input" value={form.plan} onChange={e => setForm({ ...form, plan: e.target.value })}>
-                {PLANS.map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.label} — 하네스 {p.harnesses}, 일반 슬롯 {p.normal}, 헤비 {p.heavy}
-                  </option>
-                ))}
+      {!self ? (
+        <div className="card p-6 space-y-3 max-w-lg">
+          <input className="input text-xs w-full font-mono" placeholder="포털 액세스 토큰"
+            value={token} onChange={e => setToken(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') loadSelf(token) }} />
+          <div className="flex gap-2">
+            <button className="btn-sm btn-primary" onClick={() => loadSelf(token)} disabled={loading}>
+              {loading ? '로딩...' : '포털 열기'}
+            </button>
+            <button className="btn-sm btn-secondary" onClick={() => setShowCreate(!showCreate)}>새 계정 만들기</button>
+          </div>
+          {showCreate && (
+            <div className="space-y-2 border-t border-gray-100 pt-3">
+              <input className="input text-xs w-full" placeholder="이메일" value={createForm.email} onChange={e => setCreateForm({ ...createForm, email: e.target.value })} />
+              <input className="input text-xs w-full" placeholder="이름" value={createForm.display_name} onChange={e => setCreateForm({ ...createForm, display_name: e.target.value })} />
+              <select className="input text-xs w-full" value={createForm.plan} onChange={e => setCreateForm({ ...createForm, plan: e.target.value })}>
+                {PLANS.map(p => <option key={p.value} value={p.value}>{p.ko} {p.en}</option>)}
               </select>
+              <button className="btn-sm btn-primary" onClick={createAccount}>계정 생성</button>
             </div>
-          </div>
-          <div className="mt-4 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
-            ℹ️ 퍼블릭 계정은 API 키 없이 OAuth로 인증하고 DARI 프로토콜로 서비스를 이용합니다. (v2 §10C.1)
-          </div>
-          <button type="submit" className="btn-primary mt-4">생성 · Create Account</button>
-        </form>
-      )}
-
-      {/* Account List */}
-      {accounts.length === 0 && !showCreate ? (
-        <div className="card text-center py-12">
-          <p className="text-gray-400 mb-2">등록된 퍼블릭 계정이 없습니다.</p>
-          <p className="text-sm text-gray-400">"+ 계정 생성" 버튼으로 첫 퍼블릭 구독자를 만드세요.</p>
+          )}
+          {newToken && (
+            <div className="p-3 bg-amber-50 rounded text-[11px]">
+              <div className="font-semibold text-amber-700">포털 토큰 (1회 표시 — 안전하게 보관하세요)</div>
+              <div className="font-mono break-all">{newToken}</div>
+            </div>
+          )}
+          {!newToken && <EmptyState icon="🔑" title="포털에 접속하세요" message="계정 생성 시 발급된 포털 액세스 토큰을 입력하세요." />}
         </div>
       ) : (
-        <div className="space-y-4">
-          {accounts.map(a => (
-            <div key={a.id} className="card">
-              {/* Account Header */}
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h3 className="font-bold text-lg">{a.display_name_ko || a.display_name}</h3>
-                  <p className="text-sm text-gray-500">{a.email}</p>
-                  <p className="text-xs text-gray-400 font-mono mt-1">{a.id}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={stateBadge(a.subscription_status)}>{a.subscription_status}</span>
-                  <span className="badge-blue">{a.subscription_plan || 'none'}</span>
-                </div>
-              </div>
-
-              {/* Subscription & Slots */}
-              <div className="grid grid-cols-5 gap-3 mb-4">
-                <div className="bg-gray-50 rounded p-2 text-center">
-                  <div className="text-lg font-bold">{a.max_harnesses}</div>
-                  <div className="text-xs text-gray-500">최대 하네스</div>
-                </div>
-                <div className="bg-gray-50 rounded p-2 text-center">
-                  <div className="text-lg font-bold">{a.max_active_harnesses}</div>
-                  <div className="text-xs text-gray-500">동시 하네스</div>
-                </div>
-                <div className="bg-gray-50 rounded p-2 text-center">
-                  <div className="text-lg font-bold">{a.normal_work_slots}</div>
-                  <div className="text-xs text-gray-500">일반 슬롯</div>
-                </div>
-                <div className="bg-gray-50 rounded p-2 text-center">
-                  <div className="text-lg font-bold">{a.heavy_work_slots}</div>
-                  <div className="text-xs text-gray-500">헤비 슬롯</div>
-                </div>
-                <div className="bg-gray-50 rounded p-2 text-center">
-                  <div className="text-lg font-bold">{a.background_slots}</div>
-                  <div className="text-xs text-gray-500">백그라운드</div>
-                </div>
-              </div>
-              {a.subscription_expiry && (
-                <p className="text-xs text-gray-400 mb-4">구독 만료 · Expiry: {fmtTime(a.subscription_expiry)}</p>
-              )}
-
-              {/* Risk States */}
-              <div className="grid grid-cols-4 gap-2 mb-4">
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-gray-500">무결성</span>
-                  <span className={stateBadge(a.account_integrity_state)}>{a.account_integrity_state}</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-gray-500">T&S</span>
-                  <span className={stateBadge(a.trust_safety_state)}>{a.trust_safety_state}</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-gray-500">보안</span>
-                  <span className={stateBadge(a.platform_security_state)}>{a.platform_security_state}</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-gray-500">용량</span>
-                  <span className={stateBadge(a.capacity_state)}>{a.capacity_state}</span>
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div className="flex gap-2 pt-3 border-t border-gray-100">
-                <button onClick={() => setExpanded(expanded === a.id ? null : a.id)} className="btn-secondary text-xs">
-                  {expanded === a.id ? '관리 닫기' : '계정 관리 · Manage'}
-                </button>
-                <button onClick={() => handleLease(a.id)} className="btn-secondary text-xs">
-                  용량 리스 발급 · Issue Lease
-                </button>
-                {a.subscription_status !== 'active' && (
-                  <button onClick={() => handlePlanChange(a.id, 'developer')} className="btn-primary text-xs">
-                    구독 시작 · Subscribe
-                  </button>
-                )}
-              </div>
-
-              {/* Inline capacity lease result (replaces alert) */}
-              {leases[a.id] && (
-                <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-semibold text-green-800">용량 리스 발급됨 · Capacity Lease Issued (§10C.5)</span>
-                    <span className="text-[10px] text-green-700 font-mono">유효: {fmtTime(leases[a.id].valid_until)} (TTL 5분)</span>
-                  </div>
-                  <div className="grid grid-cols-4 gap-2 text-center">
-                    <div><div className="text-sm font-bold text-green-800">{leases[a.id].active_agent_slots}</div><div className="text-[10px] text-green-700">에이전트 슬롯</div></div>
-                    <div><div className="text-sm font-bold text-green-800">{leases[a.id].heavy_slots}</div><div className="text-[10px] text-green-700">헤비 슬롯</div></div>
-                    <div><div className="text-sm font-bold text-green-800">{leases[a.id].background_slots}</div><div className="text-[10px] text-green-700">백그라운드</div></div>
-                    <div><div className="text-sm font-bold text-green-800">{leases[a.id].priority_weight}</div><div className="text-[10px] text-green-700">우선순위</div></div>
-                  </div>
-                </div>
-              )}
-
-              {/* Manage panel */}
-              {expanded === a.id && (
-                <div className="mt-4 pt-4 border-t border-gray-100 space-y-4">
-                  {/* Plan change — real: POST /api/public/accounts/{id}/subscription updates entitlements */}
-                  <div>
-                    <h4 className="text-sm font-semibold mb-2">플랜 변경 · Plan Change</h4>
-                    <div className="flex gap-2">
-                      <select
-                        className="input flex-1"
-                        value={planChange[a.id] ?? a.subscription_plan ?? 'developer'}
-                        onChange={e => setPlanChange(prev => ({ ...prev, [a.id]: e.target.value }))}
-                      >
-                        {PLANS.map(p => (
-                          <option key={p.id} value={p.id} disabled={p.id === a.subscription_plan}>
-                            {p.label} — 하네스 {p.harnesses}, 일반 {p.normal}, 헤비 {p.heavy}{p.id === a.subscription_plan ? ' (현재)' : ''}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        onClick={() => handlePlanChange(a.id, planChange[a.id] ?? a.subscription_plan ?? 'developer')}
-                        disabled={!planChange[a.id] || planChange[a.id] === a.subscription_plan}
-                        className="btn-primary text-xs disabled:opacity-50"
-                      >
-                        적용
-                      </button>
-                    </div>
-                    <p className="text-[10px] text-gray-400 mt-1">즉시 적용 · 결제/정산 미연동 — 인보이스는 아직 제공되지 않습니다.</p>
-                  </div>
-
-                  {/* Harness management — links to the existing My Devices surface */}
-                  <div>
-                    <h4 className="text-sm font-semibold mb-2">하네스 관리 · Harnesses</h4>
-                    <p className="text-xs text-gray-500">
-                      하네스 목록·해지는 <Link to="/harnesses" className="text-patty-600 hover:underline">내 기기 (My Devices)</Link> 메뉴에서 이용하세요. 계정 단위 일괄 로그아웃은 아직 제공되지 않습니다.
-                    </p>
-                  </div>
-
-                  {/* Honest placeholders — no backend routes yet (spec 24 Phase 2/3) */}
-                  <div>
-                    <h4 className="text-sm font-semibold mb-2">아직 제공되지 않는 기능 · Not Yet Available</h4>
-                    <div className="grid grid-cols-2 gap-2">
-                      {NOT_YET_AVAILABLE.map(item => (
-                        <div key={item.en} className="flex items-center justify-between p-2 rounded-lg border border-gray-100 bg-gray-50">
-                          <div>
-                            <div className="text-xs text-gray-600">{item.ko}</div>
-                            <div className="text-[10px] text-gray-400">{item.en} · {item.ref}</div>
-                          </div>
-                          <span className="badge-gray text-[10px]">준비 중</span>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="text-[10px] text-gray-400 mt-2">해당 기능의 백엔드 API가 아직 라우팅되지 않아 실제 동작 대신 상태를 정직하게 표시합니다.</p>
-                  </div>
-                </div>
-              )}
+        <div className="space-y-3">
+          <div className="card p-4">
+            <h3 className="text-xs font-bold mb-2">{self.account?.display_name_ko || self.account?.display_name} ({self.account?.email})</h3>
+            <div className="text-[11px] text-gray-500 space-y-1">
+              <div className="flex justify-between"><span>플랜</span><span>{self.subscription?.plan || 'none'}</span></div>
+              <div className="flex justify-between"><span>구독 상태</span><span>{self.account?.subscription_status}</span></div>
+              <div className="flex justify-between"><span>만료</span><span>{(self.subscription?.expires_at || '').slice(0, 10)}</span></div>
+              <div className="flex justify-between"><span>용량 리스</span><span>{self.leases?.length || 0}개</span></div>
+              <div className="flex justify-between"><span>사용 기록</span><span>{self.usage_records || 0}건</span></div>
             </div>
-          ))}
+          </div>
+
+          <div className="card p-4 space-y-2">
+            <h3 className="text-xs font-bold">플랜 변경</h3>
+            <div className="flex gap-2">
+              <select className="input text-xs" value={planSelect} onChange={e => setPlanSelect(e.target.value)}>
+                {PLANS.map(p => <option key={p.value} value={p.value}>{p.ko} {p.en}</option>)}
+              </select>
+              <button className="btn-sm btn-primary" onClick={changePlan}>변경</button>
+            </div>
+          </div>
+
+          <div className="card p-4 space-y-2">
+            <h3 className="text-xs font-bold">보안</h3>
+            <button className="btn-sm btn-danger" onClick={signOutAll}>모든 세션 해지 (Sign out all)</button>
+            <p className="text-[10px] text-gray-400">모든 용량 리스를 해지합니다 — 하네스 연결이 즉시 끊깁니다.</p>
+          </div>
+
+          <div className="card p-4 space-y-2">
+            <h3 className="text-xs font-bold">지원 요청</h3>
+            <div className="flex gap-2">
+              <input className="input text-xs flex-1" placeholder="요청 내용..." value={supportSubject} onChange={e => setSupportSubject(e.target.value)} />
+              <button className="btn-sm btn-secondary" onClick={fileSupport}>접수</button>
+            </div>
+            {(self.support_cases || []).slice(0, 5).map((c: any) => (
+              <div key={c.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+                <span className="text-gray-700 truncate">{c.subject}</span>
+                <span className="text-gray-400">{c.status}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

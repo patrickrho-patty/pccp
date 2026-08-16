@@ -2,6 +2,7 @@ package publiccloud
 
 import (
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"sync"
@@ -47,6 +48,7 @@ func New(db *gorm.DB) (*Service, error) {
 
 // CreateAccount creates a new Public Cloud account (§8.2).
 func (s *Service) CreateAccount(email, displayName, displayNameKo, plan string) (*models.Account, error) {
+	accessToken, _ := generatePortalToken()
 	account := &models.Account{
 		Email:              email,
 		DisplayName:        displayName,
@@ -60,6 +62,7 @@ func (s *Service) CreateAccount(email, displayName, displayNameKo, plan string) 
 		NormalWorkSlots:    5,
 		HeavyWorkSlots:     2,
 		BackgroundSlots:    2,
+		AccessToken:        accessToken,
 	}
 	if err := s.db.Create(account).Error; err != nil {
 		return nil, fmt.Errorf("publiccloud: create account: %w", err)
@@ -359,4 +362,66 @@ func getPlanPriority(plan string) int {
 	default:
 		return 1
 	}
+}
+
+// generatePortalToken issues the account's portal access key (32 hex).
+func generatePortalToken() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+// RotatePortalToken replaces the portal access key (revokes the old one).
+func (s *Service) RotatePortalToken(accountID string) (string, error) {
+	token, err := generatePortalToken()
+	if err != nil {
+		return "", err
+	}
+	if err := s.db.Model(&models.Account{}).Where("id = ?", accountID).
+		Update("access_token", token).Error; err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+// ChangePlan updates the account's subscription plan.
+func (s *Service) ChangePlan(accountID, plan string) (*models.Subscription, error) {
+	var account models.Account
+	if err := s.db.Where("id = ?", accountID).First(&account).Error; err != nil {
+		return nil, fmt.Errorf("publiccloud: account not found")
+	}
+	var sub models.Subscription
+	if err := s.db.Where("account_id = ? AND status = 'active'", accountID).First(&sub).Error; err != nil {
+		return nil, fmt.Errorf("publiccloud: no active subscription")
+	}
+	cfg := getPlanConfig(plan)
+	updates := map[string]interface{}{
+		"plan": plan, "revision": dari.GenerateID("sub_rev"),
+		"max_harnesses": cfg.MaxHarnesses, "max_active_harnesses": cfg.MaxActiveHarnesses,
+		"normal_work_slots": cfg.NormalSlots, "heavy_work_slots": cfg.HeavySlots,
+		"allowed_model_classes": cfg.AllowedModels,
+	}
+	if err := s.db.Model(&sub).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	s.db.Model(&account).Updates(map[string]interface{}{
+		"subscription_plan": plan,
+	})
+	s.db.First(&sub, "id = ?", sub.ID)
+	return &sub, nil
+}
+
+// SignOutAll revokes every capacity lease of the account (portal
+// self-service kill switch, §6.6).
+func (s *Service) SignOutAll(accountID string) (int64, error) {
+	res := s.db.Model(&models.AccountCapacityLease{}).
+		Where("account_id = ? AND status != 'revoked'", accountID).
+		Update("status", "revoked")
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	_ = s.db.Model(&models.Account{}).Where("id = ?", accountID).Update("platform_security_state", "normal")
+	return res.RowsAffected, nil
 }

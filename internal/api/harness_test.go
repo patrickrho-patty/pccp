@@ -180,3 +180,18 @@ func TestRevokeTerminatesSessionsAndRecordsRevocation(t *testing.T) {
 		t.Fatal("expected credential revocation record")
 	}
 }
+
+// doJSON2 issues a request with an explicit operator email claim.
+func doJSON2(t *testing.T, srv *Server, method, path, body string, email string) *httptest.ResponseRecorder {
+	t.Helper()
+	var req *http.Request
+	if body != "" {
+		req = httptest.NewRequest(method, path, strings.NewReader(body))
+	} else {
+		req = httptest.NewRequest(method, path, nil)
+	}
+	req = req.WithContext(contextWithClaims(req.Context(), &identity.Claims{Email: email, OrganizationID: "org-mfa"}))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec
+}

@@ -39,6 +39,8 @@ export default function Bootstrap() {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [orgName, setOrgName] = useState('')
+  const [policyPack, setPolicyPack] = useState('')
+  const [demoData, setDemoData] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
   const navigate = useNavigate()
@@ -52,8 +54,9 @@ export default function Bootstrap() {
     if (!canSubmit) return
     setError('')
     try {
-      await api.bootstrap(email, password, orgName, profile)
+      const res = await api.bootstrap(email, password, orgName, profile, policyPack, demoData)
       setSuccess(true)
+      void res
       setTimeout(() => navigate('/'), 2000)
     } catch (err: any) {
       setError(err.message)
@@ -145,7 +148,21 @@ export default function Bootstrap() {
                   </div>
                   <div className="flex gap-2">
                     <button type="button" onClick={() => setStep(1)} className="btn-secondary flex-1">이전</button>
-                    <button type="submit" disabled={!canSubmit} className="btn-primary flex-1 disabled:opacity-50">초기 설정 실행</button>
+                    <div>
+              <label className="label text-gray-300">컴플라이언스 프레임워크 (§41)</label>
+              <select className={inputCls + ' w-full'} value={policyPack} onChange={(e) => setPolicyPack(e.target.value)}>
+                <option value="">선택 안 함</option>
+                <option value="CSAP">CSAP (클라우드 보안 인증)</option>
+                <option value="ISMS-P">ISMS-P</option>
+                <option value="KISA">KISA 가이드라인</option>
+                <option value="AI-BASIC">인공지능 기본법</option>
+              </select>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-300">
+              <input type="checkbox" checked={demoData} onChange={(e) => setDemoData(e.target.checked)} className="w-4 h-4" />
+              데모 데이터 생성 (명시적 선택 — 기본 꺼짐)
+            </label>
+                        <button type="submit" disabled={!canSubmit} className="btn-primary flex-1 disabled:opacity-50">초기 설정 실행</button>
                   </div>
                 </form>
               )}

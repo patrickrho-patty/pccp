@@ -327,6 +327,12 @@ func (s *Server) setupAdditionalRoutes(r chi.Router, ext *AdditionalServices) {
 		r.Put("/abuse-cases/{id}", s.handleAbuseCaseItem)
 		r.Get("/segments", s.handleAccountSegments)
 		r.Put("/segments", s.handleAccountSegments)
+		// Self-service portal (web/24) — token-keyed, no creds exposed.
+		r.Get("/portal/self", s.handlePortalSelf)
+		r.Post("/portal/sign-out-all", s.handlePortalSignOutAll)
+		r.Post("/portal/plan", s.handlePortalChangePlan)
+		r.Post("/portal/support", s.handlePortalSupportCase)
+		r.Post("/portal/rotate-token", s.handlePortalRotateToken)
 	})
 }
 
@@ -1506,7 +1512,14 @@ func (s *Server) wrapPublicCreateAccount(ext *AdditionalServices) http.HandlerFu
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusCreated, acct)
+		// The portal access token is returned exactly once at creation
+		// (stored hashed-protected in the account row, never listed
+		// again — §6.6: no transferable API credentials on the portal).
+		writeJSON(w, http.StatusCreated, map[string]interface{}{
+			"account":      acct,
+			"portal_token": acct.AccessToken,
+			"note":         "portal_token is shown once — store it securely",
+		})
 	}
 }
 

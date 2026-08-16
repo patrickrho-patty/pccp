@@ -148,6 +148,8 @@ func (s *Server) setupRouter() {
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Post("/login", s.handleLogin)
 		r.Post("/bootstrap", s.handleBootstrap)
+		r.Post("/mfa/setup", s.handleMFASetup)
+		r.Post("/mfa/verify", s.handleMFAVerify)
 	})
 
 	// Realtime SSE (no middleware — HandleSSE does its own JWT check via query param)
@@ -690,16 +692,46 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
+		MFACode  string `json:"mfa_code"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if !throttleCheck(req.Email) {
+		writeError(w, http.StatusTooManyRequests, "로그인 시도가 잠겼습니다 · too many attempts — try again in 15 minutes")
+		return
+	}
+	var admin identity.AdminCredentials
+	if err := s.db.Where("email = ?", req.Email).First(&admin).Error; err == nil && admin.MFAEnrolled {
+		// MFA challenge (web/25 B): password + TOTP code.
+		if _, err := s.auth.Login(req.Email, req.Password); err != nil {
+			throttleRecordFailure(req.Email)
+			writeError(w, http.StatusUnauthorized, "로그인 실패 / invalid credentials")
+			return
+		}
+		code := req.MFACode
+		expected, terr := totpCode(admin.MFASecret, time.Now())
+		if terr != nil || expected != code {
+			writeError(w, http.StatusUnauthorized, "MFA 코드 필요 또는 불일치 · mfa code required or mismatch")
+			return
+		}
+		throttleClear(req.Email)
+		token, err := s.auth.Login(req.Email, req.Password)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "로그인 실패 / invalid credentials")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"token": token, "mfa": "verified"})
+		return
+	}
 	token, err := s.auth.Login(req.Email, req.Password)
 	if err != nil {
+		throttleRecordFailure(req.Email)
 		writeError(w, http.StatusUnauthorized, "로그인 실패 / invalid credentials")
 		return
 	}
+	throttleClear(req.Email)
 	writeJSON(w, http.StatusOK, map[string]string{
 		"token": token,
 	})
@@ -707,21 +739,45 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		OrgName  string `json:"org_name"`
+		Email      string `json:"email"`
+		Password   string `json:"password"`
+		OrgName    string `json:"org_name"`
+		Profile    string `json:"profile"`     // enterprise, public, sovereign (web/26 A)
+		PolicyPack string `json:"policy_pack"` // CSAP, ISMS-P, ... (web/26 B)
+		DemoData   bool   `json:"demo_data"`   // explicit opt-in; default false
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	profile := req.Profile
+	switch profile {
+	case "enterprise", "public", "sovereign":
+	default:
+		profile = "enterprise"
+	}
 
 	// Create default org
-	org, err := s.identity.CreateOrganization(req.OrgName, req.OrgName, "default", "enterprise")
+	org, err := s.identity.CreateOrganization(req.OrgName, req.OrgName, "default", profile)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Profile/pack choice is recorded honestly (web/26 A/B).
+	if req.PolicyPack != "" {
+		s.db.Create(&models.OrgSetting{
+			Base:           models.Base{ID: models.GenerateID("os")},
+			OrganizationID: org.ID, Key: "bootstrap.policy_pack", Value: req.PolicyPack,
+		})
+	}
+	s.db.Create(&models.OrgSetting{
+		Base:           models.Base{ID: models.GenerateID("os")},
+		OrganizationID: org.ID, Key: "bootstrap.profile", Value: profile,
+	})
+	s.db.Create(&models.OrgSetting{
+		Base:           models.Base{ID: models.GenerateID("os")},
+		OrganizationID: org.ID, Key: "bootstrap.demo_data", Value: fmt.Sprintf("%v", req.DemoData),
+	})
 
 	// Bootstrap admin
 	if err := s.auth.BootstrapAdmin(req.Email, req.Password, org.ID); err != nil {
@@ -732,6 +788,8 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"organization_id": org.ID,
 		"message":         "부트스트랩 완료",
+		"profile":         profile,
+		"demo_data":       req.DemoData,
 	})
 }
 

@@ -84,6 +84,8 @@ type AdminCredentials struct {
 	OrganizationID string `gorm:"type:varchar(64);index" json:"organization_id"`
 	Name           string `gorm:"type:varchar(255)" json:"name"`
 	Role           string `gorm:"type:varchar(64);default:'admin'" json:"role"`
+	MFASecret      string `gorm:"type:varchar(64)" json:"-"`
+	MFAEnrolled    bool   `gorm:"default:false" json:"mfa_enrolled"`
 }
 
 // TableName overrides the table name for AdminCredentials.

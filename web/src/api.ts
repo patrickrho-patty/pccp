@@ -19,15 +19,18 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   // Auth
-  login: (email: string, password: string) =>
+  login: (email: string, password: string, mfaCode?: string) =>
     request<{ token: string }>('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, mfa_code: mfaCode }),
     }),
-  bootstrap: (email: string, password: string, orgName: string, profile?: string) =>
+  mfaSetup: () => request<{ secret: string; otpauth: string }>('/api/auth/mfa/setup', { method: 'POST' }),
+  mfaVerify: (code: string) =>
+    request<any>('/api/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ code }) }),
+  bootstrap: (email: string, password: string, orgName: string, profile?: string, policyPack?: string, demoData?: boolean) =>
     request<{ organization_id: string }>('/api/auth/bootstrap', {
       method: 'POST',
-      body: JSON.stringify({ email, password, org_name: orgName, profile }),
+      body: JSON.stringify({ email, password, org_name: orgName, profile, policy_pack: policyPack, demo_data: demoData }),
     }),
 
   // SSO (§8.2) — real routed endpoints. NOTE: these sit behind the admin auth

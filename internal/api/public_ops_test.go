@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -23,6 +24,7 @@ func publicOpsTestServer(t *testing.T) (*Server, *gorm.DB) {
 		&models.AuditEvent{}, &models.ServiceSigningKey{}, &models.PolicyEpoch{},
 		&models.CapabilityLease{}, &models.Harness{}, &models.Session{}, &models.SecurityFinding{},
 		&models.SecurityRule{}, &models.ComplianceRemediation{}, &models.OrgSetting{},
+		&identity.AdminCredentials{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
 			t.Fatal(err)

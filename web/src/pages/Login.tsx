@@ -6,12 +6,13 @@ import { useAuth } from '../hooks/useAuth'
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [ssoMode, setSsoMode] = useState<'none' | 'oidc' | 'saml'>('none')
   const [oidcForm, setOidcForm] = useState({ issuer: '', client_id: '' })
   const [samlForm, setSamlForm] = useState({ idp_entity_id: '', idp_sso_url: '' })
+  const [showMfa, setShowMfa] = useState(false)
+  const [mfaCode, setMfaCode] = useState('')
   const [ssoError, setSsoError] = useState('')
   const [ssoLoading, setSsoLoading] = useState(false)
   const [ssoNotice, setSsoNotice] = useState('')
@@ -61,11 +62,16 @@ export default function Login() {
     setError('')
     setLoading(true)
     try {
-      const { token } = await api.login(email, password)
+      const { token, mfa } = await api.login(email, password, mfaCode)
       login(token)
-      navigate('/')
+      // Deep-link return-to (UX4): ?next= resumes the intended page.
+      const next = new URLSearchParams(window.location.search).get('next') || '/'
+      navigate(next.startsWith('/') ? next : '/')
+      void mfa
     } catch (err: any) {
-      setError(err.message)
+      const msg = String(err.message || err)
+      if (msg.includes('MFA') || msg.includes('mfa')) setShowMfa(true)
+      setError(msg)
     } finally {
       setLoading(false)
     }
@@ -145,8 +151,20 @@ export default function Login() {
                 </button>
               </div>
             </div>
+            {showMfa && (
+              <div>
+                <label className="label text-gray-300">MFA 코드 (TOTP)</label>
+                <input
+                  className="input bg-gray-700 border-gray-600 text-white font-mono tracking-widest"
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  placeholder="6자리 코드"
+                  maxLength={6}
+                />
+              </div>
+            )}
             <button type="submit" disabled={loading} className="btn-primary w-full">
-              {loading ? '로그인 중...' : '로그인'}
+              {loading ? '로그인 중...' : showMfa ? 'MFA 확인' : '로그인'}
             </button>
           </form>
 
