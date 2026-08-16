@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/patrickrho-patty/pccp/internal/config"
+	"github.com/patrickrho-patty/pccp/internal/keys"
 	"strings"
 	"time"
 
@@ -26,7 +27,11 @@ type Service struct {
 // New creates a new identity service. It initializes or loads the control
 // plane's CA key pair for issuing PPCs.
 func New(db *gorm.DB) (*Service, error) {
-	ca, err := dari.NewPeerCredentialIssuer("pccp-ca")
+	caKey, err := keys.LoadOrCreate(db, "identity-ca")
+	if err != nil {
+		return nil, fmt.Errorf("identity: load CA key: %w", err)
+	}
+	ca, err := dari.LoadOrCreatePeerCredentialIssuer("pccp-ca", caKey)
 	if err != nil {
 		return nil, fmt.Errorf("identity: init CA: %w", err)
 	}

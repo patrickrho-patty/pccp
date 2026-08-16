@@ -16,7 +16,7 @@ func hierarchyDB(t *testing.T) *Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.Organization{}); err != nil {
+	if err := db.AutoMigrate(&models.Organization{}, &models.ServiceSigningKey{}); err != nil {
 		t.Fatal(err)
 	}
 	svc, err := New(db)

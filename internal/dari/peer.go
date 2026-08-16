@@ -74,11 +74,28 @@ type PeerCredentialIssuer struct {
 }
 
 // NewPeerCredentialIssuer creates a new self-signed PPC issuer.
+// LoadOrCreatePeerCredentialIssuer builds an issuer over a PERSISTED
+// private key (service_signing_keys) — the CA identity survives relay
+// restarts, so credentials enrolled before a restart keep verifying.
+func LoadOrCreatePeerCredentialIssuer(issuerID string, priv ed25519.PrivateKey) (*PeerCredentialIssuer, error) {
+	return newPeerCredentialIssuerWithKey(issuerID, priv)
+}
+
 func NewPeerCredentialIssuer(issuerID string) (*PeerCredentialIssuer, error) {
-	pub, priv, err := GenerateKeyPair()
+	_, priv, err := GenerateKeyPair()
 	if err != nil {
 		return nil, err
 	}
+	return newPeerCredentialIssuerWithKey(issuerID, priv)
+}
+
+// newPeerCredentialIssuerWithKey builds an issuer over an explicit key
+// (persisted CA identity — see LoadOrCreatePeerCredentialIssuer).
+func newPeerCredentialIssuerWithKey(issuerID string, priv ed25519.PrivateKey) (*PeerCredentialIssuer, error) {
+	if len(priv) != ed25519.PrivateKeySize {
+		return nil, errors.New("dari: issuer private key has wrong size")
+	}
+	pub := priv.Public().(ed25519.PublicKey)
 	return &PeerCredentialIssuer{
 		IssuerID:   issuerID,
 		PrivateKey: priv,

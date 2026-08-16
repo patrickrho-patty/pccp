@@ -241,7 +241,7 @@ func TestIdentityRevocationRecordsSerialAndTerminatesSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
-	if err := database.AutoMigrate(&models.Harness{}, &models.Session{}, &models.AuditEvent{}); err != nil {
+	if err := database.AutoMigrate(&models.Harness{}, &models.Session{}, &models.AuditEvent{}, &models.ServiceSigningKey{}, &models.CredentialRevocationRecord{}); err != nil {
 		t.Fatalf("migrate database: %v", err)
 	}
 
