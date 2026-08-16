@@ -72,17 +72,25 @@ func (s *Service) CreatePolicyEpoch(orgID string, allowedModels []string, transi
 		Status:            "active",
 	}
 
-	// Mark previous epoch as superseded
-	if nextNum > 1 {
-		s.db.Model(&models.PolicyEpoch{}).
-			Where("organization_id = ? AND status = 'active'", orgID).
-			Updates(map[string]interface{}{
-				"status":        "superseded",
-				"superseded_by": epoch.EpochID,
-			})
-	}
-
-	if err := s.db.Create(epoch).Error; err != nil {
+	// Supersede + create commit atomically: superseding before the new
+	// epoch exists (or failing between the two statements) would leave
+	// the org with zero active epochs — every governed session open
+	// fail-closes. A transaction guarantees readers never observe the
+	// intermediate state and a failed create rolls the supersede back.
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if nextNum > 1 {
+			if err := tx.Model(&models.PolicyEpoch{}).
+				Where("organization_id = ? AND status = 'active'", orgID).
+				Updates(map[string]interface{}{
+					"status":        "superseded",
+					"superseded_by": epoch.EpochID,
+				}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(epoch).Error
+	})
+	if err != nil {
 		return nil, fmt.Errorf("policy: create epoch: %w", err)
 	}
 	return epoch, nil

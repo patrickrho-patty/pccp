@@ -31,7 +31,7 @@ export default function AccountPortal() {
     if (!tk.trim()) return
     setLoading(true)
     try {
-      const res = await fetch(`/api/public/portal/self?token=${encodeURIComponent(tk.trim())}`)
+      const res = await fetch('/api/public/portal/self', { headers: { Authorization: `Bearer ${tk.trim()}` } })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'invalid token')
       setSelf(data)
@@ -67,8 +67,8 @@ export default function AccountPortal() {
   const changePlan = async () => {
     if (!token || !planSelect) return
     try {
-      await fetch(`/api/public/portal/plan?token=${encodeURIComponent(token)}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      await fetch('/api/public/portal/plan', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ plan: planSelect }),
       })
       showToast('플랜 변경 완료', 'success')
@@ -79,7 +79,7 @@ export default function AccountPortal() {
   const signOutAll = async () => {
     if (!token) return
     try {
-      const res = await fetch(`/api/public/portal/sign-out-all?token=${encodeURIComponent(token)}`, { method: 'POST' })
+      const res = await fetch('/api/public/portal/sign-out-all', { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
       const out = await res.json()
       if (!res.ok) throw new Error(out.error || 'failed')
       showToast(`모든 세션 해지 완료 (리스 ${out.leases_revoked}개)`, 'success')
@@ -93,8 +93,8 @@ export default function AccountPortal() {
       return
     }
     try {
-      await fetch(`/api/public/portal/support?token=${encodeURIComponent(token)}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      await fetch('/api/public/portal/support', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ subject: supportSubject.slice(0, 60), description: supportSubject }),
       })
       showToast('지원 요청 접수 완료', 'success')

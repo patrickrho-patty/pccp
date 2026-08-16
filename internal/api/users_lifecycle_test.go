@@ -196,8 +196,8 @@ func TestUsageRollup(t *testing.T) {
 		t.Fatalf("usage failed: %d", rec.Code)
 	}
 	var resp struct {
-		Metrics        []map[string]interface{} `json:"metrics"`
-		TotalCostMicros int64                   `json:"total_cost_micros"`
+		Metrics         []map[string]interface{} `json:"metrics"`
+		TotalCostMicros int64                    `json:"total_cost_micros"`
 	}
 	json.Unmarshal(rec.Body.Bytes(), &resp)
 	if len(resp.Metrics) != 1 || resp.Metrics[0]["quantity"].(float64) != 30 || resp.TotalCostMicros != 6 {

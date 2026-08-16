@@ -122,14 +122,7 @@ func (s *Service) CreateSandbox(req CreateRequest) (*Sandbox, error) {
 		First(&allowlistSetting).Error; err == nil && allowlistSetting.Value != "" {
 		var allowed []string
 		if json.Unmarshal([]byte(allowlistSetting.Value), &allowed) == nil && len(allowed) > 0 {
-			matched := false
-			for _, img := range allowed {
-				if img == req.BaseImage || strings.HasPrefix(req.BaseImage, img) {
-					matched = true
-					break
-				}
-			}
-			if !matched {
+			if !imageAllowlisted(req.BaseImage, allowed) {
 				return nil, fmt.Errorf("sandbox: image %q not on the organization allowlist", req.BaseImage)
 			}
 		}
@@ -382,4 +375,51 @@ func (s *Service) updateSandboxStatus(sandboxID, status, timestamp string) {
 		OccurredAt:   timestamp,
 	}
 	s.db.Create(auditEvent)
+}
+
+// imageRepoPart strips an optional tag or digest, returning the repository
+// name ("patty/sandbox-base:latest" → "patty/sandbox-base").
+func imageRepoPart(image string) string {
+	if at := strings.Index(image, "@"); at >= 0 {
+		image = image[:at]
+	}
+	if colon := strings.Index(image, ":"); colon >= 0 {
+		image = image[:colon]
+	}
+	return image
+}
+
+// imageAllowlisted decides whether image is permitted by the allowlist.
+// Rules (fail-closed; no accidental prefix passing):
+//   - the image's repository part must EQUAL an entry's repository part
+//     (string-prefix tricks like "patty/sandbox-evil" against
+//     "patty/sandbox" never match), and
+//   - the entry's tag must be absent (pin the repo, allow any tag —
+//     the standard enterprise pin), "*" (explicit any-tag), or exactly
+//     the image's tag. Digest forms reduce to their repository.
+func imageAllowlisted(image string, allowed []string) bool {
+	imgRepo := imageRepoPart(image)
+	imgTag := imageTagPart(image)
+	for _, entry := range allowed {
+		if imageRepoPart(entry) != imgRepo {
+			continue
+		}
+		tag := imageTagPart(entry)
+		if tag == "" || tag == "*" || tag == imgTag {
+			return true
+		}
+	}
+	return false
+}
+
+// imageTagPart returns the tag after the repository ("repo:v1" → "v1";
+// digest form or untagged → "").
+func imageTagPart(image string) string {
+	if at := strings.Index(image, "@"); at >= 0 {
+		return ""
+	}
+	if colon := strings.Index(image, ":"); colon >= 0 {
+		return image[colon+1:]
+	}
+	return ""
 }

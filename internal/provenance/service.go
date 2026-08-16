@@ -1,6 +1,7 @@
 package provenance
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
@@ -302,6 +303,39 @@ func (s *Service) IssueEvidenceReceipt(req IssueReceiptRequest) (*models.Evidenc
 		return nil, fmt.Errorf("provenance: issue receipt: %w", err)
 	}
 	return receipt, nil
+}
+
+// PublicKey exposes the receipt-signing public key so verifiers (API
+// receipt checks, auditors) can validate receipt COSE-Sign1 signatures.
+func (s *Service) PublicKey() ed25519.PublicKey {
+	pub, ok := s.signingKey.Public().(ed25519.PublicKey)
+	if !ok {
+		return nil
+	}
+	return pub
+}
+
+// VerifyReceiptSignature validates a stored receipt's COSE-Sign1 over
+// its canonical field binding (exchange, final state, chain root,
+// relay identity, epoch, model, issued-at). It proves the receipt is
+// intact and relay-issued; the chain root's linkage to the exchange's
+// evidence events was established cryptographically at issuance.
+func (s *Service) VerifyReceiptSignature(rec *models.EvidenceReceipt) error {
+	raw, err := hex.DecodeString(rec.Signature)
+	if err != nil {
+		return fmt.Errorf("provenance: decode receipt signature: %w", err)
+	}
+	sign1, err := dari.DecodeCOSESign1(raw)
+	if err != nil {
+		return fmt.Errorf("provenance: decode receipt COSE: %w", err)
+	}
+	if !bytes.Equal(sign1.Payload, s.buildReceiptSigningData(rec)) {
+		return fmt.Errorf("provenance: receipt payload does not match stored fields — tampered")
+	}
+	if err := dari.VerifyCOSESign1(sign1, s.PublicKey()); err != nil {
+		return fmt.Errorf("provenance: receipt signature invalid: %w", err)
+	}
+	return nil
 }
 
 // AckEvidenceReceipt records the harness's tamper-evidence ack for an

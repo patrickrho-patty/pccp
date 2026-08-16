@@ -8,6 +8,7 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Service implements the Enterprise Communications Hub (PRD §21-23).
@@ -158,22 +159,30 @@ func (s *Service) SendBroadcast(orgID, severity, title, titleKo, body, bodyKo, t
 
 // AckBroadcast records a user's acknowledgment of a broadcast.
 func (s *Service) AckBroadcast(broadcastID, userID string) error {
-	var broadcast models.Broadcast
-	if err := s.db.Where("id = ?", broadcastID).First(&broadcast).Error; err != nil {
-		return err
-	}
-
-	var acks []string
-	if broadcast.AcksJSON != "" {
-		json.Unmarshal([]byte(broadcast.AcksJSON), &acks)
-	}
-	acks = append(acks, userID)
-	acksJSON, _ := json.Marshal(acks)
-
-	return s.db.Model(&broadcast).Updates(map[string]interface{}{
-		"ack_count": len(acks),
-		"acks_json": string(acksJSON),
-	}).Error
+	// Row-locked transaction: two concurrent acks otherwise read the
+	// same AcksJSON and one is silently lost (lost update).
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var broadcast models.Broadcast
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", broadcastID).First(&broadcast).Error; err != nil {
+			return err
+		}
+		var acks []string
+		if broadcast.AcksJSON != "" {
+			json.Unmarshal([]byte(broadcast.AcksJSON), &acks)
+		}
+		for _, a := range acks { // idempotent: re-ack is a no-op
+			if a == userID {
+				return nil
+			}
+		}
+		acks = append(acks, userID)
+		acksJSON, _ := json.Marshal(acks)
+		return tx.Model(&broadcast).Updates(map[string]interface{}{
+			"ack_count": len(acks),
+			"acks_json": string(acksJSON),
+		}).Error
+	})
 }
 
 // LinkMessageToAIContext links a chat message to an AI session/exchange (PRD §21.6).

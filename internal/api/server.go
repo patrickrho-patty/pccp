@@ -704,24 +704,21 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	var admin identity.AdminCredentials
 	if err := s.db.Where("email = ?", req.Email).First(&admin).Error; err == nil && admin.MFAEnrolled {
-		// MFA challenge (web/25 B): password + TOTP code.
-		if _, err := s.auth.Login(req.Email, req.Password); err != nil {
+		// MFA challenge (web/25 B): password + TOTP code. The TOTP
+		// check is throttled too — an attacker holding the password
+		// must not be free to grind the 10^6 code space at line speed.
+		token, err := s.auth.Login(req.Email, req.Password)
+		if err != nil {
 			throttleRecordFailure(req.Email)
 			writeError(w, http.StatusUnauthorized, "로그인 실패 / invalid credentials")
 			return
 		}
-		code := req.MFACode
-		expected, terr := totpCode(admin.MFASecret, time.Now())
-		if terr != nil || expected != code {
+		if !verifyTOTP(admin.MFASecret, req.MFACode) {
+			throttleRecordFailure(req.Email)
 			writeError(w, http.StatusUnauthorized, "MFA 코드 필요 또는 불일치 · mfa code required or mismatch")
 			return
 		}
 		throttleClear(req.Email)
-		token, err := s.auth.Login(req.Email, req.Password)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "로그인 실패 / invalid credentials")
-			return
-		}
 		writeJSON(w, http.StatusOK, map[string]string{"token": token, "mfa": "verified"})
 		return
 	}
@@ -1207,16 +1204,24 @@ func (s *Server) consumeEnrollmentCode(orgID, code, userID, harnessID string) er
 	if err := s.db.Where("code = ? AND organization_id = ?", code, orgID).First(&ec).Error; err != nil {
 		return fmt.Errorf("등록 코드가 유효하지 않습니다 · Invalid enrollment code")
 	}
-	if ec.Used {
-		return fmt.Errorf("등록 코드가 이미 사용되었습니다 · Enrollment code already used")
-	}
 	if exp, err := time.Parse(time.RFC3339, ec.ExpiresAt); err == nil && time.Now().After(exp) {
 		return fmt.Errorf("등록 코드가 만료되었습니다 · Enrollment code expired")
 	}
 	if ec.UserID != "" && ec.UserID != userID {
 		return fmt.Errorf("등록 코드가 다른 사용자에게 발급되었습니다 · Code issued to a different user")
 	}
-	return s.db.Model(&ec).Updates(map[string]interface{}{"used": true, "used_by": harnessID}).Error
+	// Atomic single-use consume: the UPDATE itself is the gate, so two
+	// concurrent redeems cannot both win the read-then-write window.
+	res := s.db.Model(&models.EnrollmentCode{}).
+		Where("id = ? AND used = ?", ec.ID, false).
+		Updates(map[string]interface{}{"used": true, "used_by": harnessID})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("등록 코드가 이미 사용되었습니다 · Enrollment code already used")
+	}
+	return nil
 }
 
 // handleHarnessHeartbeat receives a harness heartbeat over the control

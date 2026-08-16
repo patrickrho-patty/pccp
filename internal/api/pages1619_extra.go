@@ -237,13 +237,15 @@ func (s *Server) forwardAuditToSIEM(orgID string) int {
 	s.db.Where("organization_id = ? AND key = ?", orgID, "audit.siem_secret").First(&secret)
 	var cursor models.OrgSetting
 	s.db.Where("organization_id = ? AND key = ?", orgID, "audit.siem_cursor").First(&cursor)
-	lastID := cursor.Value
-	var events []models.AuditEvent
-	q := s.db.Where("organization_id = ?", orgID)
-	if lastID != "" {
-		q = q.Where("id > ?", lastID)
+	// Cursor over the per-org monotonic ChainSeq — NOT the random UUID
+	// id, which has no ordering and would silently skip events.
+	lastSeq := int64(0)
+	if cursor.Value != "" {
+		lastSeq, _ = strconv.ParseInt(cursor.Value, 10, 64)
 	}
-	q.Order("id ASC").Limit(100).Find(&events)
+	var events []models.AuditEvent
+	s.db.Where("organization_id = ? AND chain_seq > ?", orgID, lastSeq).
+		Order("chain_seq ASC").Limit(100).Find(&events)
 	if len(events) == 0 {
 		return 0
 	}
@@ -256,7 +258,10 @@ func (s *Server) forwardAuditToSIEM(orgID string) int {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-PCCP-Signature", hex.EncodeToString(mac.Sum(nil)))
-	resp, err := http.DefaultClient.Do(req)
+	// Bounded timeout: a hung SIEM endpoint must never stall the
+	// server's background ticker (which also runs sweeps).
+	siemClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := siemClient.Do(req)
 	if err != nil {
 		return 0
 	}
@@ -264,7 +269,7 @@ func (s *Server) forwardAuditToSIEM(orgID string) int {
 	if resp.StatusCode >= 300 {
 		return 0
 	}
-	newCursor := events[len(events)-1].ID
+	newCursor := strconv.FormatInt(events[len(events)-1].ChainSeq, 10)
 	if cursor.ID != "" {
 		s.db.Model(&cursor).Update("value", newCursor)
 	} else {
@@ -440,7 +445,9 @@ func (s *Server) handleCodeExplorerAttribution(w http.ResponseWriter, r *http.Re
 		q = q.Where("repository_id = ?", repoID)
 	}
 	var spans []models.ProvenanceSpan
-	q.Find(&spans)
+	// Chronological order matters: the AI→human vs human→AI state
+	// machine below consumes spans in time order per file.
+	q.Order("created_at ASC").Find(&spans)
 	type fileAttr struct {
 		FilePath   string  `json:"file_path"`
 		State      string  `json:"state"`

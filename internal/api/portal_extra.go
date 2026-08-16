@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
 )
@@ -11,10 +12,19 @@ import (
 // never listed in responses). The portal never exposes transferable
 // API credentials (§6.6).
 
+// portalToken extracts the bearer token from the Authorization header,
+// falling back to the token query parameter (compat).
+func portalToken(r *http.Request) string {
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimPrefix(h, "Bearer ")
+	}
+	return r.URL.Query().Get("token")
+}
+
 // handlePortalSelf returns the portal's self-service view for the
 // token's account: account + subscription + leases + cases + usage.
 func (s *Server) handlePortalSelf(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Query().Get("token")
+	token := portalToken(r)
 	if token == "" {
 		writeError(w, http.StatusUnauthorized, "portal access token required")
 		return

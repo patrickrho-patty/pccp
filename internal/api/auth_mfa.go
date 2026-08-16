@@ -65,6 +65,12 @@ func throttleCheck(email string) bool {
 func throttleRecordFailure(email string) {
 	loginThrottle.mu.Lock()
 	defer loginThrottle.mu.Unlock()
+	// Bounded memory: distinct-email floods reset the table rather than
+	// growing it without limit (in-memory limiter; honest best effort).
+	if len(loginThrottle.failures)+len(loginThrottle.lockedAt) > 100_000 {
+		loginThrottle.failures = map[string]int{}
+		loginThrottle.lockedAt = map[string]time.Time{}
+	}
 	loginThrottle.failures[email]++
 	if loginThrottle.failures[email] >= maxLoginFailures {
 		loginThrottle.lockedAt[email] = time.Now()
@@ -86,6 +92,26 @@ func generateTOTPSecret() (string, error) {
 		return "", err
 	}
 	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(buf), nil
+}
+
+// verifyTOTP checks a code against the secret across the current step
+// and its immediate neighbors (±30s skew per RFC 6238 verification
+// practice). Constant-time comparison per candidate.
+func verifyTOTP(secret, code string) bool {
+	if len(code) != 6 {
+		return false
+	}
+	now := time.Now()
+	for _, off := range []int64{-30, 0, 30} {
+		want, err := totpCode(secret, now.Add(time.Duration(off)*time.Second))
+		if err != nil {
+			return false
+		}
+		if hmac.Equal([]byte(want), []byte(code)) {
+			return true
+		}
+	}
+	return false
 }
 
 // totpCode computes the current RFC 6238 code for a secret.
@@ -112,10 +138,23 @@ func (s *Server) handleMFASetup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "operator identity required")
 		return
 	}
+	var req struct {
+		CurrentCode string `json:"current_code"`
+	}
+	_ = decodeJSON(r, &req) // optional body
 	var admin identity.AdminCredentials
 	if err := s.db.Where("email = ?", email).First(&admin).Error; err != nil {
 		writeError(w, http.StatusNotFound, "admin not found")
 		return
+	}
+	// Rotating an already-enrolled secret proves possession of the
+	// current factor — a stolen session alone cannot silently replace
+	// the operator's second factor.
+	if admin.MFAEnrolled {
+		if !verifyTOTP(admin.MFASecret, req.CurrentCode) {
+			writeError(w, http.StatusUnauthorized, "현재 코드 확인 필요 · current TOTP code required to rotate MFA")
+			return
+		}
 	}
 	secret, err := generateTOTPSecret()
 	if err != nil {
@@ -155,8 +194,7 @@ func (s *Server) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "setup first")
 		return
 	}
-	expected, err := totpCode(admin.MFASecret, time.Now())
-	if err != nil || expected != req.Code {
+	if !verifyTOTP(admin.MFASecret, req.Code) {
 		writeError(w, http.StatusUnauthorized, "코드 불일치 · code mismatch")
 		return
 	}

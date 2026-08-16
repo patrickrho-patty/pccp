@@ -147,9 +147,10 @@ func (g *Gateway) handleIngress(w http.ResponseWriter, r *http.Request, anthropi
 		return
 	}
 
-	tenant := r.Header.Get("X-Tenant-ID")
-	if tenant == "" {
-		tenant = "default"
+	tenant, class, err := g.resolveTenantClass(r)
+	if err != nil {
+		writeGatewayError(w, http.StatusForbidden, err.Error())
+		return
 	}
 	// Per-tenant model access: the resolved catalog ID must be in the
 	// tenant's allow-list (spec §14 row 17; fail closed for tenants with
@@ -157,13 +158,6 @@ func (g *Gateway) handleIngress(w http.ResponseWriter, r *http.Request, anthropi
 	if err := g.rewriter.CheckTenantAccess(tenant, resolved); err != nil {
 		writeGatewayError(w, http.StatusForbidden, err.Error())
 		return
-	}
-	// The traffic class is resolved from the signed envelope only.
-	// X-Traffic-Class headers are ignored entirely — a client cannot
-	// self-assert priority (spec §13.14). No envelope = batch.
-	class := string(queue.ClassBatch)
-	if g.classes != nil {
-		class = g.classes.Resolve(decodeTrafficEnvelope(r))
 	}
 
 	inputTokens, mediaTokens := g.measureInput(req.Messages)
@@ -440,13 +434,10 @@ func (g *Gateway) HandleEmbeddings(w http.ResponseWriter, r *http.Request) {
 		writeGatewayError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	tenant := r.Header.Get("X-Tenant-ID")
-	if tenant == "" {
-		tenant = "default"
-	}
-	class := string(queue.ClassBatch)
-	if g.classes != nil {
-		class = g.classes.Resolve(decodeTrafficEnvelope(r))
+	tenant, class, terr := g.resolveTenantClass(r)
+	if terr != nil {
+		writeGatewayError(w, http.StatusForbidden, terr.Error())
+		return
 	}
 	inputTokens := len(rawBody)/4 + 1
 	expected := g.dispatcher.Estimator().Estimate(inputTokens, 0, 1024)
@@ -559,6 +550,38 @@ func (g *Gateway) serveStream(w http.ResponseWriter, r *http.Request, model stri
 // decodeTrafficEnvelope parses the X-Traffic-Envelope header (base64 JSON
 // of a signed TrafficEnvelope). Returns nil when absent or malformed —
 // the resolver's fail-closed default applies.
+// resolveTenantClass derives the authoritative tenant and traffic class
+// from the request (spec §13.14: tenant/priority metadata arrives in the
+// COSE-signed envelope, never from client headers). When a valid envelope
+// is present, its TenantID is authoritative; a conflicting X-Tenant-ID
+// header is rejected as tampering rather than trusted. Without an
+// envelope the request keeps the header/default tenant but is pinned to
+// the batch class — the gateway's internal-caller path (the relay always
+// signs).
+func (g *Gateway) resolveTenantClass(r *http.Request) (tenant string, class string, err error) {
+	tenant = r.Header.Get("X-Tenant-ID")
+	if tenant == "" {
+		tenant = "default"
+	}
+	class = string(queue.ClassBatch)
+	env := decodeTrafficEnvelope(r)
+	if g.classes == nil || env == nil || env.SignatureHex == "" {
+		return tenant, class, nil
+	}
+	if vErr := env.Verify(g.classes.issuerPub); vErr != nil {
+		// Invalid signature: fail closed to batch; the header tenant is
+		// untrusted metadata but still subject to its (own) allow-list.
+		return tenant, class, nil
+	}
+	if env.TenantID != "" && env.TenantID != tenant {
+		return "", "", fmt.Errorf("scheduler: tenant header %q conflicts with signed envelope tenant %q", tenant, env.TenantID)
+	}
+	if env.TenantID != "" {
+		tenant = env.TenantID
+	}
+	return tenant, env.Class, nil
+}
+
 func decodeTrafficEnvelope(r *http.Request) *TrafficEnvelope {
 	raw := r.Header.Get("X-Traffic-Envelope")
 	if raw == "" {

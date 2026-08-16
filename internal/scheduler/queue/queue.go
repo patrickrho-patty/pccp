@@ -19,6 +19,7 @@ package queue
 import (
 	"container/heap"
 	"errors"
+	"sync"
 	"time"
 )
 
@@ -222,8 +223,10 @@ type band struct {
 }
 
 // Queue is the S2 global admission queue. All methods are safe for
-// concurrent use.
+// concurrent use: ingress goroutines (Submit) enqueue while the dispatch
+// loop pops, so every operation is serialized by mu.
 type Queue struct {
+	mu         sync.Mutex
 	limits     Limits
 	bands      map[Class]*band
 	seq        int64
@@ -250,6 +253,8 @@ func New(limits Limits) *Queue {
 // Enqueue admits a request into its class band, rejecting immediately when
 // global or per-band capacity limits are exceeded (429 rejected-saturated).
 func (q *Queue) Enqueue(r Request) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	q.seq++
 	r = normalize(r)
 	b := q.bands[r.Class]
@@ -289,6 +294,8 @@ func (q *Queue) Enqueue(r Request) error {
 // OutcomeExpiredTTL so the caller emits the correct wire error. Returns
 // ok=false only when the queue is empty.
 func (q *Queue) Next() (Dispatch, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	// Outer loop re-enters the rotation until a request is released. A pass
 	// that only accrues deficit must keep rotating: DRR serves a flow once
 	// its accumulated quantum covers the head debit (spec §13.5), so a
@@ -348,6 +355,8 @@ func contains(s []string, v string) bool {
 // Cancel removes a queued request by ID (client disconnect, 503
 // rejected-context-cancelled). Reports whether the request was present.
 func (q *Queue) Cancel(id string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	for _, c := range classOrder {
 		b := q.bands[c]
 		for _, tenant := range b.order {
@@ -367,6 +376,8 @@ func (q *Queue) Cancel(id string) bool {
 // Drain removes every queued request with OutcomeDrained (graceful
 // shutdown; 503 rejected-shutting-down on the wire).
 func (q *Queue) Drain() []Dispatch {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	var out []Dispatch
 	for _, c := range classOrder {
 		b := q.bands[c]
@@ -386,12 +397,18 @@ func (q *Queue) Drain() []Dispatch {
 }
 
 // Pending returns the number of queued requests.
-func (q *Queue) Pending() int { return q.globalReqs }
+func (q *Queue) Pending() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.globalReqs
+}
 
 // PendingTokens returns the total token debit queued — the fleet's "true
 // demand" signal consumed by overload admission and autoscaling (spec
 // §12.3.7; llm-d queue-depth metric).
 func (q *Queue) PendingTokens() int64 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	var total int64
 	for _, c := range classOrder {
 		b := q.bands[c]
@@ -407,6 +424,8 @@ func (q *Queue) PendingTokens() int64 {
 
 // ClassPending returns queued requests per class (observability).
 func (q *Queue) ClassPending() map[Class]int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	out := make(map[Class]int, len(classOrder))
 	for _, c := range classOrder {
 		out[c] = q.bands[c].requests
@@ -475,6 +494,8 @@ func effectiveDeadline(o Ordering, r Request, seq int64) time.Time {
 // the removed requests (multi-level load shedding: retryable overload
 // responses for shed work, spec §14 row 38).
 func (q *Queue) DropClass(classes ...Class) []Request {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	drop := make(map[Class]bool, len(classes))
 	for _, c := range classes {
 		drop[c] = true

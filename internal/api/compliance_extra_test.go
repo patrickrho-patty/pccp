@@ -22,6 +22,7 @@ func complianceTestServer(t *testing.T) (*Server, *gorm.DB) {
 		&models.AuditEvent{}, &models.ServiceSigningKey{}, &models.ComplianceEvidence{},
 		&models.ComplianceRemediation{}, &models.ComplianceAssessmentRecord{},
 		&models.Session{}, &models.Harness{}, &models.PolicyEpoch{}, &models.CapabilityLease{},
+		&models.EvidenceReceipt{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
 			t.Fatal(err)
