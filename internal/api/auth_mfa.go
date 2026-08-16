@@ -142,8 +142,20 @@ func verifyTOTPAcct(acct, secret, code string) bool {
 	}
 	totpReplay.mu.Lock()
 	defer totpReplay.mu.Unlock()
+	// Bounded memory WITHOUT the full-clear hole: pruning drops only
+	// entries older than the validation window (2 timesteps = 90s), so
+	// every account whose code could still verify keeps its guard.
+	// A hard cap remains as the last resort for pathological churn.
 	if len(totpReplay.byAcct) > 100_000 {
-		totpReplay.byAcct = map[string]int64{}
+		minLive := now.Unix()/30 - 2
+		for k, step := range totpReplay.byAcct {
+			if step < minLive {
+				delete(totpReplay.byAcct, k)
+			}
+		}
+		if len(totpReplay.byAcct) > 100_000 { // still pathological: reset
+			totpReplay.byAcct = map[string]int64{}
+		}
 	}
 	if last, ok := totpReplay.byAcct[acct]; ok && acceptedStep <= last {
 		return false

@@ -275,6 +275,15 @@ func (d *Dispatcher) assignLocked(workerID string) *Dispatch {
 		d.queue.Enqueue(*out.Request)
 		return nil
 	}
+	// Optimistic reservation at bind (spec §12.3.7 layer 2): between
+	// heartbeats the load picture is stale, so successive binds must
+	// each consume a slot — otherwise one drain could stack unbounded
+	// in-flight work onto a "free" worker. execute() releases on
+	// completion; the next heartbeat's engine truth overwrites both.
+	if !d.selector.ReserveLoad(selected) {
+		d.queue.Enqueue(*out.Request)
+		return nil
+	}
 	return &Dispatch{Request: *out.Request, WorkerID: selected, Model: model}
 }
 

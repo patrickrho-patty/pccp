@@ -2728,7 +2728,7 @@ func (s *Server) handleCreateConversation(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	convID := chi.URLParam(r, "id")
-	messages, err := s.comms.ListMessages(convID, 100)
+	messages, err := s.comms.ListMessages(getOrgID(r), convID, 100)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -2762,7 +2762,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	if req.SenderType == "" {
 		req.SenderType = "user"
 	}
-	msg, err := s.comms.SendMessage(convID, req.SenderID, req.SenderType, "text", req.Content, req.ParentID)
+	msg, err := s.comms.SendMessage(getOrgID(r), convID, req.SenderID, req.SenderType, "text", req.Content, req.ParentID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -4912,7 +4912,7 @@ func (s *Server) handleSeedDemoData(w http.ResponseWriter, r *http.Request) {
 
 	conv, _ := s.comms.CreateConversation(orgID, "channel", "개발팀 채널", []string{})
 	if conv != nil {
-		s.comms.SendMessage(conv.ID, "admin", "user", "text", "팀 미팅이 3시에 있습니다", "")
+		s.comms.SendMessage(orgID, conv.ID, "admin", "user", "text", "팀 미팅이 3시에 있습니다", "")
 		results["conversations"]++
 	}
 	s.comms.SendBroadcast(orgID, "info", "Scheduled Maintenance", "예정된 유지보수", "Saturday 2-4 AM", "토요일 새벽 2-4시", "all", "", false)

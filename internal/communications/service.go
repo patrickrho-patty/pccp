@@ -41,12 +41,12 @@ func (s *Service) CreateConversation(orgID, convType, title string, participants
 }
 
 // SendMessage sends a message in a conversation.
-func (s *Service) SendMessage(convID, senderID, senderType, contentType, content string, parentID string) (*models.Message, error) {
+func (s *Service) SendMessage(orgID, convID, senderID, senderType, contentType, content string, parentID string) (*models.Message, error) {
 	// The conversation must exist in the caller's org: messages are
 	// org-scoped transitively through it (react/read/edit/delete all
 	// resolve the conversation's org before mutating).
 	var conv models.Conversation
-	if err := s.db.Where("id = ?", convID).First(&conv).Error; err != nil {
+	if err := s.db.Where("id = ? AND organization_id = ?", convID, orgID).First(&conv).Error; err != nil {
 		return nil, fmt.Errorf("comms: send message: conversation %s not found: %w", convID, err)
 	}
 	msg := &models.Message{
@@ -71,12 +71,16 @@ func (s *Service) SendMessage(convID, senderID, senderType, contentType, content
 }
 
 // ListMessages returns messages in a conversation.
-func (s *Service) ListMessages(convID string, limit int) ([]models.Message, error) {
+// ListMessages returns a conversation's messages, scoped to the org
+// through the conversation row (a cross-org conversation id is
+// indistinguishable from a missing one).
+func (s *Service) ListMessages(orgID, convID string, limit int) ([]models.Message, error) {
 	if limit == 0 {
 		limit = 50
 	}
 	var messages []models.Message
-	err := s.db.Where("conversation_id = ?", convID).
+	err := s.db.Where("conversation_id = ? AND conversation_id IN (?)", convID,
+		s.db.Model(&models.Conversation{}).Select("id").Where("organization_id = ?", orgID)).
 		Order("created_at ASC").Limit(limit).Find(&messages).Error
 	return messages, err
 }
@@ -165,13 +169,16 @@ func (s *Service) SendBroadcast(orgID, severity, title, titleKo, body, bodyKo, t
 }
 
 // AckBroadcast records a user's acknowledgment of a broadcast.
-func (s *Service) AckBroadcast(broadcastID, userID string) error {
+func (s *Service) AckBroadcast(orgID, broadcastID, userID string) error {
 	// Row-locked transaction: two concurrent acks otherwise read the
-	// same AcksJSON and one is silently lost (lost update).
+	// same AcksJSON and one is silently lost (lost update). The
+	// locking clause is a no-op on SQLite (its writer lock serializes
+	// transactions anyway) and a real FOR UPDATE on Postgres/MySQL.
+	// The lookup is org-scoped: cross-org ack ids are invisible.
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		var broadcast models.Broadcast
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ?", broadcastID).First(&broadcast).Error; err != nil {
+			Where("id = ? AND organization_id = ?", broadcastID, orgID).First(&broadcast).Error; err != nil {
 			return err
 		}
 		var acks []string

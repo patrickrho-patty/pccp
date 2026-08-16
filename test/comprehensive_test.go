@@ -67,8 +67,8 @@ func TestCommunicationsFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	commsSvc.SendMessage(conv.ID, "u1", "user", "text", "안녕하세요", "")
-	messages, _ := commsSvc.ListMessages(conv.ID, 10)
+	commsSvc.SendMessage("org-1", conv.ID, "u1", "user", "text", "안녕하세요", "")
+	messages, _ := commsSvc.ListMessages("org-1", conv.ID, 10)
 	if len(messages) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(messages))
 	}
@@ -76,7 +76,7 @@ func TestCommunicationsFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	commsSvc.AckBroadcast(bc.ID, "u1")
+	commsSvc.AckBroadcast("org-1", bc.ID, "u1")
 }
 
 func TestWorkIntelligenceScorecard(t *testing.T) {

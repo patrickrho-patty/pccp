@@ -66,7 +66,7 @@ func (s *Server) handleSendMessageExtended(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "command content requires sender_type=system")
 		return
 	}
-	msg, err := s.comms.SendMessage(convID, req.SenderID, req.SenderType, req.ContentType, req.Content, req.ParentID)
+	msg, err := s.comms.SendMessage(orgID, convID, req.SenderID, req.SenderType, req.ContentType, req.Content, req.ParentID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -307,6 +307,7 @@ func (s *Server) handleBroadcastAcks(w http.ResponseWriter, r *http.Request) {
 
 // handleBroadcastAck records one user's ack (B5).
 func (s *Server) handleBroadcastAck(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
 	broadcastID := chi.URLParam(r, "id")
 	var req struct {
 		UserID string `json:"user_id"`
@@ -315,7 +316,7 @@ func (s *Server) handleBroadcastAck(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "user_id required")
 		return
 	}
-	if err := s.comms.AckBroadcast(broadcastID, req.UserID); err != nil {
+	if err := s.comms.AckBroadcast(orgID, broadcastID, req.UserID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
