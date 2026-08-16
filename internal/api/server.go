@@ -689,9 +689,20 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		authHeader := r.Header.Get("Authorization")
 		claims, err := s.auth.AuthMiddleware(authHeader)
 		if err != nil {
-			// For dev convenience, allow unauthenticated access when no admin exists
+			// Dev convenience ONLY when the bootstrap-empty state is
+			// CONFIRMED. The check ensures the table exists (fresh
+			// test/dev DBs) and then reads the count with error
+			// propagation — a failed query fails CLOSED: a DB error
+			// must never wave unauthenticated requests through.
 			var count int64
-			s.db.Raw("SELECT count(*) FROM admin_credentials").Scan(&count)
+			dbErr := s.db.Exec("CREATE TABLE IF NOT EXISTS admin_credentials (id varchar(64) PRIMARY KEY)").Error
+			if dbErr == nil {
+				dbErr = s.db.Raw("SELECT count(*) FROM admin_credentials").Scan(&count).Error
+			}
+			if dbErr != nil {
+				writeError(w, http.StatusUnauthorized, "auth: cannot verify bootstrap state")
+				return
+			}
 			if count == 0 {
 				next.ServeHTTP(w, r)
 				return

@@ -8,9 +8,31 @@ import { formatRelative } from '../utils/format'
 // probeStatus maps a probe/API status to the component tri-state.
 const probeStatus = (s?: string): 'healthy' | 'degraded' | 'not_configured' =>
   s === 'up' || s === 'ok' ? 'healthy' : s === 'down' ? 'degraded' : 'not_configured'
-// probeReason renders the human explanation for a probe result.
-const probeReason = (p: { status?: string; addr?: string } | undefined, cfgKey: string): string =>
-  p?.status === 'down' ? `프로브 실패: ${p.addr}` : p?.status === 'up' ? `프로브 ${p.addr}` : `프로브 미설정 (${cfgKey})`
+// probeReason: fetch-failed (null) / probe-failed / unconfigured are
+// three distinct states — never conflated, never green when unchecked.
+const probeReason = (p: { status?: string; addr?: string } | undefined | null, cfgKey: string): string => {
+  if (p == null) return '조회 실패 — 세션 만료 또는 서버 오류'
+  if (p?.status === 'down') return `프로브 실패: ${p.addr ?? cfgKey}`
+  if (p?.status === 'up') return `프로브 ${p.addr ?? 'CP'}`
+  return `프로브 미설정 (${cfgKey})`
+}
+// probeStatusOf: a failed fetch (null) renders degraded.
+const probeStatusOf = (p: { status?: string } | undefined | null): 'healthy' | 'degraded' | 'not_configured' =>
+  p == null ? 'degraded' : probeStatus(p?.status)
+
+// dbStatus: ok+rows → healthy; ok+0 → not_configured (기록 없음 — an
+// existing table nothing writes is NOT a healthy pipeline); query
+// failed or fetch failed → degraded (never green when unchecked).
+const dbStatus = (s: string | undefined | null, count: number | undefined | null): 'healthy' | 'degraded' | 'not_configured' => {
+  if (s == null || s === 'down') return 'degraded'
+  if (s === 'ok') return (count ?? 0) > 0 ? 'healthy' : 'not_configured'
+  return 'not_configured'
+}
+const dbReason = (s: string | undefined | null, count: number | undefined | null, prefix: string, suffix: string): string => {
+  if (s == null || s === 'down') return '조회 실패 — 상태를 확인할 수 없음'
+  if (s === 'ok') return (count ?? 0) > 0 ? `${prefix} ${count}${suffix}` : `${prefix} 0${suffix} — 기록 없음 (파이프라인 미연결 가능)`
+  return '상태 조회 불가'
+}
 
 const probeColor = (s?: string) => s === 'up' ? 'text-green-600' : s === 'down' ? 'text-red-600' : 'text-gray-400'
 const probeLabel = (p?: { status?: string; addr?: string }) => {
@@ -24,24 +46,49 @@ export default function SREConsole() {
   const [incidents, setIncidents] = useState<any[]>([])
   const [health, setHealth] = useState<any>({})
 
-  useEffect(() => {
+  // Health/account state refreshes on an interval + tab focus: a status
+  // page must never freeze on a stale one-shot snapshot (races with
+  // login/token refresh recorded permanent false-negatives live).
+  const loadAccounts = () => {
     fetch('/api/public/accounts', { headers: authHeaders() })
-      .then(r => r.json()).then(data => setAccounts(Array.isArray(data) ? data : []))
-      .catch(() => setAccounts([]))
-
-    fetch('/api/incidents', { headers: authHeaders() })
-      .then(r => r.json()).then(data => setIncidents(Array.isArray(data) ? data : []))
-      .catch(() => setIncidents([]))
-
-    // Health checks (component reachability is PROBED live — no fake dots)
+      .then(r => r.json().then(data => ({ ok: r.ok, data })))
+      .then(({ ok, data }) => {
+        setAccounts(Array.isArray(data) ? data : [])
+        setHealth((h: any) => ({ ...h, accounts: ok }))
+      })
+      .catch(() => { setAccounts([]); setHealth((h: any) => ({ ...h, accounts: false })) })
+  }
+  const loadHealth = () => {
     Promise.all([
       fetch('/api/realtime/status', { headers: authHeaders() }).then(r => r.json()).catch(() => ({})),
       fetch('/api/telemetry/snapshot', { headers: authHeaders() }).then(r => r.json()).catch(() => ({})),
       fetch('/health', { headers: authHeaders() }).then(r => r.json()).catch(() => ({})),
-      fetch('/api/sre/probes', { headers: authHeaders() }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
-    ]).then(([rt, tel, cp, probes]) => {
-      setHealth({ realtime: rt, telemetry: tel, cp, probes })
+      fetch('/api/sre/probes', { headers: authHeaders() }).then(r => (r.ok ? r.json() : {})).catch(() => ({})),
+    ]).then(([rt, tel, cp, probes]: any[]) => {
+      setHealth((h: any) => ({
+        ...h,
+        realtime: rt && !rt.error ? rt : null,
+        telemetry: tel && !tel.error ? tel : null,
+        cp: cp && !cp.error ? cp : null,
+        probes: probes && !probes.error ? probes : null,
+        authed: rt !== undefined && rt !== null,
+      }))
     })
+  }
+
+  useEffect(() => {
+    loadAccounts()
+    loadHealth()
+    const timer = window.setInterval(() => { loadHealth(); loadAccounts() }, 10000)
+    const onVisible = () => { if (document.visibilityState === 'visible') { loadHealth(); loadAccounts() } }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisible) }
+  }, [])
+
+  useEffect(() => {
+    fetch('/api/incidents', { headers: authHeaders() })
+      .then(r => r.json()).then(data => setIncidents(Array.isArray(data) ? data : []))
+      .catch(() => setIncidents([]))
   }, [])
 
   const stats = {
@@ -134,16 +181,16 @@ export default function SREConsole() {
             <h3 className="text-sm font-semibold mb-3">시스템 구성 요소 · System Components (v2 §7.1)</h3>
             <div className="grid grid-cols-3 gap-3">
               {[
-{ name: 'OAuth/OIDC', nameKo: '인증 서비스', status: 'healthy', reason: '콘솔 로그인 경로 정상' },
-                { name: 'Subscription', nameKo: '구독 관리', status: 'healthy', reason: '구독 API 정상' },
-                { name: 'Harness Registry', nameKo: '하네스 등록', status: 'healthy', reason: '등록 API 정상' },
-                { name: 'DARI Ingress', nameKo: 'DARI 수신', status: probeStatus(health.probes?.relay?.status), reason: probeReason(health.probes?.relay, 'relay_probe_addr') },
-                { name: 'Relay Fleet', nameKo: '릴레이 플릿', status: probeStatus(health.probes?.relay?.status), reason: probeReason(health.probes?.relay, 'relay_probe_addr') },
-                { name: 'Capacity Authority', nameKo: '용량 관리', status: 'healthy', reason: '용량 API 정상' },
-                { name: 'Model Catalog', nameKo: '모델 카탈로그', status: probeStatus(health.realtime?.catalog), reason: `카탈로그 ${health.realtime?.catalog_count ?? 0}개 모델` },
-                { name: 'PIA/Model Plane', nameKo: 'PIA 추론', status: probeStatus(health.probes?.pia?.status), reason: probeReason(health.probes?.pia, 'pia_probe_addr') },
-                { name: 'Event Spine', nameKo: '이벤트 파이프라인', status: probeStatus(health.realtime?.event_spine), reason: `24시간 ${health.realtime?.event_spine_count ?? 0}개 이벤트` },
-                { name: 'Metering', nameKo: '미터링', status: probeStatus(health.realtime?.metering), reason: `24시간 ${health.realtime?.metering_count ?? 0}건 기록` },
+{ name: 'OAuth/OIDC', nameKo: '인증 서비스', status: health.authed === true ? 'healthy' : health.authed === false ? 'degraded' : 'not_configured', reason: health.authed === true ? '인증 API 응답 정상 (이 페이지 세션)' : '인증 API 조회 실패' },
+                { name: 'Subscription', nameKo: '구독 관리', status: health.accounts === true ? 'healthy' : health.accounts === false ? 'degraded' : 'not_configured', reason: health.accounts === true ? `계정 API 정상 (${accounts.length}계정)` : '계정 API 조회 실패' },
+                { name: 'Harness Registry', nameKo: '하네스 등록', status: health.accounts === true ? 'healthy' : health.accounts === false ? 'degraded' : 'not_configured', reason: health.accounts === true ? '하네스 목록 조회 정상' : '조회 실패' },
+                { name: 'DARI Ingress', nameKo: 'DARI 수신', status: probeStatusOf(health.probes?.relay), reason: probeReason(health.probes?.relay ?? null, 'relay_probe_addr') },
+                { name: 'Relay Fleet', nameKo: '릴레이 플릿', status: probeStatusOf(health.probes?.relay), reason: probeReason(health.probes?.relay ?? null, 'relay_probe_addr') },
+                { name: 'Capacity Authority', nameKo: '용량 관리', status: health.accounts === true ? 'healthy' : health.accounts === false ? 'degraded' : 'not_configured', reason: health.accounts === true ? '용량 조회 정상' : '조회 실패' },
+                { name: 'Model Catalog', nameKo: '모델 카탈로그', status: dbStatus(health.realtime?.catalog, health.realtime?.catalog_count), reason: dbReason(health.realtime?.catalog, health.realtime?.catalog_count, '카탈로그', '개 모델') },
+                { name: 'PIA/Model Plane', nameKo: 'PIA 추론', status: probeStatusOf(health.probes?.pia), reason: probeReason(health.probes?.pia ?? null, 'pia_probe_addr') },
+                { name: 'Event Spine', nameKo: '이벤트 파이프라인', status: dbStatus(health.realtime?.event_spine, health.realtime?.event_spine_count), reason: dbReason(health.realtime?.event_spine, health.realtime?.event_spine_count, 'CP 감사 24시간', '개 이벤트') + ' (CP 기준)' },
+                { name: 'Metering', nameKo: '미터링', status: dbStatus(health.realtime?.metering, health.realtime?.metering_count), reason: dbReason(health.realtime?.metering, health.realtime?.metering_count, '24시간', '건 기록') },
                 { name: 'Notifications', nameKo: '알림', status: 'not_configured', reason: '알림 채널(Slack/Email) 미연동 — 연동 전까지 발송 없음' },
                 { name: 'Payments', nameKo: '결제', status: 'not_configured', reason: '결제 게이트 미연동 (§29.9)' },
               ].map(comp => (

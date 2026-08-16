@@ -1604,16 +1604,28 @@ func (s *Server) wrapRealtimeStatus(ext *AdditionalServices) http.HandlerFunc {
 		spineN, spineOK := count("audit_events", "occurred_at")
 		meterN, meterOK := count("usage_records", "created_at")
 		catalogN, catalogOK := count("catalog_models", "")
+		// Counts travel ONLY when the query succeeded: a failed query
+		// sends null (never a fake 0 — the UI renders 조회 실패).
+		var spineCount, meterCount, catalogCount interface{}
+		if spineOK {
+			spineCount = spineN
+		}
+		if meterOK {
+			meterCount = meterN
+		}
+		if catalogOK {
+			catalogCount = catalogN
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"connected_clients": ext.Realtime.ConnectedClients(),
 			"relay_status":      probe(config.RelayProbeAddr()),
 			"pia":               probe(config.PIAProbeAddr()),
 			"event_spine":       map[bool]string{true: "ok", false: "down"}[spineOK],
-			"event_spine_count": spineN,
-			"metering":          map[bool]string{true: "ok", false: "unknown"}[meterOK],
-			"metering_count":    meterN,
-			"catalog":           map[bool]string{true: "ok", false: "unknown"}[catalogOK],
-			"catalog_count":     catalogN,
+			"event_spine_count": spineCount,
+			"metering":          map[bool]string{true: "ok", false: "down"}[meterOK],
+			"metering_count":    meterCount,
+			"catalog":           map[bool]string{true: "ok", false: "down"}[catalogOK],
+			"catalog_count":     catalogCount,
 		})
 	}
 }
