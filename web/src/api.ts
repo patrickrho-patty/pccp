@@ -213,6 +213,8 @@ export const api = {
     request<any>(`/api/sessions/${id}/pause`, { method: 'POST' }),
   resumeSession: (id: string) =>
     request<any>(`/api/sessions/${id}/resume`, { method: 'POST' }),
+  getProvenanceReceipts: (id: string) => request<any[]>(`/api/sessions/${id}/provenance/receipts`),
+  provenanceSearch: (q: string) => request<any>(`/api/provenance/search?q=${encodeURIComponent(q)}`),
   getProvenance: (id: string) =>
     request<any>(`/api/sessions/${id}/provenance`),
 

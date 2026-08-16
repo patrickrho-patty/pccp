@@ -54,6 +54,22 @@ export default function LiveView() {
       sse.addEventListener('session.update', (e) => {
         try { const data = JSON.parse(e.data); loadBaseData() } catch {}
       })
+      // web/21 B: live token chunks from the governed relay stream.
+      sse.addEventListener('session.chunk', (e) => {
+        try {
+          const data = JSON.parse(e.data)
+          const payload = data.payload || data
+          const sessionId = payload.session_id
+          if (!sessionId) return
+          setSessions(prev => prev.map(c => {
+            if (c.id !== sessionId && c.sessionId !== sessionId && !(c as any).raw_session_id) return c
+            const matches = (c as any).raw_session_id === sessionId || c.id === sessionId
+            if (!matches) return c
+            const msgs = [...(c.messages || []), { time: new Date().toISOString(), text: payload.text, type: 'ai' }].slice(-200)
+            return { ...c, messages: msgs, tokenOut: (c.tokenOut || 0) + (payload.text?.length || 0), lastActivity: new Date().toISOString() }
+          }))
+        } catch {}
+      })
       setSseSource(sse)
     } catch {
       // SSE not available, use polling
@@ -78,6 +94,7 @@ export default function LiveView() {
       const harness = allHarnesses.find(h => h.harness_id === s.harness_id)
       return {
         id: s.id,
+        raw_session_id: s.session_id || s.id,
         title: s.title || '제목 없음',
         user: user?.name_ko || user?.name || '알 수 없음',
         userEmail: user?.email || '-',

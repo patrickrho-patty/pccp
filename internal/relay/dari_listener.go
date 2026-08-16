@@ -574,6 +574,14 @@ func (pl *DARIListener) governAIOpen(ctx context.Context, conn *dari.TransportCo
 		if err := conn.SendMessage(dari.MsgAITokenChunk, nil, chunkPayload, reqRecord.LaneID, reqRecord.LaneSequence+1); err != nil {
 			log.Printf("relay: token chunk to %s failed: %v", connID, err)
 		}
+		// Console live view (web/21 B): fan each delta to the org's
+		// SSE subscribers (LiveView terminal cards + throughput).
+		orgID := pl.orgForPeer(connID)
+		pl.svc.realtime.BroadcastToOrg(orgID, "session.chunk", map[string]interface{}{
+			"session_id": greq.SessionID,
+			"harness_id": harnessID,
+			"text":       text,
+		})
 	}
 	resp, receipt, err := pl.svc.GovernInference(ctx, greq, delta)
 	if err != nil {

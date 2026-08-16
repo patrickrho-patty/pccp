@@ -53,6 +53,37 @@ export default function Dashboard() {
         ))}
       </div>
 
+      {/* Incidents + gaps (A5) */}
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        <Link to="/security" className="card py-3 px-5 hover:shadow-md transition-shadow">
+          <div className="text-sm font-semibold text-red-600">{data?.open_critical_findings ?? findingCount}</div>
+          <div className="text-xs text-gray-500">미해결 심각/높음 보안 발견 · Open Critical Findings</div>
+        </Link>
+        <Link to="/compliance" className="card py-3 px-5 hover:shadow-md transition-shadow">
+          <div className="text-sm font-semibold text-amber-600">{data?.open_remediations ?? 0}</div>
+          <div className="text-xs text-gray-500">진행 중 컴플라이언스 개선 과제 · Open Remediations</div>
+        </Link>
+      </div>
+
+      {/* Recents hub (A7) */}
+      {(data?.recent_users?.length > 0 || data?.recent_projects?.length > 0) && (
+        <div className="card p-4 mb-4">
+          <h3 className="text-xs font-bold mb-2">최근 항목 · Recents</h3>
+          <div className="flex flex-wrap gap-2">
+            {(data?.recent_users || []).map((u: any) => (
+              <Link key={u.id} to={`/users/${u.id}`} className="text-[11px] px-2 py-1 rounded bg-gray-50 hover:bg-blue-50 text-gray-600">
+                👤 {u.name_ko || u.name}
+              </Link>
+            ))}
+            {(data?.recent_projects || []).map((p: any) => (
+              <Link key={p.id} to={`/projects/${p.id}`} className="text-[11px] px-2 py-1 rounded bg-gray-50 hover:bg-blue-50 text-gray-600">
+                📁 {p.name_ko || p.name}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Two column layout */}
       <div className="grid grid-cols-3 gap-4">
         {/* Recent activity */}

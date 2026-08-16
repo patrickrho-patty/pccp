@@ -264,6 +264,8 @@ func (s *Server) setupRouter() {
 			r.Post("/{id}/pause", s.handlePauseSession)
 			r.Post("/{id}/resume", s.handleResumeSession)
 			r.Get("/{id}/provenance", s.handleGetProvenance)
+			r.Get("/{id}/provenance/receipts", s.handleProvenanceReceipts)
+			r.Get("/{id}/provenance/export", s.handleProvenanceExport)
 			r.Get("/{id}/usage", s.handleGetSessionUsage)
 			r.Get("/{id}/timeline", s.handleGetSessionTimeline)
 			r.Get("/{id}/exchanges", s.handleGetSessionExchanges)
@@ -475,6 +477,9 @@ func (s *Server) setupRouter() {
 
 		// Dashboard
 		r.Get("/dashboard", s.handleDashboard)
+
+		// Provenance search (web/20 A5)
+		r.Get("/provenance/search", s.handleProvenanceSearch)
 
 		// Code explorer (web/19)
 		r.Route("/code-explorer", func(r chi.Router) {
@@ -4653,6 +4658,29 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		q = q.Where("organization_id = ?", orgID)
 	}
 	q.Order("occurred_at DESC").Limit(20).Find(&recentEvents)
+	dash["recent_events"] = recentEvents
+
+	// Active incidents (A5): security findings with severity critical/
+	// high + open remediation tasks are surfaced for the ops view.
+	var openFindings int64
+	s.db.Model(&models.SecurityFinding{}).
+		Where("organization_id = ? AND severity IN ('critical','high') AND status != 'resolved'", orgID).
+		Count(&openFindings)
+	dash["open_critical_findings"] = openFindings
+	var openRemediations int64
+	s.db.Model(&models.ComplianceRemediation{}).
+		Where("organization_id = ? AND status != 'done'", orgID).Count(&openRemediations)
+	dash["open_remediations"] = openRemediations
+
+	// Recents (A7): recently updated entities for the object hub.
+	var recentUsers []models.User
+	s.db.Model(&models.User{}).Where("organization_id = ?", orgID).
+		Order("updated_at DESC").Limit(5).Find(&recentUsers)
+	dash["recent_users"] = recentUsers
+	var recentProjects []models.Project
+	s.db.Model(&models.Project{}).Where("organization_id = ?", orgID).
+		Order("updated_at DESC").Limit(5).Find(&recentProjects)
+	dash["recent_projects"] = recentProjects
 	dash["recent_events"] = recentEvents
 
 	writeJSON(w, http.StatusOK, dash)
