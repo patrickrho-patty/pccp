@@ -515,6 +515,29 @@ packages.
   tab definitions, form-state initializers, and the DLP lexicon templates;
   no page renders fabricated records.
 
+### Round 2 + 3 review pass (final)
+
+A second review round (correctness, BOLA, SQL binding, UX feedback) and a
+third pure-verification round ran after the fixes above. Round-2 findings,
+all fixed and regression-tested where applicable:
+
+| # | Severity | Area | Finding → Fix |
+|---|----------|------|---------------|
+| 14 | Critical | S2 dispatch | `execute()` error paths (no forwarder / no dispatch addr) requeued the request *after* erroring its waiter — the client got an error, then the work executed and billed anyway. → Error drops the request; verified by `TestExecuteErrorDropsRequestNotRequeues`. |
+| 15 | High | S2 dispatch | Expired/drained queue outcomes never completed their waiter — parked HTTP handlers waited their own full timer. → Expiry completes the waiter immediately + a 500ms reap tick so idle fleets still reap; verified by `TestExpiredRequestCompletesWaiter`. |
+| 16 | High | web/13 | BOLA: message react/read/edit/delete and broadcast acks fetched by bare id — cross-org mutation possible with exact ids. → Org scoping via the conversation (Message carries no org column); verified by `TestCrossOrgMessageMutationRejected`. User/harness lookups org-scoped likewise. |
+| 17 | Medium | web/13 | `SendMessage` accepted nonexistent conversation ids silently. → Conversation existence validated. |
+| 18 | Medium | web/25 | TOTP codes replayable within their ±30s validity window. → Per-account timestep replay guard (RFC 6238 §5.2); `TestTOTPReplayRejected`. |
+| 19 | Medium | api | Unified-search org scoping interpolated `orgID` into SQL text (claim-derived, but interpolation nonetheless). → Fully parameterized (`scopedWhere`). |
+| 20 | Low | gateway | Validly-signed envelope with empty tenant silently fell back to the header tenant. → Rejected as malformed. |
+| 21 | Low | relay | Hot-state cache grew without bound between revocation epochs under harness churn. → 100k-entry coarse cap. |
+| 22 | Low | api | Unbounded intake: CSV import (now 5 MiB / 50k rows) and fleet bulk (500 targets). |
+| 23 | Low | web | 22 silent `catch {}` action handlers gave no failure feedback. → Error toasts across 6 pages. |
+
+Round 3 (verification only) confirmed: `go vet` clean, 43/43 packages
+green, **zero data races tree-wide under `-race -count=2`**, web build
+green, and the two new semantics tests + BOLA regression pass.
+
 ### Documented residuals (not fixed, by judgment)
 
 - Seat-limit enforcement is count-then-create (TOCTOU on the billing limit);
