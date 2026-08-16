@@ -182,6 +182,7 @@ type Account struct {
 	OAuthSubject  string `gorm:"type:varchar(255);index" json:"oauth_subject,omitempty"`
 	OAuthProvider string `gorm:"type:varchar(64)" json:"oauth_provider,omitempty"`
 	Locale        string `gorm:"type:varchar(10);default:'ko-KR'" json:"locale"`
+	Segment       string `gorm:"type:varchar(32)" json:"segment,omitempty"` // ops targeting tag (web/12 A8)
 	Timezone      string `gorm:"type:varchar(64);default:'Asia/Seoul'" json:"timezone"`
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/compliance"
 	"github.com/patrickrho-patty/pccp/internal/configmgmt"
 	"github.com/patrickrho-patty/pccp/internal/connectors"
+	"github.com/patrickrho-patty/pccp/internal/detection"
 	"github.com/patrickrho-patty/pccp/internal/gpuops"
 	"github.com/patrickrho-patty/pccp/internal/incident"
 	"github.com/patrickrho-patty/pccp/internal/keymgmt"
@@ -50,6 +51,7 @@ type AdditionalServices struct {
 	Reporting   *reporting.Service   `json:"reporting"`
 	Secret      *secret.Service      `json:"secret"`
 	Telemetry   *telemetry.Service   `json:"telemetry"`
+	Detection   *detection.Service   `json:"detection"`
 	Tools       *tools.Service       `json:"tools"`
 	Attestation *attestation.Service `json:"attestation"`
 	Compliance  *compliance.Service  `json:"compliance"`
@@ -89,6 +91,7 @@ func (s *Server) initAdditional() *AdditionalServices {
 		Reporting:   reporting.New(s.db),
 		Secret:      secret.New(s.db),
 		Telemetry:   telemetry.New(s.db),
+		Detection:   detection.New(s.db),
 		Tools:       tools.New(s.db),
 		Compliance:  compliance.New(s.db),
 		ConfigMgmt:  configmgmt.New(s.db),
@@ -309,11 +312,21 @@ func (s *Server) setupAdditionalRoutes(r chi.Router, ext *AdditionalServices) {
 	// v2 Public Cloud (§10C)
 	r.Route("/public", func(r chi.Router) {
 		r.Post("/accounts", s.wrapPublicCreateAccount(ext))
-		r.Get("/accounts", s.wrapPublicAccounts(ext))
-		r.Get("/accounts/{id}", s.wrapPublicGetAccount(ext))
+		r.Get("/accounts", s.handlePublicAccounts)
+		r.Get("/accounts/{id}", s.handlePublicAccountDetail)
 		r.Post("/accounts/{id}/subscription", s.wrapPublicCreateSub(ext))
+		r.Post("/accounts/{id}/action", s.handlePublicAccountAction)
+		r.Post("/accounts/{id}/refund", s.handlePublicAccountRefund)
 		r.Get("/accounts/{id}/lease", s.wrapPublicLease(ext))
 		r.Get("/accounts/{id}/slots", s.wrapPublicSlots(ext))
+		r.Get("/support-cases", s.handleSupportCases)
+		r.Post("/support-cases", s.handleSupportCases)
+		r.Put("/support-cases/{id}", s.handleSupportCaseItem)
+		r.Get("/abuse-cases", s.handleAbuseCases)
+		r.Post("/abuse-cases", s.handleAbuseCases)
+		r.Put("/abuse-cases/{id}", s.handleAbuseCaseItem)
+		r.Get("/segments", s.handleAccountSegments)
+		r.Put("/segments", s.handleAccountSegments)
 	})
 }
 

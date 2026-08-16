@@ -48,7 +48,48 @@ export default function SubscriberManagement() {
   const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
   const [page, setPage] = useState(1)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [detail, setDetail] = useState<any>(null)
+  const [actionDim, setActionDim] = useState('')
+  const [actionState, setActionState] = useState('')
+  const [actionReason, setActionReason] = useState('')
+  const [newCaseNote, setNewCaseNote] = useState('')
   const pageSize = 20
+
+  const loadDetail = async (accountId: string) => {
+    try {
+      const res = await fetch(`/api/public/accounts/${accountId}`, { headers: authHeaders() })
+      setDetail(await res.json())
+    } catch { setDetail(null) }
+  }
+  const runAction = async (accountId: string) => {
+    if (!actionDim || !actionState || !actionReason.trim()) {
+      showToast('차원·상태·사유를 모두 입력하세요', 'error')
+      return
+    }
+    try {
+      const res = await fetch(`/api/public/accounts/${accountId}/action`, {
+        method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dimension: actionDim, state: actionState, reason: actionReason }),
+      })
+      const out = await res.json()
+      if (!res.ok) throw new Error(out.error || 'action failed')
+      showToast(`조치 적용 — 단계 ${out.ladder_rung}`, 'success')
+      setActionDim(''); setActionState(''); setActionReason('')
+      loadDetail(accountId)
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+  const addSupportCase = async (accountId: string) => {
+    if (!newCaseNote.trim()) return
+    try {
+      await fetch('/api/public/support-cases', {
+        method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ account_id: accountId, subject: newCaseNote.slice(0, 60), description: newCaseNote, priority: 'normal' }),
+      })
+      showToast('지원 케이스 등록 완료', 'success')
+      setNewCaseNote('')
+      loadDetail(accountId)
+    } catch { showToast('실패', 'error') }
+  }
 
   useEffect(() => {
     Promise.all([
@@ -141,7 +182,11 @@ export default function SubscriberManagement() {
                   const hs = getAccountHarnesses(a.id)
                   return (
                     <tr key={a.id} className={`border-b border-gray-100 last:border-0 cursor-pointer ${selectedId === a.id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
-                      onClick={() => setSelectedId(selectedId === a.id ? null : a.id)}>
+                      onClick={() => {
+                        const next = selectedId === a.id ? null : a.id
+                        setSelectedId(next)
+                        if (next) loadDetail(next)
+                      }}>
                       <td className="py-3">
                         <div className="font-medium text-sm">{a.display_name_ko || a.display_name || a.email}</div>
                         <div className="text-xs text-gray-400">{a.email}</div>
@@ -182,6 +227,63 @@ export default function SubscriberManagement() {
                 <div className="flex justify-between"><span className="text-gray-500">가입일</span><span className="text-xs">{selectedAccount.created_at?.slice(0, 10)}</span></div>
               </div>
             </div>
+
+            {/* Graduated-response ladder + actions (10 A4 / 12 A3) */}
+            {detail && (
+              <div className="card">
+                <h3 className="text-sm font-semibold mb-2">단계적 대응 · Graduated Response</h3>
+                <div className="flex items-center gap-2 mb-2 text-xs">
+                  <span className="badge-gray">현재: {detail.ladder_rung || 'normal'}</span>
+                  <span className="text-gray-400">다음: {detail.ladder_next || '—'}</span>
+                  <span className="text-gray-400">신호 {detail.signals?.length || 0} · 리스크 {detail.account?.risk_score ?? '—'}</span>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  <select className="input text-xs" value={actionDim} onChange={e => setActionDim(e.target.value)}>
+                    <option value="">차원...</option>
+                    <option value="integrity">계정 무결성</option>
+                    <option value="trust_safety">신뢰·안전</option>
+                    <option value="platform_security">플랫폼 보안</option>
+                    <option value="capacity">용량</option>
+                    <option value="subscription">구독</option>
+                  </select>
+                  <select className="input text-xs" value={actionState} onChange={e => setActionState(e.target.value)}>
+                    <option value="">상태...</option>
+                    <option value="normal">정상</option>
+                    <option value="reviewing">검토</option>
+                    <option value="flagged">플래그</option>
+                    <option value="restricted">제한</option>
+                    <option value="blocked">차단</option>
+                    <option value="throttled">스로틀</option>
+                    <option value="suspended">정지</option>
+                  </select>
+                  <input className="input text-xs flex-1" placeholder="사유 (필수, 감사 기록)" value={actionReason} onChange={e => setActionReason(e.target.value)} />
+                  <button className="btn-sm btn-danger" onClick={() => runAction(selectedAccount.id)}>적용</button>
+                </div>
+              </div>
+            )}
+
+            {/* Support + abuse cases (11 A5 / 12 A6/A7) */}
+            {detail && (
+              <div className="card">
+                <h3 className="text-sm font-semibold mb-2">케이스 · Cases</h3>
+                {(detail.support_cases || []).slice(0, 5).map((c: any) => (
+                  <div key={c.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+                    <span className="text-gray-700 truncate">{c.subject}</span>
+                    <span className="text-gray-400">{c.status} · {c.priority}</span>
+                  </div>
+                ))}
+                {(detail.abuse_cases || []).slice(0, 5).map((c: any) => (
+                  <div key={c.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+                    <span className="text-red-600 truncate">⚠ {c.category}</span>
+                    <span className="text-gray-400">{c.status}{c.decision ? ` · ${c.decision.slice(0, 30)}` : ''}</span>
+                  </div>
+                ))}
+                <div className="flex gap-2 mt-2">
+                  <input className="input text-xs flex-1" placeholder="지원 케이스 등록..." value={newCaseNote} onChange={e => setNewCaseNote(e.target.value)} />
+                  <button className="btn-sm btn-secondary" onClick={() => addSupportCase(selectedAccount.id)}>등록</button>
+                </div>
+              </div>
+            )}
 
             {/* Risk States */}
             <div className="card">

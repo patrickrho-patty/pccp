@@ -120,6 +120,8 @@ func AllModels() []interface{} {
 		&ComplianceRemediation{},
 		&ComplianceAssessmentRecord{},
 		&LegalHold{},
+		&SupportCase{},
+		&AbuseCase{},
 		// Durable service identities + revocations + sandboxes
 		&ServiceSigningKey{},
 		&CredentialRevocationRecord{},
