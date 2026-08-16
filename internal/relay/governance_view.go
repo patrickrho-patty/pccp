@@ -138,14 +138,14 @@ func (s *Service) GatherGovernanceState(orgID, repoID, modelID string) Governanc
 
 	// E4: sandbox policies from the durable sandbox_records table.
 	var sandboxes []models.SandboxRecord
-	s.db.Where("organization_id = ? AND status IN ('running','defined','pending')", orgID).Find(&sandboxes)
+	s.db.Where("organization_id = ? AND status IN ('running','defined','pending') AND repository_id != ''", orgID).Find(&sandboxes)
 	for _, sb := range sandboxes {
 		risk := "STANDARD"
 		if sb.Mode == "air_gapped" || sb.Mode == "review_only" {
 			risk = "SENSITIVE"
 		}
 		view.Sandboxes = append(view.Sandboxes, GovernanceSandboxView{
-			RepositoryID: sb.SessionID,
+			RepositoryID: sb.RepositoryID,
 			Mode:         sb.Mode,
 			RiskClass:    risk,
 		})

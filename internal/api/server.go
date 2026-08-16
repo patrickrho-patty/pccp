@@ -611,20 +611,46 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 		OrgName  string `json:"org_name"`
+		Profile  string `json:"profile"` // enterprise, public, sovereign
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-
-	// Create default org
-	org, err := s.identity.CreateOrganization(req.OrgName, req.OrgName, "default", "enterprise")
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if req.Profile == "" {
+		req.Profile = "enterprise"
+	}
+	switch req.Profile {
+	case "enterprise", "public", "sovereign":
+	default:
+		writeError(w, http.StatusBadRequest, "profile must be enterprise, public, or sovereign")
 		return
 	}
 
-	// Bootstrap admin
+	// Idempotent org: reuse an existing org by exact name instead of
+	// minting a new one on every re-bootstrap (the audit's data-integrity
+	// finding — repeat bootstraps used to spam orgs).
+	var org models.Organization
+	if err := s.db.Where("name = ?", req.OrgName).First(&org).Error; err == nil {
+		// Existing org: honor a profile change only when the org has no
+		// sessions yet (an in-use org's profile is an operator decision,
+		// not a bootstrap re-run).
+		var sessions int64
+		s.db.Model(&models.Session{}).Where("organization_id = ?", org.ID).Count(&sessions)
+		if org.Profile != req.Profile && sessions == 0 {
+			s.db.Model(&org).Update("profile", req.Profile)
+			org.Profile = req.Profile
+		}
+	} else {
+		created, cerr := s.identity.CreateOrganization(req.OrgName, req.OrgName, "default", req.Profile)
+		if cerr != nil {
+			writeError(w, http.StatusInternalServerError, cerr.Error())
+			return
+		}
+		org = *created
+	}
+
+	// Bootstrap admin (idempotent per identity.BootstrapAdmin)
 	if err := s.auth.BootstrapAdmin(req.Email, req.Password, org.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -632,6 +658,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"organization_id": org.ID,
+		"profile":         org.Profile,
 		"message":         "부트스트랩 완료",
 	})
 }
