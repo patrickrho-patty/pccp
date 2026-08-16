@@ -1,137 +1,350 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../api'
-import EmptyState from '../components/EmptyState'
+import { Modal, ModalFooter } from '../components/Modal'
 import { showToast } from '../components/Toast'
-import { formatRelative } from '../utils/format'
 
-const CERT_NAMES: Record<string, { ko: string; en: string }> = {
-  CSAP: { ko: '클라우드보안인증', en: 'CSAP' },
-  ISMS_P: { ko: '정보보호관리체계 인증', en: 'ISMS-P' },
-  ISMSP: { ko: '정보보호관리체계 인증', en: 'ISMS-P' },
-  KISA: { ko: '한국인터넷진흥원 가이드라인', en: 'KISA Guidelines' },
-  PRIVACY: { ko: '개인정보보호법', en: 'Privacy Act' },
-  AI_BASIC: { ko: '인공지능 기본법', en: 'AI Basic Act' },
-  'AI-BASIC': { ko: '인공지능 기본법', en: 'AI Basic Act' },
+// Compliance page (web/08 plan): REAL backend-fed assessment. No more
+// hardcoded "compliant" badges — every status comes from the evidence
+// engine (assessControlState) which reads actual PCCP state. Self-
+// assessment disclaimer is shown: certification is the customer's
+// process (§41 guardrail).
+
+const STATUS_BADGE: Record<string, string> = {
+  compliant: 'bg-green-50 text-green-700 border-green-200',
+  partially_compliant: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+  gap: 'bg-red-50 text-red-700 border-red-200',
+  partial: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+  not_applicable: 'bg-gray-100 text-gray-500 border-gray-200',
+}
+const STATUS_KO: Record<string, string> = {
+  compliant: '준수', partially_compliant: '부분 준수', gap: '갭', partial: '부분', not_applicable: '해당 없음',
 }
 
 export default function Compliance() {
-  const [certs, setCerts] = useState<string[]>([])
-  const [selected, setSelected] = useState<string>('')
+  const [meta, setMeta] = useState<any[]>([])
+  const [selected, setSelected] = useState('')
+  const [scope, setScope] = useState('SaaS')
+  const [level, setLevel] = useState('')
   const [assessment, setAssessment] = useState<any>(null)
+  const [history, setHistory] = useState<any[]>([])
+  const [evidence, setEvidence] = useState<any[]>([])
+  const [remediations, setRemediations] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+  const [filter, setFilter] = useState('')
+  const [evidenceOpen, setEvidenceOpen] = useState<any>(null)
+  const [evForm, setEvForm] = useState({ control_id: '', title: '', description: '', source: 'manual', reference: '' })
+  const [taskOpen, setTaskOpen] = useState<any>(null)
+  const [taskForm, setTaskForm] = useState({ owner: '', due_date: '', sla: '30d', notes: '' })
+  const [bulkOwner, setBulkOwner] = useState('')
 
-  useEffect(() => {
-    api.complianceCerts().then(data => {
-      const list = Array.isArray(data) ? data : []
-      setCerts(list)
-      if (list.length > 0 && !selected) {
-        setSelected(list[0])
-      }
+  const loadMeta = () => {
+    api.complianceMeta().then(d => {
+      const list = Array.isArray(d) ? d : []
+      setMeta(list)
+      if (list.length && !selected) setSelected(list[0].certification)
+      if (list.length && !level) setLevel((list[0].levels?.[0] as any)?.value || '')
     }).catch(() => {})
-  }, [])
+  }
+  useEffect(() => { loadMeta() }, [])
 
-  useEffect(() => {
+  const currentMeta = meta.find(m => m.certification === selected)
+
+  const loadSide = (cert: string) => {
+    if (!cert) return
+    api.complianceEvidence(cert).then(d => setEvidence(Array.isArray(d) ? d : [])).catch(() => setEvidence([]))
+    api.complianceRemediations(cert).then(d => setRemediations(Array.isArray(d) ? d : [])).catch(() => setRemediations([]))
+    api.complianceHistory().then(d => setHistory(Array.isArray(d) ? d : [])).catch(() => setHistory([]))
+  }
+  useEffect(() => { loadSide(selected) }, [selected])
+
+  const assess = async () => {
     if (!selected) return
     setLoading(true)
-    api.complianceAssess(selected).then(data => { setAssessment(data); showToast('평가 완료', 'success') }).catch(() => { setAssessment(null); showToast('평가 실패', 'error') }).finally(() => setLoading(false))
-  }, [selected])
+    try {
+      const res = await api.complianceAssess(selected, scope, level)
+      setAssessment(res)
+      showToast('자체 평가 완료', 'success')
+      loadSide(selected)
+    } catch (e: any) {
+      showToast(e?.message || '평가 실패', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
 
-  const overallBadge = (s: string) => {
-    if (s === 'compliant') return 'badge-green'
-    if (s === 'partially_compliant') return 'badge-yellow'
-    return 'badge-red'
+  const downloadExport = async (format: string) => {
+    // Authenticated fetch + blob download (the endpoint sits behind the
+    // admin JWT middleware, so a plain window.open would 401).
+    const token = localStorage.getItem('pccp_token')
+    try {
+      const resp = await fetch(`/api/compliance/export?certification=${encodeURIComponent(selected)}&format=${format}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!resp.ok) throw new Error('export failed')
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${selected}-compliance-matrix.${format === 'csv' ? 'csv' : 'json'}`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e: any) {
+      showToast(e?.message || '내보내기 실패', 'error')
+    }
   }
-  const overallLabel = (s: string) => {
-    if (s === 'compliant') return '준수 · Compliant'
-    if (s === 'partially_compliant') return '부분 준수 · Partial'
-    return '갭 존재 · Gaps'
+
+  const addEvidence = async () => {
+    if (!evForm.control_id) {
+      showToast('통제 항목을 선택하세요', 'error')
+      return
+    }
+    try {
+      await api.complianceEvidenceAdd(selected, evForm.control_id, evForm.title, evForm.description, evForm.source, evForm.reference)
+      showToast('증거 추가 완료', 'success')
+      setEvidenceOpen(null)
+      setEvForm({ control_id: '', title: '', description: '', source: 'manual', reference: '' })
+      loadSide(selected)
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
-  const controlBadge = (s: string) => s === 'compliant' ? 'badge-green' : s === 'partial' ? 'badge-yellow' : 'badge-red'
+
+  const addTask = async () => {
+    if (!taskOpen?.control_id) return
+    try {
+      await api.complianceRemediationAdd(selected, taskOpen.control_id, taskForm.owner, taskForm.due_date, taskForm.sla, taskForm.notes)
+      showToast('개선 과제 등록 완료', 'success')
+      setTaskOpen(null)
+      setTaskForm({ owner: '', due_date: '', sla: '30d', notes: '' })
+      loadSide(selected)
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
+  const bulkRemediate = async () => {
+    try {
+      const res = await api.complianceBulkRemediate(selected, bulkOwner)
+      showToast(`갭 → 과제 일괄 전환 (${res.created}건)`, 'success')
+      setBulkOwner('')
+      loadSide(selected)
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
+  const updateTask = async (id: string, status: string) => {
+    try {
+      await api.complianceRemediationUpdate(id, status, '', '', '')
+      loadSide(selected)
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
+  const results = (assessment?.control_results || []) as any[]
+  const filtered = filter ? results.filter((r: any) => r.status === filter) : results
+  const counts = {
+    compliant: results.filter((r: any) => r.status === 'compliant').length,
+    partial: results.filter((r: any) => r.status === 'partial').length,
+    gap: results.filter((r: any) => r.status === 'gap').length,
+  }
+  const evByControl: Record<string, number> = {}
+  evidence.forEach(e => { evByControl[e.control_id] = (evByControl[e.control_id] || 0) + 1 })
+  const taskByControl: Record<string, string> = {}
+  remediations.forEach(t => { taskByControl[t.control_id] = t.status })
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">컴플라이언스 <span className="text-gray-400 text-lg font-normal">Compliance</span></h1>
-        <select className="input w-auto" value={selected} onChange={e => setSelected(e.target.value)}>
-          {certs.map(c => <option key={c} value={c}>{CERT_NAMES[c]?.ko || c} ({CERT_NAMES[c]?.en || c})</option>)}
-        </select>
+    <div className="p-6 space-y-4 page-enter">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-sm font-bold">컴플라이언스 · Compliance</h2>
+          <p className="text-[11px] text-gray-400">
+            자체 평가(self-assessment)입니다 — 인증은 고객의 절차이며, 이 페이지는 맵·증거·과제를 제공합니다 (§41).
+          </p>
+        </div>
+        <div className="flex gap-2 flex-wrap items-center">
+          <select className="input text-xs" value={selected} onChange={e => { setSelected(e.target.value); setAssessment(null); setLevel((meta.find(m => m.certification === e.target.value)?.levels?.[0] as any)?.value || '') }}>
+            {meta.map(m => <option key={m.certification} value={m.certification}>{m.name_ko}</option>)}
+          </select>
+          <select className="input text-xs" value={scope} onChange={e => setScope(e.target.value)}>
+            {(currentMeta?.scopes || ['SaaS']).map((s: string) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select className="input text-xs" value={level} onChange={e => setLevel(e.target.value)}>
+            {(currentMeta?.levels || []).map((l: any) => <option key={l.value} value={l.value}>{l.label_ko || l.label}</option>)}
+          </select>
+          <button className="btn-sm btn-primary" onClick={assess} disabled={loading}>
+            {loading ? '평가 중...' : '자체 평가 실행'}
+          </button>
+        </div>
       </div>
 
-      {loading ? (
-        <div className="text-gray-400 text-center py-16 text-sm">평가 중... · Assessing...</div>
-      ) : !assessment ? (
-        <EmptyState icon="📋" title="평가를 불러올 수 없습니다" message="백엔드 컴플라이언스 서비스가 필요합니다" />
-      ) : (
+      {assessment && (
         <>
-          {/* Overall status */}
-          <div className="card mb-6 flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-semibold">{CERT_NAMES[assessment.certification]?.ko || assessment.certification} 평가</h2>
-              <p className="text-xs text-gray-400 mt-1">평가 시간: {formatRelative(assessment.assessed_at)} <span title={assessment.assessed_at?.slice(0, 19)}></span></p>
-            </div>
-            <span className={overallBadge(assessment.overall_status)}>{overallLabel(assessment.overall_status)}</span>
+          <div className="grid grid-cols-3 gap-3">
+            <button className="card p-3 text-center hover:border-green-300" onClick={() => setFilter(filter === 'compliant' ? '' : 'compliant')}>
+              <div className="text-lg font-bold text-green-600">{counts.compliant}</div>
+              <div className="text-[10px] text-gray-400">준수</div>
+            </button>
+            <button className="card p-3 text-center hover:border-yellow-300" onClick={() => setFilter(filter === 'partial' ? '' : 'partial')}>
+              <div className="text-lg font-bold text-yellow-600">{counts.partial}</div>
+              <div className="text-[10px] text-gray-400">부분</div>
+            </button>
+            <button className="card p-3 text-center hover:border-red-300" onClick={() => setFilter(filter === 'gap' ? '' : 'gap')}>
+              <div className="text-lg font-bold text-red-600">{counts.gap}</div>
+              <div className="text-[10px] text-gray-400">갭</div>
+            </button>
           </div>
 
-          {/* Summary cards */}
-          <div className="grid grid-cols-3 gap-4 mb-6">
-            <div className="card text-center">
-              <div className="text-2xl font-bold text-gray-700">{assessment.control_results?.length || 0}</div>
-              <div className="text-xs text-gray-500">전체 통제</div>
+          <div className="card p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold">통제 결과 ({filtered.length}/{results.length})</h3>
+              <div className="flex gap-2">
+                <input className="input text-xs w-48" placeholder="일괄 과제 담당자"
+                  value={bulkOwner} onChange={e => setBulkOwner(e.target.value)} />
+                <button className="btn-sm btn-secondary" onClick={bulkRemediate}>갭 → 과제 일괄</button>
+                <button className="btn-sm btn-secondary" onClick={() => downloadExport('csv')}>CSV 내보내기</button>
+                <button className="btn-sm btn-secondary" onClick={() => downloadExport('json')}>JSON 패키지</button>
+              </div>
             </div>
-            <div className="card text-center">
-              <div className="text-2xl font-bold text-green-600">{assessment.control_results?.filter((c: any) => c.status === 'compliant').length || 0}</div>
-              <div className="text-xs text-gray-500">준수</div>
-            </div>
-            <div className="card text-center">
-              <div className="text-2xl font-bold text-red-600">{assessment.open_gaps || 0}</div>
-              <div className="text-xs text-gray-500">갭</div>
-            </div>
+            {filtered.map((r: any) => (
+              <div key={r.control_id} className="border rounded-lg p-2 flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold">{r.control_id}</div>
+                  <div className="text-[11px] text-gray-500 truncate">{r.gap_description_ko || r.gap_description || ''}</div>
+                  <div className="text-[10px] text-gray-400">{r.evidence}</div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <span className="text-[10px] px-1 rounded bg-gray-100 text-gray-500">{evByControl[r.control_id] || 0} 증거</span>
+                  {taskByControl[r.control_id] && (
+                    <button className="text-[10px] px-1 rounded bg-blue-50 text-blue-600" onClick={() => updateTask(remediations.find(t => t.control_id === r.control_id)?.id, taskByControl[r.control_id] === 'done' ? 'open' : 'done')}>
+                      과제 {taskByControl[r.control_id]}
+                    </button>
+                  )}
+                  <button className="text-[10px] px-1 rounded hover:bg-gray-100" onClick={() => { setEvidenceOpen(r); setEvForm({ control_id: r.control_id, title: '', description: '', source: 'manual', reference: '' }) }}>+증거</button>
+                  {r.status !== 'compliant' && (
+                    <button className="text-[10px] px-1 rounded hover:bg-amber-50 text-amber-600" onClick={() => { setTaskOpen(r); setTaskForm({ owner: '', due_date: '', sla: '30d', notes: '' }) }}>+과제</button>
+                  )}
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full border ${STATUS_BADGE[r.status] || ''}`}>{STATUS_KO[r.status] || r.status}</span>
+                </div>
+              </div>
+            ))}
           </div>
-
-          {/* Control results */}
-          <div className="card mb-6">
-            <h3 className="text-sm font-semibold mb-3">통제 평가 결과 · Control Results</h3>
-            <table className="w-full overflow-x-auto block">
-              <thead>
-                <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
-                  <th className="pb-3">통제 ID</th>
-                  <th className="pb-3">상태</th>
-                  <th className="pb-3">증거</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(assessment.control_results || []).map((c: any, i: number) => (
-                  <tr key={i} className="border-b border-gray-100 last:border-0">
-                    <td className="py-3 text-sm font-mono">{c.control_id}</td>
-                    <td className="py-3"><span className={controlBadge(c.status)}>{c.status}</span></td>
-                    <td className="py-3 text-xs text-gray-500">{c.evidence || c.gap_desc || c.gap_desc_ko || '-'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Recommendations */}
-          {assessment.recommendations && assessment.recommendations.length > 0 && (
-            <div className="card">
-              <h3 className="text-sm font-semibold mb-3">권장 사항 · Recommendations</h3>
-              <ul className="space-y-2">
-                {assessment.recommendations.map((r: string, i: number) => (
-                  <li key={i} className="text-sm text-gray-600 flex items-start gap-2">
-                    <span className="text-blue-500 mt-0.5">•</span>
-                    <span>{r}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Disclaimer */}
-          <p className="text-[10px] text-gray-400 mt-4 text-center">
-            이 평가는 자가 평가(self-assessment)이며 공인 인증을 대체하지 않습니다. · This is a self-assessment; it does not constitute certified compliance.
-          </p>
         </>
       )}
+
+      {!assessment && (
+        <div className="card p-8 text-center text-xs text-gray-400">
+          인증 대상·범위·등급을 선택하고 자체 평가를 실행하세요. 결과는 실제 PCCP 상태(사용자/규칙/감사 이벤트/보안 발견)에서 산출됩니다.
+        </div>
+      )}
+
+      {/* Evidence vault (C1) */}
+      <div className="card p-4">
+        <h3 className="text-xs font-bold mb-2">증거 보관소 · Evidence Vault ({evidence.length})</h3>
+        {evidence.length === 0 ? <p className="text-[11px] text-gray-400">등록된 증거 없음</p> : (
+          <div className="space-y-1">
+            {evidence.slice(0, 20).map((e: any) => (
+              <div key={e.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+                <span className="text-gray-700">{e.control_id} — {e.title} <span className="text-gray-400">({e.source})</span></span>
+                <span className="text-gray-400">{(e.collected_at || '').slice(0, 10)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Remediation tracking (C2) */}
+      <div className="card p-4">
+        <h3 className="text-xs font-bold mb-2">개선 과제 · Remediation ({remediations.length})</h3>
+        {remediations.length === 0 ? <p className="text-[11px] text-gray-400">등록된 과제 없음</p> : (
+          <div className="space-y-1">
+            {remediations.map((t: any) => (
+              <div key={t.id} className="flex justify-between items-center text-[11px] border-b border-gray-50 py-1">
+                <span className="text-gray-700">{t.control_id} — {t.owner || '담당자 미정'}</span>
+                <span className="text-gray-400">{t.sla || ''} · {t.due_date || ''}</span>
+                <select className="input text-[10px] py-0" value={t.status} onChange={e => updateTask(t.id, e.target.value)}>
+                  <option value="open">open</option>
+                  <option value="in_progress">in_progress</option>
+                  <option value="done">done</option>
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Assessment history (C3) */}
+      {history.length > 0 && (
+        <div className="card p-4">
+          <h3 className="text-xs font-bold mb-2">평가 이력 · History</h3>
+          <div className="space-y-1">
+            {history.slice(0, 10).map((h: any) => (
+              <div key={h.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+                <span className="text-gray-700">{h.certification} · {h.scope}/{h.level}</span>
+                <span className={h.overall_status === 'compliant' ? 'text-green-600' : h.overall_status === 'gap' ? 'text-red-600' : 'text-yellow-600'}>
+                  {h.overall_status} ({h.open_gaps} 갭)
+                </span>
+                <span className="text-gray-400">{(h.assessed_at || '').slice(0, 16)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Evidence modal (C1) */}
+      <Modal open={!!evidenceOpen} title={`증거 등록 — ${evidenceOpen?.control_id || ''}`}
+        onClose={() => setEvidenceOpen(null)}
+        footer={<ModalFooter onCancel={() => setEvidenceOpen(null)} onConfirm={addEvidence} confirmLabel="등록" />}>
+        <div className="space-y-2">
+          <div>
+            <label className="text-[10px] text-gray-500">제목</label>
+            <input className="input text-xs w-full" value={evForm.title} onChange={e => setEvForm({ ...evForm, title: e.target.value })} />
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500">설명</label>
+            <textarea className="input text-xs w-full" rows={2} value={evForm.description} onChange={e => setEvForm({ ...evForm, description: e.target.value })} />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-gray-500">출처</label>
+              <select className="input text-xs w-full" value={evForm.source} onChange={e => setEvForm({ ...evForm, source: e.target.value })}>
+                <option value="manual">manual</option>
+                <option value="audit">audit</option>
+                <option value="provenance">provenance</option>
+                <option value="security">security</option>
+                <option value="attestation">attestation</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-500">참조 (API 경로/파일)</label>
+              <input className="input text-xs w-full" value={evForm.reference} onChange={e => setEvForm({ ...evForm, reference: e.target.value })} />
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Task modal (C2) */}
+      <Modal open={!!taskOpen} title={`개선 과제 등록 — ${taskOpen?.control_id || ''}`}
+        onClose={() => setTaskOpen(null)}
+        footer={<ModalFooter onCancel={() => setTaskOpen(null)} onConfirm={addTask} confirmLabel="등록" />}>
+        <div className="space-y-2">
+          <div>
+            <label className="text-[10px] text-gray-500">담당자</label>
+            <input className="input text-xs w-full" value={taskForm.owner} onChange={e => setTaskForm({ ...taskForm, owner: e.target.value })} />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-gray-500">기한</label>
+              <input className="input text-xs w-full" type="date" value={taskForm.due_date} onChange={e => setTaskForm({ ...taskForm, due_date: e.target.value })} />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-500">SLA</label>
+              <select className="input text-xs w-full" value={taskForm.sla} onChange={e => setTaskForm({ ...taskForm, sla: e.target.value })}>
+                <option value="30d">30일</option>
+                <option value="60d">60일</option>
+                <option value="90d">90일</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500">비고</label>
+            <textarea className="input text-xs w-full" rows={2} value={taskForm.notes} onChange={e => setTaskForm({ ...taskForm, notes: e.target.value })} />
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

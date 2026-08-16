@@ -210,8 +210,18 @@ func (s *Server) setupAdditionalRoutes(r chi.Router, ext *AdditionalServices) {
 	// Compliance
 	r.Route("/compliance", func(r chi.Router) {
 		r.Get("/certifications", s.wrapComplianceList(ext))
+		r.Get("/meta", s.handleComplianceMeta)
 		r.Get("/packs/{cert}", s.wrapCompliancePack(ext))
-		r.Post("/assess", s.wrapComplianceAssess(ext))
+		r.Post("/assess", s.handleComplianceAssessWithTarget)
+		r.Get("/history", s.handleComplianceHistory)
+		r.Get("/evidence", s.handleComplianceEvidence)
+		r.Post("/evidence", s.handleComplianceEvidence)
+		r.Delete("/evidence/{id}", s.handleComplianceEvidence)
+		r.Get("/remediations", s.handleComplianceRemediations)
+		r.Post("/remediations", s.handleComplianceRemediations)
+		r.Put("/remediations/{id}", s.handleComplianceRemediationItem)
+		r.Post("/remediate-all", s.handleComplianceBulkRemediate)
+		r.Get("/export", s.handleComplianceExport)
 	})
 
 	// Config Management
@@ -898,17 +908,9 @@ func (s *Server) wrapCompliancePack(ext *AdditionalServices) http.HandlerFunc {
 
 func (s *Server) wrapComplianceAssess(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgID := getOrgID(r)
-		var req struct {
-			Certification string `json:"certification"`
-		}
-		decodeJSON(r, &req)
-		assessment, err := ext.Compliance.AssessCompliance(orgID, compliance.CertificationType(req.Certification))
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, assessment)
+		// Legacy forwarder: route through the target-aware handler so
+		// every assessment persists a snapshot (web/08 C3).
+		s.handleComplianceAssessWithTarget(w, r)
 	}
 }
 

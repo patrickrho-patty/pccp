@@ -538,6 +538,12 @@ func (s *Server) ListenAndServe(addr string) error {
 			if n := s.identity.SweepExpiredContractors(); n > 0 {
 				log.Printf("api: suspended %d expired contractors", n)
 			}
+			// Continuous compliance re-assessment (web/08 C3): orgs
+			// with a recent snapshot get re-assessed weekly so statuses
+			// track the real system as features ship.
+			if n := s.ext().Compliance.ContinuousReassess(7 * 24 * time.Hour); n > 0 {
+				log.Printf("api: re-assessed %d compliance targets", n)
+			}
 		}
 	}()
 	log.Printf("api: listening on %s", addr)

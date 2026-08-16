@@ -389,8 +389,24 @@ export const api = {
 
   // Compliance
   complianceCerts: () => request<any[]>('/api/compliance/certifications'),
-  complianceAssess: (cert: string) =>
-    request<any>('/api/compliance/assess', { method: 'POST', body: JSON.stringify({ certification: cert }) }),
+  complianceMeta: () => request<any[]>('/api/compliance/meta'),
+  complianceAssess: (cert: string, scope: string, level: string) =>
+    request<any>('/api/compliance/assess', { method: 'POST', body: JSON.stringify({ certification: cert, scope, level }) }),
+  complianceHistory: () => request<any[]>('/api/compliance/history'),
+  complianceEvidence: (cert: string, control?: string) =>
+    request<any[]>(`/api/compliance/evidence?certification=${encodeURIComponent(cert)}${control ? '&control=' + encodeURIComponent(control) : ''}`),
+  complianceEvidenceAdd: (cert: string, controlId: string, title: string, description: string, source: string, reference: string) =>
+    request<any>('/api/compliance/evidence', { method: 'POST', body: JSON.stringify({ certification: cert, control_id: controlId, title, description, source, reference }) }),
+  complianceEvidenceDelete: (id: string) =>
+    request<any>(`/api/compliance/evidence/${id}`, { method: 'DELETE' }),
+  complianceRemediations: (cert: string, status?: string) =>
+    request<any[]>(`/api/compliance/remediations?certification=${encodeURIComponent(cert)}${status ? '&status=' + status : ''}`),
+  complianceRemediationAdd: (cert: string, controlId: string, owner: string, dueDate: string, sla: string, notes: string) =>
+    request<any>('/api/compliance/remediations', { method: 'POST', body: JSON.stringify({ certification: cert, control_id: controlId, owner, due_date: dueDate, sla, notes }) }),
+  complianceRemediationUpdate: (id: string, status: string, owner: string, dueDate: string, notes: string) =>
+    request<any>(`/api/compliance/remediations/${id}`, { method: 'PUT', body: JSON.stringify({ status, owner, due_date: dueDate, notes }) }),
+  complianceBulkRemediate: (cert: string, owner: string) =>
+    request<any>('/api/compliance/remediate-all', { method: 'POST', body: JSON.stringify({ certification: cert, owner }) }),
 
   // Connectors
   connectorsTypes: () => request<any[]>('/api/connectors/types'),

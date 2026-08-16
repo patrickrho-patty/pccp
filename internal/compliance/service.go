@@ -67,6 +67,8 @@ type ComplianceAssessment struct {
 	ID              string                    `json:"id"`
 	OrganizationID  string                    `json:"organization_id"`
 	Certification   CertificationType         `json:"certification"`
+	Scope           string                    `json:"scope,omitempty"` // SaaS, PaaS, IaaS
+	Level           string                    `json:"level,omitempty"` // CSAP 간편/일반, ISMS-P 1/2/3
 	AssessedAt      string                    `json:"assessed_at"`
 	OverallStatus   string                    `json:"overall_status"` // compliant, partially_compliant, gap
 	ControlResults  []ControlAssessmentResult `json:"control_results"`
