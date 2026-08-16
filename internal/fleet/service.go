@@ -181,6 +181,10 @@ func (s *Service) PerformAction(req ActionRequest) error {
 			"revocation_reason": req.Reason,
 		})
 		s.revokeAllSessions(harness.HarnessID)
+		// A1: live propagation — the relay must drop the peer. Directive
+		// failures are logged, not fatal: the DB status gate is enforced
+		// on the relay's next exchange regardless.
+		_ = s.pushRelayDirective(req, string(req.Action))
 
 	case ActionQuarantine:
 		s.db.Model(&harness).Updates(map[string]interface{}{
@@ -188,6 +192,7 @@ func (s *Service) PerformAction(req ActionRequest) error {
 			"risk_state": "high",
 		})
 		s.revokeAllSessions(harness.HarnessID)
+		_ = s.pushRelayDirective(req, string(req.Action))
 
 	case ActionTerminateSession:
 		if req.SessionID != "" {
@@ -198,12 +203,14 @@ func (s *Service) PerformAction(req ActionRequest) error {
 					"closed_at": time.Now().Format(time.RFC3339),
 				})
 		}
+		_ = s.pushRelayDirective(req, string(req.Action))
 
 	case ActionSuspendModel:
 		// Revoke all capability leases for this harness
 		s.db.Model(&models.CapabilityLease{}).
 			Where("subject_peer_id = ?", harness.HarnessID).
 			Update("status", "revoked")
+		_ = s.pushRelayDirective(req, string(req.Action))
 
 	case ActionEmergencyLockdown:
 		// Lockdown all harnesses in the organization
@@ -213,16 +220,20 @@ func (s *Service) PerformAction(req ActionRequest) error {
 		s.db.Model(&models.Session{}).
 			Where("organization_id = ? AND status = 'active'", req.OrganizationID).
 			Update("status", "terminated")
+		// Org-wide directive: target "" = broadcast to all peers.
+		_ = s.pushRelayDirective(req, string(req.Action))
 
 	case ActionPauseExecution:
 		// Mark sessions as paused
 		s.db.Model(&models.Session{}).
 			Where("harness_id = ? AND status = 'active'", harness.HarnessID).
 			Update("status", "paused")
+		_ = s.pushRelayDirective(req, string(req.Action))
 
 	case ActionRequireUpgrade:
 		// Set a flag on the harness
 		s.db.Model(&harness).Update("risk_state", "elevated")
+		_ = s.pushRelayDirective(req, string(req.Action))
 
 	case ActionReauth, ActionForcePolicy, ActionForceConfig, ActionMoveRing,
 		ActionReduceTools, ActionDisableMCP, ActionChangeQuota, ActionSendAdminMsg:

@@ -316,8 +316,22 @@ export const api = {
 
   // Fleet
   fleetInventory: () => request<any[]>('/api/fleet/inventory'),
+  listFleetInventory: (query: string) =>
+    request<any>(`/api/fleet/inventory${query ? '?' + query : ''}`),
   fleetAction: (data: any) =>
     request<any>('/api/fleet/actions', { method: 'POST', body: JSON.stringify(data) }),
+  fleetBulkAction: (harnessIds: string[], action: string, reason: string) =>
+    request<any>('/api/fleet/actions/bulk', { method: 'POST', body: JSON.stringify({ harness_ids: harnessIds, action, reason }) }),
+  fleetActionHistory: (harnessId?: string) =>
+    request<any[]>(`/api/fleet/actions${harnessId ? '?harness_id=' + encodeURIComponent(harnessId) : ''}`),
+  fleetFreeze: (reason: string, reasonKo: string, affectedRepos: string[]) =>
+    request<any>('/api/fleet/freeze', { method: 'POST', body: JSON.stringify({ reason, reason_ko: reasonKo, affected_repos: affectedRepos }) }),
+  fleetForceVersion: (minVersion: string, releaseRing: string, deadline: string, reason: string) =>
+    request<any>('/api/fleet/force-version', { method: 'POST', body: JSON.stringify({ min_version: minVersion, release_ring: releaseRing, deadline, reason }) }),
+  fleetApprovals: () => request<any[]>('/api/fleet/approvals'),
+  fleetImpact: (action: string, scope: string) =>
+    request<any>(`/api/fleet/impact?action=${action}&scope=${scope}`),
+  fleetStatus: () => request<any>('/api/fleet/status'),
 
   // SCM
   repoHeatmap: () => request<any[]>('/api/scm/heatmaps'),

@@ -377,9 +377,17 @@ func (s *Server) setupRouter() {
 
 		// Fleet Operations
 		r.Route("/fleet", func(r chi.Router) {
-			r.Get("/inventory", s.handleFleetInventory)
+			r.Get("/inventory", s.handleFleetInventoryQuery)
 			r.Get("/sessions/{id}/inspect", s.handleInspectSession)
 			r.Post("/actions", s.handleFleetAction)
+			r.Post("/actions/bulk", s.handleFleetBulkAction)
+			r.Get("/actions", s.handleFleetActionHistory)
+			r.Post("/freeze", s.handleFleetChangeFreeze)
+			r.Post("/force-version", s.handleFleetForceVersion)
+			r.Get("/harnesses/{id}/snapshot", s.handleFleetSnapshot)
+			r.Get("/approvals", s.handleFleetApprovals)
+			r.Get("/impact", s.handleFleetImpactPreview)
+			r.Get("/status", s.handleFleetStatus)
 		})
 
 		// Git/SCM
