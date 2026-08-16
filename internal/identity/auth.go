@@ -120,7 +120,18 @@ func (a *AuthService) BootstrapAdmin(email, password, orgID string) error {
 	var count int64
 	a.db.Model(&AdminCredentials{}).Count(&count)
 	if count > 0 {
-		return nil // already bootstrapped
+		// Already bootstrapped: a re-bootstrap for the SAME email resets
+		// that admin's password (the operator's first-run recovery
+		// path); it never creates a second admin or touches others.
+		var existing AdminCredentials
+		if err := a.db.Where("email = ?", email).First(&existing).Error; err == nil {
+			hash, herr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+			if herr != nil {
+				return fmt.Errorf("auth: hash password: %w", herr)
+			}
+			return a.db.Model(&existing).Update("password", string(hash)).Error
+		}
+		return nil // different email, org already bootstrapped
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
