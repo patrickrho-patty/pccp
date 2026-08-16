@@ -136,8 +136,11 @@ func TestWorkerAgentRegistersAndRenewsLease(t *testing.T) {
 		return ok && after.LastSeen.After(before.LastSeen)
 	})
 
-	if got := agent.LastOutcome; got != scheduler.OutcomeAdmitted {
-		t.Fatalf("last outcome %s (%s)", got, agent.LastReason)
+	agent.mu.Lock()
+	got, reason := agent.LastOutcome, agent.LastReason
+	agent.mu.Unlock()
+	if got != scheduler.OutcomeAdmitted {
+		t.Fatalf("last outcome %s (%s)", got, reason)
 	}
 }
 

@@ -459,3 +459,68 @@ Naming/blockers/docs: `6d6951f`, `20da560`, `981775c`, `8d323d8`.
 
 *Generated for validation against the plan of record. Every "implemented"
 claim above is backed by committed code + tests on forge/pccp-fabric @ 8d323d8.*
+
+## 11. Deep Review Pass (post-completion audit)
+
+A full spec-drift + correctness review of every plan-of-record was run after
+completion. **13 findings fixed** (all with regression tests where
+applicable); the entire test suite now passes with `-race` across all 43
+packages.
+
+### Fixed findings
+
+| # | Severity | Area | Finding → Fix |
+|---|----------|------|---------------|
+| 1 | Critical | S2 queue | `queue.Queue` claimed concurrency safety but had no mutex — gateway `Submit` raced the dispatch loop on heap/map internals (caught by `-race`). → Full serialization via internal mutex; contract now true. |
+| 2 | Critical | §13.14 | Gateway trusted the client `X-Tenant-ID` header for the per-tenant model allow-list; the signed envelope's TenantID was discarded — tenant impersonation path for anything reaching the gateway. → Envelope is authoritative; header conflict = 403. Regression tests added. |
+| 3 | High | web/15 D | Image allowlist used `strings.HasPrefix` — `patty/sandbox` admitted `patty/sandbox-evil`. → Exact repository-part match with optional tag pin or `:*` wildcard. Table-driven tests incl. prefix tricks. |
+| 4 | High | web/25 B | TOTP: MFA-code failures bypassed the login throttle (unthrottled 10^6 grind with a stolen password); zero clock-skew tolerance; double `Login` call; MFA rotation without proving the current code. → ±30s skew + constant-time compare, code failures throttle, single Login, rotation requires current code, bounded throttle maps. |
+| 5 | High | web/17 E | SIEM cursor advanced over random UUID ids — silently skipped most audit events. → Cursor over the per-org monotonic `chain_seq`; bounded HTTP client so a hung SIEM can't stall the background ticker. Regression test proves full delivery. |
+| 6 | High | web/20 A2 | Receipt verifier re-derived an *invented* hash chain (`pccp-chain|` seed over ActionEnvelopes) that mismatched every real F.9 receipt — every legitimate receipt would have shown `chain_root_mismatch`. → Real COSE-Sign1 verification over the canonical receipt fields via `provenance.VerifyReceiptSignature`; tamper regression test. |
+| 7 | High | web/06 | Epoch publish superseded the old epoch *before* creating the new one — a failure between the statements left the org with zero active epochs (all session opens fail-closed, permanently). → Supersede+create in one transaction. |
+| 8 | Medium | web/01 | Enrollment-code consume was read-`Used`-then-write — double-redeem window. → Atomic `UPDATE … WHERE used = false` as the gate. |
+| 9 | Medium | web/13 | Broadcast ack read-modify-wrote `AcksJSON` — concurrent acks lost updates. → Row-locked transaction + idempotent re-ack. |
+| 10 | Medium | web/24 | Portal token traveled in the URL query string (access logs, browser history, proxies). → `Authorization: Bearer` header (query param kept for compat). |
+| 11 | Low | web/19 | Attribution aggregation consumed spans in unordered DB order, but the AI→human vs human→AI state machine is order-sensitive. → Chronological `created_at` ordering. |
+| 12 | Critical | S1→S2 wiring | `Dispatcher.SetSelector` wrote `d.selector` unlocked while the dispatch loop read it (caught by `-race` on the full tree). → Lock-protected install. |
+| 13 | Low | pia test | Test read `LastOutcome` without the agent lock (race with the heartbeat goroutine). → Locked test read. |
+
+### Verified clean (no drift)
+
+- **§12.3.1 cost model** — router implements the locked formula (one noted
+  nuance: the code clamps `newPrompt − overlap` at 0 *before* adding
+  `activePrefill` — more conservative than the spec's clamp of the total,
+  behaviorally equivalent under the invariant overlap ≤ input tokens).
+- **§12.3.2 affinity-as-preference** — discount only while healthy; overloaded
+  workers are filtered before the discount applies.
+- **§12.3.4/§13.5 DRR** — token-debit at admission, weight-scaled quanta
+  (10/6/2/1), strict class priority, work-conserving, O(1) rotation.
+- **§12.3.7 two-layer overload** — edge gate before enqueue (shed batch /
+  wait interactive) + worker-local caps.
+- **§12.3.8 autoscale inputs** — tokens+latency only; never raw GPU util.
+- **§12.3.9 MTP** — accepted-token capacity model present.
+- **§12.3.10 aggregated-first** — aggregated default; P/D conditional; SGLang
+  split-role refusal.
+- **§13.10 batch slack-only** — DispatchOne gated on slack; pause/resume.
+- **§13.11 KV journal** — PIA append-only journal + per-worker dedup watermark.
+- **§13.14 signed classes** — envelope-only resolution, fail-closed to batch.
+- **§14 row 16 gangs** — TP/EP complete-gang readiness; DP independent.
+- **Harness A handshake** — proof → profile validation → standing gate →
+  mid-auth revocation check; org attribution from the credential only.
+- **Webhooks** — HMAC-SHA256 constant-time compare, fail-closed on missing sig.
+- **Offboard** — soft status + session close + harness trim + evidence
+  confirmation; the relay standing gate can't be bypassed by row deletion
+  (offboard never deletes rows).
+- **Frontend phantom-data sweep** — the `id:` literals flagged by grep are
+  tab definitions, form-state initializers, and the DLP lexicon templates;
+  no page renders fabricated records.
+
+### Documented residuals (not fixed, by judgment)
+
+- Seat-limit enforcement is count-then-create (TOCTOU on the billing limit);
+  a serializable transaction or trigger would close it. Not security-
+  critical; noted.
+- Relay tool enforcement reads the org's tool registry per action envelope
+  (correct, one indexed query; a TTL cache would shave the hot path).
+- `AuthorizePeer`'s comment says full PPC verification is a follow-up; it is
+  implemented in the handshake — comment is stale, code is current.

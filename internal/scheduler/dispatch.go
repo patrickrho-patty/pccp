@@ -152,8 +152,13 @@ func NewDispatcher(q *queue.Queue) *Dispatcher {
 func (d *Dispatcher) Queue() *queue.Queue { return d.queue }
 
 // SetSelector installs the worker selector and wakes the dispatch loop.
+// The write takes the dispatcher lock: the dispatch loop reads
+// d.selector concurrently (worker registration can race an in-flight
+// drain).
 func (d *Dispatcher) SetSelector(s *WorkerSelector) {
+	d.mu.Lock()
 	d.selector = s
+	d.mu.Unlock()
 	d.wakeDispatch()
 }
 
