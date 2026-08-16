@@ -9,6 +9,7 @@ export default function Login() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [ssoMode, setSsoMode] = useState<'none' | 'oidc' | 'saml'>('none')
+  const [showPassword, setShowPassword] = useState(false)
   const [oidcForm, setOidcForm] = useState({ issuer: '', client_id: '' })
   const [samlForm, setSamlForm] = useState({ idp_entity_id: '', idp_sso_url: '' })
   const [showMfa, setShowMfa] = useState(false)
