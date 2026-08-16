@@ -89,9 +89,9 @@
         },
         {
           "capability": "ai-open-idempotency-and-replay-window (§42.1)",
-          "test": "TestHeaderRoundTripDeterministic",
+          "test": "TestRunnerCase9EffectIdempotency",
           "normative_requirement": "§42.1 idempotent replay of cached responses + bounded record replay window",
-          "deployment_mode": "in-process (header codec pinned) + relay listener cache/window (TestAIOpenCacheReplay, TestReplayWindowDropsDuplicates in internal/relay)",
+          "deployment_mode": "runner idempotency semantics + header codec determinism (internal/dari TestHeaderRoundTripDeterministic) + relay cache/window (internal/relay TestAIOpenCacheReplay, TestReplayWindowDropsDuplicates)",
           "result": "PASS"
         },
         {
