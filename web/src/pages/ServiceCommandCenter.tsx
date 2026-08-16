@@ -15,6 +15,8 @@ export default function ServiceCommandCenter() {
   const [accounts, setAccounts] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null)
+  const [supportCases, setSupportCases] = useState<any[]>([])
+  const [abuseCases, setAbuseCases] = useState<any[]>([])
 
   useEffect(() => {
     Promise.all([
@@ -23,8 +25,13 @@ export default function ServiceCommandCenter() {
       fetch('/health', { headers: authHeaders() }).then(r => r.json()).catch(() => ({})),
       fetch('/api/realtime/status', { headers: authHeaders() }).then(r => r.json()).catch(() => ({})),
       fetch('/api/telemetry/snapshot', { headers: authHeaders() }).then(r => r.json()).catch(() => ({})),
-    ]).then(([d, accts, cp, rt, tel]) => {
-      setDash(d); setAccounts(Array.isArray(accts) ? accts : []); setHealth({ cp, rt, tel }); setLoading(false)
+      fetch('/api/public/support-cases', { headers: authHeaders() }).then(r => r.json()).catch(() => []),
+      fetch('/api/public/abuse-cases', { headers: authHeaders() }).then(r => r.json()).catch(() => []),
+    ]).then(([d, accts, cp, rt, tel, sc, ab]) => {
+      setDash(d); setAccounts(Array.isArray(accts) ? accts : []); setHealth({ cp, rt, tel })
+      setSupportCases(Array.isArray(sc) ? sc : [])
+      setAbuseCases(Array.isArray(ab) ? ab : [])
+      setLoading(false)
     })
   }, [])
 
@@ -303,6 +310,29 @@ export default function ServiceCommandCenter() {
         ) : (
           <p className="text-xs text-gray-400 text-center py-4">이벤트 없음</p>
         )}
+      </div>
+      {/* Live case queues (11 A5 / 12 A6) */}
+      <div className="grid grid-cols-2 gap-4 mt-6">
+        <div className="card p-4">
+          <h3 className="text-sm font-semibold mb-2">지원 케이스 · Support ({supportCases.filter((c: any) => c.status === 'open').length} 열림)</h3>
+          {supportCases.length === 0 && <p className="text-xs text-gray-400">케이스 없음</p>}
+          {supportCases.slice(0, 8).map((c: any) => (
+            <div key={c.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+              <span className="text-gray-700 truncate">{c.subject}</span>
+              <span className="text-gray-400">{c.status} · {c.priority}</span>
+            </div>
+          ))}
+        </div>
+        <div className="card p-4">
+          <h3 className="text-sm font-semibold mb-2">어뷰즈 케이스 · Abuse ({abuseCases.filter((c: any) => c.status === 'open').length} 열림)</h3>
+          {abuseCases.length === 0 && <p className="text-xs text-gray-400">케이스 없음</p>}
+          {abuseCases.slice(0, 8).map((c: any) => (
+            <div key={c.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+              <span className="text-red-600 truncate">⚠ {c.category}</span>
+              <span className="text-gray-400">{c.status}{c.decision ? ` · ${c.decision.slice(0, 24)}` : ''}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )

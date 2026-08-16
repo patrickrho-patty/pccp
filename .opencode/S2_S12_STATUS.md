@@ -39,3 +39,23 @@ tested, and committed. Full suite: go build + go vet + go test ./... green
 ## Blockers
 - blockers.md has entries: audit flake (resolved), sandbox Docker flake
   (environmental).
+
+
+## Web feature plans (docs/feature-plans/web/00-26) — ALL DONE
+All 27 web plans (00 cross-cutting + 26 pages) are implemented on
+forge/pccp-fabric. Backend verticals + frontends per page:
+- 00 cross-cutting: shared infra (favorites/server-table/StatCard/
+  EntitySelect/⌘K/theme/motion/responsive/search/detail routes)
+- 01 users, 02 sessions, 03 harnesses, 04 projects, 05 repositories,
+  06 policy, 07 security, 08 compliance, 09 fleet, 10 sre, 11 scc,
+  12 subscriber-management, 13 communications, 14 tools, 15 sandboxes,
+  16 analytics, 17 audit, 18 model-infra, 19 code-explorer,
+  20 provenance, 21 live-view, 22 enterprise-features, 23 dashboard,
+  24 account-portal, 25 login (TOTP MFA + throttle), 26 bootstrap.
+Blockers logged in blockers.md #3-#6 (operator SSO, PSP, harness-side
+telemetry, PIA-side load verification — all cross-repo/dependency).
+
+## Paper plans — ALL DONE (see commits 644e466..adfd4f4)
+Visual-evidence 24/24, rhetoric-audit 11/11, Korean-edition QA,
+positioning superseded note. Manuscripts rebuild clean (EN/KO, zero
+warnings, fonts embedded, archive verified from a fresh unpack).
