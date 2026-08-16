@@ -333,6 +333,47 @@ export const api = {
     request<any>(`/api/fleet/impact?action=${action}&scope=${scope}`),
   fleetStatus: () => request<any>('/api/fleet/status'),
 
+  // Communications (web/13)
+  listConversations: () => request<any[]>('/api/communications/conversations'),
+  createConversation: (data: any) =>
+    request<any>('/api/communications/conversations', { method: 'POST', body: JSON.stringify(data) }),
+  openDM: (userId: string) =>
+    request<any>('/api/communications/conversations/dm', { method: 'POST', body: JSON.stringify({ user_id: userId }) }),
+  listMessages: (convId: string) => request<any[]>(`/api/communications/conversations/${convId}/messages`),
+  sendMessage: (convId: string, data: any) =>
+    request<any>(`/api/communications/conversations/${convId}/messages`, { method: 'POST', body: JSON.stringify(data) }),
+  editMessage: (id: string, content: string) =>
+    request<any>(`/api/communications/messages/${id}`, { method: 'PUT', body: JSON.stringify({ content }) }),
+  deleteMessage: (id: string, deletedBy: string) =>
+    request<any>(`/api/communications/messages/${id}`, { method: 'DELETE', body: JSON.stringify({ deleted_by: deletedBy }) }),
+  reactMessage: (id: string, emoji: string, userId: string) =>
+    request<any>(`/api/communications/messages/${id}/react`, { method: 'POST', body: JSON.stringify({ emoji, user_id: userId }) }),
+  readMessage: (id: string, userId: string) =>
+    request<any>(`/api/communications/messages/${id}/read`, { method: 'POST', body: JSON.stringify({ user_id: userId }) }),
+  linkMessage: (id: string, sessionId: string, exchangeId: string) =>
+    request<any>(`/api/communications/messages/${id}/link`, { method: 'POST', body: JSON.stringify({ session_id: sessionId, exchange_id: exchangeId }) }),
+  getPresence: () => request<any[]>('/api/communications/presence'),
+  listBroadcasts: () => request<any[]>('/api/communications/broadcasts'),
+  sendBroadcast: (data: any) =>
+    request<any>('/api/communications/broadcasts', { method: 'POST', body: JSON.stringify(data) }),
+  broadcastAcks: (id: string) => request<any>(`/api/communications/broadcasts/${id}/acks`),
+  ackBroadcast: (id: string, userId: string) =>
+    request<any>(`/api/communications/broadcasts/${id}/ack`, { method: 'POST', body: JSON.stringify({ user_id: userId }) }),
+  listFileTransfers: () => request<any[]>('/api/communications/file-transfers'),
+  createFileTransfer: (data: any) =>
+    request<any>('/api/communications/file-transfers', { method: 'POST', body: JSON.stringify(data) }),
+  uploadFileTransfer: (id: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    const token = localStorage.getItem('pccp_token')
+    const headers: Record<string, string> = {}
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    return fetch(`/api/communications/file-transfers/${id}/content`, { method: 'POST', headers, body: form })
+      .then(r => r.json())
+  },
+  transitionFileTransfer: (id: string, action: string) =>
+    request<any>(`/api/communications/file-transfers/${id}/transition`, { method: 'POST', body: JSON.stringify({ action }) }),
+
   // SCM
   repoHeatmap: () => request<any[]>('/api/scm/heatmaps'),
 

@@ -172,7 +172,7 @@ func (s *Service) AckBroadcast(broadcastID, userID string) error {
 
 	return s.db.Model(&broadcast).Updates(map[string]interface{}{
 		"ack_count": len(acks),
-		"acks":      string(acksJSON),
+		"acks_json": string(acksJSON),
 	}).Error
 }
 

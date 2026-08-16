@@ -1,352 +1,530 @@
-import { useState, useEffect, useRef } from 'react'
-import EmptyState from '../components/EmptyState'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import { EntitySelect } from '../components/EntitySelect'
+import { Modal, ModalFooter } from '../components/Modal'
+import EmptyState from '../components/EmptyState'
 import { showToast } from '../components/Toast'
+import { useFavorites, FavoriteStar } from '../hooks/useFavorites'
+
+// Communications hub (web/13 plan): real-time SSE (A1), threading/
+// mentions/reactions/read receipts (B1/B2), AI-context linking (B4),
+// broadcast ack dashboard (B5), 1:1 DM from user search (C1), system
+// commands (C3), real file transfer upload/scan/download (A3/C4).
+
+const SEVERITY_KO: Record<string, string> = { info: '안내', warning: '경고', critical: '심각', emergency: '긴급' }
+const SEVERITY_BADGE: Record<string, string> = {
+  info: 'bg-blue-50 text-blue-700 border-blue-200',
+  warning: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+  critical: 'bg-orange-50 text-orange-700 border-orange-200',
+  emergency: 'bg-red-50 text-red-700 border-red-200',
+}
+
+const TABS = [
+  { id: 'chat', label: '채팅' },
+  { id: 'broadcast', label: '방송' },
+  { id: 'files', label: '파일' },
+  { id: 'presence', label: '접속 현황' },
+]
 
 export default function Communications() {
-  const [tab, setTab] = useState<'chat' | 'broadcast' | 'files' | 'presence'>('chat')
+  const { favorites, sortPinnedFirst } = useFavorites('conversations')
+  const [tab, setTab] = useState('chat')
   const [conversations, setConversations] = useState<any[]>([])
+  const [activeConv, setActiveConv] = useState<any>(null)
   const [messages, setMessages] = useState<any[]>([])
-  const [selectedConv, setSelectedConv] = useState<string | null>(null)
-  const [newMessage, setNewMessage] = useState('')
   const [broadcasts, setBroadcasts] = useState<any[]>([])
-  const [showBroadcast, setShowBroadcast] = useState(false)
-  const [showNewConv, setShowNewConv] = useState(false)
-  const [bcForm, setBcForm] = useState({ severity: 'info', title: '', title_ko: '', body: '', body_ko: '', target_type: 'all', requires_ack: false })
-  const [convForm, setConvForm] = useState({ type: 'group', title: '', participantIds: [] as string[] })
-  const [users, setUsers] = useState<any[]>([])
+  const [transfers, setTransfers] = useState<any[]>([])
   const [presence, setPresence] = useState<any[]>([])
-  const [files, setFiles] = useState<any[]>([])
-  const [showFileTransfer, setShowFileTransfer] = useState(false)
-  const [fileForm, setFileForm] = useState({ recipient_id: '', file_name: '', classification: 'internal' })
-  const msgEndRef = useRef<HTMLDivElement>(null)
+  const [text, setText] = useState('')
+  const [replyTo, setReplyTo] = useState<any>(null)
+  const [newConvOpen, setNewConvOpen] = useState(false)
+  const [dmUser, setDmUser] = useState('')
+  const [newConvTitle, setNewConvTitle] = useState('')
+  const [broadcastOpen, setBroadcastOpen] = useState(false)
+  const [bcForm, setBcForm] = useState({ severity: 'info', title: '', title_ko: '', body: '', body_ko: '', requires_ack: false })
+  const [ackTarget, setAckTarget] = useState<any>(null)
+  const [ackDash, setAckDash] = useState<any>(null)
+  const [transferOpen, setTransferOpen] = useState(false)
+  const [transferForm, setTransferForm] = useState({ recipient_id: '', file_name: '', file_type: 'text', classification: 'internal' })
+  const [uploadTarget, setUploadTarget] = useState<any>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [linkTarget, setLinkTarget] = useState<any>(null)
+  const [linkSessionId, setLinkSessionId] = useState('')
+  const [editingMsg, setEditingMsg] = useState<any>(null)
+  const [editText, setEditText] = useState('')
+  const [unread, setUnread] = useState<Set<string>>(new Set())
 
-  const authHeaders = () => { const t = localStorage.getItem('pccp_token'); return t ? { Authorization: `Bearer ${t}` } : {} }
+  const loadAll = () => {
+    api.listConversations().then((d: any[]) => setConversations(Array.isArray(d) ? d : [])).catch(() => {})
+    api.listBroadcasts().then((d: any[]) => setBroadcasts(Array.isArray(d) ? d : [])).catch(() => {})
+    api.listFileTransfers().then((d: any[]) => setTransfers(Array.isArray(d) ? d : [])).catch(() => {})
+    api.getPresence().then((d: any[]) => setPresence(Array.isArray(d) ? d : [])).catch(() => {})
+  }
+  useEffect(() => { loadAll() }, [])
 
-  const load = () => {
-    fetch('/api/communications/conversations', { headers: authHeaders() })
-      .then(r => r.json()).then(data => setConversations(Array.isArray(data) ? data : [])).catch(() => {})
-    api.listUsers().then(data => setUsers(Array.isArray(data) ? data : []))
-    fetch('/api/communications/presence', { headers: authHeaders() })
-      .then(r => r.json()).then(data => setPresence(Array.isArray(data) ? data : [])).catch(() => {})
-    fetch('/api/communications/broadcasts', { headers: authHeaders() })
-      .then(r => r.json()).then(data => setBroadcasts(Array.isArray(data) ? data : [])).catch(() => {})
+  const loadMessages = (conv: any) => {
+    setActiveConv(conv)
+    api.listMessages(conv.id).then((d: any[]) => setMessages(Array.isArray(d) ? d : [])).catch(() => setMessages([]))
   }
 
+  // SSE (A1): live fan-out for messages/broadcasts/transfers/presence.
   useEffect(() => {
-    load()
-    const interval = setInterval(load, 5000) // Poll for new messages/broadcasts
-    return () => clearInterval(interval)
-  }, [])
+    const token = localStorage.getItem('pccp_token')
+    if (!token) return
+    const sse = new EventSource(`/api/realtime/sse?token=${encodeURIComponent(token)}`)
+    sse.onmessage = (ev) => {
+      try {
+        const event = JSON.parse(ev.data)
+        switch (event.type) {
+          case 'comms.message':
+            if (activeConv && event.payload?.conversation_id === activeConv.id) {
+              setMessages(prev => {
+                const exists = prev.some(m => m.id === event.payload?.message?.id)
+                return exists ? prev : [...prev, event.payload.message]
+              })
+            }
+            setUnread(prev => { const n = new Set(prev); n.add(event.payload?.conversation_id); return n })
+            break
+          case 'comms.broadcast':
+          case 'comms.transfer':
+          case 'comms.presence':
+            loadAll()
+            break
+          default:
+            break
+        }
+      } catch { /* ignore malformed */ }
+    }
+    return () => sse.close()
+  }, [activeConv?.id])
 
-  // Auto-scroll to bottom on new messages
-  useEffect(() => { msgEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
-
-  const loadMessages = (convId: string) => {
-    setSelectedConv(convId)
-    fetch(`/api/communications/conversations/${convId}/messages`, { headers: authHeaders() })
-      .then(r => r.json()).then(data => setMessages(Array.isArray(data) ? data : [])).catch(() => setMessages([]))
-  }
-
-  // Reload messages periodically when a conversation is selected
-  useEffect(() => {
-    if (!selectedConv) return
-    loadMessages(selectedConv)
-    const interval = setInterval(() => loadMessages(selectedConv), 3000)
-    return () => clearInterval(interval)
-  }, [selectedConv])
-
-  const sendMessage = async () => {
-    if (!newMessage.trim() || !selectedConv) return
+  const send = async () => {
+    if (!activeConv || !text.trim()) return
     try {
-      await fetch(`/api/communications/conversations/${selectedConv}/messages`, {
-        method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sender_id: 'admin', sender_type: 'user', content_type: 'text', content: newMessage }),
+      await api.sendMessage(activeConv.id, {
+        sender_id: 'operator',
+        content: text,
+        parent_id: replyTo?.id || '',
       })
-      setNewMessage('')
-      showToast('메시지 전송됨', 'success')
-      loadMessages(selectedConv)
-    } catch {}
+      setText('')
+      setReplyTo(null)
+    } catch (e: any) { showToast(e?.message || '전송 실패', 'error') }
   }
 
-  const createConversation = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!convForm.title || convForm.participantIds.length === 0) { showToast('제목과 참여자를 입력하세요'); return }
+  const react = async (msg: any, emoji: string) => {
     try {
-      const res = await fetch('/api/communications/conversations', {
-        method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: convForm.type, title: convForm.title, participants: convForm.participantIds }),
-      })
-      if (res.ok) { setShowNewConv(false); setConvForm({ type: 'group', title: '', participantIds: [] }); load() }
-    } catch {}
+      await api.reactMessage(msg.id, emoji, 'operator')
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
 
-  const sendBroadcast = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const markRead = async (msg: any) => {
+    try { await api.readMessage(msg.id, 'operator') } catch { /* noop */ }
+  }
+
+  const saveEdit = async () => {
+    if (!editingMsg) return
     try {
-      await fetch('/api/communications/broadcasts', {
-        method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify(bcForm),
-      })
-      setShowBroadcast(false)
-      setBcForm({ severity: 'info', title: '', title_ko: '', body: '', body_ko: '', target_type: 'all', requires_ack: false })
-      load()
-    } catch {}
+      await api.editMessage(editingMsg.id, editText)
+      setEditingMsg(null)
+      setEditText('')
+      if (activeConv) loadMessages(activeConv)
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
 
-  const createFileTransfer = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const delMessage = async (msg: any) => {
     try {
-      await fetch('/api/communications/file-transfers', {
-        method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...fileForm, sender_id: 'admin' }),
-      })
-      setShowFileTransfer(false)
-      setFileForm({ recipient_id: '', file_name: '', classification: 'internal' })
-      load()
-    } catch {}
+      await api.deleteMessage(msg.id, 'operator')
+      if (activeConv) loadMessages(activeConv)
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
 
-  const getUserName = (id: string) => users.find(u => u.id === id)?.name_ko || users.find(u => u.id === id)?.name || id?.slice(0, 8)
+  const linkContext = async (msg: any, sessionId: string) => {
+    try {
+      await api.linkMessage(msg.id, sessionId, '')
+      showToast('AI 컨텍스트 연결 완료', 'success')
+      if (activeConv) loadMessages(activeConv)
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
 
-  const sevBadge = (s: string) => s === 'critical' || s === 'emergency' ? 'badge-red' : s === 'warning' ? 'badge-yellow' : 'badge-blue'
-  const sevLabel = (s: string) => s === 'critical' || s === 'emergency' ? '🔴 긴급' : s === 'warning' ? '⚠️ 경고' : 'ℹ️ 정보'
+  const openDM = async () => {
+    if (!dmUser) return
+    try {
+      const conv = await api.openDM(dmUser)
+      setNewConvOpen(false)
+      setDmUser('')
+      loadAll()
+      loadMessages(conv)
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
+  const createChannel = async () => {
+    if (!newConvTitle.trim()) return
+    try {
+      await api.createConversation({ type: 'channel', title: newConvTitle, participants: ['operator'] })
+      setNewConvOpen(false)
+      setNewConvTitle('')
+      loadAll()
+      showToast('채널 생성 완료', 'success')
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
+  const sendBroadcast = async () => {
+    if (!bcForm.title.trim()) {
+      showToast('제목이 필요합니다', 'error')
+      return
+    }
+    try {
+      await api.sendBroadcast(bcForm)
+      setBroadcastOpen(false)
+      setBcForm({ severity: 'info', title: '', title_ko: '', body: '', body_ko: '', requires_ack: false })
+      loadAll()
+      showToast('방송 전송 완료', 'success')
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
+  const showAcks = async (bc: any) => {
+    setAckTarget(bc)
+    try {
+      const d = await api.broadcastAcks(bc.id)
+      setAckDash(d)
+    } catch (e: any) { setAckDash(null); showToast(e?.message || '실패', 'error') }
+  }
+
+  const createTransfer = async () => {
+    if (!transferForm.file_name.trim() || !transferForm.recipient_id) {
+      showToast('받는 사람과 파일명이 필요합니다', 'error')
+      return
+    }
+    try {
+      const tr = await api.createFileTransfer({
+        sender_id: 'operator', recipient_id: transferForm.recipient_id,
+        file_name: transferForm.file_name, file_size: 0, file_type: transferForm.file_type,
+        classification: transferForm.classification,
+      })
+      setTransferOpen(false)
+      setUploadTarget(tr)
+      loadAll()
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
+  const uploadContent = async () => {
+    const file = fileRef.current?.files?.[0]
+    if (!file || !uploadTarget) {
+      showToast('파일을 선택하세요', 'error')
+      return
+    }
+    try {
+      const res = await api.uploadFileTransfer(uploadTarget.id, file)
+      if (res.scan_status === 'blocked') {
+        showToast('보안 검사 차단 — 전송이 거부되었습니다', 'error')
+      } else {
+        showToast('업로드 완료 — 검사 통과', 'success')
+      }
+      setUploadTarget(null)
+      if (fileRef.current) fileRef.current.value = ''
+      loadAll()
+    } catch (e: any) { showToast(e?.message || '업로드 실패', 'error') }
+  }
+
+  const downloadTransfer = async (tr: any) => {
+    const token = localStorage.getItem('pccp_token')
+    try {
+      const resp = await fetch(`/api/communications/file-transfers/${tr.id}/download`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}))
+        throw new Error(err.error || 'download failed')
+      }
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = tr.file_name
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e: any) { showToast(e?.message || '다운로드 실패', 'error') }
+  }
+
+  const transitionTransfer = async (tr: any, action: string) => {
+    try {
+      await api.transitionFileTransfer(tr.id, action)
+      loadAll()
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
+  const parseReactions = (msg: any): Record<string, string[]> => {
+    if (!msg.reactions) return {}
+    try { return JSON.parse(msg.reactions) } catch { return {} }
+  }
+  const parseMentions = (msg: any): string[] => {
+    if (!msg.mentions) return []
+    try { return JSON.parse(msg.mentions) } catch { return [] }
+  }
+  const parseReadBy = (msg: any): string[] => {
+    if (!msg.read_by) return []
+    try { return JSON.parse(msg.read_by) } catch { return [] }
+  }
+
+  const sortedConvs = sortPinnedFirst(conversations, c => c.id)
 
   return (
-    <div>
-      <h1 className="text-2xl font-bold mb-1">커뮤니케이션 허브 <span className="text-gray-400 text-lg font-normal">Communications Hub</span></h1>
-      <p className="text-xs text-gray-400 mb-6">실시간 채팅 · 방송 · 파일 전송 · 프레전스 · PRD §21-22</p>
+    <div className="p-6 space-y-4 page-enter">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <h2 className="text-sm font-bold">커뮤니케이션 허브 · Communications</h2>
+          <p className="text-[11px] text-gray-400">SSE 실시간 · 개발자 1:1 · 방송 확인 · 파일 전송 (검사 포함)</p>
+        </div>
+        <div className="flex gap-2">
+          <button className="btn-sm btn-primary" onClick={() => setNewConvOpen(true)}>+ 새 대화</button>
+          <button className="btn-sm btn-secondary" onClick={() => setBroadcastOpen(true)}>방송 보내기</button>
+          <button className="btn-sm btn-secondary" onClick={() => setTransferOpen(true)}>파일 전송</button>
+        </div>
+      </div>
 
-      <div className="flex gap-1 mb-6 border-b border-gray-200">
-        {[
-          { id: 'chat', label: '채팅', en: 'Chat', count: conversations.length },
-          { id: 'broadcast', label: '방송', en: 'Broadcast', count: broadcasts.length },
-          { id: 'files', label: '파일 전송', en: 'File Transfer' },
-          { id: 'presence', label: '프레전스', en: 'Presence', count: presence.length },
-        ].map(t => (
-          <button key={t.id} onClick={() => setTab(t.id as any)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === t.id ? 'border-patty-600 text-patty-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-            {t.label} {t.count !== undefined && <span className="text-xs text-gray-400">({t.count})</span>}
+      <div className="flex gap-1 border-b border-gray-200">
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`px-3 py-2 text-xs ${tab === t.id ? 'border-b-2 border-blue-600 text-blue-600 font-semibold' : 'text-gray-500'}`}>
+            {t.label}
           </button>
         ))}
       </div>
 
-      {/* CHAT TAB */}
       {tab === 'chat' && (
-        <div className="flex gap-4" style={{ height: 'calc(100vh - 250px)' }}>
-          {/* Conversation list */}
-          <div className="w-64 flex flex-col">
-            <button onClick={() => setShowNewConv(!showNewConv)} className="btn-primary text-sm mb-3">+ 새 대화</button>
-
-            {showNewConv && (
-              <form onSubmit={createConversation} className="card mb-3 p-3">
-                <input className="input text-sm mb-2" placeholder="대화 제목" value={convForm.title} onChange={e => setConvForm({ ...convForm, title: e.target.value })} />
-                <select className="input text-sm mb-2" value={convForm.type} onChange={e => setConvForm({ ...convForm, type: e.target.value })}>
-                  <option value="direct">1:1</option>
-                  <option value="group">그룹</option>
-                  <option value="channel">채널</option>
-                </select>
-                <div className="max-h-32 overflow-y-auto mb-2">
-                  {users.map(u => (
-                    <label key={u.id} className="flex items-center gap-2 text-xs py-1">
-                      <input type="checkbox" checked={convForm.participantIds.includes(u.id)}
-                        onChange={e => setConvForm({ ...convForm, participantIds: e.target.checked ? [...convForm.participantIds, u.id] : convForm.participantIds.filter(id => id !== u.id) })} />
-                      {u.name_ko || u.name}
-                    </label>
-                  ))}
-                </div>
-                <button type="submit" className="btn-primary text-xs w-full">생성</button>
-              </form>
-            )}
-
-            <div className="flex-1 overflow-y-auto">
-              {conversations.map(c => (
-                <div key={c.id} onClick={() => loadMessages(c.id)}
-                  className={`p-3 rounded cursor-pointer mb-1 ${selectedConv === c.id ? 'bg-blue-50 border-l-2 border-blue-400' : 'hover:bg-gray-50'}`}>
-                  <div className="flex items-center gap-2">
-                    <span className={`w-2 h-2 rounded-full ${c.type === 'direct' ? 'bg-blue-400' : c.type === 'channel' ? 'bg-purple-400' : 'bg-green-400'}`} />
-                    <span className="text-sm font-medium truncate">{c.title || '제목 없음'}</span>
-                  </div>
-                  <div className="text-xs text-gray-400 ml-4">{c.type}</div>
-                </div>
-              ))}
-              {conversations.length === 0 && <p className="text-xs text-gray-400 text-center py-4">대화가 없습니다</p>}
-            </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="card p-2 space-y-1">
+            {sortedConvs.length === 0 && <p className="text-[11px] text-gray-400 p-3">대화 없음 — "새 대화"로 시작하세요</p>}
+            {sortedConvs.map((c: any) => (
+              <button key={c.id} onClick={() => { setUnread(prev => { const n = new Set(prev); n.delete(c.id); return n }); loadMessages(c) }}
+                className={`w-full text-left px-2 py-2 rounded flex items-center gap-2 text-xs ${activeConv?.id === c.id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}>
+                <FavoriteStar entity="conversations" id={c.id} />
+                <span className="flex-1 truncate">{c.title || (c.type === 'direct' ? '1:1 채팅' : c.id.slice(0, 8))}</span>
+                {unread.has(c.id) && <span className="w-2 h-2 rounded-full bg-blue-600" />}
+              </button>
+            ))}
           </div>
-
-          {/* Message area */}
-          <div className="flex-1 flex flex-col card">
-            {selectedConv ? (
+          <div className="card p-3 md:col-span-2 flex flex-col max-h-[560px]">
+            {!activeConv ? (
+              <div className="flex-1 flex items-center justify-center text-xs text-gray-400">대화를 선택하세요</div>
+            ) : (
               <>
-                <div className="p-3 border-b border-gray-100">
-                  <h3 className="text-sm font-semibold">{conversations.find(c => c.id === selectedConv)?.title || '대화'}</h3>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                  {messages.map(m => (
-                    <div key={m.id} className={`flex ${m.sender_type === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[70%] rounded-lg px-3 py-2 ${m.sender_type === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}>
-                        <div className="text-xs opacity-70 mb-0.5">{getUserName(m.sender_id)} · {m.sender_type}</div>
-                        <div className="text-sm">{m.content}</div>
-                        <div className={`text-[10px] mt-0.5 ${m.sender_type === 'user' ? 'text-blue-200' : 'text-gray-400'}`}>
-                          {m.created_at?.slice(11, 16)}
-                          {m.session_id && <Link to="/sessions" className="ml-2 underline">AI 세션 연결</Link>}
+                <div className="flex-1 overflow-auto space-y-2 pr-1">
+                  {messages.filter(m => !m.deleted_by).map((m: any) => {
+                    const reactions = parseReactions(m)
+                    const mentions = parseMentions(m)
+                    const readBy = parseReadBy(m)
+                    const isCommand = m.content_type === 'command'
+                    return (
+                      <div key={m.id} className={`text-xs ${isCommand ? 'border-l-2 border-red-400 bg-red-50/50 p-2 rounded' : ''}`}
+                        onClick={() => markRead(m)}>
+                        {replyTo?.id !== m.id && m.parent_message_id && (
+                          <div className="text-[10px] text-gray-400 ml-4">↳ 답글</div>
+                        )}
+                        <div className="flex items-start gap-2">
+                          <span className="font-semibold text-gray-700">{m.sender_type === 'system' ? '시스템' : m.sender_id}</span>
+                          <span className="text-gray-500 flex-1 whitespace-pre-wrap">{m.content}</span>
+                          {m.edited && <span className="text-[9px] text-gray-400">(수정됨)</span>}
+                          {readBy.length > 0 && <span className="text-[9px] text-gray-400">읽음 {readBy.length}</span>}
+                        </div>
+                        {mentions.length > 0 && <div className="text-[10px] text-blue-600">@{mentions.join(', @')}</div>}
+                        {m.linked_session_id && (
+                          <div className="text-[10px] text-purple-600">
+                            🔗 <Link className="hover:underline" to={`/sessions/${m.linked_session_id}`}>{m.linked_session_id.slice(0, 12)}</Link>
+                          </div>
+                        )}
+                        <div className="flex gap-1 mt-0.5 text-[10px]">
+                          {Object.entries(reactions).map(([emoji, users]) => (
+                            <button key={emoji} className="px-1 rounded bg-gray-100 hover:bg-gray-200" onClick={() => react(m, emoji)}>
+                              {emoji} {users.length}
+                            </button>
+                          ))}
+                          <button className="px-1 rounded hover:bg-gray-100 text-gray-500" onClick={() => react(m, '👍')}>👍</button>
+                          <button className="px-1 rounded hover:bg-gray-100 text-gray-500" onClick={() => { setReplyTo(m); setText('') }}>답글</button>
+                          <button className="px-1 rounded hover:bg-gray-100 text-gray-500" onClick={() => { setEditingMsg(m); setEditText(m.content) }}>수정</button>
+                          <button className="px-1 rounded hover:bg-gray-100 text-gray-500" onClick={() => delMessage(m)}>삭제</button>
+                          <button className="px-1 rounded hover:bg-gray-100 text-gray-500" onClick={() => { setLinkTarget(m); setLinkSessionId('') }}>링크</button>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                  {messages.length === 0 && <p className="text-center text-gray-400 text-sm py-8">메시지가 없습니다</p>}
-                  <div ref={msgEndRef} />
+                    )
+                  })}
+                  {messages.length === 0 && <EmptyState icon="💬" title="메시지가 없습니다" message="첫 메시지를 보내보세요." />}
                 </div>
-                <div className="p-3 border-t border-gray-100 flex gap-2">
-                  <input className="input flex-1 text-sm" value={newMessage} onChange={e => setNewMessage(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && sendMessage()} placeholder="메시지 입력..." />
-                  <button onClick={sendMessage} className="btn-primary text-sm">전송</button>
+                {replyTo && (
+                  <div className="text-[10px] text-gray-500 bg-gray-50 rounded px-2 py-1 flex justify-between">
+                    <span>답글 대상: {replyTo.content.slice(0, 40)}</span>
+                    <button onClick={() => setReplyTo(null)}>✕</button>
+                  </div>
+                )}
+                <div className="flex gap-2 mt-2">
+                  <input className="input text-xs flex-1" placeholder="메시지 입력 (Enter 전송)"
+                    value={text}
+                    onChange={e => setText(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }} />
+                  <button className="btn-sm btn-primary" onClick={send}>전송</button>
                 </div>
               </>
-            ) : (
-              <div className="flex-1 flex items-center justify-center">
-                <p className="text-gray-400">대화를 선택하세요</p>
-              </div>
             )}
           </div>
         </div>
       )}
 
-      {/* BROADCAST TAB */}
       {tab === 'broadcast' && (
-        <div>
-          <div className="flex justify-between items-center mb-4">
-            <p className="text-xs text-gray-400">조직 전체 방송 · 긴급 공지 · 유지보수 안내 · PRD §22</p>
-            <button onClick={() => setShowBroadcast(!showBroadcast)} className="btn-primary text-sm">+ 방송 보내기</button>
-          </div>
-
-          {showBroadcast && (
-            <form onSubmit={sendBroadcast} className="card mb-4 p-4">
-              <div className="grid grid-cols-3 gap-3">
-                <div><label className="label">심각도</label>
-                  <select className="input" value={bcForm.severity} onChange={e => setBcForm({ ...bcForm, severity: e.target.value })}>
-                    <option value="info">ℹ️ 정보</option><option value="warning">⚠️ 경고</option><option value="critical">🔴 긴급</option><option value="emergency">🔴 비상</option>
-                  </select>
-                </div>
-                <div><label className="label">대상</label>
-                  <select className="input" value={bcForm.target_type} onChange={e => setBcForm({ ...bcForm, target_type: e.target.value })}>
-                    <option value="all">전체</option><option value="project">특정 프로젝트</option><option value="team">특정 팀</option>
-                  </select>
-                </div>
-                <div className="flex items-end"><label className="flex items-center gap-2 text-sm cursor-pointer pb-2">
-                  <input type="checkbox" checked={bcForm.requires_ack} onChange={e => setBcForm({ ...bcForm, requires_ack: e.target.checked })} className="w-4 h-4" /> 확인 필요</label>
-                </div>
+        <div className="card p-4 space-y-2">
+          {broadcasts.length === 0 && <p className="text-[11px] text-gray-400">방송 없음</p>}
+          {broadcasts.map((b: any) => (
+            <div key={b.id} className="border rounded-lg p-2 flex items-start justify-between gap-2">
+              <div>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full border ${SEVERITY_BADGE[b.severity] || ''}`}>{SEVERITY_KO[b.severity] || b.severity}</span>
+                <div className="text-xs font-semibold mt-1">{b.title_ko || b.title}</div>
+                <div className="text-[11px] text-gray-500">{b.body_ko || b.body}</div>
+                {b.requires_ack && <div className="text-[10px] text-amber-600 mt-0.5">확인 필요 · ack {b.ack_count || 0}</div>}
               </div>
-              <input className="input mt-3" placeholder="제목 · Title" value={bcForm.title} onChange={e => setBcForm({ ...bcForm, title: e.target.value })} required />
-              <input className="input mt-2" placeholder="한글 제목 · Korean Title" value={bcForm.title_ko} onChange={e => setBcForm({ ...bcForm, title_ko: e.target.value })} />
-              <textarea className="input mt-2" rows={3} placeholder="내용 · Body" value={bcForm.body} onChange={e => setBcForm({ ...bcForm, body: e.target.value })} required />
-              <textarea className="input mt-2" rows={2} placeholder="한글 내용 · Korean Body" value={bcForm.body_ko} onChange={e => setBcForm({ ...bcForm, body_ko: e.target.value })} />
-              <button type="submit" className="btn-primary text-sm mt-3">방송 전송</button>
-            </form>
-          )}
-
-          <div className="space-y-2">
-            {broadcasts.map(bc => (
-              <div key={bc.id} className={`card border-l-4 ${bc.severity === 'critical' || bc.severity === 'emergency' ? 'border-l-red-500' : bc.severity === 'warning' ? 'border-l-yellow-500' : 'border-l-blue-500'}`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className={sevBadge(bc.severity)}>{sevLabel(bc.severity)}</span>
-                    <div>
-                      <div className="text-sm font-medium">{bc.title_ko || bc.title}</div>
-                      <div className="text-xs text-gray-400">{bc.body_ko || bc.body}</div>
-                    </div>
-                  </div>
-                  <div className="text-xs text-gray-400">
-                    {bc.requires_ack && <span className="badge-yellow mr-2">확인 필요</span>}
-                    {bc.created_at?.slice(0, 16)}
-                  </div>
-                </div>
-              </div>
-            ))}
-            {broadcasts.length === 0 && <EmptyState icon="📢" title="방송 내역이 없습니다" message="방송을 보내면 여기에 표시됩니다" />}
-          </div>
+              <button className="text-[10px] px-2 py-1 rounded hover:bg-blue-50 text-blue-600" onClick={() => showAcks(b)}>확인 현황</button>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* FILES TAB */}
       {tab === 'files' && (
-        <div>
-          <div className="flex justify-between items-center mb-4">
-            <p className="text-xs text-gray-400">보안 파일 전송 · 분류별 권한 관리 · PRD §23</p>
-            <button onClick={() => setShowFileTransfer(!showFileTransfer)} className="btn-primary text-sm">+ 파일 전송</button>
-          </div>
-
-          {showFileTransfer && (
-            <form onSubmit={createFileTransfer} className="card mb-4 p-4">
-              <div className="grid grid-cols-3 gap-3">
-                <div><label className="label">받는 사람</label>
-                  <select className="input" value={fileForm.recipient_id} onChange={e => setFileForm({ ...fileForm, recipient_id: e.target.value })} required>
-                    <option value="">선택...</option>
-                    {users.map(u => <option key={u.id} value={u.id}>{u.name_ko || u.name}</option>)}
-                  </select>
-                </div>
-                <div><label className="label">파일명</label>
-                  <input className="input" value={fileForm.file_name} onChange={e => setFileForm({ ...fileForm, file_name: e.target.value })} placeholder="report.pdf" required />
-                </div>
-                <div><label className="label">분류</label>
-                  <select className="input" value={fileForm.classification} onChange={e => setFileForm({ ...fileForm, classification: e.target.value })}>
-                    <option value="public">공개</option><option value="internal">내부</option>
-                    <option value="confidential">기밀</option><option value="restricted">제한</option>
-                  </select>
+        <div className="card p-4 space-y-2">
+          {transfers.length === 0 && <p className="text-[11px] text-gray-400">파일 전송 없음</p>}
+          {transfers.map((t: any) => (
+            <div key={t.id} className="border rounded-lg p-2 flex items-center justify-between gap-2 text-[11px]">
+              <div className="min-w-0">
+                <div className="font-semibold truncate">{t.file_name}</div>
+                <div className="text-gray-400">
+                  {t.scan_status} · {t.status} · {(t.file_size || 0)}B
+                  {t.scan_findings && <span className="text-red-500"> (검사 발견)</span>}
                 </div>
               </div>
-              <button type="submit" className="btn-primary text-sm mt-3">전송</button>
-            </form>
-          )}
-
-          <div className="card">
-            {files.length === 0 ? <p className="text-gray-400 text-center py-8">파일 전송 내역이 없습니다</p> : (
-              <table className="w-full overflow-x-auto block">
-                <thead><tr className="border-b text-left text-xs text-gray-500">
-                  <th className="pb-2">파일</th><th className="pb-2">보낸 사람</th><th className="pb-2">받는 사람</th>
-                  <th className="pb-2">분류</th><th className="pb-2">상태</th><th className="pb-2">시간</th>
-                </tr></thead>
-                <tbody>
-                  {files.map(f => (
-                    <tr key={f.id} className="border-b border-gray-100 last:border-0">
-                      <td className="py-2 text-sm">{f.file_name}</td>
-                      <td className="py-2 text-xs">{getUserName(f.sender_id)}</td>
-                      <td className="py-2 text-xs">{getUserName(f.recipient_id)}</td>
-                      <td className="py-2"><span className="badge-gray">{f.classification}</span></td>
-                      <td className="py-2"><span className={f.status === 'completed' ? 'badge-green' : 'badge-yellow'}>{f.status}</span></td>
-                      <td className="py-2 text-xs text-gray-400">{f.created_at?.slice(0, 16)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
+              <div className="flex gap-1 shrink-0">
+                {t.status === 'pending' && <button className="text-[10px] px-2 py-1 rounded bg-blue-50 text-blue-600" onClick={() => setUploadTarget(t)}>업로드</button>}
+                {t.status === 'ready' && (
+                  <>
+                    <button className="text-[10px] px-2 py-1 rounded bg-green-50 text-green-600" onClick={() => transitionTransfer(t, 'accept')}>수락</button>
+                    <button className="text-[10px] px-2 py-1 rounded bg-red-50 text-red-600" onClick={() => transitionTransfer(t, 'decline')}>거절</button>
+                  </>
+                )}
+                {t.scan_status === 'clean' && <button className="text-[10px] px-2 py-1 rounded bg-gray-100" onClick={() => downloadTransfer(t)}>다운로드</button>}
+                {t.status === 'downloading' && <button className="text-[10px] px-2 py-1 rounded bg-gray-100" onClick={() => transitionTransfer(t, 'complete')}>완료</button>}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* PRESENCE TAB */}
       {tab === 'presence' && (
-        <div>
-          <p className="text-xs text-gray-400 mb-4">사용자 프레전스 · 온라인 상태 · 현재 활동 · PRD §21.3</p>
-          <div className="grid grid-cols-4 gap-3">
-            {presence.map(p => (
-              <div key={p.id || p.user_id} className="card">
-                <div className="flex items-center gap-3">
-                  <span className={`w-3 h-3 rounded-full ${p.status === 'online' ? 'bg-green-500' : p.status === 'away' ? 'bg-yellow-500' : 'bg-gray-400'}`} />
-                  <div>
-                    <Link to="/users" className="text-sm font-medium text-blue-600 hover:underline">{getUserName(p.user_id)}</Link>
-                    <div className="text-xs text-gray-400">{p.status || 'offline'}</div>
-                  </div>
-                </div>
-                {p.activity && <div className="text-xs text-gray-500 mt-1">📍 {p.activity}</div>}
-                {p.harness_id && <Link to="/harnesses" className="text-xs text-blue-600 hover:underline mt-1 block">하네스: {p.harness_id.slice(0, 15)}</Link>}
-              </div>
-            ))}
-            {presence.length === 0 && <div className="col-span-4 text-center py-12 text-gray-400">프레전스 정보가 없습니다</div>}
-          </div>
+        <div className="card p-4 space-y-1">
+          {presence.length === 0 && <p className="text-[11px] text-gray-400">접속 기록 없음</p>}
+          {presence.map((p: any) => (
+            <div key={p.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+              <span className="text-gray-700">
+                <span className={`inline-block w-2 h-2 rounded-full mr-1 ${p.status === 'online' ? 'bg-green-500' : p.status === 'away' ? 'bg-yellow-400' : 'bg-gray-300'}`} />
+                {p.user_id}
+              </span>
+              <span className="text-gray-400">{p.activity || p.status} · 최근 {(p.last_active_at || '').slice(0, 16)}</span>
+            </div>
+          ))}
         </div>
       )}
+
+      {/* New conversation / DM (C1) */}
+      <Modal open={newConvOpen} title="새 대화" onClose={() => setNewConvOpen(false)}
+        footer={<div className="flex gap-2 justify-end">
+          <button className="btn-sm btn-secondary" onClick={createChannel}>채널 생성</button>
+          <button className="btn-sm btn-primary" onClick={openDM}>1:1 시작</button>
+        </div>}>
+        <div className="space-y-2">
+          <div>
+            <label className="text-[10px] text-gray-500">개발자 선택 (1:1 채팅)</label>
+            <EntitySelect entity="user" value={dmUser} onChange={setDmUser} />
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500">채널 제목</label>
+            <input className="input text-xs w-full" value={newConvTitle} onChange={e => setNewConvTitle(e.target.value)} />
+          </div>
+        </div>
+      </Modal>
+
+      {/* Broadcast composer */}
+      <Modal open={broadcastOpen} title="방송 보내기" onClose={() => setBroadcastOpen(false)}
+        footer={<ModalFooter onCancel={() => setBroadcastOpen(false)} onConfirm={sendBroadcast} confirmLabel="전송" />}>
+        <div className="space-y-2">
+          <select className="input text-xs w-full" value={bcForm.severity} onChange={e => setBcForm({ ...bcForm, severity: e.target.value })}>
+            {Object.entries(SEVERITY_KO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+          <input className="input text-xs w-full" placeholder="제목" value={bcForm.title} onChange={e => setBcForm({ ...bcForm, title: e.target.value })} />
+          <input className="input text-xs w-full" placeholder="제목 (KO)" value={bcForm.title_ko} onChange={e => setBcForm({ ...bcForm, title_ko: e.target.value })} />
+          <textarea className="input text-xs w-full" rows={2} placeholder="본문" value={bcForm.body} onChange={e => setBcForm({ ...bcForm, body: e.target.value })} />
+          <textarea className="input text-xs w-full" rows={2} placeholder="본문 (KO)" value={bcForm.body_ko} onChange={e => setBcForm({ ...bcForm, body_ko: e.target.value })} />
+          <label className="flex items-center gap-2 text-xs text-gray-600">
+            <input type="checkbox" checked={bcForm.requires_ack} onChange={e => setBcForm({ ...bcForm, requires_ack: e.target.checked })} />
+            확인(ack) 필수
+          </label>
+        </div>
+      </Modal>
+
+      {/* Ack dashboard (B5) */}
+      <Modal open={!!ackTarget} title={`확인 현황 — ${ackTarget?.title || ''}`}
+        onClose={() => setAckTarget(null)}
+        footer={<ModalFooter onCancel={() => setAckTarget(null)} onConfirm={() => setAckTarget(null)} confirmLabel="닫기" />}>
+        {ackDash ? (
+          <div className="space-y-2 text-xs">
+            <div>확인률: {Math.round((ackDash.ack_rate || 0) * 100)}% ({ackDash.acked}/{ackDash.total_users})</div>
+            <div className="max-h-48 overflow-auto space-y-1">
+              {(ackDash.pending || []).map((p: any) => (
+                <div key={p.user_id} className="text-gray-600">{p.name_ko || p.name} ({p.email})</div>
+              ))}
+            </div>
+          </div>
+        ) : <p className="text-xs text-gray-400">로딩...</p>}
+      </Modal>
+
+      {/* Transfer composer */}
+      <Modal open={transferOpen} title="파일 전송" onClose={() => setTransferOpen(false)}
+        footer={<ModalFooter onCancel={() => setTransferOpen(false)} onConfirm={createTransfer} confirmLabel="생성" />}>
+        <div className="space-y-2">
+          <div>
+            <label className="text-[10px] text-gray-500">받는 개발자</label>
+            <EntitySelect entity="user" value={transferForm.recipient_id} onChange={v => setTransferForm({ ...transferForm, recipient_id: v })} />
+          </div>
+          <input className="input text-xs w-full" placeholder="파일명" value={transferForm.file_name} onChange={e => setTransferForm({ ...transferForm, file_name: e.target.value })} />
+          <select className="input text-xs w-full" value={transferForm.classification} onChange={e => setTransferForm({ ...transferForm, classification: e.target.value })}>
+            <option value="internal">internal</option>
+            <option value="confidential">confidential</option>
+            <option value="public">public</option>
+          </select>
+        </div>
+      </Modal>
+
+      {/* Upload content (A3) */}
+      <Modal open={!!uploadTarget} title={`업로드 — ${uploadTarget?.file_name || ''}`}
+        onClose={() => setUploadTarget(null)}
+        footer={<ModalFooter onCancel={() => setUploadTarget(null)} onConfirm={uploadContent} confirmLabel="업로드 + 검사" />}>
+        <div className="space-y-2">
+          <p className="text-[11px] text-gray-500">업로드 시 보안 콘텐츠 검사(비밀/민감 정보)가 실행되고, 발견 시 차단됩니다.</p>
+          <input ref={fileRef} type="file" className="text-xs" />
+        </div>
+      </Modal>
+
+      {/* AI-context link (B4) */}
+      <Modal open={!!linkTarget} title="AI 컨텍스트 연결 (§21.6)"
+        onClose={() => setLinkTarget(null)}
+        footer={<ModalFooter onCancel={() => setLinkTarget(null)} onConfirm={() => { linkContext(linkTarget, linkSessionId); setLinkTarget(null) }} confirmLabel="연결" />}>
+        <div className="space-y-2">
+          <p className="text-[11px] text-gray-500">메시지를 세션/익스체인지 증거에 연결합니다.</p>
+          <input className="input text-xs w-full" placeholder="세션 ID" value={linkSessionId} onChange={e => setLinkSessionId(e.target.value)} />
+        </div>
+      </Modal>
+
+      {/* Edit message */}
+      <Modal open={!!editingMsg} title="메시지 수정"
+        onClose={() => setEditingMsg(null)}
+        footer={<ModalFooter onCancel={() => setEditingMsg(null)} onConfirm={saveEdit} confirmLabel="저장" />}>
+        <textarea className="input text-xs w-full" rows={3} value={editText} onChange={e => setEditText(e.target.value)} />
+      </Modal>
     </div>
   )
 }

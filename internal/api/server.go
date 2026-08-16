@@ -334,16 +334,25 @@ func (s *Server) setupRouter() {
 		r.Route("/communications", func(r chi.Router) {
 			r.Get("/conversations", s.handleListConversations)
 			r.Post("/conversations", s.handleCreateConversation)
+			r.Post("/conversations/dm", s.handleConversationDM)
 			r.Get("/conversations/{id}/messages", s.handleListMessages)
-			r.Post("/conversations/{id}/messages", s.handleSendMessage)
+			r.Post("/conversations/{id}/messages", s.handleSendMessageExtended)
+			r.Put("/messages/{id}", s.handleMessageEdit)
+			r.Delete("/messages/{id}", s.handleMessageDelete)
+			r.Post("/messages/{id}/react", s.handleMessageReact)
+			r.Post("/messages/{id}/read", s.handleMessageRead)
+			r.Post("/messages/{id}/link", s.handleMessageLink)
 			r.Get("/presence", s.handleGetPresence)
 			r.Post("/presence", s.handleUpdatePresence)
 			r.Post("/broadcasts", s.handleSendBroadcast)
 			r.Get("/broadcasts", s.handleListBroadcasts)
+			r.Get("/broadcasts/{id}/acks", s.handleBroadcastAcks)
+			r.Post("/broadcasts/{id}/ack", s.handleBroadcastAck)
 			r.Post("/file-transfers", s.handleCreateFileTransfer)
 			r.Get("/file-transfers", s.handleListFileTransfers)
-			r.Get("/presence", s.handleGetPresence)
-			r.Post("/presence", s.handleUpdatePresence)
+			r.Post("/file-transfers/{id}/content", s.handleFileTransferUpload)
+			r.Get("/file-transfers/{id}/download", s.handleFileTransferDownload)
+			r.Post("/file-transfers/{id}/transition", s.handleFileTransferTransition)
 		})
 
 		// Work Intelligence
@@ -551,6 +560,11 @@ func (s *Server) ListenAndServe(addr string) error {
 			// track the real system as features ship.
 			if n := s.ext().Compliance.ContinuousReassess(7 * 24 * time.Hour); n > 0 {
 				log.Printf("api: re-assessed %d compliance targets", n)
+			}
+			// Comms retention (web/13 C5): purge soft-deleted messages
+			// and expired transfers with their stored content.
+			if n := s.sweepCommsRetention(); n > 0 {
+				log.Printf("api: comms retention purged %d items", n)
 			}
 		}
 	}()
@@ -2613,6 +2627,17 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// C2: privacy-aware separation — viewer-role operators get
+	// metadata only (content + context links redacted); elevated roles
+	// read full content.
+	if getRole(r) == "viewer" {
+		for i := range messages {
+			messages[i].Content = "[redacted]"
+			messages[i].ContentEncrypted = "[redacted]"
+			messages[i].LinkedSessionID = ""
+			messages[i].LinkedExchangeID = ""
+		}
+	}
 	writeJSON(w, http.StatusOK, messages)
 }
 
@@ -2636,6 +2661,9 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.commsBroadcast(getOrgID(r), "comms.message", map[string]interface{}{
+		"conversation_id": convID, "message": msg,
+	})
 	writeJSON(w, http.StatusCreated, msg)
 }
 
