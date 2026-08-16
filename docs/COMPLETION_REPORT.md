@@ -534,9 +534,15 @@ all fixed and regression-tested where applicable:
 | 22 | Low | api | Unbounded intake: CSV import (now 5 MiB / 50k rows) and fleet bulk (500 targets). |
 | 23 | Low | web | 22 silent `catch {}` action handlers gave no failure feedback. → Error toasts across 6 pages. |
 
-Round 3 (verification only) confirmed: `go vet` clean, 43/43 packages
-green, **zero data races tree-wide under `-race -count=2`**, web build
-green, and the two new semantics tests + BOLA regression pass.
+Round 3 (verification) additionally hardened test determinism — the
+relay package's shared-cache in-memory DB was keyed by a fixed name
+(`-count>1` reruns collided on name-keyed fixtures), and the audit
+concurrency test assumed a fixed insert count under load. Both fixed;
+the MFA tests reset their in-memory guards for reruns.
+
+**Final gate (all green):** `gofmt` clean · `go vet` clean · `go build`
+clean · `go test -race -count=2` 43/43 packages, zero data races, zero
+flakes · `npm run build` green.
 
 ### Documented residuals (not fixed, by judgment)
 
