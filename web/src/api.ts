@@ -371,6 +371,34 @@ export const api = {
     return fetch(`/api/communications/file-transfers/${id}/content`, { method: 'POST', headers, body: form })
       .then(r => r.json())
   },
+  // Tools (web/14)
+  listTools: () => request<any[]>('/api/tools'),
+  registerTool: (data: any) =>
+    request<any>('/api/tools', { method: 'POST', body: JSON.stringify(data) }),
+  updateTool: (id: string, data: any) =>
+    request<any>(`/api/tools/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  seedTools: () => request<{ added: number }>('/api/tools/seed-defaults', { method: 'POST' }),
+  toolPresets: () => request<any>('/api/tools/presets'),
+  toolApprovals: () => request<any[]>('/api/tools/approvals'),
+  decideToolApproval: (id: string, decision: string, reviewerId: string) =>
+    request<any>(`/api/tools/approvals/${id}/decide`, { method: 'POST', body: JSON.stringify({ decision, reviewer_id: reviewerId }) }),
+  getProjectToolAllowlist: (projectId: string) =>
+    request<any[]>(`/api/projects/${projectId}/tool-allowlist`),
+  // Sandboxes (web/15)
+  listSandboxes: () => request<any[]>('/api/sandboxes'),
+  createSandbox: (data: any) =>
+    request<any>('/api/sandboxes', { method: 'POST', body: JSON.stringify(data) }),
+  destroySandbox: (id: string) =>
+    request<any>(`/api/sandboxes/${id}/destroy`, { method: 'POST' }),
+  snapshotSandbox: (id: string) =>
+    request<any>(`/api/sandboxes/${id}/snapshot`, { method: 'POST' }),
+  getSandboxImageAllowlist: () => request<{ images: string[]; enforced: boolean }>('/api/sandboxes/image-allowlist'),
+  setSandboxImageAllowlist: (images: string[]) =>
+    request<any>('/api/sandboxes/image-allowlist', { method: 'PUT', body: JSON.stringify({ images }) }),
+
+  setProjectToolAllowlist: (projectId: string, toolNames: string[]) =>
+    request<any>(`/api/projects/${projectId}/tool-allowlist`, { method: 'PUT', body: JSON.stringify({ tool_names: toolNames, granted_by: 'admin' }) }),
+
   transitionFileTransfer: (id: string, action: string) =>
     request<any>(`/api/communications/file-transfers/${id}/transition`, { method: 'POST', body: JSON.stringify({ action }) }),
 

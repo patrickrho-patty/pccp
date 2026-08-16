@@ -94,6 +94,7 @@ func AllModels() []interface{} {
 		&User{},
 		&Role{},
 		&UserRole{},
+		&ProjectToolAllowlist{},
 		&Device{},
 		&Harness{},
 		&EnrollmentCode{},
@@ -160,4 +161,15 @@ func AllModels() []interface{} {
 		&EnterpriseHarnessFeature{},
 		&EnterpriseFeatureViolation{},
 	}
+}
+
+// ProjectToolAllowlist is the per-project tool allowlist (web/14
+// feature 7): a project may further restrict which registered tools
+// its sessions may call.
+type ProjectToolAllowlist struct {
+	Base
+	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
+	ProjectID      string `gorm:"type:varchar(64);index;not null" json:"project_id"`
+	ToolName       string `gorm:"type:varchar(128);not null" json:"tool_name"`
+	GrantedBy      string `gorm:"type:varchar(64)" json:"granted_by,omitempty"`
 }

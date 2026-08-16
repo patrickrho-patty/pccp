@@ -25,6 +25,7 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/provenance"
 	"github.com/patrickrho-patty/pccp/internal/realtime"
 	"github.com/patrickrho-patty/pccp/internal/security"
+	"github.com/patrickrho-patty/pccp/internal/tools"
 	"github.com/patrickrho-patty/pccp/internal/workintel"
 	"gorm.io/gorm"
 )
@@ -42,6 +43,7 @@ type Service struct {
 	identity   *identity.Service
 	policy     *policy.Service
 	catalog    *catalog.Service
+	tools      *tools.Service
 	forwarder  inferenceForwarder
 	cpURL      string
 	relayID    string
@@ -148,6 +150,7 @@ func New(db *gorm.DB, cpURL, relayID string) (*Service, error) {
 		identity:   identitySvc,
 		policy:     policySvc,
 		catalog:    catalogSvc,
+		tools:      tools.New(db),
 		cpURL:      cpURL,
 		relayID:    relayID,
 		httpClient: &http.Client{Timeout: 120 * time.Second},

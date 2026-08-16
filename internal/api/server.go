@@ -226,6 +226,8 @@ func (s *Server) setupRouter() {
 			r.Put("/{id}", s.handleUpdateProject)
 			r.Delete("/{id}", s.handleDeleteProject)
 			r.Post("/{id}/restore", s.handleRestoreProject)
+			r.Get("/{id}/tool-allowlist", s.wrapProjectToolAllowlist(s.ext()))
+			r.Put("/{id}/tool-allowlist", s.wrapProjectToolAllowlist(s.ext()))
 			r.Get("/{id}/archive-impact", s.handleProjectArchiveImpact)
 			r.Get("/{id}/usage", s.handleProjectUsage)
 			r.Get("/{id}/members", s.handleListProjectMembers)
@@ -433,6 +435,8 @@ func (s *Server) setupRouter() {
 			r.Post("/", s.handleCreateSandbox)
 			r.Post("/{id}/destroy", s.handleDestroySandbox)
 			r.Post("/{id}/snapshot", s.handleForensicSnapshot)
+			r.Get("/image-allowlist", s.handleSandboxImageAllowlist)
+			r.Put("/image-allowlist", s.handleSandboxImageAllowlist)
 		})
 
 		// Events
@@ -1940,6 +1944,15 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 	if err := s.identity.CloseSession(sess.SessionID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// Auto-teardown (web/15 feature 10): sandboxes bound to the session
+	// are destroyed with it (best-effort — statuses recorded honestly).
+	var bound []models.SandboxRecord
+	s.db.Where("organization_id = ? AND session_id = ?", orgID, sess.SessionID).Find(&bound)
+	for _, sb := range bound {
+		if sb.Status != "destroyed" {
+			_, _ = s.sandbox.DestroySandbox(sb.ID)
+		}
 	}
 	s.ext().Realtime.NotifySessionUpdate(orgID, sess.SessionID, "closed")
 	s.db.Create(&models.AuditEvent{

@@ -1,267 +1,276 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
-import { FilterBar, useFilteredData, FilterConfig } from '../components/FilterBar'
+import { Modal, ModalFooter } from '../components/Modal'
+import EmptyState from '../components/EmptyState'
 import { showToast } from '../components/Toast'
-import { useConfirm } from '../components/useConfirm'
+import { useFavorites, FavoriteStar } from '../hooks/useFavorites'
 
-const FILTER_CONFIG: FilterConfig = {
-  searchFields: ['name', 'name_ko', 'tool_class'],
-  searchPlaceholder: '도구명으로 검색...',
-  dropdowns: [
-    { key: 'category', label: '분류', options: [
-      { value: 'read', label: 'Read' }, { value: 'write', label: 'Write' },
-      { value: 'execute', label: 'Execute' }, { value: 'network', label: 'Network' },
-    ]},
-    { key: 'danger_level', label: '위험도', options: [
-      { value: 'low', label: '낮음' }, { value: 'medium', label: '중간' },
-      { value: 'high', label: '높음' }, { value: 'critical', label: '치명적' },
-    ]},
-  ],
+// Tools page (web/14 plan): the Tool Registry — governance metadata
+// that the relay enforces on the live path (A). Includes the approvals
+// queue (B), MCP cross-link (C), classification presets + wizard (D),
+// seed feedback (UX2), per-project allowlist (feature 7).
+
+const DANGER_KO: Record<string, string> = { low: '낮음', medium: '중간', high: '높음', critical: '심각' }
+const DANGER_BADGE: Record<string, string> = {
+  low: 'bg-green-50 text-green-700 border-green-200',
+  medium: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+  high: 'bg-orange-50 text-orange-700 border-orange-200',
+  critical: 'bg-red-50 text-red-700 border-red-200',
+}
+const DANGER_HELP: Record<string, string> = {
+  low: '읽기 전용 — 기본 허용 가능',
+  medium: '수정 가능 — 감사 기록됨',
+  high: '삭제/실행 — 승인 필요 권장',
+  critical: '인프라/네트워크 — 항상 승인 필요',
 }
 
-export default function Tools() {
-  const confirm = useConfirm()
-  const [tools, setTools] = useState<any[]>([])
-  const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
-  const [showForm, setShowForm] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [form, setForm] = useState({
-    name: '', name_ko: '', category: 'read', tool_class: '', danger_level: 'low', requires_approval: false,
-  })
-  const [approvals, setApprovals] = useState<any[]>([])
+const TABS = [
+  { id: 'registry', label: '도구 레지스트리' },
+  { id: 'approvals', label: '승인 대기' },
+  { id: 'allowlist', label: '프로젝트 허용 목록' },
+]
 
-  const authHeaders = () => {
-    const token = localStorage.getItem('pccp_token')
-    return token ? { Authorization: `Bearer ${token}` } : {}
-  }
+export default function Tools() {
+  const { favorites, sortPinnedFirst } = useFavorites('tools')
+  const [tab, setTab] = useState('registry')
+  const [tools, setTools] = useState<any[]>([])
+  const [approvals, setApprovals] = useState<any[]>([])
+  const [presets, setPresets] = useState<any>(null)
+  const [projects, setProjects] = useState<any[]>([])
+  const [selectedProject, setSelectedProject] = useState('')
+  const [allowlist, setAllowlist] = useState<any[]>([])
+  const [allToolNames, setAllToolNames] = useState<string[]>([])
+  const [formOpen, setFormOpen] = useState(false)
+  const [form, setForm] = useState({ name: '', name_ko: '', category: 'read', tool_class: 'read', danger_level: 'low', requires_approval: false })
+  const [filterCat, setFilterCat] = useState('')
+  const [filterDanger, setFilterDanger] = useState('')
 
   const load = () => {
-    api.listTools().then(data => setTools(Array.isArray(data) ? data : []))
-    api.listToolApprovals().then(data => setApprovals(Array.isArray(data) ? data : [])).catch(() => {})
+    api.listTools().then((d: any[]) => {
+      const list = Array.isArray(d) ? d : []
+      setTools(list)
+      setAllToolNames(list.map((t: any) => t.name))
+    }).catch(() => {})
+    api.toolApprovals().then((d: any[]) => setApprovals(Array.isArray(d) ? d : [])).catch(() => {})
+    api.toolPresets().then(setPresets).catch(() => {})
+    api.listProjects().then((d: any[]) => setProjects(Array.isArray(d) ? d : [])).catch(() => {})
   }
   useEffect(() => { load() }, [])
 
-  const filtered = useFilteredData(tools, filters, FILTER_CONFIG)
-
-  const seed = async () => { await api.seedTools(); load() }
-
-  const dangerBadge = (d: string) => {
-    const m: Record<string,string> = { low: 'badge-green', medium: 'badge-blue', high: 'badge-yellow', critical: 'badge-red' }
-    return m[d] || 'badge-gray'
-  }
-  const dangerLabel = (d: string) => {
-    const m: Record<string,string> = { low: '낮음', medium: '중간', high: '높음', critical: '치명적' }
-    return m[d] || d
-  }
-  const categoryLabel = (c: string) => {
-    const m: Record<string,string> = { read: '읽기', write: '쓰기', execute: '실행', network: '네트워크', search: '검색', git: 'Git', test: '테스트' }
-    return m[c] || c
+  const loadAllowlist = (projectId: string) => {
+    if (!projectId) { setAllowlist([]); return }
+    api.getProjectToolAllowlist(projectId).then((d: any[]) => setAllowlist(Array.isArray(d) ? d : [])).catch(() => setAllowlist([]))
   }
 
-  const createOrUpdate = async () => {
-    if (!form.name || !form.tool_class) { showToast('도구명과 클래스는 필수입니다'); return }
+  const seed = async () => {
     try {
-      if (editingId) {
-        await fetch(`/api/tools/${editingId}`, {
-          method: 'PUT',
-          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-          body: JSON.stringify(form),
-        })
-      } else {
-        await fetch('/api/tools', {
-          method: 'POST',
-          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-          body: JSON.stringify(form),
-        })
-      }
-      setShowForm(false)
-      setEditingId(null)
-      setForm({ name: '', name_ko: '', category: 'read', tool_class: '', danger_level: 'low', requires_approval: false })
+      const res = await api.seedTools()
+      showToast(res.added > 0 ? `기본 도구 ${res.added}개 등록 완료` : '이미 모두 등록되어 있습니다 (0개 추가)', 'info')
       load()
-    } catch (e) { showToast('오류: ' + e) }
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
 
-  const startEdit = (t: any) => {
-    setEditingId(t.id)
-    setForm({
-      name: t.name || '', name_ko: t.name_ko || '',
-      category: t.category || 'read', tool_class: t.tool_class || '',
-      danger_level: t.danger_level || 'low', requires_approval: t.requires_approval || false,
-    })
-    setShowForm(true)
-  }
-
-  const handleDelete = async (t: any) => {
-    if (!await confirm({ title: '확인', message: `"${t.name}" 도구를 삭제하시겠습니까?`, danger: true })) return
+  const register = async () => {
+    if (!form.name.trim()) {
+      showToast('도구 이름이 필요합니다', 'error')
+      return
+    }
     try {
-      await fetch(`/api/tools/${t.id}`, { method: 'DELETE', headers: authHeaders() })
+      await api.registerTool(form)
+      showToast('도구 등록 완료 — 릴레이가 요청 시점에 강제합니다', 'success')
+      setFormOpen(false)
+      setForm({ name: '', name_ko: '', category: 'read', tool_class: 'read', danger_level: 'low', requires_approval: false })
       load()
-    } catch {}
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
 
   const toggleApproval = async (t: any) => {
     try {
-      await fetch(`/api/tools/${t.id}`, {
-        method: 'PUT',
-        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...t, requires_approval: !t.requires_approval }),
-      })
+      await api.updateTool(t.id, { requires_approval: !t.requires_approval })
       load()
-    } catch {}
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
 
-  const stats = {
-    total: tools.length,
-    requiringApproval: tools.filter(t => t.requires_approval).length,
-    highRisk: tools.filter(t => t.danger_level === 'high' || t.danger_level === 'critical').length,
-    byCategory: tools.reduce((acc, t) => { acc[t.category] = (acc[t.category] || 0) + 1; return acc }, {} as Record<string, number>),
+  const decide = async (a: any, decision: string) => {
+    try {
+      await api.decideToolApproval(a.id, decision, 'admin')
+      showToast(decision === 'approved' ? '승인 완료' : '거절 완료', 'success')
+      load()
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
+
+  const saveAllowlist = async () => {
+    if (!selectedProject) {
+      showToast('프로젝트를 선택하세요', 'error')
+      return
+    }
+    const names = allToolNames.filter(n => allowlist.some((r: any) => r.tool_name === n))
+    try {
+      await api.setProjectToolAllowlist(selectedProject, names)
+      showToast('허용 목록 저장 완료', 'success')
+      loadAllowlist(selectedProject)
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
+  const toggleAllowlistTool = (name: string) => {
+    setAllowlist(prev => {
+      const exists = prev.some((r: any) => r.tool_name === name)
+      if (exists) return prev.filter((r: any) => r.tool_name !== name)
+      return [...prev, { tool_name: name }]
+    })
+  }
+
+  const filtered = tools.filter(t =>
+    (!filterCat || t.category === filterCat) && (!filterDanger || t.danger_level === filterDanger))
+  const sorted = sortPinnedFirst(filtered, t => t.id)
 
   return (
-    <div>
-      <div className="flex justify-between items-center mb-6">
+    <div className="p-6 space-y-4 page-enter">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold">도구 관리 <span className="text-gray-400 text-lg font-normal">Tool Registry</span></h1>
-          <p className="text-xs text-gray-400 mt-1">하네스가 실행할 수 있는 도구와 권한을 관리합니다 · Govern what operations the harness may perform</p>
+          <h2 className="text-sm font-bold">도구 레지스트리 · Tools</h2>
+          <p className="text-[11px] text-gray-400">
+            등록된 도구만 하네스가 호출할 수 있습니다 — 릴레이가 요청 시점에 레지스트리·임대·프로젝트 허용 목록을 강제합니다 (§17.1).
+          </p>
         </div>
         <div className="flex gap-2">
-          <button onClick={seed} className="btn-secondary text-sm">기본 도구 등록</button>
-          <button onClick={() => { setShowForm(!showForm); setEditingId(null); setForm({ name: '', name_ko: '', category: 'read', tool_class: '', danger_level: 'low', requires_approval: false }) }} className="btn-primary text-sm">+ 도구 등록</button>
+          <button className="btn-sm btn-secondary" onClick={seed}>기본 도구 시드</button>
+          <Link className="btn-sm btn-secondary" to="/enterprise-features">MCP 거버넌스</Link>
+          <button className="btn-sm btn-primary" onClick={() => setFormOpen(true)}>+ 도구 등록</button>
         </div>
       </div>
 
-      {/* Register/Edit Form */}
-      {showForm && (
-        <div className="card mb-6">
-          <h3 className="text-sm font-semibold mb-4">{editingId ? '도구 수정' : '새 도구 등록'}</h3>
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <label className="label">도구명 · Name (필수)</label>
-              <input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="file.read" disabled={!!editingId} />
-            </div>
-            <div>
-              <label className="label">한글명 · Korean Name</label>
-              <input className="input" value={form.name_ko} onChange={e => setForm({ ...form, name_ko: e.target.value })} placeholder="파일 읽기" />
-            </div>
-            <div>
-              <label className="label">도구 클래스 · Tool Class (필수)</label>
-              <input className="input" value={form.tool_class} onChange={e => setForm({ ...form, tool_class: e.target.value })} placeholder="read" />
-            </div>
-            <div>
-              <label className="label">분류 · Category</label>
-              <select className="input" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>
-                <option value="read">읽기 · Read</option>
-                <option value="write">쓰기 · Write</option>
-                <option value="execute">실행 · Execute</option>
-                <option value="network">네트워크 · Network</option>
-                <option value="git">Git</option>
-                <option value="test">테스트 · Test</option>
-                <option value="search">검색 · Search</option>
-              </select>
-            </div>
-            <div>
-              <label className="label">위험도 · Danger Level</label>
-              <select className="input" value={form.danger_level} onChange={e => setForm({ ...form, danger_level: e.target.value })}>
-                <option value="low">낮음 · Low</option>
-                <option value="medium">중간 · Medium</option>
-                <option value="high">높음 · High</option>
-                <option value="critical">치명적 · Critical</option>
-              </select>
-            </div>
-            <div className="flex items-end">
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input type="checkbox" checked={form.requires_approval} onChange={e => setForm({ ...form, requires_approval: e.target.checked })} className="w-4 h-4" />
-                승인 필요 · Requires Approval
-              </label>
-            </div>
+      <div className="flex gap-1 border-b border-gray-200">
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`px-3 py-2 text-xs ${tab === t.id ? 'border-b-2 border-blue-600 text-blue-600 font-semibold' : 'text-gray-500'}`}>
+            {t.label}{t.id === 'approvals' && approvals.length > 0 ? ` (${approvals.length})` : ''}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'registry' && (
+        <>
+          <div className="flex gap-2 flex-wrap">
+            <select className="input text-xs w-32" value={filterCat} onChange={e => setFilterCat(e.target.value)}>
+              <option value="">전체 카테고리</option>
+              {(presets?.categories || []).map((c: any) => <option key={c.value} value={c.value}>{c.label_ko}</option>)}
+            </select>
+            <select className="input text-xs w-32" value={filterDanger} onChange={e => setFilterDanger(e.target.value)}>
+              <option value="">전체 위험도</option>
+              {Object.entries(DANGER_KO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
           </div>
-          <div className="flex gap-2 mt-4">
-            <button onClick={createOrUpdate} className="btn-primary text-sm">{editingId ? '수정' : '등록'}</button>
-            <button onClick={() => { setShowForm(false); setEditingId(null) }} className="btn-secondary text-sm">취소</button>
+          <div className="space-y-2">
+            {sorted.length === 0 && <EmptyState icon="🧰" title="도구가 없습니다"
+              message="기본 도구를 시드하거나 커스텀 도구를 등록하세요." action={{ label: '기본 도구 시드', onClick: seed }} />}
+            {sorted.map((t: any) => (
+              <div key={t.id} className="card p-3 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <FavoriteStar entity="tools" id={t.id} />
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold truncate">{t.name_ko || t.name} <span className="text-gray-400 font-mono font-normal">({t.name})</span></div>
+                    <div className="text-[10px] text-gray-400">{t.category} · class {t.tool_class}</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full border ${DANGER_BADGE[t.danger_level] || ''}`}
+                    title={DANGER_HELP[t.danger_level] || ''}>
+                    {DANGER_KO[t.danger_level] || t.danger_level}
+                  </span>
+                  <button className={`text-[10px] px-2 py-0.5 rounded-full border ${t.requires_approval ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}
+                    onClick={() => toggleApproval(t)} title="승인 필요 토글 (감사 기록됨)">
+                    {t.requires_approval ? '승인 필요' : '자동 허용'}
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
-        </div>
+        </>
       )}
 
-      {/* Stats */}
-      <div className="grid grid-cols-4 gap-3 mb-4">
-        <div className="card py-3 text-center">
-          <div className="text-2xl font-bold">{stats.total}</div>
-          <div className="text-xs text-gray-500">전체 도구</div>
-        </div>
-        <div className="card py-3 text-center">
-          <div className="text-2xl font-bold text-yellow-600">{stats.requiringApproval}</div>
-          <div className="text-xs text-gray-500">승인 필요</div>
-        </div>
-        <div className="card py-3 text-center">
-          <div className="text-2xl font-bold text-red-600">{stats.highRisk}</div>
-          <div className="text-xs text-gray-500">고위험 도구</div>
-        </div>
-        <div className="card py-3 text-center">
-          <div className="text-2xl font-bold text-blue-600">{Object.keys(stats.byCategory).length}</div>
-          <div className="text-xs text-gray-500">분류 수</div>
-        </div>
-      </div>
-
-      <FilterBar config={FILTER_CONFIG} onChange={setFilters} />
-
-      <div className="card">
-        {filtered.length === 0 ? (
-          <p className="text-gray-400 text-center py-8">등록된 도구가 없습니다</p>
-        ) : (
-          <table className="w-full overflow-x-auto block">
-            <thead>
-              <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
-                <th className="pb-3">도구명</th>
-                <th className="pb-3">한글명</th>
-                <th className="pb-3">분류</th>
-                <th className="pb-3">위험도</th>
-                <th className="pb-3">승인</th>
-                <th className="pb-3">작업</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(t => (
-                <tr key={t.id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30">
-                  <td className="py-3 font-mono text-sm">{t.name}</td>
-                  <td className="py-3 text-sm">{t.name_ko || '-'}</td>
-                  <td className="py-3"><span className="badge-gray">{categoryLabel(t.category)}</span></td>
-                  <td className="py-3"><span className={dangerBadge(t.danger_level)}>{dangerLabel(t.danger_level)}</span></td>
-                  <td className="py-3">
-                    <button onClick={() => toggleApproval(t)}>
-                      {t.requires_approval ? <span className="badge-yellow cursor-pointer">✓ 승인필요</span> : <span className="text-gray-300 cursor-pointer">-</span>}
-                    </button>
-                  </td>
-                  <td className="py-3">
-                    <div className="flex gap-2">
-                      <button onClick={() => startEdit(t)} className="text-xs text-blue-600 hover:underline">수정</button>
-                      <button onClick={() => handleDelete(t)} className="text-xs text-red-600 hover:underline">삭제</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {approvals.length > 0 && (
-        <div className="card mt-6">
-          <h3 className="text-sm font-semibold mb-3">⏳ 대기 중인 승인 · Pending Approvals ({approvals.length})</h3>
+      {tab === 'approvals' && (
+        <div className="card p-4 space-y-2">
+          {approvals.length === 0 && <p className="text-[11px] text-gray-400">대기 중 승인 요청 없음</p>}
           {approvals.map((a: any) => (
-            <div key={a.id} className="flex items-center justify-between py-3 border-b border-gray-100 last:border-0">
+            <div key={a.id} className="border rounded-lg p-2 flex items-center justify-between gap-2 text-[11px]">
               <div>
-                <span className="text-sm font-medium">{a.tool_name || a.name || a.tool_id || 'Unknown'}</span>
-                {a.reason && <span className="ml-2 text-xs text-gray-400">{a.reason}</span>}
+                <span className="font-semibold">{a.approval_type}</span>
+                <span className="text-gray-400 ml-2">세션 {a.session_id?.slice(0, 12) || '—'}</span>
+                <div className="text-[10px] text-gray-400">요청자 {a.requested_by || '—'} · {(a.created_at || '').slice(0, 16)}</div>
               </div>
-              <div className="flex gap-2">
-                <button onClick={async () => { try { await fetch(`/api/tools/approvals/${a.id}/decide`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: 'approved' }) }); load() } catch {} }} className="btn-sm btn-primary">승인</button>
-                <button onClick={async () => { try { await fetch(`/api/tools/approvals/${a.id}/decide`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: 'denied' }) }); load() } catch {} }} className="btn-sm btn-danger">거부</button>
+              <div className="flex gap-1">
+                <button className="text-[10px] px-2 py-1 rounded bg-green-50 text-green-600" onClick={() => decide(a, 'approved')}>승인</button>
+                <button className="text-[10px] px-2 py-1 rounded bg-red-50 text-red-600" onClick={() => decide(a, 'rejected')}>거절</button>
               </div>
             </div>
           ))}
         </div>
       )}
+
+      {tab === 'allowlist' && (
+        <div className="card p-4 space-y-3">
+          <p className="text-[11px] text-gray-500">프로젝트별 도구 허용 목록 — 허용 목록이 설정된 프로젝트는 목록에 없는 도구 호출이 차단됩니다.</p>
+          <select className="input text-xs w-64" value={selectedProject}
+            onChange={e => { setSelectedProject(e.target.value); loadAllowlist(e.target.value) }}>
+            <option value="">프로젝트 선택...</option>
+            {projects.map((p: any) => <option key={p.id} value={p.id}>{p.name_ko || p.name}</option>)}
+          </select>
+          {selectedProject && (
+            <>
+              <div className="space-y-1">
+                {allToolNames.map(name => (
+                  <label key={name} className="flex items-center gap-2 text-xs">
+                    <input type="checkbox" checked={allowlist.some((r: any) => r.tool_name === name)}
+                      onChange={() => toggleAllowlistTool(name)} />
+                    <span className="font-mono">{name}</span>
+                  </label>
+                ))}
+              </div>
+              <button className="btn-sm btn-primary" onClick={saveAllowlist}>허용 목록 저장</button>
+            </>
+          )}
+        </div>
+      )}
+
+      <Modal open={formOpen} title="도구 등록 (커스텀 마법사)" onClose={() => setFormOpen(false)}
+        footer={<ModalFooter onCancel={() => setFormOpen(false)} onConfirm={register} confirmLabel="등록" />}>
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-gray-500">이름 (식별자, 예: git.commit)</label>
+              <input className="input text-xs w-full" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-500">한글 이름</label>
+              <input className="input text-xs w-full" value={form.name_ko} onChange={e => setForm({ ...form, name_ko: e.target.value })} />
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500">카테고리</label>
+            <select className="input text-xs w-full" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>
+              {(presets?.categories || []).map((c: any) => <option key={c.value} value={c.value}>{c.label_ko} — {c.description}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500">도구 클래스 (임대에서 허용되는 클래스)</label>
+            <select className="input text-xs w-full" value={form.tool_class} onChange={e => setForm({ ...form, tool_class: e.target.value })}>
+              {(presets?.tool_classes || []).map((c: any) => <option key={c.value} value={c.value}>{c.label_ko} — {c.description}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500">위험도</label>
+            <select className="input text-xs w-full" value={form.danger_level} onChange={e => setForm({ ...form, danger_level: e.target.value })}>
+              {(presets?.danger_levels || []).map((c: any) => <option key={c.value} value={c.value}>{c.label_ko} — {c.description}</option>)}
+            </select>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-gray-600">
+            <input type="checkbox" checked={form.requires_approval} onChange={e => setForm({ ...form, requires_approval: e.target.checked })} />
+            호출 시 리뷰어 승인 필요
+          </label>
+        </div>
+      </Modal>
     </div>
   )
 }

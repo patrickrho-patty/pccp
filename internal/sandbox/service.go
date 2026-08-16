@@ -111,6 +111,30 @@ func (s *Service) CreateSandbox(req CreateRequest) (*Sandbox, error) {
 		req.BaseImage = "patty/sandbox-base:latest"
 	}
 
+	// Image allowlist (web/15 D): when the org pins an allowlist, an
+	// image outside it is refused fail-closed.
+	var allowlistSetting struct {
+		Value string
+	}
+	if err := s.db.Table("org_settings").
+		Select("value").
+		Where("organization_id = ? AND key = ?", req.OrganizationID, "sandbox.image_allowlist").
+		First(&allowlistSetting).Error; err == nil && allowlistSetting.Value != "" {
+		var allowed []string
+		if json.Unmarshal([]byte(allowlistSetting.Value), &allowed) == nil && len(allowed) > 0 {
+			matched := false
+			for _, img := range allowed {
+				if img == req.BaseImage || strings.HasPrefix(req.BaseImage, img) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return nil, fmt.Errorf("sandbox: image %q not on the organization allowlist", req.BaseImage)
+			}
+		}
+	}
+
 	resourceJSON, _ := json.Marshal(req.ResourceLimits)
 	networkPolicy := req.NetworkPolicy
 

@@ -194,6 +194,8 @@ func (s *Server) setupAdditionalRoutes(r chi.Router, ext *AdditionalServices) {
 	r.Route("/tools", func(r chi.Router) {
 		r.Get("/", s.wrapToolsList(ext))
 		r.Post("/", s.wrapToolsRegister(ext))
+		r.Get("/presets", s.wrapToolsPresets(ext))
+		r.Put("/{id}", s.wrapToolsUpdate(ext))
 		r.Post("/seed-defaults", s.wrapToolsSeed(ext))
 		r.Get("/approvals", s.wrapToolsPendingApprovals(ext))
 		r.Post("/approvals/{id}/decide", s.wrapToolsDecideApproval(ext))
@@ -800,8 +802,86 @@ func (s *Server) wrapToolsRegister(ext *AdditionalServices) http.HandlerFunc {
 func (s *Server) wrapToolsSeed(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID := getOrgID(r)
-		ext.Tools.SeedDefaultTools(orgID)
-		writeJSON(w, http.StatusOK, map[string]string{"status": "seeded"})
+		added, err := ext.Tools.SeedDefaultToolsCount(orgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "seeded", "added": added})
+	}
+}
+
+// wrapToolsUpdate patches a tool's registry fields (web/14 UX13 with
+// audit for the approval toggle).
+func (s *Server) wrapToolsUpdate(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID := getOrgID(r)
+		id := chi.URLParam(r, "id")
+		var req struct {
+			RequiresApproval *bool  `json:"requires_approval"`
+			DangerLevel      string `json:"danger_level"`
+			Category         string `json:"category"`
+			ToolClass        string `json:"tool_class"`
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		tool, err := ext.Tools.UpdateTool(orgID, id, req.RequiresApproval, req.DangerLevel, req.Category, req.ToolClass)
+		if err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		if req.RequiresApproval != nil {
+			s.db.Create(&models.AuditEvent{
+				OrganizationID: orgID, EventType: "cp.tool.updated", ActorType: "admin",
+				Action: "update_tool", ResourceType: "tool", ResourceID: id,
+				Details:    fmt.Sprintf(`{"requires_approval":%v}`, *req.RequiresApproval),
+				Result:     "success",
+				OccurredAt: time.Now().Format(time.RFC3339),
+			})
+		}
+		writeJSON(w, http.StatusOK, tool)
+	}
+}
+
+// wrapToolsPresets returns the classification presets + guidance (D).
+func (s *Server) wrapToolsPresets(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, tools.ToolPresets())
+	}
+}
+
+// wrapProjectToolAllowlist GETs/replaces a project's tool allowlist.
+func (s *Server) wrapProjectToolAllowlist(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID := getOrgID(r)
+		projectID := chi.URLParam(r, "id")
+		switch r.Method {
+		case http.MethodGet:
+			rows, err := ext.Tools.GetProjectAllowlist(orgID, projectID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, rows)
+		case http.MethodPut:
+			var req struct {
+				ToolNames []string `json:"tool_names"`
+				GrantedBy string   `json:"granted_by"`
+			}
+			if err := decodeJSON(r, &req); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
+			if err := ext.Tools.SetProjectAllowlist(orgID, projectID, req.GrantedBy, req.ToolNames); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "allowlist_replaced"})
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
 	}
 }
 

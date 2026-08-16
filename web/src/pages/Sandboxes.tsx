@@ -1,186 +1,218 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import ConfirmDialog from '../components/ConfirmDialog'
+import { api } from '../api'
+import { Modal, ModalFooter } from '../components/Modal'
+import EmptyState from '../components/EmptyState'
 import { showToast } from '../components/Toast'
-import { useConfirm } from '../components/useConfirm'
+import { useFavorites, FavoriteStar } from '../hooks/useFavorites'
+
+// Sandboxes page (web/15 plan): governed isolated runtime control.
+// Provisioning is REAL per-mode (docker/microvm/local/remote) with an
+// honest status: "running" only when the runtime accepted the
+// container; otherwise "defined" (definition persisted, not running).
+
+const MODE_KO: Record<string, string> = { container: '컨테이너', microvm: '마이크로VM', remote: '원격', local: '로컬' }
+const STATUS_KO: Record<string, string> = {
+  pending: '대기', defined: '정의됨 (런타임 미연결)', running: '실행 중', destroyed: '파괴됨', failed: '실패',
+}
+const STATUS_BADGE: Record<string, string> = {
+  pending: 'bg-gray-100 text-gray-500 border-gray-200',
+  defined: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+  running: 'bg-green-50 text-green-700 border-green-200',
+  destroyed: 'bg-gray-100 text-gray-400 border-gray-200',
+  failed: 'bg-red-50 text-red-700 border-red-200',
+}
+const NETWORK_KO: Record<string, string> = { none: '차단', restricted: '제한', host: '호스트' }
 
 export default function Sandboxes() {
-  const confirm = useConfirm()
+  const { favorites, sortPinnedFirst } = useFavorites('sandboxes')
   const [sandboxes, setSandboxes] = useState<any[]>([])
-  const [sessions, setSessions] = useState<any[]>([])
-  const [showForm, setShowForm] = useState(false)
-  const [destroyTarget, setDestroyTarget] = useState<string | null>(null)
-  const [form, setForm] = useState({ runtime_mode: 'docker', image: 'patty/sandbox-base:latest', session_id: '', cpu_limit: '4', memory_limit_mb: '8192', network_policy: 'restricted' })
+  const [allowlist, setAllowlist] = useState<{ images: string[]; enforced: boolean }>({ images: [], enforced: false })
+  const [formOpen, setFormOpen] = useState(false)
+  const [allowlistOpen, setAllowlistOpen] = useState(false)
+  const [allowlistText, setAllowlistText] = useState('')
+  const [form, setForm] = useState({
+    mode: 'container', base_image: 'patty/sandbox-base:latest', cpu_limit: '1', memory_limit_mb: 1024,
+    network_policy: 'none', session_id: '',
+  })
+  const [filterMode, setFilterMode] = useState('')
+  const [filterStatus, setFilterStatus] = useState('')
+  const [destroyTarget, setDestroyTarget] = useState<any>(null)
 
   const load = () => {
-    fetch('/api/sandboxes', { headers: authHeaders() }).then(r => r.json()).then(data => setSandboxes(Array.isArray(data) ? data : [])).catch(() => setSandboxes([]))
-    fetch('/api/sessions', { headers: authHeaders() }).then(r => r.json()).then(data => setSessions(Array.isArray(data) ? data : [])).catch(() => {})
+    api.listSandboxes().then((d: any[]) => setSandboxes(Array.isArray(d) ? d : [])).catch(() => {})
+    api.getSandboxImageAllowlist().then(setAllowlist).catch(() => {})
   }
   useEffect(() => { load() }, [])
 
   const create = async () => {
+    if (!form.base_image.trim()) {
+      showToast('이미지가 필요합니다', 'error')
+      return
+    }
     try {
-      await fetch('/api/sandboxes', {
-        method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify(form)
+      const sb = await api.createSandbox({
+        mode: form.mode, base_image: form.base_image, cpu_limit: form.cpu_limit,
+        memory_limit_mb: form.memory_limit_mb, network_policy: form.network_policy,
+        session_id: form.session_id || undefined,
       })
-      setShowForm(false)
-      showToast('샌드박스 생성됨', 'success')
+      showToast(sb.status === 'running' ? '샌드박스 실행 중' : `정의 저장됨 (${sb.status}) — 런타임 연결 시 실행됩니다`, sb.status === 'running' ? 'success' : 'info')
+      setFormOpen(false)
       load()
-    } catch {}
+    } catch (e: any) { showToast(e?.message || '생성 실패', 'error') }
   }
 
-  const destroy = async (id: string) => {
-    if (!await confirm({ title: '확인', message: '이 샌드박스를 파기하시겠습니까? 모든 데이터가 삭제됩니다.', danger: true })) return
-    try { await fetch(`/api/sandboxes/${id}/destroy`, { method: 'POST', headers: authHeaders() }); load() } catch {}
-  }
-
-  const snapshot = async (id: string) => {
+  const destroy = async (sb: any) => {
     try {
-      const res = await fetch(`/api/sandboxes/${id}/snapshot`, { method: 'POST', headers: authHeaders() })
-      if (res.ok) showToast('포렌식 스냅샷 생성됨 · Forensic snapshot captured')
-    } catch {}
+      await api.destroySandbox(sb.id)
+      showToast('샌드박스 파괴 완료', 'success')
+      setDestroyTarget(null)
+      load()
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
 
-  const statusBadge = (s: string) => { const m: Record<string,string> = { running:'badge-green', defined:'badge-gray', stopped:'badge-gray', isolated:'badge-red', error:'badge-red' }; return m[s] || 'badge-gray' }
-  const statusLabel = (s: string) => { const m: Record<string,string> = { running:'실행 중', defined:'정의만 됨 (런타임 없음)', stopped:'중지됨', isolated:'격리됨', error:'오류' }; return m[s] || s }
-
-  const modeInfo: Record<string, { icon: string; desc: string; isolation: string }> = {
-    docker: { icon: '🐳', desc: 'Docker 컨테이너', isolation: '네임스페이스 격리' },
-    firecracker: { icon: '🔥', desc: 'Firecracker microVM', isolation: '하드웨어 수준 격리 (KVM)' },
-    gvisor: { icon: '🛡', desc: 'gVisor 샌드박스', isolation: '사용자 공간 커널' },
-    kata: { icon: '🏗', desc: 'Kata Containers', isolation: '경량 VM + 컨테이너' },
-    none: { icon: '💻', desc: '로컬 실행 (관리형)', isolation: '격리 없음 (정책 기반 통제만)' },
+  const snapshot = async (sb: any) => {
+    try {
+      const res = await api.snapshotSandbox(sb.id)
+      showToast(`포렌식 스냅샷 기록: ${res.snapshot_id || '생성됨'}`, 'success')
+      load()
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
 
-  const policyInfo: Record<string, string> = {
-    restricted: '제한 (인바운드/아웃바운드 차단)',
-    'egress-only': '송신만 (외부 접속 허용, 수신 차단)',
-    full: '전체 (모든 네트워크 허용)',
-    airgap: '에어갭 (완전 차단, 로컬만)',
+  const saveAllowlist = async () => {
+    const images = allowlistText.split('\n').map(s => s.trim()).filter(Boolean)
+    try {
+      await api.setSandboxImageAllowlist(images)
+      showToast(images.length ? `이미지 허용 목록 저장 (${images.length}개) — 이제 목록 외 이미지는 거부됩니다` : '허용 목록 해제 — 모든 이미지 허용', 'success')
+      setAllowlistOpen(false)
+      load()
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
 
-  const getSessionTitle = (sid: string) => sessions.find(s => s.session_id === sid || s.id === sid)
+  const filtered = sandboxes.filter(s =>
+    (!filterMode || s.mode === filterMode) && (!filterStatus || s.status === filterStatus))
+  const sorted = sortPinnedFirst(filtered, s => s.id)
 
   return (
-    <div>
-      <div className="flex justify-between items-center mb-6">
+    <div className="p-6 space-y-4 page-enter">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold">샌드박스 <span className="text-gray-400 text-lg font-normal">Sandbox & Runtime</span></h1>
-          <p className="text-xs text-gray-400 mt-1">격리된 실행 환경 관리 · PRD §31 · AI 도구 실행을 안전한 환경에서 통제</p>
+          <h2 className="text-sm font-bold">샌드박스 · Sandboxes</h2>
+          <p className="text-[11px] text-gray-400">
+            격리 실행 런타임 (§31). 상태는 정직합니다 — 런타임이 실제로 수락한 경우에만 "실행 중"으로 표시됩니다.
+            {allowlist.enforced && <span className="text-amber-600 ml-2">이미지 허용 목록 강제 중 ({allowlist.images.length})</span>}
+          </p>
         </div>
-        <button onClick={() => setShowForm(!showForm)} className="btn-primary text-sm">+ 샌드박스 생성</button>
-      </div>
-
-      {/* Explanation card */}
-      <div className="card mb-6">
-        <h3 className="text-sm font-semibold mb-2">샌드박스란? · What is a Sandbox?</h3>
-        <p className="text-xs text-gray-500 mb-3">
-          샌드박스는 AI 하네스가 코드를 실행하는 격리된 환경입니다. 엔터프라이즈/정부 환경에서는 모든 도구 실행이
-          중앙에서 관리되는 샌드박스 내에서 이루어져야 합니다 (PRD §31.2).
-        </p>
-        <div className="grid grid-cols-5 gap-3">
-          {Object.entries(modeInfo).map(([mode, info]) => (
-            <div key={mode} className="bg-gray-50 rounded p-2 text-center">
-              <div className="text-xl mb-1">{info.icon}</div>
-              <div className="text-xs font-medium capitalize">{mode}</div>
-              <div className="text-[10px] text-gray-400">{info.desc}</div>
-            </div>
-          ))}
+        <div className="flex gap-2">
+          <button className="btn-sm btn-secondary" onClick={() => { setAllowlistText(allowlist.images.join('\n')); setAllowlistOpen(true) }}>이미지 허용 목록</button>
+          <button className="btn-sm btn-primary" onClick={() => setFormOpen(true)}>+ 새 샌드박스</button>
         </div>
       </div>
 
-      {/* Create form */}
-      {showForm && (
-        <div className="card mb-6">
-          <h3 className="text-sm font-semibold mb-4">샌드박스 생성 · Create Sandbox</h3>
-          <div className="grid grid-cols-3 gap-4">
-            <div><label className="label">런타임 모드 · Runtime Mode</label>
-              <select className="input" value={form.runtime_mode} onChange={e => setForm({ ...form, runtime_mode: e.target.value })}>
-                {Object.entries(modeInfo).map(([mode, info]) => <option key={mode} value={mode}>{info.icon} {mode} — {info.desc}</option>)}
-              </select>
-              <p className="text-xs text-blue-600 mt-1">🔒 {modeInfo[form.runtime_mode]?.isolation}</p>
-            </div>
-            <div><label className="label">베이스 이미지 · Base Image</label>
-              <input className="input font-mono text-xs" value={form.image} onChange={e => setForm({ ...form, image: e.target.value })} placeholder="patty/sandbox-base:latest" />
-            </div>
-            <div><label className="label">세션 연결 · Link to Session</label>
-              <select className="input" value={form.session_id} onChange={e => setForm({ ...form, session_id: e.target.value })}>
-                <option value="">연결 안함</option>
-                {sessions.filter(s => s.status === 'active').map(s => <option key={s.id} value={s.session_id}>{s.title || s.session_id?.slice(0, 20)}</option>)}
-              </select>
-            </div>
-            <div><label className="label">CPU 코어</label><input className="input" type="number" value={form.cpu_limit} onChange={e => setForm({ ...form, cpu_limit: e.target.value })} /></div>
-            <div><label className="label">메모리 (MB)</label><input className="input" type="number" value={form.memory_limit_mb} onChange={e => setForm({ ...form, memory_limit_mb: e.target.value })} /></div>
-            <div><label className="label">네트워크 정책</label>
-              <select className="input" value={form.network_policy} onChange={e => setForm({ ...form, network_policy: e.target.value })}>
-                <option value="restricted">🔒 제한 (Restricted)</option>
-                <option value="egress-only">📤 송신만 (Egress Only)</option>
-                <option value="full">🌐 전체 (Full)</option>
-                <option value="airgap">✈️ 에어갭 (Air-gap)</option>
-              </select>
-              <p className="text-xs text-gray-400 mt-1">{policyInfo[form.network_policy]}</p>
-            </div>
-          </div>
-          <div className="flex gap-2 mt-4">
-            <button onClick={create} className="btn-primary text-sm">생성</button>
-            <button onClick={() => setShowForm(false)} className="btn-secondary text-sm">취소</button>
-          </div>
-        </div>
-      )}
+      <div className="flex gap-2 flex-wrap">
+        <select className="input text-xs w-32" value={filterMode} onChange={e => setFilterMode(e.target.value)}>
+          <option value="">전체 모드</option>
+          {Object.entries(MODE_KO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        <select className="input text-xs w-36" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+          <option value="">전체 상태</option>
+          {Object.entries(STATUS_KO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+      </div>
 
-      {/* Sandbox grid */}
-      <div className="card">
-        {sandboxes.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="text-4xl mb-2">📦</div>
-            <p className="text-gray-400">등록된 샌드박스가 없습니다</p>
-            <p className="text-xs text-gray-400 mt-1">샌드박스를 생성하여 AI 도구 실행 환경을 관리하세요</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-3 gap-4">
-            {sandboxes.map(s => (
-              <div key={s.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-sm transition-shadow">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-mono text-xs text-gray-500">{s.id?.slice(0, 12)}</span>
-                  <span className={statusBadge(s.status)}>{statusLabel(s.status)}</span>
+      <div className="space-y-2">
+        {sorted.length === 0 && <EmptyState icon="📦" title="샌드박스가 없습니다"
+          message="민감한 작업을 격리 런타임에서 실행하세요." action={{ label: '+ 새 샌드박스', onClick: () => setFormOpen(true) }} />}
+        {sorted.map((s: any) => (
+          <div key={s.id} className="card p-3 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <FavoriteStar entity="sandboxes" id={s.id} />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold font-mono truncate">{s.id?.slice(0, 14)}</div>
+                <div className="text-[10px] text-gray-400">
+                  {MODE_KO[s.mode] || s.mode} · {s.base_image} · CPU {s.cpu_limit || '—'} · {s.memory_limit_mb || 0}MB · 네트워크 {NETWORK_KO[s.network_policy] || s.network_policy}
                 </div>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-lg">{modeInfo[s.runtime_mode]?.icon || '📦'}</span>
-                  <div>
-                    <div className="text-sm font-medium">{s.runtime_mode || s.image || 'Sandbox'}</div>
-                    <div className="text-xs text-gray-400">{modeInfo[s.runtime_mode]?.desc}</div>
-                  </div>
-                </div>
-                <div className="text-xs text-gray-500 space-y-0.5">
-                  {s.image && <div>📦 {s.image}</div>}
-                  <div>⚙️ CPU: {s.cpu_limit || '-'} · 💾 {s.memory_limit_mb || '-'}MB</div>
-                  <div>🌐 <span className="font-medium">{policyInfo[s.network_policy]?.split(' ')[0] || s.network_policy}</span></div>
-                  {s.session_id && <div>🔗 세션: {getSessionTitle(s.session_id)?.title || s.session_id?.slice(0, 16)}</div>}
-                  {s.created_at && <div>🕐 생성: {s.created_at?.slice(0, 19)}</div>}
-                </div>
-                <div className="flex gap-1 mt-3">
-                  <button onClick={() => snapshot(s.id)} className="btn-sm btn-secondary">📸 스냅샷</button>
-                  <button onClick={() => setDestroyTarget(s.id)} className="btn-sm btn-danger">파기</button>
-                  {s.session_id && <Link to="/sessions" className="btn-sm btn-secondary ml-auto">세션 →</Link>}
-                </div>
+                {s.session_id && (
+                  <Link to={`/sessions/${s.session_id}`} className="text-[10px] text-blue-600 hover:underline">세션 {s.session_id.slice(0, 12)}</Link>
+                )}
               </div>
-            ))}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className={`text-[10px] px-2 py-0.5 rounded-full border ${STATUS_BADGE[s.status] || ''}`}>
+                {STATUS_KO[s.status] || s.status}
+              </span>
+              <button className="text-[10px] px-2 py-1 rounded hover:bg-blue-50 text-blue-600" onClick={() => snapshot(s)}>스냅샷</button>
+              {s.status !== 'destroyed' && (
+                <button className="text-[10px] px-2 py-1 rounded hover:bg-red-50 text-red-600" onClick={() => setDestroyTarget(s)}>파괴</button>
+              )}
+            </div>
           </div>
-        )}
+        ))}
       </div>
 
-      <ConfirmDialog
-        open={!!destroyTarget}
-        title="샌드박스 파기 · Destroy Sandbox"
-        message="이 샌드박스를 파기하시겠습니까? 모든 데이터가 삭제됩니다."
-        confirmLabel="파기 실행"
-        danger
-        onConfirm={async () => { if (destroyTarget) { try { await fetch(`/api/sandboxes/${destroyTarget}/destroy`, { method: 'POST', headers: authHeaders() }); load() } catch {} } setDestroyTarget(null) }}
-        onCancel={() => setDestroyTarget(null)}
-      />
+      <Modal open={formOpen} title="새 샌드박스" onClose={() => setFormOpen(false)}
+        footer={<ModalFooter onCancel={() => setFormOpen(false)} onConfirm={create} confirmLabel="생성" />}>
+        <div className="space-y-2">
+          <div>
+            <label className="text-[10px] text-gray-500">런타임 모드</label>
+            <select className="input text-xs w-full" value={form.mode} onChange={e => setForm({ ...form, mode: e.target.value })}>
+              <option value="container">컨테이너 (Docker/containerd)</option>
+              <option value="microvm">마이크로VM (Firecracker)</option>
+              <option value="local">로컬 프로세스 (격리 없음 — 문서화된 한계)</option>
+              <option value="remote">원격 호스트</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500">이미지 {allowlist.enforced ? '(허용 목록에서 선택)' : ''}</label>
+            {allowlist.enforced ? (
+              <select className="input text-xs w-full" value={form.base_image} onChange={e => setForm({ ...form, base_image: e.target.value })}>
+                {allowlist.images.map(img => <option key={img} value={img}>{img}</option>)}
+              </select>
+            ) : (
+              <input className="input text-xs w-full" value={form.base_image} onChange={e => setForm({ ...form, base_image: e.target.value })} />
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-gray-500">CPU</label>
+              <input className="input text-xs w-full" value={form.cpu_limit} onChange={e => setForm({ ...form, cpu_limit: e.target.value })} />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-500">메모리 (MB)</label>
+              <input className="input text-xs w-full" type="number" value={form.memory_limit_mb} onChange={e => setForm({ ...form, memory_limit_mb: Number(e.target.value) })} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-gray-500">네트워크 정책</label>
+              <select className="input text-xs w-full" value={form.network_policy} onChange={e => setForm({ ...form, network_policy: e.target.value })}>
+                <option value="none">차단 (--network none)</option>
+                <option value="restricted">제한</option>
+                <option value="host">호스트</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-500">세션 바인딩 (선택)</label>
+              <input className="input text-xs w-full" placeholder="세션 ID" value={form.session_id} onChange={e => setForm({ ...form, session_id: e.target.value })} />
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={!!destroyTarget} title="샌드박스 파괴"
+        onClose={() => setDestroyTarget(null)}
+        footer={<ModalFooter onCancel={() => setDestroyTarget(null)} onConfirm={() => destroy(destroyTarget)} confirmLabel="파괴" danger />}>
+        <p className="text-[11px] text-gray-500">런타임을 종료하고 정의를 제거합니다 (스냅샷이 있다면 보존). 되돌릴 수 없습니다.</p>
+      </Modal>
+
+      <Modal open={allowlistOpen} title="이미지 허용 목록 (§31.1)"
+        onClose={() => setAllowlistOpen(false)}
+        footer={<ModalFooter onCancel={() => setAllowlistOpen(false)} onConfirm={saveAllowlist} confirmLabel="저장" />}>
+        <div className="space-y-2">
+          <p className="text-[11px] text-gray-500">줄당 하나의 이미지 ref. 목록이 비어 있지 않으면 목록 외 이미지는 생성 시 거부됩니다 (fail-closed).</p>
+          <textarea className="input text-xs w-full font-mono" rows={6} value={allowlistText} onChange={e => setAllowlistText(e.target.value)} />
+        </div>
+      </Modal>
     </div>
   )
 }
-
-function authHeaders() { const token = localStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }

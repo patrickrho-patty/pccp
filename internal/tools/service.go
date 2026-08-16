@@ -88,6 +88,12 @@ type ToolAuthResult struct {
 
 // CheckToolAuthorization checks whether a tool use is permitted.
 func (s *Service) CheckToolAuthorization(orgID, toolName, sessionID, leaseID string) (*ToolAuthResult, error) {
+	return s.CheckToolAuthorizationFull(orgID, toolName, sessionID, leaseID, "", "")
+}
+
+// CheckToolAuthorizationFull adds project allowlist + integrity-digest
+// enforcement (web/14 features 7 + E).
+func (s *Service) CheckToolAuthorizationFull(orgID, toolName, sessionID, leaseID, projectID, reportedDigest string) (*ToolAuthResult, error) {
 	var tool models.Tool
 	err := s.db.Where("organization_id = ? AND name = ?", orgID, toolName).First(&tool).Error
 	if err != nil {
@@ -130,6 +136,27 @@ func (s *Service) CheckToolAuthorization(orgID, toolName, sessionID, leaseID str
 			Allowed: false,
 			Reason:  fmt.Sprintf("tool class %s not permitted by capability lease", tool.ToolClass),
 		}, nil
+	}
+
+	// Per-project allowlist (feature 7): when the project has one, the
+	// tool must be on it.
+	if projectID != "" {
+		var pinned int64
+		s.db.Model(&models.ProjectToolAllowlist{}).
+			Where("organization_id = ? AND project_id = ?", orgID, projectID).Count(&pinned)
+		if pinned > 0 {
+			var hit int64
+			s.db.Model(&models.ProjectToolAllowlist{}).
+				Where("organization_id = ? AND project_id = ? AND tool_name = ?", orgID, projectID, toolName).Count(&hit)
+			if hit == 0 {
+				return &ToolAuthResult{Allowed: false, Reason: "tool not on the project allowlist"}, nil
+			}
+		}
+	}
+
+	// Integrity digest (E): a pinned tool must match its runtime digest.
+	if ok, reason := s.VerifyToolDigest(tool, reportedDigest); !ok {
+		return &ToolAuthResult{Allowed: false, Reason: "tool integrity: " + reason}, nil
 	}
 
 	// High-danger tools require approval

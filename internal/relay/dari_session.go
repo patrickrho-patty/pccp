@@ -555,6 +555,28 @@ func (pl *DARIListener) ingestActionEnvelope(conn *dari.TransportConn, connID, h
 	// a client-supplied OrganizationID is never trusted (cross-tenant
 	// provenance injection).
 	orgID := pl.orgForPeer(connID)
+
+	// Tool-registry enforcement (web/14 A): when the org maintains a
+	// tool registry, a tool action must be registered, active,
+	// lease-permitted, allowlisted for the project, and match its
+	// pinned integrity digest. Denials override the client-reported
+	// verdict on the recorded action.
+	verdict := env.VerdictResult
+	if env.ActionType != "" {
+		registered, _ := pl.svc.tools.ListTools(orgID)
+		if len(registered) > 0 {
+			result, aerr := pl.svc.tools.CheckToolAuthorizationFull(orgID, env.ActionType, env.SessionID, env.LeaseID, env.ProjectID, "")
+			if aerr != nil || !result.Allowed {
+				reason := "tool not authorized"
+				if result != nil && result.Reason != "" {
+					reason = result.Reason
+				}
+				verdict = "denied:" + reason
+				log.Printf("relay: tool %s denied for %s: %s", env.ActionType, connID, reason)
+			}
+		}
+	}
+
 	_, err := pl.svc.provenance.RecordAction(provenance.RecordActionRequest{
 		OrganizationID: orgID,
 		SessionID:      env.SessionID,
@@ -570,7 +592,7 @@ func (pl *DARIListener) ingestActionEnvelope(conn *dari.TransportConn, connID, h
 		LeaseID:        env.LeaseID,
 		ActionType:     env.ActionType,
 		ActionPayload:  env.ActionPayload,
-		VerdictResult:  env.VerdictResult,
+		VerdictResult:  verdict,
 		Classification: env.Classification,
 	})
 	if err != nil {
