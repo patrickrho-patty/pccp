@@ -448,7 +448,7 @@ export default function Security() {
                           </button>
                         </td>
                         <td className="py-2.5">
-                          <button onClick={() => { setEditingRule(r); setRuleBefore({ ...r }); setShowBuilder(true) }} className="text-xs text-blue-600 hover:underline">편집 (diff)</button>
+                          <button onClick={() => { setEditingRule(r); setRuleBefore({ ...r }); setShowBuilder(true) }} className="btn-link">편집 (diff)</button>
                         </td>
                       </tr>
                     ))}
@@ -640,7 +640,7 @@ export default function Security() {
                       <div className="text-[10px] text-gray-400 font-mono truncate">{a.target}</div>
                       <div className="text-[10px] text-gray-400">심각도: {JSON.parse(a.severities || '[]').length ? JSON.parse(a.severities).join(', ') : '전체'}</div>
                     </div>
-                    <button onClick={async () => { await api.deleteSecurityAlert(a.id); showToast('삭제됨', 'info'); loadAlerts() }} className="text-xs text-red-600 hover:underline">삭제</button>
+                    <button onClick={async () => { await api.deleteSecurityAlert(a.id); showToast('삭제됨', 'info'); loadAlerts() }} className="btn-link-danger">삭제</button>
                   </div>
                 ))}
               </div>
@@ -653,7 +653,7 @@ export default function Security() {
               현재 버전: <span className="font-semibold">{lexicon?.version || 'builtin'}</span> — 조직별 패턴 오버라이드가 탐지기에 반영됩니다. rule_id → 정규식 맵을 편집하세요.
             </p>
             <textarea className="input font-mono text-xs mb-3" rows={10} value={lexiconForm} onChange={e => setLexiconForm(e.target.value)} />
-            <div className="flex gap-2">
+            <div className="flex gap-2 shrink-0 flex-wrap">
               <button onClick={publishLexicon} className="btn-primary text-sm">새 버전 발행</button>
               <button onClick={() => setLexiconForm(JSON.stringify({}, null, 2))} className="btn-sm btn-secondary">초기화</button>
             </div>

@@ -48,6 +48,7 @@
   /* Buttons — enterprise, not flashy */
   .btn {
     @apply px-4 py-2 rounded-md font-medium text-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed;
+    white-space: nowrap;
   }
   .btn-primary {
     @apply btn bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800;
@@ -59,7 +60,24 @@
     @apply btn bg-red-600 text-white hover:bg-red-700;
   }
   .btn-sm {
-    @apply px-2.5 py-1 text-xs rounded;
+    @apply btn px-2.5 py-1 text-xs rounded;
+  }
+  /* btn-xs: the ~40 inline mini row-actions normalized into the theme. */
+  .btn-xs {
+    @apply btn px-2 py-0.5 text-[10px] rounded;
+  }
+  .btn-xs-secondary {
+    @apply btn-xs text-gray-600 hover:bg-gray-100 border border-gray-200;
+  }
+  .btn-xs-danger {
+    @apply btn-xs text-red-600 hover:bg-red-50 border border-red-100;
+  }
+  /* Text-style action links inside rows/tables. */
+  .btn-link {
+    @apply btn px-0 py-0 text-xs text-blue-600 hover:underline bg-transparent border-0;
+  }
+  .btn-link-danger {
+    @apply btn-link text-red-600 hover:text-red-700;
   }
 
   /* Cards — flat enterprise, no shadows by default */

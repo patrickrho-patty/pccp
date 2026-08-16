@@ -119,7 +119,7 @@ export default function AccountPortal() {
           <input className="input text-xs w-full font-mono" placeholder="포털 액세스 토큰"
             value={token} onChange={e => setToken(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') loadSelf(token) }} />
-          <div className="flex gap-2">
+          <div className="flex gap-2 shrink-0 flex-wrap">
             <button className="btn-sm btn-primary" onClick={() => loadSelf(token)} disabled={loading}>
               {loading ? '로딩...' : '포털 열기'}
             </button>
@@ -158,7 +158,7 @@ export default function AccountPortal() {
 
           <div className="card p-4 space-y-2">
             <h3 className="text-xs font-bold">플랜 변경</h3>
-            <div className="flex gap-2">
+            <div className="flex gap-2 shrink-0 flex-wrap">
               <select className="input text-xs" value={planSelect} onChange={e => setPlanSelect(e.target.value)}>
                 {PLANS.map(p => <option key={p.value} value={p.value}>{p.ko} {p.en}</option>)}
               </select>
@@ -174,7 +174,7 @@ export default function AccountPortal() {
 
           <div className="card p-4 space-y-2">
             <h3 className="text-xs font-bold">지원 요청</h3>
-            <div className="flex gap-2">
+            <div className="flex gap-2 shrink-0 flex-wrap">
               <input className="input text-xs flex-1" placeholder="요청 내용..." value={supportSubject} onChange={e => setSupportSubject(e.target.value)} />
               <button className="btn-sm btn-secondary" onClick={fileSupport}>접수</button>
             </div>

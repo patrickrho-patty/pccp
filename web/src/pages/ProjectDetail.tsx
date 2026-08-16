@@ -98,7 +98,7 @@ export default function ProjectDetail() {
           </p>
           {proj.description && <p className="text-sm text-gray-500 mt-2">{proj.description}</p>}
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center shrink-0">
           {proj.status === 'archived'
             ? <button onClick={async () => { if (await confirm({ title: '복원', message: '이 프로젝트를 복원하시겠습니까?', danger: false })) { await api.restoreProject(proj.id); showToast('복원됨', 'success'); load() } }} className="btn-sm btn-primary">복원 · Restore</button>
             : <span className="badge-green">active</span>}
@@ -236,7 +236,7 @@ export default function ProjectDetail() {
                       {c.decision_reason && <div className="text-xs text-gray-500 mt-0.5">사유: {c.decision_reason}</div>}
                     </div>
                     {c.status === 'pending' ? (
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 shrink-0 flex-wrap">
                         <button onClick={() => decideChange(c, true)} className="btn-sm btn-primary">승인</button>
                         <button onClick={() => decideChange(c, false)} className="btn-sm btn-danger">거부</button>
                       </div>

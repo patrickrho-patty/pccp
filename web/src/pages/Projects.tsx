@@ -141,7 +141,7 @@ export default function Projects() {
           <h1 className="text-2xl font-bold">프로젝트 <span className="text-gray-400 text-lg font-normal">Projects</span></h1>
           <p className="text-xs text-gray-400 mt-1">프로젝트별 저장소, 세션, 멤버, 정책 관리 · 카드 클릭 → 상세</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 shrink-0 flex-wrap">
           <button onClick={() => { if (editingId) { setEditingId(null); setForm({ name: '', name_ko: '', slug: '', allowed_models: ['patty-code-standard'], description: '', project_code: '', group_affiliate: '', policy_pack_id: '' }) } setShowForm(!showForm) }} className="btn-primary">
             {showForm ? '취소' : '+ 프로젝트 생성'}
           </button>
@@ -253,7 +253,7 @@ export default function Projects() {
               <div className="mb-3">
                 <div className="text-xs font-medium text-gray-500 mb-1">연결된 저장소 · Repositories ({projRepos.length})</div>
                 {projRepos.length === 0 ? (
-                  <button onClick={() => { setAttachTarget(p); setAttachRepo('') }} className="text-xs text-blue-600 hover:underline">+ 저장소 연결 (인라인)</button>
+                  <button onClick={() => { setAttachTarget(p); setAttachRepo('') }} className="btn-link">+ 저장소 연결 (인라인)</button>
                 ) : (
                   <div className="space-y-1">
                     {projRepos.slice(0, 4).map(r => (
@@ -280,11 +280,11 @@ export default function Projects() {
               )}
 
               <div className="flex gap-2 pt-2 border-t border-gray-50 flex-wrap">
-                <button onClick={() => setExpandedId(expandedId === p.id ? null : p.id)} className="text-xs text-blue-600 hover:underline">{expandedId === p.id ? '접기' : '상세'}</button>
-                <button onClick={() => handleEdit(p)} className="text-xs text-blue-600 hover:underline">편집</button>
-                <button onClick={() => { setMemberTarget(p); setMemberForm({ user_id: '', role: 'member' }) }} className="text-xs text-blue-600 hover:underline">멤버</button>
+                <button onClick={() => setExpandedId(expandedId === p.id ? null : p.id)} className="btn-link">{expandedId === p.id ? '접기' : '상세'}</button>
+                <button onClick={() => handleEdit(p)} className="btn-link">편집</button>
+                <button onClick={() => { setMemberTarget(p); setMemberForm({ user_id: '', role: 'member' }) }} className="btn-link">멤버</button>
                 {p.status === 'active'
-                  ? <button onClick={() => requestArchive(p)} className="text-xs text-red-600 hover:underline">보관</button>
+                  ? <button onClick={() => requestArchive(p)} className="btn-link-danger">보관</button>
                   : <button onClick={() => handleRestore(p.id)} className="text-xs text-green-600 hover:underline">복원</button>}
                 <Link to={`/projects/${p.id}`} className="text-xs text-blue-600 hover:underline ml-auto">상세 →</Link>
               </div>
@@ -309,9 +309,9 @@ export default function Projects() {
       <div className="flex items-center justify-between mt-4 text-xs text-gray-500">
         <span>{(table.page - 1) * PAGE_SIZE + 1}-{Math.min(table.page * PAGE_SIZE, table.total)} / {table.total}건</span>
         <div className="flex gap-1">
-          <button onClick={() => table.setPage(table.page - 1)} disabled={table.page === 1} className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-30">이전</button>
+          <button onClick={() => table.setPage(table.page - 1)} disabled={table.page === 1} className="btn-sm btn-secondary">이전</button>
           <span className="px-2 py-1">{table.page} / {Math.max(Math.ceil(table.total / PAGE_SIZE), 1)}</span>
-          <button onClick={() => table.setPage(table.page + 1)} disabled={table.page * PAGE_SIZE >= table.total} className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-30">다음</button>
+          <button onClick={() => table.setPage(table.page + 1)} disabled={table.page * PAGE_SIZE >= table.total} className="btn-sm btn-secondary">다음</button>
         </div>
       </div>
 

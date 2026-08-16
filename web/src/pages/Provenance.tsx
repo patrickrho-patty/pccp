@@ -119,7 +119,7 @@ export default function Provenance() {
               <div key={cs.id} className="border border-gray-200 rounded-lg p-4">
                 <div className="flex justify-between items-center mb-2">
                   <span className="font-medium text-sm">{cs.files_changed}</span>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 shrink-0 flex-wrap">
                     <span className="text-xs text-green-600">+{cs.lines_added}</span>
                     <span className="text-xs text-red-600">-{cs.lines_removed}</span>
                     <span className="badge-blue">{cs.attribution_state}</span>

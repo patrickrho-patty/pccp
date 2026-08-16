@@ -41,7 +41,7 @@ export default function FindingDetail() {
           <h1 className="text-xl font-bold">{f.title_ko || f.title}</h1>
           <p className="text-xs text-gray-400 mt-1 font-mono">{f.finding_type}</p>
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center shrink-0">
           <span className={sevBadge(f.severity)}>{f.severity}</span>
           <span className={statusBadge(f.status)}>{f.status}</span>
         </div>

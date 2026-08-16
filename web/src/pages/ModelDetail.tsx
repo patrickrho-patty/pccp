@@ -44,7 +44,7 @@ export default function ModelDetail() {
           <h1 className="text-2xl font-bold">{pkg.name}</h1>
           <p className="text-xs text-gray-400 mt-1 font-mono">{pkg.model_id} · {pkg.package_id}</p>
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center shrink-0">
           <span className={statusBadge(pkg.status)}>{pkg.status || '-'}</span>
           <span className="badge-blue">{pkg.entitlement_class || 'standard'}</span>
         </div>
@@ -95,7 +95,7 @@ export default function ModelDetail() {
         )}
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 shrink-0 flex-wrap">
         {pkg.status !== 'published' && (
           <button className="btn-sm btn-primary" onClick={async () => { await api.publishModel(pkg.id); showToast('게시됨', 'success'); load() }}>게시 · Publish</button>
         )}

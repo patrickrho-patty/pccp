@@ -44,12 +44,12 @@ export default function Dashboard() {
       {/* Stat cards */}
       <div className="grid grid-cols-4 gap-3 mb-6">
         {stats.map(s => (
-          <div key={s.labelEn} className="card py-4 px-5 cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(s.route)}>
+          <Link key={s.labelEn} to={s.route} className="card py-4 px-5 cursor-pointer hover:shadow-md transition-shadow block">
             <div className={`w-2 h-2 rounded-full ${s.color} mb-2`} />
             <div className="text-3xl font-bold">{s.value}</div>
             <div className="text-sm text-gray-500">{s.label}</div>
             <div className="text-xs text-gray-400">{s.labelEn}</div>
-          </div>
+          </Link>
         ))}
       </div>
 
@@ -90,7 +90,7 @@ export default function Dashboard() {
         <div className="card col-span-2">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold">최근 활동 · Recent Activity</h3>
-            <Link to="/audit" className="text-xs text-blue-600 hover:underline">전체 보기 →</Link>
+            <Link to="/audit" className="btn-link">전체 보기 →</Link>
           </div>
           {data?.recent_activity && data.recent_activity.length > 0 ? (
             <div className="space-y-1">
@@ -119,7 +119,7 @@ export default function Dashboard() {
           <div className="card">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-semibold">보안 현황</h3>
-              <Link to="/security" className="text-xs text-blue-600 hover:underline">상세 →</Link>
+              <Link to="/security" className="btn-link">상세 →</Link>
             </div>
             <div className="space-y-2">
               <div className="flex justify-between text-sm">

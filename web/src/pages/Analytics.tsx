@@ -55,7 +55,7 @@ export default function Analytics() {
           <h2 className="text-sm font-bold">분석 · Analytics</h2>
           <p className="text-[11px] text-gray-400">실제 사용량 (릴레이 계량 파이프라인) — 모든 숫자는 클릭하여 원본으로 이동합니다.</p>
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center shrink-0">
           <select className="input text-xs" value={range} onChange={e => setRange(e.target.value)}>
             {RANGES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
           </select>

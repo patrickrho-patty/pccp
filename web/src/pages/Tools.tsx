@@ -134,7 +134,7 @@ export default function Tools() {
             등록된 도구만 하네스가 호출할 수 있습니다 — 릴레이가 요청 시점에 레지스트리·임대·프로젝트 허용 목록을 강제합니다 (§17.1).
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 shrink-0 flex-wrap">
           <button className="btn-sm btn-secondary" onClick={seed}>기본 도구 시드</button>
           <Link className="btn-sm btn-secondary" to="/enterprise-features">MCP 거버넌스</Link>
           <button className="btn-sm btn-primary" onClick={() => setFormOpen(true)}>+ 도구 등록</button>

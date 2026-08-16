@@ -107,7 +107,7 @@ export default function CodeExplorer() {
 
       {tab === 'attribution' && (
         <div className="space-y-2">
-          <div className="flex gap-2 items-center">
+          <div className="flex gap-2 items-center shrink-0">
             <select className="input text-xs w-40" value={attributionFilter} onChange={e => setAttributionFilter(e.target.value)}>
               <option value="">전체 귀속</option>
               {Object.entries(ATTRIBUTION_KO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}

@@ -270,17 +270,17 @@ export default function Users() {
       render: (u) => (
         <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
           <FavoriteStar entity="users" id={u.id} />
-          <button className="text-[10px] px-2 py-1 rounded hover:bg-blue-50 text-blue-600" title="초대 코드 발급"
+          <button className="btn-xs-secondary" title="초대 코드 발급"
             onClick={() => issueEnrollment(u)}>초대 코드</button>
           {u.status === 'active' && (
             <button className="text-[10px] px-2 py-1 rounded hover:bg-amber-50 text-amber-600"
               onClick={() => { setReasonTarget({ id: u.id, action: 'suspend' }); setReasonText('') }}>정지</button>
           )}
           {u.status !== 'offboarded' && (
-            <button className="text-[10px] px-2 py-1 rounded hover:bg-red-50 text-red-600"
+            <button className="btn-xs-danger"
               onClick={() => { setReasonTarget({ id: u.id, action: 'offboard' }); setReasonText('') }}>퇴사</button>
           )}
-          <button className="text-[10px] px-2 py-1 rounded hover:bg-gray-100 text-gray-600"
+          <button className="btn-xs-secondary"
             onClick={() => openEdit(u)}>수정</button>
         </div>
       ),
@@ -373,7 +373,7 @@ export default function Users() {
         expand={(u) => (
           <div className="px-3 py-2 text-[11px] text-gray-500 space-y-1">
             <div>사번: {u.employee_id || '—'} · 권한: {roles.filter(r => u.role_ids?.includes(r.id)).map(r => r.name_ko || r.name).join(', ') || '—'}</div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 shrink-0 flex-wrap">
               <Link className="text-blue-600 hover:underline" to={`/users/${u.id}`}>상세 페이지</Link>
               <Link className="text-blue-600 hover:underline" to={`/users/${u.id}?tab=usage`}>사용량</Link>
               <Link className="text-blue-600 hover:underline" to={`/users/${u.id}?tab=harnesses`}>하네스</Link>

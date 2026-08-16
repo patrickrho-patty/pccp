@@ -186,7 +186,7 @@ export function Pagination({ total, page, pageSize, onPageChange }: {
         <button
           onClick={() => onPageChange(page - 1)}
           disabled={page === 1}
-          className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-30"
+          className="btn-sm btn-secondary"
         >
           이전
         </button>
@@ -196,7 +196,7 @@ export function Pagination({ total, page, pageSize, onPageChange }: {
         <button
           onClick={() => onPageChange(page + 1)}
           disabled={page >= totalPages}
-          className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-30"
+          className="btn-sm btn-secondary"
         >
           다음
         </button>

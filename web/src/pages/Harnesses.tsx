@@ -187,9 +187,9 @@ export default function Harnesses() {
       render: (h) => (
         <div className="flex gap-1 flex-wrap" onClick={e => e.stopPropagation()}>
           {(h.status === 'active' || h.status === 'enrolled') && <button onClick={() => handleQuarantine(h)} className="text-xs text-yellow-600 hover:underline">격리</button>}
-          {(h.status === 'active' || h.status === 'enrolled') && <button onClick={() => { setRevokeTarget(h); setRevokeReason('') }} className="text-xs text-red-600 hover:underline">폐기</button>}
+          {(h.status === 'active' || h.status === 'enrolled') && <button onClick={() => { setRevokeTarget(h); setRevokeReason('') }} className="btn-link-danger">폐기</button>}
           {h.status === 'quarantined' && <button onClick={() => handleReactivate(h)} className="text-xs text-green-600 hover:underline">재활성화</button>}
-          <Link to={`/harnesses/${h.id}`} className="text-xs text-blue-600 hover:underline">상세</Link>
+          <Link to={`/harnesses/${h.id}`} className="btn-link">상세</Link>
         </div>
       ),
     },
@@ -255,7 +255,7 @@ export default function Harnesses() {
             하네스 ID 또는 사용자를 클릭하여 상세 이동
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 shrink-0 flex-wrap">
           <button onClick={() => { setCodeTarget(null); setIssuedCode(null); setShowForm(!showForm); setForm({ user_id: '', harness_id: '', public_key_hex: '', binary_version: '1.0.0', enrollment_code: '', device_hostname: '', device_os: '', device_arch: '' }) }} className="btn-primary">
             {showForm ? '취소' : '+ 하네스 등록'}
           </button>
@@ -344,9 +344,9 @@ export default function Harnesses() {
         <div className="flex items-center justify-between px-4 py-3 text-xs text-gray-500 border-t border-gray-100">
           <span>{(table.page - 1) * PAGE_SIZE + 1}-{Math.min(table.page * PAGE_SIZE, table.total)} / {table.total}건 {isFavorite ? '· ★ 고정 우선' : ''}</span>
           <div className="flex gap-1">
-            <button onClick={() => table.setPage(table.page - 1)} disabled={table.page === 1} className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-30">이전</button>
+            <button onClick={() => table.setPage(table.page - 1)} disabled={table.page === 1} className="btn-sm btn-secondary">이전</button>
             <span className="px-2 py-1">{table.page} / {Math.max(Math.ceil(table.total / PAGE_SIZE), 1)}</span>
-            <button onClick={() => table.setPage(table.page + 1)} disabled={table.page * PAGE_SIZE >= table.total} className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-30">다음</button>
+            <button onClick={() => table.setPage(table.page + 1)} disabled={table.page * PAGE_SIZE >= table.total} className="btn-sm btn-secondary">다음</button>
           </div>
         </div>
       </div>

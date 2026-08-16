@@ -195,7 +195,7 @@ export default function SREConsole() {
                 { name: 'Payments', nameKo: '결제', status: 'not_configured', reason: '결제 게이트 미연동 (§29.9)' },
               ].map(comp => (
                 <div key={comp.name} className="py-1.5 px-2 bg-gray-50 rounded">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
                     <div>
                       <span className="text-sm">{comp.nameKo}</span>
                       <span className="text-xs text-gray-400 ml-1">{comp.name}</span>

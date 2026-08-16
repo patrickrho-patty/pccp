@@ -270,11 +270,11 @@ export default function Fleet() {
                 onClick={() => { setActionTarget({ harness: h, action: 'quarantine_device' }); setReason('') }}>격리</button>
             )}
             {h.status !== 'revoked' && (
-              <button className="text-[10px] px-2 py-1 rounded hover:bg-red-50 text-red-600"
+              <button className="btn-xs-danger"
                 onClick={() => { setActionTarget({ harness: h, action: 'revoke_harness_certificate' }); setReason('') }}>인증 해지</button>
             )}
-            <button className="text-[10px] px-2 py-1 rounded hover:bg-blue-50 text-blue-600" onClick={() => loadHistory(h)}>이력</button>
-            <button className="text-[10px] px-2 py-1 rounded hover:bg-gray-100 text-gray-600" onClick={() => downloadSnapshot(h)}>스냅샷</button>
+            <button className="btn-xs-secondary" onClick={() => loadHistory(h)}>이력</button>
+            <button className="btn-xs-secondary" onClick={() => downloadSnapshot(h)}>스냅샷</button>
           </div>
         )
       },

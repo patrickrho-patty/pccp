@@ -45,7 +45,7 @@ export default function SessionDetail() {
   if (loading) return <div className="text-gray-400 p-8 text-center">로딩 중...</div>
   if (!detail?.session) return (
     <div>
-      <Link to="/sessions" className="text-xs text-blue-600 hover:underline">← 세션 목록</Link>
+      <Link to="/sessions" className="btn-link">← 세션 목록</Link>
       <p className="text-gray-400 p-8 text-center">세션을 찾을 수 없습니다</p>
     </div>
   )
@@ -65,7 +65,7 @@ export default function SessionDetail() {
 
   return (
     <div className="p-6 space-y-4 page-enter">
-      <Link to="/sessions" className="text-xs text-blue-600 hover:underline">← 세션 목록</Link>
+      <Link to="/sessions" className="btn-link">← 세션 목록</Link>
 
       <div className="card p-5">
         <div className="flex items-start justify-between gap-3">
@@ -80,7 +80,7 @@ export default function SessionDetail() {
               {sess.policy_epoch_id && <span className="text-gray-400"> · epoch {sess.policy_epoch_id.slice(0, 10)}</span>}
             </p>
           </div>
-          <div className="flex gap-2 items-center">
+          <div className="flex gap-2 items-center shrink-0">
             <span className={`text-[10px] px-2 py-0.5 rounded-full border ${meta.badge}`}>{meta.ko}</span>
             {visibility && (
               <span className="text-[10px] px-2 py-0.5 rounded-full border bg-blue-50 text-blue-700 border-blue-200" title={visibility.label}>

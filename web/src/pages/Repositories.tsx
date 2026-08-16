@@ -174,11 +174,11 @@ export default function Repositories() {
       render: (r) => (
         <div className="flex gap-2 flex-wrap" onClick={e => e.stopPropagation()}>
           <button onClick={() => handleSync(r)} className="text-xs text-green-600 hover:underline">동기화</button>
-          <button onClick={() => handleEdit(r)} className="text-xs text-blue-600 hover:underline">편집</button>
+          <button onClick={() => handleEdit(r)} className="btn-link">편집</button>
           <button onClick={() => openBranchProtection(r)} className="text-xs text-yellow-600 hover:underline">브랜치 보호</button>
-          <button onClick={() => { setBaselineRepo(r); setBaselineForm({ branch: r.default_branch || 'main', commit_sha: '', commit_message: '', author_name: '', author_email: '' }) }} className="text-xs text-blue-600 hover:underline">베이스라인</button>
+          <button onClick={() => { setBaselineRepo(r); setBaselineForm({ branch: r.default_branch || 'main', commit_sha: '', commit_message: '', author_name: '', author_email: '' }) }} className="btn-link">베이스라인</button>
           <button onClick={() => openWebhook(r)} className="text-xs text-gray-500 hover:underline">웹훅</button>
-          <button onClick={() => handleDelete(r)} className="text-xs text-red-600 hover:underline">삭제</button>
+          <button onClick={() => handleDelete(r)} className="btn-link-danger">삭제</button>
         </div>
       ),
     },
@@ -199,7 +199,7 @@ export default function Repositories() {
       </div>
       <div>
         <div className="text-xs font-semibold text-gray-600 mb-2">프로젝트</div>
-        {r.project_id ? <Link to={`/projects/${r.project_id}`} className="text-xs text-blue-600 hover:underline">프로젝트 상세 →</Link> : <span className="text-xs text-gray-400">연결된 프로젝트 없음</span>}
+        {r.project_id ? <Link to={`/projects/${r.project_id}`} className="btn-link">프로젝트 상세 →</Link> : <span className="text-xs text-gray-400">연결된 프로젝트 없음</span>}
         <div className="text-xs font-semibold text-gray-600 mb-2 mt-3">거버넌스</div>
         <div className="space-y-2">
           <button onClick={() => openBranchProtection(r)} className="text-xs text-yellow-600 hover:underline block">🌿 브랜치 보호 설정</button>
@@ -225,7 +225,7 @@ export default function Repositories() {
           <h1 className="text-2xl font-bold">저장소 <span className="text-gray-400 text-lg font-normal">Repositories</span></h1>
           <p className="text-xs text-gray-400 mt-1">Git 저장소 관리 · 동기화 · 파일 브라우저 · 브랜치 보호 · 웹훅 · PRD §18</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 shrink-0 flex-wrap">
           <button onClick={() => { setEditingId(null); resetForm(); setShowForm(!showForm) }} className="btn-primary">{showForm ? '취소' : '+ 저장소 추가'}</button>
           <button onClick={() => exportCSV(`repos_${new Date().toISOString().slice(0,10)}.csv`, ['저장소명', 'SCM', 'Clone URL', '기본 브랜치', '민감도', '상태', '동기화'], table.rows.map(r => [r.name, r.scm_provider, r.clone_url, r.default_branch, r.sensitivity, r.status, r.sync_status]))} className="btn-sm btn-secondary">📥 CSV</button>
         </div>
@@ -292,9 +292,9 @@ export default function Repositories() {
         <div className="flex items-center justify-between px-4 py-3 text-xs text-gray-500 border-t border-gray-100">
           <span>{(table.page - 1) * PAGE_SIZE + 1}-{Math.min(table.page * PAGE_SIZE, table.total)} / {table.total}건</span>
           <div className="flex gap-1">
-            <button onClick={() => table.setPage(table.page - 1)} disabled={table.page === 1} className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-30">이전</button>
+            <button onClick={() => table.setPage(table.page - 1)} disabled={table.page === 1} className="btn-sm btn-secondary">이전</button>
             <span className="px-2 py-1">{table.page} / {Math.max(Math.ceil(table.total / PAGE_SIZE), 1)}</span>
-            <button onClick={() => table.setPage(table.page + 1)} disabled={table.page * PAGE_SIZE >= table.total} className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-30">다음</button>
+            <button onClick={() => table.setPage(table.page + 1)} disabled={table.page * PAGE_SIZE >= table.total} className="btn-sm btn-secondary">다음</button>
           </div>
         </div>
       </div>
@@ -333,11 +333,11 @@ export default function Repositories() {
             <p className="text-xs text-gray-500">SCM 시스템의 webhook에 아래 URL을 등록하고, 시크릿으로 HMAC 서명(X-PCCP-Signature = hex(sha256(secret, body)))을 설정하세요.</p>
             <div>
               <label className="label">Webhook URL</label>
-              <div className="flex gap-2"><code className="flex-1 text-xs bg-gray-50 border border-gray-200 rounded p-2 break-all">{webhookInfo.url}</code><button className="btn-sm btn-secondary flex-shrink-0" onClick={() => copyText(webhookInfo.url)}>⧉</button></div>
+              <div className="flex gap-2 shrink-0 flex-wrap"><code className="flex-1 text-xs bg-gray-50 border border-gray-200 rounded p-2 break-all">{webhookInfo.url}</code><button className="btn-sm btn-secondary flex-shrink-0" onClick={() => copyText(webhookInfo.url)}>⧉</button></div>
             </div>
             <div>
               <label className="label">시크릿 · Secret</label>
-              <div className="flex gap-2"><code className="flex-1 text-xs bg-gray-50 border border-gray-200 rounded p-2 break-all font-mono">{webhookInfo.secret}</code><button className="btn-sm btn-secondary flex-shrink-0" onClick={() => copyText(webhookInfo.secret)}>⧉</button></div>
+              <div className="flex gap-2 shrink-0 flex-wrap"><code className="flex-1 text-xs bg-gray-50 border border-gray-200 rounded p-2 break-all font-mono">{webhookInfo.secret}</code><button className="btn-sm btn-secondary flex-shrink-0" onClick={() => copyText(webhookInfo.secret)}>⧉</button></div>
             </div>
           </div>
         ) : <p className="text-xs text-gray-400">로딩 중...</p>}

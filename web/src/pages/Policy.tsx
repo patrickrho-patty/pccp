@@ -361,7 +361,7 @@ export default function Policy() {
                       {(templatesByDomain[builderDomain] || []).map(t => (
                         <button key={t.template_id} onClick={() => setBuilderTemplate(t)}
                           className={`w-full p-3 rounded-lg text-left border transition-all ${builderTemplate?.template_id === t.template_id ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}>
-                          <div className="flex items-center justify-between">
+                          <div className="flex items-center justify-between flex-wrap gap-2">
                             <div>
                               <span className="text-sm font-medium">{t.name}</span>
                               <span className="text-xs text-gray-400 ml-2">{t.nameEn} v{t.version}</span>
@@ -475,8 +475,8 @@ export default function Policy() {
                         {isActive && <span className="badge-green text-[10px]">활성</span>}
                       </div>
                       <p className="text-xs text-gray-500 mb-3">{t.desc}</p>
-                      <div className="flex gap-2">
-                        <button onClick={() => addRuleFromTemplate(t)} className="text-xs text-blue-600 hover:underline">{isActive ? '다시 추가' : '+ 활성화 (초안)'}</button>
+                      <div className="flex gap-2 shrink-0 flex-wrap">
+                        <button onClick={() => addRuleFromTemplate(t)} className="btn-link">{isActive ? '다시 추가' : '+ 활성화 (초안)'}</button>
                         <button onClick={() => openTemplateEdit(t)} className="text-xs text-gray-400 hover:underline ml-auto">편집</button>
                       </div>
                     </div>
@@ -516,7 +516,7 @@ export default function Policy() {
                     <td className="py-3 text-xs">{e.status === 'active' ? <span className="badge-green">활성</span> : <span className="badge-gray">{e.status}</span>}</td>
                     <td className="py-3 text-xs text-gray-400">{formatRelative(e.created_at || e.effective_at)}</td>
                     <td className="py-3 text-xs">
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 shrink-0 flex-wrap">
                         {i < epochs.length - 1 && (
                           <button onClick={() => openDiff(e.epoch_id, epochs[i + 1].epoch_id)} className="text-blue-600 hover:underline">diff</button>
                         )}
@@ -563,7 +563,7 @@ export default function Policy() {
         <div>
           <div className="flex justify-between items-center mb-4">
             <p className="text-xs text-gray-400">규칙을 버전 팩으로 묶어 조직/프로젝트에 할당 (§41)</p>
-            <div className="flex gap-2">
+            <div className="flex gap-2 shrink-0 flex-wrap">
               <label className="btn-sm btn-secondary cursor-pointer">📥 팩 가져오기<input type="file" accept="application/json" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) importPack(f) }} /></label>
               <button onClick={() => { setPackModal(true); setPackForm({ name: '', name_ko: '', version: '1', profile: 'enterprise', rule_ids: [] }) }} className="btn-primary text-sm">+ 팩 생성</button>
             </div>
@@ -614,7 +614,7 @@ export default function Policy() {
                     <div className="text-[10px] text-gray-400">규칙: {JSON.parse(ex.rule_ids || '[]').length}개 · 신청: {formatRelative(ex.created_at)}</div>
                   </div>
                   {ex.status === 'pending' && (
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 shrink-0 flex-wrap">
                       <button onClick={() => decideException(ex, true)} className="btn-sm btn-primary">승인</button>
                       <button onClick={() => decideException(ex, false)} className="btn-sm btn-secondary">거부</button>
                     </div>

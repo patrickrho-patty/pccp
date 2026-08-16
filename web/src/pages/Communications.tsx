@@ -276,7 +276,7 @@ export default function Communications() {
           <h2 className="text-sm font-bold">커뮤니케이션 허브 · Communications</h2>
           <p className="text-[11px] text-gray-400">SSE 실시간 · 개발자 1:1 · 방송 확인 · 파일 전송 (검사 포함)</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 shrink-0 flex-wrap">
           <button className="btn-sm btn-primary" onClick={() => setNewConvOpen(true)}>+ 새 대화</button>
           <button className="btn-sm btn-secondary" onClick={() => setBroadcastOpen(true)}>방송 보내기</button>
           <button className="btn-sm btn-secondary" onClick={() => setTransferOpen(true)}>파일 전송</button>
@@ -381,7 +381,7 @@ export default function Communications() {
                 <div className="text-[11px] text-gray-500">{b.body_ko || b.body}</div>
                 {b.requires_ack && <div className="text-[10px] text-amber-600 mt-0.5">확인 필요 · ack {b.ack_count || 0}</div>}
               </div>
-              <button className="text-[10px] px-2 py-1 rounded hover:bg-blue-50 text-blue-600" onClick={() => showAcks(b)}>확인 현황</button>
+              <button className="btn-xs-secondary" onClick={() => showAcks(b)}>확인 현황</button>
             </div>
           ))}
         </div>

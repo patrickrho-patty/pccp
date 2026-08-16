@@ -103,7 +103,7 @@ export default function Sandboxes() {
             {allowlist.enforced && <span className="text-amber-600 ml-2">이미지 허용 목록 강제 중 ({allowlist.images.length})</span>}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 shrink-0 flex-wrap">
           <button className="btn-sm btn-secondary" onClick={() => { setAllowlistText(allowlist.images.join('\n')); setAllowlistOpen(true) }}>이미지 허용 목록</button>
           <button className="btn-sm btn-primary" onClick={() => setFormOpen(true)}>+ 새 샌드박스</button>
         </div>
@@ -141,9 +141,9 @@ export default function Sandboxes() {
               <span className={`text-[10px] px-2 py-0.5 rounded-full border ${STATUS_BADGE[s.status] || ''}`}>
                 {STATUS_KO[s.status] || s.status}
               </span>
-              <button className="text-[10px] px-2 py-1 rounded hover:bg-blue-50 text-blue-600" onClick={() => snapshot(s)}>스냅샷</button>
+              <button className="btn-xs-secondary" onClick={() => snapshot(s)}>스냅샷</button>
               {s.status !== 'destroyed' && (
-                <button className="text-[10px] px-2 py-1 rounded hover:bg-red-50 text-red-600" onClick={() => setDestroyTarget(s)}>파괴</button>
+                <button className="btn-xs-danger" onClick={() => setDestroyTarget(s)}>파괴</button>
               )}
             </div>
           </div>

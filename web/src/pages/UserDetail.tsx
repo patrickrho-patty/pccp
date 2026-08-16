@@ -144,7 +144,7 @@ export default function UserDetail() {
 
   return (
     <div className="p-6 space-y-4 page-enter">
-      <Link to="/users" className="text-xs text-blue-600 hover:underline">← 사용자 목록</Link>
+      <Link to="/users" className="btn-link">← 사용자 목록</Link>
 
       <div className="card p-5">
         <div className="flex items-start justify-between gap-3">
@@ -168,7 +168,7 @@ export default function UserDetail() {
               </div>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 shrink-0 flex-wrap">
             <button className="btn-sm btn-secondary" onClick={issueEnrollment}>초대 코드 발급</button>
             {user.status !== 'offboarded' && (
               <>
@@ -293,7 +293,7 @@ export default function UserDetail() {
             ))}
             {harnesses.length === 0 && <p className="text-[11px] text-gray-400">바인딩된 하네스 없음</p>}
           </div>
-          <div className="flex gap-2 items-center">
+          <div className="flex gap-2 items-center shrink-0">
             <select className="input text-xs" defaultValue=""
               onChange={e => { if (e.target.value) grantHarness(e.target.value) }}>
               <option value="">하네스 바인딩 추가...</option>

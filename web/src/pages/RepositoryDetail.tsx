@@ -85,7 +85,7 @@ export default function RepositoryDetail() {
           <h1 className="text-2xl font-bold">{repo.name}</h1>
           <p className="text-xs text-gray-400 mt-1 font-mono">{repo.clone_url || repo.full_name || repo.id}</p>
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center shrink-0">
           {repo.project_id && <Link to={`/projects/${repo.project_id}`} className="btn-sm btn-secondary">프로젝트 →</Link>}
           <button onClick={handleSync} disabled={syncing} className="btn-sm btn-primary">{syncing ? '동기화 중...' : '🔄 동기화'}</button>
         </div>

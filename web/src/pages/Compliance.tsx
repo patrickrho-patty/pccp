@@ -189,9 +189,9 @@ export default function Compliance() {
           </div>
 
           <div className="card p-4 space-y-2">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <h3 className="text-xs font-bold">통제 결과 ({filtered.length}/{results.length})</h3>
-              <div className="flex gap-2">
+              <div className="flex gap-2 shrink-0 flex-wrap">
                 <input className="input text-xs w-48" placeholder="일괄 과제 담당자"
                   value={bulkOwner} onChange={e => setBulkOwner(e.target.value)} />
                 <button className="btn-sm btn-secondary" onClick={bulkRemediate}>갭 → 과제 일괄</button>

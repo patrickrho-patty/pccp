@@ -105,7 +105,7 @@ export default function Bootstrap() {
 
               {/* Policy pack — honest placeholder (spec 26 §B, §41): no backend route at bootstrap */}
               <div className="mt-4 p-3 rounded-lg border border-gray-700 bg-gray-900/50">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
                     <div className="text-sm text-gray-300">초기 정책 팩 · Policy Pack (§41)</div>
                     <div className="text-[11px] text-gray-500">컴플라이언스 프레임워크 기본 정책 세트 — 아직 부트스트랩에서 선택할 수 없습니다</div>
@@ -146,7 +146,7 @@ export default function Bootstrap() {
                     <input type="password" className={inputCls} value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
                     {confirm !== '' && !pwMatch && <p className="text-xs text-red-400 mt-1">비밀번호가 일치하지 않습니다.</p>}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 shrink-0 flex-wrap">
                     <button type="button" onClick={() => setStep(1)} className="btn-secondary flex-1">이전</button>
                     <div>
               <label className="label text-gray-300">컴플라이언스 프레임워크 (§41)</label>

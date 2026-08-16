@@ -170,8 +170,8 @@ export default function Sessions() {
         <div className="flex gap-1" onClick={e => e.stopPropagation()}>
           {s.status === 'active' && <button className="text-[10px] px-2 py-1 rounded hover:bg-amber-50 text-amber-600" onClick={() => act(s.id, 'pause')}>일시정지</button>}
           {(s.status === 'paused' || s.status === 'idle') && <button className="text-[10px] px-2 py-1 rounded hover:bg-green-50 text-green-600" onClick={() => act(s.id, 'resume')}>재개</button>}
-          {s.status !== 'closed' && s.status !== 'terminated' && <button className="text-[10px] px-2 py-1 rounded hover:bg-gray-100 text-gray-600" onClick={() => act(s.id, 'close')}>종료</button>}
-          <Link className="text-[10px] px-2 py-1 rounded hover:bg-blue-50 text-blue-600" to={`/sessions/${s.id}`}>검사</Link>
+          {s.status !== 'closed' && s.status !== 'terminated' && <button className="btn-xs-secondary" onClick={() => act(s.id, 'close')}>종료</button>}
+          <Link className="btn-xs-secondary" to={`/sessions/${s.id}`}>검사</Link>
         </div>
       ),
       cardLabel: '작업',
