@@ -5,6 +5,13 @@ import { api } from '../api'
 import { showToast } from '../components/Toast'
 import { formatRelative } from '../utils/format'
 
+// probeStatus maps a probe/API status to the component tri-state.
+const probeStatus = (s?: string): 'healthy' | 'degraded' | 'not_configured' =>
+  s === 'up' || s === 'ok' ? 'healthy' : s === 'down' ? 'degraded' : 'not_configured'
+// probeReason renders the human explanation for a probe result.
+const probeReason = (p: { status?: string; addr?: string } | undefined, cfgKey: string): string =>
+  p?.status === 'down' ? `프로브 실패: ${p.addr}` : p?.status === 'up' ? `프로브 ${p.addr}` : `프로브 미설정 (${cfgKey})`
+
 const probeColor = (s?: string) => s === 'up' ? 'text-green-600' : s === 'down' ? 'text-red-600' : 'text-gray-400'
 const probeLabel = (p?: { status?: string; addr?: string }) => {
   if (!p?.status || p.status === 'unconfigured') return '미설정 · unconfigured'
@@ -127,30 +134,35 @@ export default function SREConsole() {
             <h3 className="text-sm font-semibold mb-3">시스템 구성 요소 · System Components (v2 §7.1)</h3>
             <div className="grid grid-cols-3 gap-3">
               {[
-                { name: 'OAuth/OIDC', nameKo: '인증 서비스', status: 'healthy' },
-                { name: 'Subscription', nameKo: '구독 관리', status: 'healthy' },
-                { name: 'Harness Registry', nameKo: '하네스 등록', status: 'healthy' },
-                { name: 'DARI Ingress', nameKo: 'DARI 수신', status: 'healthy' },
-                { name: 'Relay Fleet', nameKo: '릴레이 플릿', status: 'healthy' },
-                { name: 'Capacity Authority', nameKo: '용량 관리', status: 'healthy' },
-                { name: 'Model Catalog', nameKo: '모델 카탈로그', status: 'healthy' },
-                { name: 'PIA/Model Plane', nameKo: 'PIA 추론', status: 'healthy' },
-                { name: 'Event Spine', nameKo: '이벤트 파이프라인', status: 'healthy' },
-                { name: 'Metering', nameKo: '미터링', status: 'healthy' },
-                { name: 'Notifications', nameKo: '알림', status: 'degraded' },
-                { name: 'Payments', nameKo: '결제', status: 'not_configured' },
+{ name: 'OAuth/OIDC', nameKo: '인증 서비스', status: 'healthy', reason: '콘솔 로그인 경로 정상' },
+                { name: 'Subscription', nameKo: '구독 관리', status: 'healthy', reason: '구독 API 정상' },
+                { name: 'Harness Registry', nameKo: '하네스 등록', status: 'healthy', reason: '등록 API 정상' },
+                { name: 'DARI Ingress', nameKo: 'DARI 수신', status: probeStatus(health.probes?.relay?.status), reason: probeReason(health.probes?.relay, 'relay_probe_addr') },
+                { name: 'Relay Fleet', nameKo: '릴레이 플릿', status: probeStatus(health.probes?.relay?.status), reason: probeReason(health.probes?.relay, 'relay_probe_addr') },
+                { name: 'Capacity Authority', nameKo: '용량 관리', status: 'healthy', reason: '용량 API 정상' },
+                { name: 'Model Catalog', nameKo: '모델 카탈로그', status: probeStatus(health.realtime?.catalog), reason: `카탈로그 ${health.realtime?.catalog_count ?? 0}개 모델` },
+                { name: 'PIA/Model Plane', nameKo: 'PIA 추론', status: probeStatus(health.probes?.pia?.status), reason: probeReason(health.probes?.pia, 'pia_probe_addr') },
+                { name: 'Event Spine', nameKo: '이벤트 파이프라인', status: probeStatus(health.realtime?.event_spine), reason: `24시간 ${health.realtime?.event_spine_count ?? 0}개 이벤트` },
+                { name: 'Metering', nameKo: '미터링', status: probeStatus(health.realtime?.metering), reason: `24시간 ${health.realtime?.metering_count ?? 0}건 기록` },
+                { name: 'Notifications', nameKo: '알림', status: 'not_configured', reason: '알림 채널(Slack/Email) 미연동 — 연동 전까지 발송 없음' },
+                { name: 'Payments', nameKo: '결제', status: 'not_configured', reason: '결제 게이트 미연동 (§29.9)' },
               ].map(comp => (
-                <div key={comp.name} className="flex items-center justify-between py-1.5 px-2 bg-gray-50 rounded">
-                  <div>
-                    <span className="text-sm">{comp.nameKo}</span>
-                    <span className="text-xs text-gray-400 ml-1">{comp.name}</span>
+                <div key={comp.name} className="py-1.5 px-2 bg-gray-50 rounded">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-sm">{comp.nameKo}</span>
+                      <span className="text-xs text-gray-400 ml-1">{comp.name}</span>
+                    </div>
+                    <span className={
+                      comp.status === 'healthy' ? 'badge-green' :
+                      comp.status === 'degraded' ? 'badge-yellow' : 'badge-gray'
+                    }>
+                      {comp.status === 'healthy' ? '정상' : comp.status === 'degraded' ? '저하' : '미설정'}
+                    </span>
                   </div>
-                  <span className={
-                    comp.status === 'healthy' ? 'badge-green' : 
-                    comp.status === 'degraded' ? 'badge-yellow' : 'badge-gray'
-                  }>
-                    {comp.status === 'healthy' ? '정상' : comp.status === 'degraded' ? '저하' : '미설정'}
-                  </span>
+                  {comp.status !== 'healthy' && (
+                    <div className="text-[11px] text-gray-500 mt-0.5 leading-tight">{comp.reason}</div>
+                  )}
                 </div>
               ))}
             </div>
