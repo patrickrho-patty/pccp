@@ -40,7 +40,7 @@ func (s *Service) NewWebBindingServer(allowedOrigins []string) (*webbinding.Serv
 		executor: dari.NewDurableEffectExecutor(s.relayID, s.policy.SigningPrivateKey(), &effectStoreDB{db: s.db}),
 		priv:     s.policy.SigningPrivateKey(),
 	}
-	if err := s.db.AutoMigrate(&effectRecordRow{}); err != nil {
+	if err := s.db.AutoMigrate(&models.EffectRecordRow{}); err != nil {
 		return nil, fmt.Errorf("webbinding: effect store migrate: %w", err)
 	}
 	return webbinding.NewServer(store, allowedOrigins, func(sessionID string, envelope []byte) ([]byte, error) {
@@ -249,28 +249,12 @@ func (s *Service) governWebEnvelope(ctx context.Context, harnessID, sessionID st
 // restart instead of ABSENT.
 type effectStoreDB struct{ db *gorm.DB }
 
-// effectRecordRow is the storage model (dari.EffectRecordRow columns).
-type effectRecordRow struct {
-	ID            string `gorm:"type:varchar(128);primaryKey"`
-	State         int
-	Nonce         []byte
-	PrepareDigest string
-	GrantDigest   string
-	InputDigest   string
-	AuthDigest    string
-	Executor      string
-	RetryOwner    string
-	ResultCOSE    []byte
-}
-
-func (effectRecordRow) TableName() string { return "effect_records" }
-
 func (s *effectStoreDB) SaveEffect(opID string, rec *dari.EffectRecordRow) error {
 	if s.db == nil || rec == nil {
 		return nil
 	}
-	row := effectRecordRow{
-		ID: opID, State: int(rec.State), Nonce: rec.Nonce[:],
+	row := models.EffectRecordRow{
+		OperationID: opID, State: int(rec.State), Nonce: rec.Nonce[:],
 		PrepareDigest: hex.EncodeToString(rec.PrepareDigest[:]),
 		GrantDigest:   hex.EncodeToString(rec.GrantDigest[:]),
 		InputDigest:   hex.EncodeToString(rec.InputDigest[:]),
@@ -285,8 +269,8 @@ func (s *effectStoreDB) LoadEffect(opID string) (*dari.EffectRecordRow, error) {
 	if s.db == nil {
 		return nil, gorm.ErrRecordNotFound
 	}
-	var row effectRecordRow
-	if err := s.db.Where("id = ?", opID).First(&row).Error; err != nil {
+	var row models.EffectRecordRow
+	if err := s.db.Where("operation_id = ?", opID).First(&row).Error; err != nil {
 		return nil, err
 	}
 	out := &dari.EffectRecordRow{
@@ -294,14 +278,9 @@ func (s *effectStoreDB) LoadEffect(opID string) (*dari.EffectRecordRow, error) {
 		RetryOwner: row.RetryOwner, ResultCOSE: row.ResultCOSE,
 	}
 	copy(out.Nonce[:], row.Nonce)
-	copy(out.PrepareDigest[:], mustHex(row.PrepareDigest))
-	copy(out.GrantDigest[:], mustHex(row.GrantDigest))
-	copy(out.InputDigest[:], mustHex(row.InputDigest))
-	copy(out.AuthDigest[:], mustHex(row.AuthDigest))
+	copy(out.PrepareDigest[:], digestBytes(row.PrepareDigest))
+	copy(out.GrantDigest[:], digestBytes(row.GrantDigest))
+	copy(out.InputDigest[:], digestBytes(row.InputDigest))
+	copy(out.AuthDigest[:], digestBytes(row.AuthDigest))
 	return out, nil
-}
-
-func mustHex(s string) []byte {
-	b, _ := hex.DecodeString(s)
-	return b
 }

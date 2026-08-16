@@ -16,8 +16,8 @@ code,name,family,description
 0x0202,SESSION_CLOSE,session,Working session close
 0x0210,LEASE_ISSUE,session,Capability lease issuance
 0x0211,LEASE_REVOKE,session,Capability lease revocation
-0x0212,LEASE_RENEW,sessions,SessionResumptionRequest (kernel type; resume rides 0x0213)
-0x0213,SESSION_RESUME,sessions,§53 session resumption request/response,session,Capability lease renewal
+0x0212,LEASE_RENEW,sessions,Session lease renewal
+0x0213,SESSION_RESUME,sessions,§53 session resumption request/response
 0x0300,EXCHANGE_OPEN,governance,Governed exchange open
 0x0301,EXCHANGE_ACTION,governance,Exchange action
 0x0302,EXCHANGE_CLOSE,governance,Exchange close

@@ -2,6 +2,8 @@ package relay
 
 import (
 	"testing"
+
+	"github.com/patrickrho-patty/pccp/internal/dari"
 )
 
 // P0-5: sandbox governance rows are REPO-scoped (the old mapping put
@@ -30,5 +32,36 @@ func TestSandboxRowsAreRepoScoped(t *testing.T) {
 	}
 	if len(view.Sandboxes) != 1 {
 		t.Fatalf("sandbox rows = %d, want 1 (session-only row skipped)", len(view.Sandboxes))
+	}
+}
+
+// H5 (code review): resumption credentials are crypto-random and
+// harness+org bound — two mints for the same inputs never collide, and
+// the binding fields are populated.
+func TestResumptionTokenRandomAndBound(t *testing.T) {
+	a := dari.GenerateResumptionToken("sess-x", "org-1", "harness-1")
+	b := dari.GenerateResumptionToken("sess-x", "org-1", "harness-1")
+	if string(a.Token) == string(b.Token) {
+		t.Fatal("tokens for identical inputs must not collide (crypto-rand)")
+	}
+	if a.HarnessID != "harness-1" || a.OrgID != "org-1" {
+		t.Fatalf("binding fields = %q/%q", a.HarnessID, a.OrgID)
+	}
+	if !a.IsValid() {
+		t.Fatal("fresh token must be valid")
+	}
+}
+
+// M2 (code review): a nil reservation is a miss for replay purposes —
+// never a replayable empty response.
+func TestAIOpenCacheNilReservationNotReplayable(t *testing.T) {
+	c := newAIOpenCache()
+	c.put("conn", "k", nil) // in-flight reservation
+	if got, ok := c.get("conn", "k"); ok && got != nil {
+		t.Fatalf("reservation leaked as response: %q", got)
+	}
+	c.put("conn", "k", []byte("done"))
+	if got, ok := c.get("conn", "k"); !ok || string(got) != "done" {
+		t.Fatalf("filled entry must replay: %q %v", got, ok)
 	}
 }

@@ -1,9 +1,8 @@
 package dari
 
 import (
-	"crypto/sha256"
+	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"time"
 )
 
@@ -38,21 +37,24 @@ type ResumptionCredential struct {
 	HarnessID  string    `json:"harness_id"`
 }
 
-// GenerateResumptionToken creates a resumption token for a session.
-func GenerateResumptionToken(sessionID, orgID string) *ResumptionCredential {
+// GenerateResumptionToken creates a resumption credential for a
+// session. The token is 32 bytes of CRYPTO-RAND — a resumption token
+// re-binds session governance to whichever connection presents it, so
+// a derivable token (hash of guessable inputs) is a session-hijack
+// vector. HarnessID binds the credential to the enrolled peer.
+func GenerateResumptionToken(sessionID, orgID, harnessID string) *ResumptionCredential {
 	now := time.Now()
-	h := sha256.New()
-	h.Write([]byte(sessionID))
-	h.Write([]byte(orgID))
-	h.Write([]byte(fmt.Sprintf("%d", now.UnixNano())))
-	token := h.Sum(nil)
-
+	token := make([]byte, 32)
+	if _, err := rand.Read(token); err != nil {
+		panic("dari: resumption token entropy: " + err.Error())
+	}
 	return &ResumptionCredential{
 		SessionID: sessionID,
 		Token:     token,
 		IssuedAt:  now,
 		ExpiresAt: now.Add(30 * time.Minute), // 30-minute resumption window
 		OrgID:     orgID,
+		HarnessID: harnessID,
 	}
 }
 

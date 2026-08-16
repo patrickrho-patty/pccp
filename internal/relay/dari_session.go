@@ -116,12 +116,24 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 	// §53: mint the session's resumption credential (30-minute window)
 	// and send it with the grant — a reconnecting connector presents it
 	// on SESSION_RESUME instead of re-running full setup.
-	resumeTok := dari.GenerateResumptionToken(so.SessionID, orgID)
+	resumeTok := dari.GenerateResumptionToken(so.SessionID, orgID, pl.harnessForConn(connID))
 	pl.mu.Lock()
 	if pl.resumptionTokens == nil {
-		pl.resumptionTokens = map[string]*dari.ResumptionCredential{}
+		pl.resumptionTokens = map[string]*resumeState{}
 	}
-	pl.resumptionTokens[so.SessionID] = resumeTok
+	if pl.resumeMints%128 == 0 {
+		// M5: sweep expired credentials — the map must stay bounded on
+		// a long-lived relay.
+		for sid, st := range pl.resumptionTokens {
+			if !st.cred.IsValid() {
+				delete(pl.resumptionTokens, sid)
+			}
+		}
+	}
+	pl.resumeMints++
+	// H6: the session's governance context (grant) attaches when the
+	// grant is issued below; the epoch is known now.
+	pl.resumptionTokens[so.SessionID] = &resumeState{cred: resumeTok, epoch: epoch.EpochID}
 	pl.mu.Unlock()
 
 	// Push POLICY_EPOCH (0x0D10).
@@ -222,6 +234,14 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 		return
 	}
 	grantEnv, err := pl.svc.IssueSessionGrant(lease, harnessPub)
+	if err == nil {
+		// H6: complete the resume state's governance context.
+		pl.mu.Lock()
+		if st := pl.resumptionTokens[so.SessionID]; st != nil {
+			st.grant = grantEnv
+		}
+		pl.mu.Unlock()
+	}
 	if err != nil {
 		pl.sendJSONError(conn, connID, "authorization grant issuance failed: "+err.Error())
 		return

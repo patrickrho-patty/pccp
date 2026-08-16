@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 )
 
 // VersionMajor is the DARI protocol major version (DARI §9).
@@ -179,20 +178,13 @@ func EncodeHeader(kv map[HeaderKey][]byte) ([]byte, error) {
 	if len(kv) == 0 {
 		return nil, nil
 	}
-	keys := make([]HeaderKey, 0, len(kv))
-	for k := range kv {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool { return uint64(keys[i]) < uint64(keys[j]) })
 	m := make(map[int]interface{}, len(kv))
-	for _, k := range keys {
-		m[int(k)] = kv[k]
+	for k, v := range kv {
+		m[int(k)] = v
 	}
-	enc, err := MarshalCBOR(m)
-	if err != nil {
-		return nil, err
-	}
-	return enc, nil
+	// Determinism comes from the canonical encoder (SortCoreDeterministic
+	// orders map keys) — no manual pre-sort needed.
+	return MarshalCBOR(m)
 }
 
 // DecodeHeader parses a CBOR header map back to key→bytes.

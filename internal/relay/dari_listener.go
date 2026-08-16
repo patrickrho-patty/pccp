@@ -54,8 +54,10 @@ type DARIListener struct {
 	// replay + bounded record-replay window) per connection.
 	aiOpenCache  *aiOpenCache
 	replayWindow *replayWindow
-	// resumptionTokens are the live §53 credentials by session ID.
-	resumptionTokens map[string]*dari.ResumptionCredential
+	// resumptionTokens carry the §53 credential + the session's
+	// governance context (grant/epoch) for restore-on-resume.
+	resumptionTokens map[string]*resumeState
+	resumeMints      uint64
 }
 
 type credentialConnection interface {
@@ -402,17 +404,22 @@ func (pl *DARIListener) handleApplicationMessages(ctx context.Context, conn *dar
 			// envelope (never re-governed, never re-metered); a replay
 			// with a SEEN LaneSequence inside the replay window is
 			// dropped (bounded dedupe per §42.1 record replay window).
-			if idemKey := headerString(record.Header, dari.HKIdempotencyKey); idemKey != "" {
-				if cached, ok := pl.aiOpenCache.get(connID, idemKey); ok {
-					log.Printf("relay: AI_OPEN idempotent replay from %s key=%s — cached response", connID, idemKey)
-					conn.SendMessage(dari.MsgAIComplete, nil, cached, record.LaneID, record.LaneSequence+1)
-					continue
-				}
-				pl.aiOpenCache.put(connID, idemKey, nil) // reserve (filled post-govern)
-			}
 			if seen := pl.replayWindow.observe(connID, record.LaneSequence); seen {
+				// Replay of an observed sequence: the idempotency cache
+				// decides between replaying the cached answer and
+				// dropping a duplicate in flight.
+				if idemKey := headerString(record.Header, dari.HKIdempotencyKey); idemKey != "" {
+					if cached, ok := pl.aiOpenCache.get(connID, idemKey); ok && cached != nil {
+						log.Printf("relay: AI_OPEN idempotent replay from %s key=%s — cached response", connID, idemKey)
+						conn.SendMessage(dari.MsgAIComplete, nil, cached, record.LaneID, record.LaneSequence+1)
+						continue
+					}
+				}
 				log.Printf("relay: replayed record from %s seq=%d inside window — dropped", connID, record.LaneSequence)
 				continue
+			}
+			if idemKey := headerString(record.Header, dari.HKIdempotencyKey); idemKey != "" {
+				pl.aiOpenCache.put(connID, idemKey, nil) // reserve (filled post-govern)
 			}
 			log.Printf("relay: dari AI_OPEN from %s, governing", connID)
 			pl.governAIOpen(ctx, conn, record, connID, harnessID)
@@ -792,32 +799,75 @@ func (pl *DARIListener) handleSessionResume(conn *dari.TransportConn, connID str
 		pl.sendJSONError(conn, connID, "session resume: decode failed")
 		return
 	}
+	// H4: EVERY conns/token access happens under pl.mu — the map read
+	// races connection tracking writers otherwise (fatal map race).
 	pl.mu.Lock()
-	tok := pl.resumptionTokens[req.WorkingSessionID]
+	st := pl.resumptionTokens[req.WorkingSessionID]
+	connState := pl.conns[connID]
 	pl.mu.Unlock()
+
 	resp := &dari.SessionResumptionResponse{}
-	if tok == nil || !tok.IsValid() || string(req.ResumptionToken) != string(tok.Token) {
+	var restoreGrant *dari.GrantEnvelope
+	var restoreEpoch string
+	switch {
+	case st == nil || !st.cred.IsValid() || string(req.ResumptionToken) != string(st.cred.Token):
 		resp.Granted = false
 		resp.Reason = "resumption credential unknown or expired — full SESSION_OPEN required"
 		resp.RequiresFullRestart = true
-	} else {
+	default:
 		harnessID := ""
-		if st := pl.conns[connID]; st != nil && st.cred != nil {
-			harnessID = st.cred.SubjectPeerID
+		if connState != nil && connState.cred != nil {
+			harnessID = connState.cred.SubjectPeerID
 		}
-		if harnessID == "" || tok.HarnessID != "" && tok.HarnessID != harnessID {
+		orgID := pl.orgForPeer(connID)
+		if harnessID == "" || st.cred.HarnessID != harnessID || st.cred.OrgID != orgID {
+			// H5: the credential is bound to the enrolled harness AND
+			// org — a token presented from another identity never
+			// re-binds session governance.
 			resp.Granted = false
-			resp.Reason = "resumption credential bound to a different harness"
+			resp.Reason = "resumption credential bound to a different harness or organization"
 			resp.RequiresFullRestart = true
 		} else {
 			resp.Granted = true
 			resp.ResumedFromSeq = req.LastAckLaneSeq
+			restoreGrant, restoreEpoch = st.grant, st.epoch
 			pl.setSession(connID, req.WorkingSessionID)
 		}
+	}
+	if resp.Granted {
+		// H6: restore the session's governance context on this
+		// connection — a resumed AI_OPEN carries the same grant and
+		// epoch pin as the full handshake; resume is never a weaker
+		// authority path.
+		pl.mu.Lock()
+		if cs := pl.conns[connID]; cs != nil {
+			cs.grant = restoreGrant
+			cs.epoch = restoreEpoch
+		}
+		pl.mu.Unlock()
 	}
 	body, err := dari.MarshalCBOR(resp)
 	if err != nil {
 		return
 	}
 	conn.SendMessage(dari.MsgSessionResume, nil, body, record.LaneID, record.LaneSequence+1)
+}
+
+// resumeState bundles the §53 credential with the session's
+// governance context for restore-on-resume.
+type resumeState struct {
+	cred  *dari.ResumptionCredential
+	grant *dari.GrantEnvelope
+	epoch string
+}
+
+// harnessForConn resolves the authenticated harness identity for a
+// connection ("" pre-auth).
+func (pl *DARIListener) harnessForConn(connID string) string {
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
+	if st := pl.conns[connID]; st != nil && st.cred != nil {
+		return st.cred.SubjectPeerID
+	}
+	return ""
 }

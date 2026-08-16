@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/scheduler"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -303,6 +304,13 @@ type aiOpenCacheEntry struct {
 // store (§42.1): a retransmitted AI_OPEN with the same key replays the
 // cached response instead of re-governing. Entries expire past TTL so
 // the map stays bounded under key churn.
+//
+// NOTE: internal/replay.Protection models §51/§52 idempotency classes
+// at the SERVICE level. This cache deliberately lives one layer down
+// (transport connection scope + hard key bound + nil-reservation
+// semantics for in-flight requests) — consolidating the two is a
+// worthwhile follow-up, tracked here so the overlap is a documented
+// decision rather than an accident.
 type aiOpenCache struct {
 	mu      sync.Mutex
 	byConn  map[string]map[string]aiOpenCacheEntry
@@ -326,9 +334,16 @@ func (c *aiOpenCache) get(connID, key string) ([]byte, bool) {
 		return nil, false
 	}
 	e, ok := m[key]
-	if !ok || time.Since(e.at) > c.ttl {
+	if !ok {
 		return nil, false
 	}
+	if time.Since(e.at) > c.ttl {
+		delete(m, key) // expired: purge, not just miss
+		return nil, false
+	}
+	// A nil response is a RESERVATION (request in flight), not a
+	// replayable answer — callers treat (nil, true) as "original turn
+	// still running; drop the duplicate".
 	return e.response, true
 }
 
@@ -341,17 +356,19 @@ func (c *aiOpenCache) put(connID, key string, response []byte) {
 		c.byConn[connID] = m
 	}
 	if len(m) >= c.maxKeys {
-		// Drop the oldest tenth (approximate LRU by timestamp).
-		var oldest []string
-		for k, e := range m {
-			_ = e
-			oldest = append(oldest, k)
-			if len(oldest) > c.maxKeys/10 {
-				break
-			}
+		// Evict genuinely OLDEST entries (by timestamp — the previous
+		// random-tenth eviction could discard the hottest keys).
+		type kv struct {
+			k  string
+			at time.Time
 		}
-		for _, k := range oldest {
-			delete(m, k)
+		all := make([]kv, 0, len(m))
+		for k, e := range m {
+			all = append(all, kv{k, e.at})
+		}
+		sort.Slice(all, func(i, j int) bool { return all[i].at.Before(all[j].at) })
+		for _, e := range all[:c.maxKeys/10] {
+			delete(m, e.k)
 		}
 	}
 	m[key] = aiOpenCacheEntry{response: response, at: time.Now()}

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 )
@@ -266,7 +267,12 @@ func (e *EffectExecutor) persistLocked(opID string, rec *effectRecord) {
 	if rec.result != nil {
 		row.ResultCOSE = rec.result.COSEBytes
 	}
-	_ = e.store.SaveEffect(opID, row) // best-effort: memory remains authoritative for this process
+	if err := e.store.SaveEffect(opID, row); err != nil {
+		// Memory remains authoritative for this process, but after a
+		// restart the store is the ONLY source — a failed persist is
+		// lost F.10 state and must be visible to the operator.
+		log.Printf("dari: effect %s persist FAILED (state lost on restart): %v", opID, err)
+	}
 }
 
 // loadFromStore materializes a pre-restart record (caller holds mu).
@@ -302,7 +308,12 @@ func (e *EffectExecutor) AckPrepare(p *EffectPrepareEnvelope) error {
 	rec, exists := e.ops[p.Body.OperationID]
 	if !exists {
 		if prior := e.loadFromStore(p.Body.OperationID); prior != nil {
+			// Cross-restart replay: fall THROUGH to the binding check —
+			// a retried prepare with a different binding must conflict,
+			// exactly like the in-memory path.
+			e.ops[p.Body.OperationID] = prior
 			rec = prior
+			exists = true
 		} else {
 			rec = &effectRecord{
 				state: EffectStatePrepared, nonce: p.Body.Nonce,
@@ -312,8 +323,8 @@ func (e *EffectExecutor) AckPrepare(p *EffectPrepareEnvelope) error {
 			}
 			e.ops[p.Body.OperationID] = rec
 			e.persistLocked(p.Body.OperationID, rec)
+			return nil
 		}
-		return nil
 	}
 	// Idempotency: identical binding replays; anything else conflicts.
 	if rec.prepareDigest == p.SignedDigest && rec.nonce == p.Body.Nonce &&

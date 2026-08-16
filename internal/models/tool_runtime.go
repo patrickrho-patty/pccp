@@ -106,6 +106,7 @@ func AllModels() []interface{} {
 		&ServiceSigningKey{},
 		&CredentialRevocationRecord{},
 		&SandboxRecord{},
+		&EffectRecordRow{},
 		// Provenance
 		&ActionEnvelope{},
 		&ChangeSet{},
