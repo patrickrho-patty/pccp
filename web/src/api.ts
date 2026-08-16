@@ -208,8 +208,6 @@ export const api = {
     request<{ data: any[]; total: number; page: number; size: number }>(
       `/api/sessions?page=${page}&size=${size}${search ? `&search=${encodeURIComponent(search)}` : ''}`
     ),
-  openSession: (data: any) =>
-    request<any>('/api/sessions', { method: 'POST', body: JSON.stringify(data) }),
   closeSession: (id: string) =>
     request<any>(`/api/sessions/${id}/close`, { method: 'POST' }),
   pauseSession: (id: string) =>
@@ -303,11 +301,6 @@ export const api = {
     request<any>(`/api/analytics/usage-extended?range=${rangeParam}`),
 
   // Model infra (web/18)
-  publishModel: (id: string) =>
-    request<any>(`/api/models/${id}/publish`, { method: 'POST' }),
-  recallModel: (id: string) =>
-    request<any>(`/api/models/${id}/recall`, { method: 'POST' }),
-  modelRecallImpact: (id: string) => request<any>(`/api/models/${id}/recall-impact`),
   assignModelRing: (id: string, releaseRing: string) =>
     request<any>(`/api/models/${id}/ring`, { method: 'PUT', body: JSON.stringify({ release_ring: releaseRing }) }),
 
@@ -452,11 +445,6 @@ export const api = {
     request<any>('/api/context/evaluate', { method: 'POST', body: JSON.stringify(data) }),
 
   // Sandbox
-  listSandboxes: () => request<any[]>('/api/sandboxes'),
-  createSandbox: (data: any) =>
-    request<any>('/api/sandboxes', { method: 'POST', body: JSON.stringify(data) }),
-
-  // Events
   queryEvents: (type?: string) =>
     request<any[]>(`/api/events${type ? '?type=' + type : ''}`),
 
@@ -500,9 +488,6 @@ export const api = {
   telemetrySnapshot: () => request<any>('/api/telemetry/snapshot'),
 
   // Tools
-  listTools: () => request<any[]>('/api/tools'),
-  seedTools: () =>
-    request<any>('/api/tools/seed-defaults', { method: 'POST', body: JSON.stringify({}) }),
   listToolApprovals: () => request<any[]>('/api/tools/approvals'),
 
   // Attestation

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import EmptyState from '../components/EmptyState'
 import { Link } from 'react-router-dom'
 import { showToast } from '../components/Toast'
@@ -18,6 +18,18 @@ export default function ServiceCommandCenter() {
   const [supportCases, setSupportCases] = useState<any[]>([])
   const [abuseCases, setAbuseCases] = useState<any[]>([])
 
+
+  // refreshHealth: poll /health + /api/realtime/status; a failed fetch
+  // renders 'unreachable' (red) — never silently keeps stale 'ok'.
+  const refreshHealth = useCallback(() => {
+    Promise.all([
+      fetch('/health', { headers: authHeaders() }).then(r => r.json()).catch(() => null),
+      fetch('/api/realtime/status', { headers: authHeaders() }).then(r => (r.ok ? r.json() : null)).catch(() => null),
+    ]).then(([cp, rt]) => {
+      setHealth((h: any) => ({ ...h, cp: cp ?? { status: 'unreachable' }, rt: rt ?? { relay_status: 'unreachable' } }))
+    })
+  }, [])
+
   useEffect(() => {
     Promise.all([
       fetch('/api/dashboard', { headers: authHeaders() }).then(r => r.json()).catch(() => ({})),
@@ -33,7 +45,14 @@ export default function ServiceCommandCenter() {
       setAbuseCases(Array.isArray(ab) ? ab : [])
       setLoading(false)
     })
-  }, [])
+    // Health refreshes on an interval + on tab focus: operators must
+    // see CURRENT component state without a manual reload (a stale
+    // tab or cached bundle must never freeze the panel).
+    const timer = window.setInterval(refreshHealth, 10000)
+    const onVisible = () => { if (document.visibilityState === 'visible') refreshHealth() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisible) }
+  }, [refreshHealth])
 
   if (loading) return <div className="text-gray-500">로딩 중...</div>
 
