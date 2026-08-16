@@ -14,7 +14,9 @@ web/dist/
 patty-code-pccp/
 
 # Reference checkouts for distributed-systems research (not part of this repo)
-tools/
+# Anchored to the top level ONLY: an unanchored `tools/` also ignored
+# internal/tools/ and silently dropped source files from commits.
+/tools/
 
 # IDE
 .idea/
