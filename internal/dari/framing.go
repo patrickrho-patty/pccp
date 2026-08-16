@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 )
 
 // VersionMajor is the DARI protocol major version (DARI §9).
@@ -169,4 +170,43 @@ func DecodeRecord(r io.Reader) (*Record, error) {
 		}
 	}
 	return rec, nil
+}
+
+// EncodeHeader CBOR-encodes a record header map (DARI §9): header keys
+// are uint64-tagged integers → value bytes. Deterministic (sorted
+// keys, canonical CBOR via the package encoder).
+func EncodeHeader(kv map[HeaderKey][]byte) ([]byte, error) {
+	if len(kv) == 0 {
+		return nil, nil
+	}
+	keys := make([]HeaderKey, 0, len(kv))
+	for k := range kv {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return uint64(keys[i]) < uint64(keys[j]) })
+	m := make(map[int]interface{}, len(kv))
+	for _, k := range keys {
+		m[int(k)] = kv[k]
+	}
+	enc, err := MarshalCBOR(m)
+	if err != nil {
+		return nil, err
+	}
+	return enc, nil
+}
+
+// DecodeHeader parses a CBOR header map back to key→bytes.
+func DecodeHeader(raw []byte) (map[HeaderKey][]byte, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var m map[int][]byte
+	if err := UnmarshalCBOR(raw, &m); err != nil {
+		return nil, fmt.Errorf("dari: decode header: %w", err)
+	}
+	out := make(map[HeaderKey][]byte, len(m))
+	for k, v := range m {
+		out[HeaderKey(k)] = v
+	}
+	return out, nil
 }

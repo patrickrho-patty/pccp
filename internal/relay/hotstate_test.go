@@ -173,3 +173,37 @@ func seedGovernedStack(t *testing.T, db *gorm.DB, suffix string) (harnessID, ses
 	db.Create(&models.EndpointLease{EndpointID: endpoint, OrganizationID: orgID, ModelPackageID: pkgID, LeaseID: epLease, NotAfter: future, Status: "active", IssuedAt: past})
 	return harnessID, sessionID, modelID
 }
+
+// §42.1 pins: idempotent AI_OPEN replay + bounded record replay window.
+func TestAIOpenCacheReplay(t *testing.T) {
+	c := newAIOpenCache()
+	c.put("conn-1", "key-1", []byte(`{"output":"done"}`))
+	if got, ok := c.get("conn-1", "key-1"); !ok || string(got) != `{"output":"done"}` {
+		t.Fatalf("cached get = %q ok=%v", got, ok)
+	}
+	if _, ok := c.get("conn-1", "key-2"); ok {
+		t.Fatal("unknown key must miss")
+	}
+	c.dropConn("conn-1")
+	if _, ok := c.get("conn-1", "key-1"); ok {
+		t.Fatal("dropConn must clear the connection's cache")
+	}
+}
+
+func TestReplayWindowDropsDuplicates(t *testing.T) {
+	w := newReplayWindow()
+	if w.observe("c", 5) {
+		t.Fatal("first observe must be new")
+	}
+	if !w.observe("c", 5) {
+		t.Fatal("duplicate sequence must be flagged as replay")
+	}
+	if w.observe("c", 6) {
+		t.Fatal("forward sequence must be new")
+	}
+	// Far-below-max sequences outside the window are stale-reorder —
+	// treated as new (not dropped), matching the bounded-window rule.
+	if w.observe("c", 1) {
+		t.Fatal("out-of-window sequence is stale reordering, not a replay")
+	}
+}

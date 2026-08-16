@@ -50,6 +50,12 @@ type DARIListener struct {
 	authenticator *PeerAuthenticator
 	mu            sync.Mutex
 	conns         map[string]*connState
+	// aiOpenCache + replayWindow implement §42.1 (idempotent AI_OPEN
+	// replay + bounded record-replay window) per connection.
+	aiOpenCache  *aiOpenCache
+	replayWindow *replayWindow
+	// resumptionTokens are the live §53 credentials by session ID.
+	resumptionTokens map[string]*dari.ResumptionCredential
 }
 
 type credentialConnection interface {
@@ -77,6 +83,8 @@ func NewDARIListener(svc *Service, tlsConfig *tls.Config, trust ...TrustBundle) 
 		tlsConfig:     tlsConfig,
 		authenticator: NewPeerAuthenticator(bundle),
 		conns:         make(map[string]*connState),
+		aiOpenCache:   newAIOpenCache(),
+		replayWindow:  newReplayWindow(),
 	}
 }
 
@@ -167,10 +175,25 @@ func (pl *DARIListener) handleConn(ctx context.Context, netConn net.Conn) {
 
 	// Build HELLO_ACK
 	serverNonce := make([]byte, 32)
+	// Map §3 negotiation: ACK carries the INTERSECTION of the offered
+	// extension set and what the relay implements (sorted, no dupes —
+	// the canonical encoder enforces it).
+	relaySupported := map[string]uint8{
+		"dari.ai/1":           1,
+		"dari.model-supply/1": 1,
+		"dari.collab/1":       1,
+	}
+	negotiated := map[string]uint8{}
+	for ext, ver := range hello.Extensions {
+		if relaySupported[ext] == ver {
+			negotiated[ext] = ver
+		}
+	}
 	ack := &dari.HelloAckMessage{
-		CoreVersion:   1,
-		CryptoProfile: "DARI-BASE-1",
-		ServerNonce:   serverNonce,
+		CoreVersion:       1,
+		CryptoProfile:     "DARI-BASE-1",
+		ServerNonce:       serverNonce,
+		ExtensionVersions: negotiated,
 		ResourceLimits: map[string]uint64{
 			"max_sessions":    100,
 			"max_exchanges":   1000,
@@ -304,6 +327,8 @@ func (pl *DARIListener) forgetConnection(connID string) {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
 	delete(pl.conns, connID)
+	pl.aiOpenCache.dropConn(connID)
+	pl.replayWindow.dropConn(connID)
 }
 
 // RevokeCredential advances the revocation view and immediately closes every
@@ -372,8 +397,33 @@ func (pl *DARIListener) handleApplicationMessages(ctx context.Context, conn *dar
 			pl.setupSession(ctx, conn, connID, so, hello.ImplementationVersion)
 
 		case record.Kind == dari.KindMessage && msgType == dari.MsgAIOpen:
+			// §42.1 replay/idempotency: an AI_OPEN retransmission with a
+			// known idempotency key is answered with the CACHED response
+			// envelope (never re-governed, never re-metered); a replay
+			// with a SEEN LaneSequence inside the replay window is
+			// dropped (bounded dedupe per §42.1 record replay window).
+			if idemKey := headerString(record.Header, dari.HKIdempotencyKey); idemKey != "" {
+				if cached, ok := pl.aiOpenCache.get(connID, idemKey); ok {
+					log.Printf("relay: AI_OPEN idempotent replay from %s key=%s — cached response", connID, idemKey)
+					conn.SendMessage(dari.MsgAIComplete, nil, cached, record.LaneID, record.LaneSequence+1)
+					continue
+				}
+				pl.aiOpenCache.put(connID, idemKey, nil) // reserve (filled post-govern)
+			}
+			if seen := pl.replayWindow.observe(connID, record.LaneSequence); seen {
+				log.Printf("relay: replayed record from %s seq=%d inside window — dropped", connID, record.LaneSequence)
+				continue
+			}
 			log.Printf("relay: dari AI_OPEN from %s, governing", connID)
 			pl.governAIOpen(ctx, conn, record, connID, harnessID)
+
+		case record.Kind == dari.KindMessage && msgType == dari.MsgSessionResume:
+			// §53: a reconnecting connector presents its resumption
+			// credential. Valid + inside the window → re-bound session
+			// (fresh lease, same working session) without full re-setup;
+			// anything else requires full SESSION_OPEN (fail-closed, the
+			// connector falls back automatically).
+			pl.handleSessionResume(conn, connID, record)
 
 		case record.Kind == dari.KindMessage && msgType == dari.MsgCollabEnvelope:
 			pl.routeCollabEnvelope(conn, connID, record)
@@ -611,6 +661,12 @@ func (pl *DARIListener) governAIOpen(ctx context.Context, conn *dari.TransportCo
 
 	conn.SendMessage(dari.MsgAIComplete, nil, completePayload, reqRecord.LaneID, reqRecord.LaneSequence+1)
 	log.Printf("relay: governed AI_COMPLETE sent to %s", connID)
+
+	// §42.1: cache the response under the request's idempotency key —
+	// a retransmission replays this exact envelope without re-governing.
+	if idemKey := headerString(reqRecord.Header, dari.HKIdempotencyKey); idemKey != "" {
+		pl.aiOpenCache.put(connID, idemKey, completePayload)
+	}
 }
 
 // pushEvidenceReceiptMessage encodes and pushes an issued receipt.
@@ -727,4 +783,41 @@ func (pl *DARIListener) routeCollabEnvelope(conn *dari.TransportConn, connID str
 		Result:         "delivered",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	})
+}
+
+// handleSessionResume validates a §53 resumption request and answers.
+func (pl *DARIListener) handleSessionResume(conn *dari.TransportConn, connID string, record *dari.Record) {
+	var req dari.SessionResumptionRequest
+	if err := dari.UnmarshalCBOR(record.Payload, &req); err != nil {
+		pl.sendJSONError(conn, connID, "session resume: decode failed")
+		return
+	}
+	pl.mu.Lock()
+	tok := pl.resumptionTokens[req.WorkingSessionID]
+	pl.mu.Unlock()
+	resp := &dari.SessionResumptionResponse{}
+	if tok == nil || !tok.IsValid() || string(req.ResumptionToken) != string(tok.Token) {
+		resp.Granted = false
+		resp.Reason = "resumption credential unknown or expired — full SESSION_OPEN required"
+		resp.RequiresFullRestart = true
+	} else {
+		harnessID := ""
+		if st := pl.conns[connID]; st != nil && st.cred != nil {
+			harnessID = st.cred.SubjectPeerID
+		}
+		if harnessID == "" || tok.HarnessID != "" && tok.HarnessID != harnessID {
+			resp.Granted = false
+			resp.Reason = "resumption credential bound to a different harness"
+			resp.RequiresFullRestart = true
+		} else {
+			resp.Granted = true
+			resp.ResumedFromSeq = req.LastAckLaneSeq
+			pl.setSession(connID, req.WorkingSessionID)
+		}
+	}
+	body, err := dari.MarshalCBOR(resp)
+	if err != nil {
+		return
+	}
+	conn.SendMessage(dari.MsgSessionResume, nil, body, record.LaneID, record.LaneSequence+1)
 }

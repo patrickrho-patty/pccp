@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"gorm.io/gorm"
 	"os"
 	"strings"
 	"time"
@@ -36,8 +37,11 @@ func (s *Service) NewWebBindingServer(allowedOrigins []string) (*webbinding.Serv
 		return nil, err
 	}
 	fx := &webEffectExecutor{
-		executor: dari.NewEffectExecutor(s.relayID, s.policy.SigningPrivateKey()),
+		executor: dari.NewDurableEffectExecutor(s.relayID, s.policy.SigningPrivateKey(), &effectStoreDB{db: s.db}),
 		priv:     s.policy.SigningPrivateKey(),
+	}
+	if err := s.db.AutoMigrate(&effectRecordRow{}); err != nil {
+		return nil, fmt.Errorf("webbinding: effect store migrate: %w", err)
 	}
 	return webbinding.NewServer(store, allowedOrigins, func(sessionID string, envelope []byte) ([]byte, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -238,4 +242,66 @@ func (s *Service) governWebEnvelope(ctx context.Context, harnessID, sessionID st
 		return out, nil
 	}
 	return raw, nil
+}
+
+// effectStoreDB persists effect records for the web executor (F.10
+// durability): EFFECT_STATUS answers from history after a relay
+// restart instead of ABSENT.
+type effectStoreDB struct{ db *gorm.DB }
+
+// effectRecordRow is the storage model (dari.EffectRecordRow columns).
+type effectRecordRow struct {
+	ID            string `gorm:"type:varchar(128);primaryKey"`
+	State         int
+	Nonce         []byte
+	PrepareDigest string
+	GrantDigest   string
+	InputDigest   string
+	AuthDigest    string
+	Executor      string
+	RetryOwner    string
+	ResultCOSE    []byte
+}
+
+func (effectRecordRow) TableName() string { return "effect_records" }
+
+func (s *effectStoreDB) SaveEffect(opID string, rec *dari.EffectRecordRow) error {
+	if s.db == nil || rec == nil {
+		return nil
+	}
+	row := effectRecordRow{
+		ID: opID, State: int(rec.State), Nonce: rec.Nonce[:],
+		PrepareDigest: hex.EncodeToString(rec.PrepareDigest[:]),
+		GrantDigest:   hex.EncodeToString(rec.GrantDigest[:]),
+		InputDigest:   hex.EncodeToString(rec.InputDigest[:]),
+		AuthDigest:    hex.EncodeToString(rec.AuthDigest[:]),
+		Executor:      rec.Executor, RetryOwner: rec.RetryOwner,
+		ResultCOSE: rec.ResultCOSE,
+	}
+	return s.db.Save(&row).Error
+}
+
+func (s *effectStoreDB) LoadEffect(opID string) (*dari.EffectRecordRow, error) {
+	if s.db == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var row effectRecordRow
+	if err := s.db.Where("id = ?", opID).First(&row).Error; err != nil {
+		return nil, err
+	}
+	out := &dari.EffectRecordRow{
+		State: dari.EffectState(row.State), Executor: row.Executor,
+		RetryOwner: row.RetryOwner, ResultCOSE: row.ResultCOSE,
+	}
+	copy(out.Nonce[:], row.Nonce)
+	copy(out.PrepareDigest[:], mustHex(row.PrepareDigest))
+	copy(out.GrantDigest[:], mustHex(row.GrantDigest))
+	copy(out.InputDigest[:], mustHex(row.InputDigest))
+	copy(out.AuthDigest[:], mustHex(row.AuthDigest))
+	return out, nil
+}
+
+func mustHex(s string) []byte {
+	b, _ := hex.DecodeString(s)
+	return b
 }

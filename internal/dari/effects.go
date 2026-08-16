@@ -208,16 +208,84 @@ type effectRecord struct {
 // before acknowledging PREPARED, the authorization digest before
 // AUTHORIZED, and the terminal result before COMMIT/ABORT. The
 // operation ID is the idempotency key.
+// EffectStore persists effect records so EFFECT_STATUS survives
+// executor restarts (F.10 durability). Nil store = memory-only (tests).
+type EffectStore interface {
+	SaveEffect(opID string, rec *EffectRecordRow) error
+	LoadEffect(opID string) (*EffectRecordRow, error)
+}
+
+// EffectRecordRow is the persistable effect record (effectRecord
+// exported for storage).
+type EffectRecordRow struct {
+	State         EffectState
+	Nonce         [32]byte
+	PrepareDigest Digest
+	GrantDigest   Digest
+	InputDigest   Digest
+	AuthDigest    Digest
+	Executor      string
+	RetryOwner    string
+	ResultCOSE    []byte // nil until COMMIT
+}
+
 type EffectExecutor struct {
 	mu          sync.Mutex
 	ops         map[string]*effectRecord
 	executorID  string
 	executorKey ed25519.PrivateKey
+	store       EffectStore
 }
 
 // NewEffectExecutor builds an executor bound to a peer identity.
 func NewEffectExecutor(executorID string, executorKey ed25519.PrivateKey) *EffectExecutor {
 	return &EffectExecutor{ops: map[string]*effectRecord{}, executorID: executorID, executorKey: executorKey}
+}
+
+// NewDurableEffectExecutor builds an executor with a persistence store:
+// every state transition is written through, and lookups fall back to
+// the store for operations predating this process (F.10: a restart
+// answers EFFECT_STATUS from history instead of ABSENT).
+func NewDurableEffectExecutor(executorID string, executorKey ed25519.PrivateKey, store EffectStore) *EffectExecutor {
+	e := NewEffectExecutor(executorID, executorKey)
+	e.store = store
+	return e
+}
+
+// persistLocked writes one record through (caller holds mu).
+func (e *EffectExecutor) persistLocked(opID string, rec *effectRecord) {
+	if e.store == nil || rec == nil {
+		return
+	}
+	row := &EffectRecordRow{
+		State: rec.state, Nonce: rec.nonce,
+		PrepareDigest: rec.prepareDigest, GrantDigest: rec.grantDigest,
+		InputDigest: rec.inputDigest, AuthDigest: rec.authDigest,
+		Executor: rec.executor, RetryOwner: rec.retryOwner,
+	}
+	if rec.result != nil {
+		row.ResultCOSE = rec.result.COSEBytes
+	}
+	_ = e.store.SaveEffect(opID, row) // best-effort: memory remains authoritative for this process
+}
+
+// loadFromStore materializes a pre-restart record (caller holds mu).
+func (e *EffectExecutor) loadFromStore(opID string) *effectRecord {
+	if e.store == nil {
+		return nil
+	}
+	row, err := e.store.LoadEffect(opID)
+	if err != nil || row == nil {
+		return nil
+	}
+	rec := &effectRecord{
+		state: row.State, nonce: row.Nonce,
+		prepareDigest: row.PrepareDigest, grantDigest: row.GrantDigest,
+		inputDigest: row.InputDigest, authDigest: row.AuthDigest,
+		executor: row.Executor, retryOwner: row.RetryOwner,
+	}
+	e.ops[opID] = rec
+	return rec
 }
 
 // AckPrepare is the PREPARED transition: binding persisted first,
@@ -233,11 +301,17 @@ func (e *EffectExecutor) AckPrepare(p *EffectPrepareEnvelope) error {
 	defer e.mu.Unlock()
 	rec, exists := e.ops[p.Body.OperationID]
 	if !exists {
-		e.ops[p.Body.OperationID] = &effectRecord{
-			state: EffectStatePrepared, nonce: p.Body.Nonce,
-			prepareDigest: p.SignedDigest, grantDigest: p.Body.LeafGrantDigest,
-			inputDigest: p.Body.InputDigest, executor: p.Body.ExecutorPeerID,
-			retryOwner: p.Body.RetryOwnerID,
+		if prior := e.loadFromStore(p.Body.OperationID); prior != nil {
+			rec = prior
+		} else {
+			rec = &effectRecord{
+				state: EffectStatePrepared, nonce: p.Body.Nonce,
+				prepareDigest: p.SignedDigest, grantDigest: p.Body.LeafGrantDigest,
+				inputDigest: p.Body.InputDigest, executor: p.Body.ExecutorPeerID,
+				retryOwner: p.Body.RetryOwnerID,
+			}
+			e.ops[p.Body.OperationID] = rec
+			e.persistLocked(p.Body.OperationID, rec)
 		}
 		return nil
 	}
@@ -260,6 +334,10 @@ func (e *EffectExecutor) AckAuthorize(opID string, auth *EffectAuthorizationEnve
 	defer e.mu.Unlock()
 	rec, ok := e.ops[opID]
 	if !ok {
+		rec = e.loadFromStore(opID)
+		ok = rec != nil
+	}
+	if !ok {
 		return errors.New("dari: unknown operation")
 	}
 	if auth.Body.OperationID != opID {
@@ -274,6 +352,7 @@ func (e *EffectExecutor) AckAuthorize(opID string, auth *EffectAuthorizationEnve
 	// Persist the authorization digest, then transition.
 	rec.authDigest = auth.SignedDigest
 	rec.state = EffectStateAuthorized
+	e.persistLocked(opID, rec)
 	return nil
 }
 
@@ -283,12 +362,17 @@ func (e *EffectExecutor) Execute(opID string) error {
 	defer e.mu.Unlock()
 	rec, ok := e.ops[opID]
 	if !ok {
+		rec = e.loadFromStore(opID)
+		ok = rec != nil
+	}
+	if !ok {
 		return errors.New("dari: unknown operation")
 	}
 	if rec.state != EffectStateAuthorized {
 		return fmt.Errorf("dari: illegal EXECUTING transition from %d", rec.state)
 	}
 	rec.state = EffectStateExecuting
+	e.persistLocked(opID, rec)
 	return nil
 }
 
@@ -297,6 +381,10 @@ func (e *EffectExecutor) Execute(opID string) error {
 func (e *EffectExecutor) Finish(opID string, terminal EffectTerminalState, resultDigest Digest, prepareDigest Digest, decisionDigest Digest) (*EffectResultEnvelope, error) {
 	e.mu.Lock()
 	rec, ok := e.ops[opID]
+	if !ok {
+		rec = e.loadFromStore(opID)
+		ok = rec != nil
+	}
 	if !ok {
 		e.mu.Unlock()
 		return nil, errors.New("dari: unknown operation")
@@ -349,6 +437,7 @@ func (e *EffectExecutor) Finish(opID string, terminal EffectTerminalState, resul
 		rec.state = EffectStateAborted
 	}
 	rec.result = env
+	e.persistLocked(opID, rec)
 	_ = prepareDigest
 	return env, nil
 }
@@ -358,6 +447,10 @@ func (e *EffectExecutor) Status(opID string) (EffectState, *EffectResultEnvelope
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	rec, ok := e.ops[opID]
+	if !ok {
+		rec = e.loadFromStore(opID)
+		ok = rec != nil
+	}
 	if !ok {
 		return EffectStateAbsent, nil, false
 	}
@@ -370,6 +463,10 @@ func (e *EffectExecutor) Reconcile(opID, callerID string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	rec, ok := e.ops[opID]
+	if !ok {
+		rec = e.loadFromStore(opID)
+		ok = rec != nil
+	}
 	if !ok {
 		return errors.New("dari: unknown operation")
 	}

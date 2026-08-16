@@ -29,12 +29,13 @@ const (
 
 // Sessions / capability leases (0x0200–0x02FF)
 const (
-	MsgSessionOpen  MessageType = 0x0200
-	MsgSessionGrant MessageType = 0x0201
-	MsgSessionClose MessageType = 0x0202
-	MsgLeaseIssue   MessageType = 0x0210
-	MsgLeaseRevoke  MessageType = 0x0211
-	MsgLeaseRenew   MessageType = 0x0212
+	MsgSessionOpen   MessageType = 0x0200
+	MsgSessionGrant  MessageType = 0x0201
+	MsgSessionClose  MessageType = 0x0202
+	MsgLeaseIssue    MessageType = 0x0210
+	MsgLeaseRevoke   MessageType = 0x0211
+	MsgLeaseRenew    MessageType = 0x0212
+	MsgSessionResume MessageType = 0x0213
 )
 
 // Governance / approvals (0x0300–0x03FF)
@@ -162,6 +163,8 @@ func (mt MessageType) String() string {
 		return "SESSION_CLOSE"
 	case MsgLeaseIssue:
 		return "LEASE_ISSUE"
+	case MsgSessionResume:
+		return "SESSION_RESUME"
 	case MsgLeaseRevoke:
 		return "LEASE_REVOKE"
 	case MsgLeaseRenew:

@@ -113,6 +113,17 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 		return
 	}
 
+	// §53: mint the session's resumption credential (30-minute window)
+	// and send it with the grant — a reconnecting connector presents it
+	// on SESSION_RESUME instead of re-running full setup.
+	resumeTok := dari.GenerateResumptionToken(so.SessionID, orgID)
+	pl.mu.Lock()
+	if pl.resumptionTokens == nil {
+		pl.resumptionTokens = map[string]*dari.ResumptionCredential{}
+	}
+	pl.resumptionTokens[so.SessionID] = resumeTok
+	pl.mu.Unlock()
+
 	// Push POLICY_EPOCH (0x0D10).
 	wireEpoch, err := buildWirePolicyEpoch(epoch, pl.svc.Policy().SigningPublicKey())
 	if err != nil {
@@ -226,11 +237,13 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 	}
 	pl.mu.Unlock()
 	grant, _ := json.Marshal(map[string]string{
-		"session_id":   so.SessionID,
-		"policy_epoch": epoch.EpochID,
-		"lease_id":     lease.LeaseID,
-		"organization": orgID,
-		"grant_hex":    GrantHexForWire(grantEnv),
+		"session_id":     so.SessionID,
+		"policy_epoch":   epoch.EpochID,
+		"lease_id":       lease.LeaseID,
+		"organization":   orgID,
+		"resume_token":   resumeTok.TokenHex(),
+		"resume_expires": resumeTok.ExpiresAt.Format(time.RFC3339),
+		"grant_hex":      GrantHexForWire(grantEnv),
 	})
 	if err := conn.SendMessage(dari.MsgSessionGrant, nil, grant, 0, 4); err != nil {
 		log.Printf("relay: session grant to %s failed: %v", connID, err)

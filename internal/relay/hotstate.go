@@ -3,6 +3,7 @@ package relay
 import (
 	"errors"
 	"fmt"
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/scheduler"
 	"sync"
 	"sync/atomic"
@@ -287,3 +288,148 @@ func (s *Service) admitGoverned(accountID, _ string) bool {
 func (s *Service) releaseGoverned(accountID string) {
 	s.exchangeGate.Release()
 }
+
+// ---------------------------------------------------------------------------
+// §42.1 idempotency + record replay window (per-connection, bounded).
+// ---------------------------------------------------------------------------
+
+// aiOpenCacheEntry is one cached governed response by idempotency key.
+type aiOpenCacheEntry struct {
+	response []byte
+	at       time.Time
+}
+
+// aiOpenCache is a bounded per-connection idempotency-key → response
+// store (§42.1): a retransmitted AI_OPEN with the same key replays the
+// cached response instead of re-governing. Entries expire past TTL so
+// the map stays bounded under key churn.
+type aiOpenCache struct {
+	mu      sync.Mutex
+	byConn  map[string]map[string]aiOpenCacheEntry
+	ttl     time.Duration
+	maxKeys int
+}
+
+func newAIOpenCache() *aiOpenCache {
+	return &aiOpenCache{
+		byConn:  map[string]map[string]aiOpenCacheEntry{},
+		ttl:     10 * time.Minute,
+		maxKeys: 1024,
+	}
+}
+
+func (c *aiOpenCache) get(connID, key string) ([]byte, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := c.byConn[connID]
+	if m == nil {
+		return nil, false
+	}
+	e, ok := m[key]
+	if !ok || time.Since(e.at) > c.ttl {
+		return nil, false
+	}
+	return e.response, true
+}
+
+func (c *aiOpenCache) put(connID, key string, response []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := c.byConn[connID]
+	if m == nil {
+		m = map[string]aiOpenCacheEntry{}
+		c.byConn[connID] = m
+	}
+	if len(m) >= c.maxKeys {
+		// Drop the oldest tenth (approximate LRU by timestamp).
+		var oldest []string
+		for k, e := range m {
+			_ = e
+			oldest = append(oldest, k)
+			if len(oldest) > c.maxKeys/10 {
+				break
+			}
+		}
+		for _, k := range oldest {
+			delete(m, k)
+		}
+	}
+	m[key] = aiOpenCacheEntry{response: response, at: time.Now()}
+}
+
+// dropConn frees a closed connection's cache.
+func (c *aiOpenCache) dropConn(connID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.byConn, connID)
+}
+
+// replayWindow is the per-connection bounded record replay guard
+// (§42.1): records whose LaneSequence was already observed inside the
+// window are replays and are dropped. Sequences move forward; the
+// window bounds how far BACK a legitimate retransmission may land.
+type replayWindow struct {
+	mu     sync.Mutex
+	byConn map[string]*seqRing
+	size   int
+}
+
+type seqRing struct {
+	seen map[uint64]struct{}
+	max  uint64 // highest observed
+}
+
+func newReplayWindow() *replayWindow {
+	return &replayWindow{byConn: map[string]*seqRing{}, size: 512}
+}
+
+// observe records a sequence and reports whether it was ALREADY seen
+// (a replay). Sequences above the ring's max are new; sequences below
+// max that are not in the set are outside the window (stale
+// reordering) and treated as new-but-flagged, not dropped.
+func (w *replayWindow) observe(connID string, seq uint64) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	r := w.byConn[connID]
+	if r == nil {
+		r = &seqRing{seen: map[uint64]struct{}{}}
+		w.byConn[connID] = r
+	}
+	if _, dup := r.seen[seq]; dup {
+		return true
+	}
+	if seq > r.max {
+		r.max = seq
+	}
+	r.seen[seq] = struct{}{}
+	if len(r.seen) > w.size {
+		// Evict sequences more than the window below max.
+		for s := range r.seen {
+			if r.max-s > uint64(w.size) {
+				delete(r.seen, s)
+				if len(r.seen) <= w.size {
+					break
+				}
+			}
+		}
+	}
+	return false
+}
+
+// dropConn frees a closed connection's window.
+func (w *replayWindow) dropConn(connID string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.byConn, connID)
+}
+
+// headerString extracts one header value as a string ("" when absent).
+func headerString(raw []byte, key dari.HeaderKey) string {
+	m, err := dari.DecodeHeader(raw)
+	if err != nil || m == nil {
+		return ""
+	}
+	return string(m[key])
+}
+
+// Note: aiOpenCache/replayWindow regression pins live in hotstate_test.go.
