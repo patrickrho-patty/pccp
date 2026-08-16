@@ -316,6 +316,7 @@ func (s *Server) setupRouter() {
 			r.Get("/{id}", s.handleGetEndpoint)
 			r.Put("/{id}", s.handleUpdateEndpoint)
 			r.Post("/{id}/drain", s.handleDrainEndpoint)
+			r.Post("/{id}/attest", s.handleSubmitEndpointAttestation)
 		})
 
 		// Scheduler (fleet registry) — DARI scheduler §9
@@ -5712,4 +5713,25 @@ func (s *Server) handleSREProbes(w http.ResponseWriter, r *http.Request) {
 		"pia":   probe(config.PIAProbeAddr()),
 		"cp":    map[string]any{"status": "up"}, // this handler answering IS the probe
 	})
+}
+
+// handleSubmitEndpointAttestation records a PIA's measurement
+// envelope (the registry's lease gate requires a fresh attestation).
+func (s *Server) handleSubmitEndpointAttestation(w http.ResponseWriter, r *http.Request) {
+	var att models.EndpointAttestation
+	if err := decodeJSON(r, &att); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if id := chi.URLParam(r, "id"); id != "" {
+		att.EndpointID = id
+	}
+	if att.OrganizationID == "" {
+		att.OrganizationID = getOrgID(r)
+	}
+	if err := s.registry.RecordAttestation(&att); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, att)
 }

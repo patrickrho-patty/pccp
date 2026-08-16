@@ -833,7 +833,6 @@ func (s *Server) wrapToolsSeed(ext *AdditionalServices) http.HandlerFunc {
 
 // wrapToolsUpdate patches a tool's registry fields (web/14 UX13 with
 
-
 // wrapToolsPresets returns the classification presets + guidance (D).
 func (s *Server) wrapToolsPresets(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/patrickrho-patty/pccp/internal/keys"
 	"time"
@@ -147,16 +148,56 @@ func (s *Service) EnrollEndpoint(orgID, piaPeerID, modelPackageID, servingEngine
 	return endpoint, nil
 }
 
-// RecordAttestation stores an endpoint attestation envelope.
+// RecordAttestation stores an endpoint attestation envelope AND
+// verifies it when the PIA's signature is present: the enrolled
+// endpoint's public key must verify the signature over the canonical
+// measurement bytes. Unsigned attestations record as unverified
+// (lease gate keeps refusing them — honest).
 func (s *Service) RecordAttestation(att *models.EndpointAttestation) error {
 	if att.EndpointID == "" {
 		return fmt.Errorf("registry: attestation requires endpoint_id")
 	}
 	att.Timestamp = time.Now().Format(time.RFC3339)
+	if att.Signature != "" {
+		if err := s.verifyAttestation(att); err != nil {
+			return fmt.Errorf("registry: attestation verification: %w", err)
+		}
+		att.Verified = true
+		att.VerifiedAt = att.Timestamp
+	}
 	if err := s.db.Create(att).Error; err != nil {
 		return fmt.Errorf("registry: record attestation: %w", err)
 	}
 	return nil
+}
+
+// verifyAttestation checks the PIA's signature under its ENROLLED
+// public key over the canonical measurement bytes.
+func (s *Service) verifyAttestation(att *models.EndpointAttestation) error {
+	var ep models.InferenceEndpoint
+	if err := s.db.Where("endpoint_id = ?", att.EndpointID).First(&ep).Error; err != nil {
+		return fmt.Errorf("unknown endpoint %s", att.EndpointID)
+	}
+	pub, err := hex.DecodeString(ep.PublicKey)
+	if err != nil || len(pub) != ed25519.PublicKeySize {
+		return fmt.Errorf("endpoint %s has no usable enrolled key", att.EndpointID)
+	}
+	sig, err := hex.DecodeString(att.Signature)
+	if err != nil || len(sig) == 0 {
+		return errors.New("malformed signature")
+	}
+	if !ed25519.Verify(ed25519.PublicKey(pub), AttestationSigningBytes(att), sig) {
+		return errors.New("signature does not verify under the enrolled key")
+	}
+	return nil
+}
+
+// AttestationSigningBytes is the canonical attestation signature
+// input (mirrored by the PIA at signing time).
+func AttestationSigningBytes(att *models.EndpointAttestation) []byte {
+	return []byte(fmt.Sprintf("pia-attest-v1|%s|%s|%s|%s|%s|%s|%s",
+		att.EndpointID, att.OrganizationID, att.Nonce, att.ModelPackageID,
+		att.PIABuildDigest, att.ServingContainerDigest, att.RuntimeConfigDigest))
 }
 
 // AttestationMaxAge bounds attestation freshness for lease issuance.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -111,6 +112,7 @@ func (s *Service) EnrollWithControlPlane(ctx context.Context, orgID, modelPackag
 		return fmt.Errorf("pia: create enroll request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	s.setServiceAuth(req)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -131,6 +133,12 @@ func (s *Service) EnrollWithControlPlane(ctx context.Context, orgID, modelPackag
 	s.mu.Lock()
 	s.endpointID = result.EndpointID
 	s.mu.Unlock()
+	// Attest the endpoint so lease issuance has a fresh measurement
+	// record (registry gate: no attestation, no lease). The digest
+	// covers what THIS PIA can actually measure about itself.
+	if aerr := s.attestSelf(ctx, orgID, modelPackageID); aerr != nil {
+		log.Printf("pia: self-attestation failed (leases will be refused): %v", aerr)
+	}
 
 	log.Printf("pia: enrolled as endpoint %s", result.EndpointID)
 	return nil
@@ -149,6 +157,7 @@ func (s *Service) RequestLease(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("pia: create lease request: %w", err)
 	}
+	s.setServiceAuth(req)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -423,4 +432,56 @@ func (s *Service) EndpointID() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.endpointID
+}
+
+// setServiceAuth attaches the machine credential for control-plane
+// calls: PCCP_CP_SERVICE_TOKEN (a console-issued JWT for the service
+// principal). Absent token = unauthenticated (CP refuses — honest).
+func (s *Service) setServiceAuth(req *http.Request) {
+	if tok := os.Getenv("PCCP_CP_SERVICE_TOKEN"); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+}
+
+// attestSelf submits the endpoint's measurement envelope to the CP.
+func (s *Service) attestSelf(ctx context.Context, orgID, modelPackageID string) error {
+	epID := s.EndpointID()
+	h := sha256.Sum256([]byte(fmt.Sprintf("pia|%s|%s|%s|%s", s.peerID, s.servingType, "0.6.0", s.servingURL)))
+	att := map[string]string{
+		"endpoint_id":              epID,
+		"organization_id":          orgID,
+		"nonce":                    hex.EncodeToString(h[:8]),
+		"model_package_id":         modelPackageID,
+		"pia_build_digest":         "sha256:" + hex.EncodeToString(h[:]),
+		"serving_container_digest": "sha256:" + hex.EncodeToString(h[:]),
+	}
+	// Sign the canonical measurement bytes with the PIA's key (the CP
+	// verifies under the ENROLLED public key).
+	sig := ed25519.Sign(s.privKey, registryAttestationBytes(att))
+	att["signature"] = hex.EncodeToString(sig)
+	body, _ := json.Marshal(att)
+	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/api/endpoints/%s/attest", s.cpURL, epID), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	s.setServiceAuth(req)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("attestation (%d): %s", resp.StatusCode, string(b))
+	}
+	return nil
+}
+
+// registryAttestationBytes mirrors registry.AttestationSigningBytes.
+func registryAttestationBytes(att map[string]string) []byte {
+	get := func(k string) string { return att[k] }
+	return []byte(fmt.Sprintf("pia-attest-v1|%s|%s|%s|%s|%s|%s|%s",
+		get("endpoint_id"), get("organization_id"), get("nonce"), get("model_package_id"),
+		get("pia_build_digest"), get("serving_container_digest"), get("runtime_config_digest")))
 }
