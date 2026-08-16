@@ -1,6 +1,6 @@
-# S2–S12 Execution Status (patty-fabric)
+# S2–S12 Execution Status (pccp-fabric)
 
-Branch: forge/patty-fabric (renamed from forge/dynamo-fabric — the layer's own name, not the upstream project it borrowed ideas from). All S2–S12 sub-projects from
+Branch: forge/pccp-fabric. The layer carries no separate product brand — it is internal PCCP code (the governed-inference fabric: gateway/admission/routing/KV/SLO/autoscale/resilience/observability). 'Dynamo' was only the upstream inspiration project from the original plan title. All S2–S12 sub-projects from
 docs/superpowers/specs/2026-08-15-s1-fleet-registry-design.md are implemented,
 tested, and committed. Full suite: go build + go vet + go test ./... green
 (42 packages).
@@ -34,7 +34,7 @@ tested, and committed. Full suite: go build + go vet + go test ./... green
    web/src/api.ts, internal/api handlers.
 2. docs/feature-plans/harness/* (A-F) — harness worktree work. F
    (benchmark) not started.
-3. Push to origin as we go (forge/patty-fabric).
+3. Push to origin as we go (forge/pccp-fabric).
 
 ## Blockers
 - blockers.md has entries: audit flake (resolved), sandbox Docker flake
