@@ -544,6 +544,24 @@ the MFA tests reset their in-memory guards for reruns.
 clean · `go test -race -count=2` 43/43 packages, zero data races, zero
 flakes · `npm run build` green.
 
+### Round 4 review pass (audit of the fixes themselves)
+
+The round-2/3 fixes were themselves reviewed as new code. Findings, all fixed:
+
+| # | Severity | Area | Finding → Fix |
+|---|----------|------|---------------|
+| 24 | High | web/13 | Round 2 validated the conversation's *existence* in `SendMessage` but not its *org* — org A could still inject messages into org B's conversation, and `ListMessages` read cross-org. → `SendMessage`/`ListMessages`/`AckBroadcast` are org-scoped at the service layer; `TestCrossOrgConversationAccessRejected` pins list-empty + zero-leak. |
+| 25 | High | S2/S7 | `ReserveLoad` existed but was never called: between heartbeats the selector's load picture is stale, so a single drain could bind unbounded in-flight work to one "free" worker (spec §12.3.7 layer-2 buffers are small by design). → Optimistic reservation at bind; `execute()` releases; heartbeat engine-truth overwrites both. |
+| 26 | Low | web/25 | The TOTP replay map's overflow path cleared *all* entries — re-enabling replays for every account. → Prune only timesteps outside the validation window; hard reset stays as last resort. |
+| 27 | Info | web/13 | Verified `clause.Locking` portability for the broadcast-ack row lock (no-op on SQLite where the writer lock serializes; real `FOR UPDATE` on Postgres/MySQL). Documented in place. |
+
+Also verified in this round with no findings: dispatcher lock ordering
+(`mu → fwMu` only, no inversion), `ReleaseLoad` balance across all
+execute() error paths, `scopedWhere` semantics (identical to the
+interpolated form it replaced, empty-org behaves the same), the
+empty-tenant envelope rejection (fail-closed), the heartbeat-driven
+selector rebuild path, and all comms route handlers now carry org scoping.
+
 ### Documented residuals (not fixed, by judgment)
 
 - Seat-limit enforcement is count-then-create (TOCTOU on the billing limit);
