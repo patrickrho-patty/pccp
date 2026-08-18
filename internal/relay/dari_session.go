@@ -180,13 +180,23 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 		return
 	}
 
-	// C1.3: push the org's DLP rule pack so the connector's scanner
-	// runs the server-enforced lexicon (same bytes, same epoch).
+	// C1.3 + PAT-1432: push the DLP rule packs so the connector's
+	// scanner runs the server-enforced lexicon (same bytes, same
+	// epoch). The org catalog pack goes first; then any scoped DELTA
+	// packs (team → user → harness, ascending specificity) so the
+	// harness cascade resolves Harness > User > Team > Org.
 	if secRules := pl.svc.securityRulesFor(orgID); len(secRules) > 0 {
 		pack := BuildDLPRulePack(epoch.EpochID, orgID, secRules, time.Now())
 		if body, derr := encodeWire(pack); derr == nil {
 			if err := conn.SendMessage(dari.MsgDLPRulePack, nil, body, 0, 2); err != nil {
 				log.Printf("relay: DLP rule pack push to %s failed: %v", connID, err)
+			}
+		}
+	}
+	for _, scoped := range pl.svc.dlpOverridePacksFor(orgID, so.UserID, pl.peerIDForConn(connID), epoch.EpochID) {
+		if body, derr := encodeWire(scoped); derr == nil {
+			if err := conn.SendMessage(dari.MsgDLPRulePack, nil, body, 0, 2); err != nil {
+				log.Printf("relay: scoped DLP pack (%s) push to %s failed: %v", scoped.Scope.Level, connID, err)
 			}
 		}
 	}

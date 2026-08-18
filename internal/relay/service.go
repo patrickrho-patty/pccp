@@ -1173,6 +1173,24 @@ func (s *Service) securityRulesFor(orgID string) []SecurityRuleView {
 	return out
 }
 
+// dlpOverridePacksFor builds the scoped DELTA packs (PAT-1432) for a
+// session's subject, ordered team → user → harness (ascending
+// specificity; the harness applies them in arrival order and the
+// most specific scope wins). Levels with no override rows are
+// omitted entirely — no empty packs on the wire.
+func (s *Service) dlpOverridePacksFor(orgID, userID, harnessPeerID, epochID string) []*wireDLPRulePack {
+	if s.security == nil {
+		return nil
+	}
+	var packs []*wireDLPRulePack
+	for _, scope := range s.security.OverridesFor(orgID, userID, harnessPeerID) {
+		if pack := BuildScopedDLPOverridePack(epochID, orgID, scope.Level, scope.ScopeID, scope.Overrides, time.Now()); pack != nil {
+			packs = append(packs, pack)
+		}
+	}
+	return packs
+}
+
 // redactIfConfigured applies the org's DLP redaction to inspector
 // text when the scanner carries redaction rules (best effort: a
 // scanner failure returns the input unredacted-but-flagged=false).

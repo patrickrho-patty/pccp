@@ -20,6 +20,29 @@ type SecurityRule struct {
 	Pattern string `gorm:"type:text" json:"pattern,omitempty"`
 }
 
+// SecurityRuleOverride is a scoped DELTA on top of the org catalog
+// (PAT-1432). The org-level SecurityRule rows remain the catalog +
+// org toggles; this table carries narrower overrides at team /
+// user / harness level. Precedence when the relay pushes packs:
+// Harness > User > Team > Organization — the most specific scope
+// wins for the rules it names.
+//
+// Nil Enabled / empty Severity / empty Action mean "inherit" from
+// the next-wider scope; at least one field must be set on write.
+type SecurityRuleOverride struct {
+	Base
+	OrganizationID string `gorm:"type:varchar(64);uniqueIndex:idx_secrule_ov_org_scope_rule,priority:1;not null" json:"organization_id"`
+	ScopeLevel     string `gorm:"type:varchar(16);uniqueIndex:idx_secrule_ov_org_scope_rule,priority:2;not null" json:"scope_level"` // team, user, harness
+	ScopeID        string `gorm:"type:varchar(64);uniqueIndex:idx_secrule_ov_org_scope_rule,priority:3;not null" json:"scope_id"`
+	RuleID         string `gorm:"type:varchar(64);uniqueIndex:idx_secrule_ov_org_scope_rule,priority:4;not null" json:"rule_id"`
+	Enabled        *bool  `gorm:"json:"enabled,omitempty"`                 // nil = inherit
+	Severity       string `gorm:"type:varchar(32)" json:"severity,omitempty"` // empty = inherit
+	Action         string `gorm:"type:varchar(32)" json:"action,omitempty"`  // empty = inherit
+}
+
+// TableName overrides for scoped rule overrides.
+func (SecurityRuleOverride) TableName() string { return "security_rule_overrides" }
+
 // AlertEndpoint is an alert-routing destination (security C2/C3,
 // §10C.14): Slack webhooks, generic webhooks (on-call), and SIEM
 // forwarders receive findings as they are recorded.

@@ -14,6 +14,7 @@ import (
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"github.com/patrickrho-patty/pccp/internal/security"
 )
 
 // This file is the cross-repo wire contract for the DARI extension
@@ -493,6 +494,10 @@ type wireDLPRulePack struct {
 	// RuleOverrides carries per-rule enabled/severity/action overrides.
 	// When present, these take precedence over class-level toggles.
 	RuleOverrides []wireDLPRuleOverride `cbor:"7,keyasint,omitempty"`
+	// Scope names the administrative level this pack applies to
+	// (PAT-1432). Absent scope = org (byte-compatible with the
+	// pre-scope wire format; field is omitempty).
+	Scope wireDLPRuleScope `cbor:"8,keyasint,omitempty"`
 }
 
 // wireDLPRuleOverride is a per-rule override (PAT-1431).
@@ -503,15 +508,34 @@ type wireDLPRuleOverride struct {
 	Action   string `cbor:"4,keyasint"`
 }
 
-// BuildDLPRulePack assembles the push from the security service's
-// rule rows. It carries both class-level toggles (backward compat)
-// and per-rule overrides (PAT-1431).
+// DLP scope levels (PAT-1432). Precedence when multiple scoped
+// packs arrive at the harness: Harness > User > Team > Org.
+const (
+	wireScopeOrg     = "org"
+	wireScopeTeam    = "team"
+	wireScopeUser    = "user"
+	wireScopeHarness = "harness"
+)
+
+// wireDLPRuleScope names the administrative level a pack applies to
+// (org/team/user/harness) and the level's subject ID. A zero scope
+// encodes to nothing (omitempty) — byte-compatible with pre-1432 packs.
+type wireDLPRuleScope struct {
+	Level string `cbor:"1,keyasint"`
+	ID    string `cbor:"2,keyasint"`
+}
+
+// BuildDLPRulePack assembles the org-level push from the security
+// service's rule rows. It carries both class-level toggles (backward
+// compat) and per-rule overrides (PAT-1431). The pack's scope is
+// org (explicit since PAT-1432).
 func BuildDLPRulePack(epochID, orgID string, rules []SecurityRuleView, now time.Time) *wireDLPRulePack {
 	pack := &wireDLPRulePack{
 		Version: 1, EpochID: epochID, OrgID: orgID,
 		NotAfterMs: now.Add(24 * time.Hour).UnixMilli(),
 		Rules:      make([]wireDLPRule, 0, len(rules)),
 		RuleOverrides: make([]wireDLPRuleOverride, 0, len(rules)),
+		Scope:      wireDLPRuleScope{Level: wireScopeOrg, ID: orgID},
 	}
 	for _, r := range rules {
 		pack.Rules = append(pack.Rules, wireDLPRule{
@@ -538,6 +562,37 @@ func dlpPackDigest(p *wireDLPRulePack) [32]byte {
 	var d [32]byte
 	copy(d[:], h.Sum(nil))
 	return d
+}
+
+// BuildScopedDLPOverridePack assembles a team/user/harness DELTA pack
+// (PAT-1432). Override rows carry nil Enabled (inherit) — the pack
+// only includes rows that actually pin a value; inherited-only rows
+// are meaningless on the wire. Digest input mirrors the org pack's
+// rule lines plus the override lines so scoped pushes are covered.
+func BuildScopedDLPOverridePack(epochID, orgID, level, scopeID string, overrides []security.ScopedOverride, now time.Time) *wireDLPRulePack {
+	pack := &wireDLPRulePack{
+		Version: 1, EpochID: epochID, OrgID: orgID,
+		NotAfterMs: now.Add(24 * time.Hour).UnixMilli(),
+		Rules:      []wireDLPRule{},
+		Scope:      wireDLPRuleScope{Level: level, ID: scopeID},
+	}
+	for _, ov := range overrides {
+		if ov.Enabled == nil && ov.Severity == "" && ov.Action == "" {
+			continue // inherit-only row: no wire meaning
+		}
+		enabled := true
+		if ov.Enabled != nil {
+			enabled = *ov.Enabled
+		}
+		pack.RuleOverrides = append(pack.RuleOverrides, wireDLPRuleOverride{
+			RuleID: ov.RuleID, Enabled: enabled, Severity: ov.Severity, Action: ov.Action,
+		})
+	}
+	if len(pack.RuleOverrides) == 0 {
+		return nil
+	}
+	pack.Digest = dlpPackDigest(pack)
+	return pack
 }
 
 // SecurityRuleView is the security service's rule projection.

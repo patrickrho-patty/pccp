@@ -141,6 +141,7 @@ func AllModels() []interface{} {
 		&AlertEndpoint{},
 		&PIILexicon{},
 		&SecurityRule{},
+		&SecurityRuleOverride{},
 		&PolicyRule{},
 		&PolicyTemplate{},
 		&PolicyAcknowledgement{},

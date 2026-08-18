@@ -832,3 +832,117 @@ func maskRange(text string, start, end int) string {
 	}
 	return "…" + strings.Repeat("•", max(0, re_-rs)) + "…"
 }
+
+// --- PAT-1432: scoped rule overrides (team/user/harness deltas) ---
+
+// ValidScopeLevels are the override levels (org lives in SecurityRule).
+var validScopeLevels = map[string]bool{"team": true, "user": true, "harness": true}
+
+// SetRuleOverride persists (or replaces) one scoped delta. level must
+// be team/user/harness; at least one of enabled/severity/action must
+// be set so the row is never a pure no-op. Severity, when set, must
+// match the catalog's vocabulary.
+func (s *Service) SetRuleOverride(orgID, level, scopeID, ruleID string, enabled *bool, severity, action string) error {
+	if !validScopeLevels[level] {
+		return fmt.Errorf("security: invalid scope level %q (want team/user/harness)", level)
+	}
+	if scopeID == "" || ruleID == "" {
+		return fmt.Errorf("security: scope id and rule id are required")
+	}
+	if enabled == nil && severity == "" && action == "" {
+		return fmt.Errorf("security: override must set at least one of enabled/severity/action")
+	}
+	if severity != "" {
+		switch severity {
+		case "low", "medium", "high", "critical":
+		default:
+			return fmt.Errorf("security: invalid severity %q", severity)
+		}
+	}
+	// The rule must exist in the org catalog (seeded or custom).
+	var count int64
+	s.db.Model(&models.SecurityRule{}).Where("organization_id = ? AND rule_id = ?", orgID, ruleID).Count(&count)
+	if count == 0 {
+		return fmt.Errorf("security: rule %s not in org catalog", ruleID)
+	}
+	var row models.SecurityRuleOverride
+	err := s.db.Where("organization_id = ? AND scope_level = ? AND scope_id = ? AND rule_id = ?",
+		orgID, level, scopeID, ruleID).First(&row).Error
+	if err != nil {
+		row = models.SecurityRuleOverride{
+			OrganizationID: orgID, ScopeLevel: level, ScopeID: scopeID, RuleID: ruleID,
+		}
+	}
+	row.Enabled, row.Severity, row.Action = enabled, severity, action
+	if err != nil {
+		return s.db.Create(&row).Error
+	}
+	return s.db.Save(&row).Error
+}
+
+// DeleteRuleOverride removes a scoped delta (the rule reverts to the
+// next-wider scope's setting).
+func (s *Service) DeleteRuleOverride(orgID, level, scopeID, ruleID string) error {
+	return s.db.Where("organization_id = ? AND scope_level = ? AND scope_id = ? AND rule_id = ?",
+		orgID, level, scopeID, ruleID).Delete(&models.SecurityRuleOverride{}).Error
+}
+
+// ListRuleOverrides returns the scoped deltas for one scope target,
+// ordered by rule id.
+func (s *Service) ListRuleOverrides(orgID, level, scopeID string) ([]models.SecurityRuleOverride, error) {
+	var rows []models.SecurityRuleOverride
+	err := s.db.Where("organization_id = ? AND scope_level = ? AND scope_id = ?",
+		orgID, level, scopeID).Order("rule_id").Find(&rows).Error
+	return rows, err
+}
+
+// ScopedOverride is the pack-push projection of one delta row.
+type ScopedOverride struct {
+	RuleID   string
+	Enabled  *bool
+	Severity string
+	Action   string
+}
+
+// ResolvedScope is one applicable scope target with its delta rows,
+// ordered by the resolver (team → user → harness).
+type ResolvedScope struct {
+	Level     string
+	ScopeID   string
+	Overrides []ScopedOverride
+}
+
+// OverridesFor resolves the delta rows that apply to a session's
+// subject: the user's business unit (team level), the user, and the
+// harness peer — returned in ascending specificity order. Scopes
+// with no override rows are omitted.
+func (s *Service) OverridesFor(orgID, userID, harnessPeerID string) []ResolvedScope {
+	var out []ResolvedScope
+	if s == nil || s.db == nil {
+		return out
+	}
+	add := func(level, scopeID string) {
+		if scopeID == "" {
+			return
+		}
+		rows, err := s.ListRuleOverrides(orgID, level, scopeID)
+		if err != nil || len(rows) == 0 {
+			return
+		}
+		ov := make([]ScopedOverride, 0, len(rows))
+		for _, r := range rows {
+			ov = append(ov, ScopedOverride{RuleID: r.RuleID, Enabled: r.Enabled, Severity: r.Severity, Action: r.Action})
+		}
+		out = append(out, ResolvedScope{Level: level, ScopeID: scopeID, Overrides: ov})
+	}
+	// Team level: the user's business unit (org hierarchy §12.1).
+	if userID != "" {
+		var user models.User
+		if err := s.db.Where("id = ?", userID).First(&user).Error; err == nil && user.BusinessUnitID != "" {
+			add("team", user.BusinessUnitID)
+		}
+	}
+	add("user", userID)
+	add("harness", harnessPeerID)
+	return out
+}
