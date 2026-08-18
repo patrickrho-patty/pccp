@@ -51,11 +51,18 @@ type AlertEndpoint struct {
 	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
 	Name           string `gorm:"type:varchar(255)" json:"name"`
 	Type           string `gorm:"type:varchar(32)" json:"type"` // slack, webhook, siem
-	// Target is a write-only secret: stored on disk for server-side
-	// delivery, but never marshalled to JSON. PAT-1502 PR 1 (response
-	// redaction boundary). PR 2 will replace the plaintext column with
-	// a keymgmt secret reference.
+	// Target is the legacy plaintext column retained for the dual-read
+	// window only (PAT-1502 PR 2). New writes go to TargetEnc; legacy
+	// rows are migrated by the backfill command, then Target is
+	// dropped in a later PR. Never marshalled to JSON.
 	Target         string `gorm:"type:varchar(1024)" json:"-"`
+	// TargetEnc is the keymgmt Envelope JSON for the encrypted URL.
+	// When non-empty, the dispatch path decrypts via the configured
+	// KeyProvider. When empty AND Target is non-empty, the dispatch
+	// path falls back to Target with a startup warning. Both must
+	// not be empty in production.
+	TargetEnc      string `gorm:"type:text" json:"-"`
+	TargetKEKID    string `gorm:"type:varchar(128);index" json:"-"`
 	SeveritiesJSON string `gorm:"type:text" json:"severities,omitempty"` // JSON array of severities to route
 	Enabled        bool   `gorm:"default:true" json:"enabled"`
 }

@@ -2,6 +2,9 @@ package security
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -53,6 +56,70 @@ func (s *Service) SweepSuppressions() int {
 // --- Alert routing (security C2/C3, §10C.14/§32.4) ---
 
 var alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
+
+// KeyProvider is the envelope-encryption provider used by alert
+// dispatch. nil means the dispatch path falls back to the legacy
+// plaintext column (dual-read window during the backfill). PAT-1502 PR 2.
+var alertKeyProvider interface {
+	KEKID() string
+	UnwrapKey(wrapped []byte) ([]byte, error)
+}
+
+// SetAlertKeyProvider configures the provider used to decrypt
+// alert-endpoint envelopes at dispatch time. PAT-1502 PR 2.
+func SetAlertKeyProvider(p interface {
+	KEKID() string
+	UnwrapKey(wrapped []byte) ([]byte, error)
+}) {
+	alertKeyProvider = p
+}
+
+// resolveAlertTarget decrypts an envelope if present, otherwise
+// falls back to the plaintext column. PAT-1502 PR 2.
+func resolveAlertTarget(ep models.AlertEndpoint) (string, error) {
+	if ep.TargetEnc == "" {
+		return ep.Target, nil
+	}
+	if alertKeyProvider == nil {
+		return "", fmt.Errorf("security: alert target is encrypted but no key provider is configured")
+	}
+	envJSON, err := base64.StdEncoding.DecodeString(ep.TargetEnc)
+	if err != nil {
+		return "", fmt.Errorf("security: decode envelope: %w", err)
+	}
+	var env struct {
+		KEKID      string `json:"kek_id"`
+		WrappedDEK []byte `json:"wrapped_dek"`
+		Nonce      []byte `json:"nonce"`
+		Ciphertext []byte `json:"ciphertext"`
+	}
+	if err := json.Unmarshal(envJSON, &env); err != nil {
+		return "", fmt.Errorf("security: parse envelope: %w", err)
+	}
+	if env.KEKID != alertKeyProvider.KEKID() {
+		return "", fmt.Errorf("security: KEK mismatch (envelope %q vs provider %q)", env.KEKID, alertKeyProvider.KEKID())
+	}
+	dek, err := alertKeyProvider.UnwrapKey(env.WrappedDEK)
+	if err != nil {
+		return "", fmt.Errorf("security: unwrap DEK: %w", err)
+	}
+	block, err := aes.NewCipher(dek)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	if len(env.Nonce) < gcm.NonceSize() {
+		return "", fmt.Errorf("security: envelope nonce too short")
+	}
+	pt, err := gcm.Open(nil, env.Nonce, env.Ciphertext, nil)
+	if err != nil {
+		return "", fmt.Errorf("security: decrypt: %w", err)
+	}
+	return string(pt), nil
+}
 
 // DispatchAlerts routes a recorded finding to the org's enabled alert
 // endpoints whose severity filter matches. Slack gets a compact text
@@ -113,7 +180,15 @@ func (s *Service) deliverAlert(ep models.AlertEndpoint, finding models.SecurityF
 		payload, _ = json.Marshal(finding)
 		contentType = "application/json"
 	}
-	resp, err := alertHTTPClient.Post(ep.Target, contentType, bytes.NewReader(payload))
+	target, err := resolveAlertTarget(ep)
+	if err != nil {
+		log.Printf("security: alert %s target unresolved: %v", ep.Name, err)
+		return false
+	}
+	if target == "" {
+		return false
+	}
+	resp, err := alertHTTPClient.Post(target, contentType, bytes.NewReader(payload))
 	if err != nil {
 		log.Printf("security: alert delivery to %s failed: %v", ep.Name, err)
 		return false

@@ -347,6 +347,10 @@ export const api = {
     request<any>('/api/security/alerts', { method: 'POST', body: JSON.stringify(data) }),
   deleteSecurityAlert: (id: string) =>
     request<any>(`/api/security/alerts/${id}`, { method: 'DELETE' }),
+  testSecurityAlert: (id: string) =>
+    request<any>(`/api/security/alerts/${id}/test`, { method: 'POST' }),
+  rotateSecurityAlert: (id: string, target: string) =>
+    request<any>(`/api/security/alerts/${id}/rotate`, { method: 'POST', body: JSON.stringify({ target }) }),
   securityLexicon: () => request<any>('/api/security/lexicon'),
   updateSecurityLexicon: (data: any) =>
     request<any>('/api/security/lexicon', { method: 'PUT', body: JSON.stringify(data) }),

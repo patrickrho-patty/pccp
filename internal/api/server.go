@@ -32,6 +32,7 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/gitscm"
 	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/impact"
+	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/korean"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/policy"
@@ -63,6 +64,12 @@ type Server struct {
 	korean     *korean.Service
 	jwtSecret  string
 	router     *chi.Mux
+	// keyProvider seals/opens alert-endpoint secret references. nil
+	// by default so test fixtures without an HSM/KMS still build.
+	// Production callers must inject via SetKeyProvider; write paths
+	// fail closed when it is nil. PAT-1502 PR 2.
+	keyProvider keymgmt.KeyProvider
+	testAlert   *testAlertState
 	// modelPublishedHook is invoked after a successful model publish
 	// (Task 15 catalog push). Deployments link it to the relay's
 	// OnModelPublished so connected sessions receive the delta.
@@ -125,6 +132,21 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 	}
 	s.setupRouter()
 	return s, nil
+}
+
+// SetKeyProvider injects the envelope-encryption provider used by
+// alert-endpoint write paths. PAT-1502 PR 2. The provider is invoked
+// when sealing new targets (create/rotate) and when opening existing
+// envelopes for delivery/test. When nil, write paths fail closed
+// (503 service unavailable) so an unconfigured server cannot accept
+// secret material.
+func (s *Server) SetKeyProvider(provider keymgmt.KeyProvider) {
+	s.keyProvider = provider
+}
+
+// KeyProvider returns the currently configured provider (nil-safe).
+func (s *Server) KeyProvider() keymgmt.KeyProvider {
+	return s.keyProvider
 }
 
 func (s *Server) setupRouter() {
@@ -415,6 +437,8 @@ func (s *Server) setupRouter() {
 		r.Get("/security/alerts", s.handleListAlertEndpoints)
 		r.Post("/security/alerts", s.handleCreateAlertEndpoint)
 		r.Delete("/security/alerts/{id}", s.handleDeleteAlertEndpoint)
+		r.Post("/security/alerts/{id}/test", s.handleTestAlertEndpoint)
+		r.Post("/security/alerts/{id}/rotate", s.handleRotateAlertEndpoint)
 		r.Get("/security/lexicon", s.handleGetLexicon)
 		r.Put("/security/lexicon", s.handleUpdateLexicon)
 
@@ -4941,13 +4965,25 @@ func (s *Server) handleCreateAlertEndpoint(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusForbidden, "organization administrator role required")
 		return
 	}
+	if s.keyProvider == nil {
+		// PAT-1502 PR 2: write paths fail closed when no KeyProvider
+		// is configured. An unconfigured server cannot accept secret
+		// material.
+		writeError(w, http.StatusServiceUnavailable, "alert endpoint storage is not configured")
+		return
+	}
 	var req AlertEndpointCreateRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Name == "" || strings.TrimSpace(req.Target) == "" {
+	target := strings.TrimSpace(req.Target)
+	if req.Name == "" || target == "" {
 		writeError(w, http.StatusBadRequest, "name and target are required")
+		return
+	}
+	if !isAcceptableAlertTarget(req.Type, target) {
+		writeError(w, http.StatusBadRequest, "target must be an http(s) URL on a public host")
 		return
 	}
 	if req.Type == "" {
@@ -4958,17 +4994,21 @@ func (s *Server) handleCreateAlertEndpoint(w http.ResponseWriter, r *http.Reques
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
+	enc, kekID, err := PersistTarget(s.keyProvider, target)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not seal target")
+		return
+	}
 	ep := &models.AlertEndpoint{
-		OrganizationID: orgID, Name: req.Name, Type: req.Type, Target: req.Target,
+		OrganizationID: orgID, Name: req.Name, Type: req.Type,
+		Target: "", TargetEnc: enc, TargetKEKID: kekID,
 		SeveritiesJSON: string(severitiesJSON), Enabled: enabled,
 	}
 	if err := s.db.Create(ep).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Audit create with the credential identifier (NOT the URL). The
-	// request body and any provider response are deliberately omitted
-	// from the audit trail.
+	credID := credentialIDForTarget(target)
 	s.db.Create(&models.AuditEvent{
 		OrganizationID: orgID,
 		ActorID:        getActorID(r),
@@ -4978,7 +5018,7 @@ func (s *Server) handleCreateAlertEndpoint(w http.ResponseWriter, r *http.Reques
 		ResourceType:   "alert_endpoint",
 		ResourceID:     ep.ID,
 		Result:         "success",
-		Details:        fmt.Sprintf(`{"credential_id":%q,"type":%q,"name":%q}`, credentialIDForTarget(ep.Target), ep.Type, ep.Name),
+		Details:        fmt.Sprintf(`{"credential_id":%q,"type":%q,"name":%q}`, credID, ep.Type, ep.Name),
 	})
 	writeJSON(w, http.StatusCreated, redactAlertEndpoint(*ep))
 }
@@ -4996,7 +5036,11 @@ func (s *Server) handleDeleteAlertEndpoint(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "alert endpoint not found")
 		return
 	}
-	credID := credentialIDForTarget(ep.Target)
+	// We resolve the target (encrypted preferred, legacy fallback)
+	// solely to compute a stable credential_id for the audit row.
+	// The plaintext URL never leaves this handler.
+	target, _ := ResolveTarget(s.keyProvider, ep.TargetEnc, ep.TargetKEKID, ep.Target)
+	credID := credentialIDForTarget(target)
 	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).Delete(&models.AlertEndpoint{}).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -5013,6 +5057,176 @@ func (s *Server) handleDeleteAlertEndpoint(w http.ResponseWriter, r *http.Reques
 		Details:        fmt.Sprintf(`{"credential_id":%q,"type":%q,"name":%q}`, credID, ep.Type, ep.Name),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// Alert endpoint rotation — replaces the stored credential with a
+// new one. The previous credential is destroyed at the provider
+// level (the DEK is overwritten; the old DEK ciphertext remains on
+// disk but cannot be decrypted). Provider-side revocation (e.g.
+// disabling a Slack webhook) is a separate operation against the
+// upstream service — this endpoint only updates PCCP's record.
+// PAT-1502 PR 2.
+func (s *Server) handleRotateAlertEndpoint(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	role := getRole(r)
+	if role != "admin" && role != "owner" && role != "super_admin" {
+		writeError(w, http.StatusForbidden, "organization administrator role required")
+		return
+	}
+	if s.keyProvider == nil {
+		writeError(w, http.StatusServiceUnavailable, "alert endpoint storage is not configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Target string `json:"target"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	target := strings.TrimSpace(req.Target)
+	if target == "" {
+		writeError(w, http.StatusBadRequest, "target is required")
+		return
+	}
+	var ep models.AlertEndpoint
+	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&ep).Error; err != nil {
+		writeError(w, http.StatusNotFound, "alert endpoint not found")
+		return
+	}
+	if !isAcceptableAlertTarget(ep.Type, target) {
+		writeError(w, http.StatusBadRequest, "target must be an http(s) URL on a public host")
+		return
+	}
+	enc, kekID, err := PersistTarget(s.keyProvider, target)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not seal new target")
+		return
+	}
+	oldCredID := credentialIDForTarget(mustResolveTarget(s.keyProvider, ep.TargetEnc, ep.TargetKEKID, ep.Target))
+	if err := s.db.Model(&models.AlertEndpoint{}).
+		Where("id = ? AND organization_id = ?", id, orgID).
+		Updates(map[string]interface{}{
+			"target":      "",
+			"target_enc":  enc,
+			"target_kek_id": kekID,
+		}).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	newCredID := credentialIDForTarget(target)
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		ActorID:        getActorID(r),
+		ActorType:      "user",
+		EventType:      "security.alert_endpoint.rotate",
+		Action:         "rotate",
+		ResourceType:   "alert_endpoint",
+		ResourceID:     id,
+		Result:         "success",
+		Details:        fmt.Sprintf(`{"old_credential_id":%q,"new_credential_id":%q,"type":%q}`, oldCredID, newCredID, ep.Type),
+	})
+	updated := ep
+	updated.Target = ""
+	updated.TargetEnc = enc
+	updated.TargetKEKID = kekID
+	writeJSON(w, http.StatusOK, redactAlertEndpoint(updated))
+}
+
+// Alert endpoint test — sends a synthetic Slack-style "ping" to the
+// resolved target. The endpoint's URL is decrypted on the server
+// side and used to dispatch one HTTP POST. The provider response
+// body is never returned; only the status class (2xx/non-2xx) and
+// a short reason. PAT-1502 PR 2.
+func (s *Server) handleTestAlertEndpoint(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	role := getRole(r)
+	if role != "admin" && role != "owner" && role != "super_admin" {
+		writeError(w, http.StatusForbidden, "organization administrator role required")
+		return
+	}
+	if s.keyProvider == nil {
+		writeError(w, http.StatusServiceUnavailable, "alert endpoint storage is not configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	var ep models.AlertEndpoint
+	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&ep).Error; err != nil {
+		writeError(w, http.StatusNotFound, "alert endpoint not found")
+		return
+	}
+	target, err := ResolveTarget(s.keyProvider, ep.TargetEnc, ep.TargetKEKID, ep.Target)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not resolve target")
+		return
+	}
+	if target == "" {
+		writeError(w, http.StatusBadRequest, "endpoint has no secret configured")
+		return
+	}
+	// Per-endpoint rate limit (PAT-1502 PR 2): one test per minute.
+	now := time.Now()
+	if s.testAlert != nil && s.testAlert.now != nil {
+		now = s.testAlert.now()
+	}
+	if !s.testAlertRateLimit(id, now) {
+		writeError(w, http.StatusTooManyRequests, "rate limited; try again later")
+		return
+	}
+	// SSRF guard: reject private/loopback/link-local hosts.
+	if err := assertPublicHost(target); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	payload := []byte(`{"text":"[pccp] alert endpoint test"}`)
+	ctx, cancel := ctxWithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	req2, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(payload))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not build test request")
+		return
+	}
+	req2.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(req2)
+	if err != nil {
+		s.db.Create(&models.AuditEvent{
+			OrganizationID: orgID,
+			ActorID:        getActorID(r),
+			ActorType:      "user",
+			EventType:      "security.alert_endpoint.test",
+			Action:         "test",
+			ResourceType:   "alert_endpoint",
+			ResourceID:     id,
+			Result:         "failure",
+			Details:        fmt.Sprintf(`{"credential_id":%q,"reason":%q}`, credentialIDForTarget(target), err.Error()),
+		})
+		writeError(w, http.StatusBadGateway, "test delivery failed")
+		return
+	}
+	defer resp.Body.Close()
+	ok := resp.StatusCode < 300
+	statusClass := "non_2xx"
+	if ok {
+		statusClass = "2xx"
+	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		ActorID:        getActorID(r),
+		ActorType:      "user",
+		EventType:      "security.alert_endpoint.test",
+		Action:         "test",
+		ResourceType:   "alert_endpoint",
+		ResourceID:     id,
+		Result:         "success",
+		Details:        fmt.Sprintf(`{"credential_id":%q,"status_class":%q,"http_status":%d}`, credentialIDForTarget(target), statusClass, resp.StatusCode),
+	})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status_class": statusClass,
+		"http_status":  resp.StatusCode,
+		"ok":           ok,
+	})
 }
 
 // --- PII lexicon (security C5) ---

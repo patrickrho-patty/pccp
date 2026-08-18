@@ -44,7 +44,9 @@ type AlertEndpointResponse struct {
 // redactAlertEndpoint produces a client-safe view of an AlertEndpoint.
 // It MUST be the only way the API returns alert endpoint data. The
 // caller is responsible for ensuring the raw Target never escapes this
-// boundary.
+// boundary. PAT-1502 PR 2: secret_configured is derived from the
+// encrypted envelope when present; the legacy plaintext column is the
+// dual-read fallback during the backfill window.
 func redactAlertEndpoint(ep models.AlertEndpoint) AlertEndpointResponse {
 	return AlertEndpointResponse{
 		ID:               ep.ID,
@@ -55,8 +57,8 @@ func redactAlertEndpoint(ep models.AlertEndpoint) AlertEndpointResponse {
 		Enabled:          ep.Enabled,
 		CreatedAt:        ep.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:        ep.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
-		SecretConfigured: strings.TrimSpace(ep.Target) != "",
-		CredentialID:     credentialIDForTarget(ep.Target),
+		SecretConfigured: strings.TrimSpace(ep.TargetEnc) != "" || strings.TrimSpace(ep.Target) != "",
+		CredentialID:     credentialIDForSecret(ep.TargetEnc, ep.TargetKEKID, ep.Target),
 		TargetRedacted:   "***",
 	}
 }
@@ -70,18 +72,33 @@ func redactAlertEndpoints(eps []models.AlertEndpoint) []AlertEndpointResponse {
 	return out
 }
 
-// credentialIDForTarget derives a stable, non-secret identifier for a
-// stored URL. SHA-256 is overkill but cheap; first 12 hex chars is
-// enough to distinguish endpoints in logs and audit trails without
-// leaking any portion of the URL.
-//
-// A non-empty URL produces a stable id; an empty URL produces "" so
-// unconfigured endpoints stay distinguishable from configured ones.
+// credentialIDForSecret derives a stable, non-secret identifier for a
+// stored secret. PAT-1502 PR 2: when the encrypted envelope is present
+// it identifies the row (SHA-256 over the envelope bytes); when only
+// the legacy plaintext column is present it identifies the URL. The
+// resulting identifier is safe to log and stable across reseals for
+// the same envelope.
+func credentialIDForSecret(targetEnc, targetKEKID, target string) string {
+	if strings.TrimSpace(targetEnc) != "" {
+		sum := sha256.Sum256([]byte(targetEnc + "|" + targetKEKID))
+		return hex.EncodeToString(sum[:6])
+	}
+	t := strings.TrimSpace(target)
+	if t == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(t))
+	return hex.EncodeToString(sum[:6])
+}
+
+// credentialIDForTarget is the PR 1 helper retained for callers that
+// only have a raw URL in hand (e.g. the dispatch path inside a single
+// handler where decryption has already happened).
 func credentialIDForTarget(target string) string {
 	t := strings.TrimSpace(target)
 	if t == "" {
 		return ""
 	}
 	sum := sha256.Sum256([]byte(t))
-	return hex.EncodeToString(sum[:6]) // 12 hex chars
+	return hex.EncodeToString(sum[:6])
 }

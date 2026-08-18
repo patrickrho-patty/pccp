@@ -460,3 +460,41 @@ func (s *Server) handleContractorProfile(w http.ResponseWriter, r *http.Request)
 }
 
 var _ = io.EOF
+
+// handleSuspendUser records a user suspension event. PAT-1502 PR 2:
+// stub added so the router compiles after the merge; full lifecycle
+// (revoke harnesses, terminate sessions) is delivered separately.
+func (s *Server) handleSuspendUser(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	var user models.User
+	if err := s.db.First(&user, "id = ? AND organization_id = ?", id, orgID).Error; err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID, EventType: "cp.user.suspended", ActorType: "admin",
+		Action: "suspend", ResourceType: "user", ResourceID: id,
+		Result: "success", OccurredAt: time.Now().Format(time.RFC3339),
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "suspended"})
+}
+
+// handleResumeUser records a user unsuspension event. PAT-1502 PR 2:
+// stub added so the router compiles after the merge; full lifecycle
+// is delivered separately.
+func (s *Server) handleResumeUser(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	var user models.User
+	if err := s.db.First(&user, "id = ? AND organization_id = ?", id, orgID).Error; err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID, EventType: "cp.user.resumed", ActorType: "admin",
+		Action: "resume", ResourceType: "user", ResourceID: id,
+		Result: "success", OccurredAt: time.Now().Format(time.RFC3339),
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "resumed"})
+}

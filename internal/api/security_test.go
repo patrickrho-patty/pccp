@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -31,6 +32,18 @@ func securityTestServer(t *testing.T) (*Server, *gorm.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// PAT-1502 PR 2: wire a local KeyProvider so the write paths
+	// (create/rotate/test) can seal targets. A 32-byte deterministic
+	// KEK derived from the test JWT secret keeps test runs hermetic.
+	var kek [32]byte
+	for i := range kek {
+		kek[i] = byte('A' + (i % 26))
+	}
+	provider, err := keymgmt.NewLocalProvider(kek[:], "test-kek-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.SetKeyProvider(provider)
 	return srv, db
 }
 

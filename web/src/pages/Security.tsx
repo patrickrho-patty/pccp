@@ -751,6 +751,20 @@ export default function Security() {
                       </div>
                       <div className="text-[10px] text-gray-400">심각도: {JSON.parse(a.severities || '[]').length ? JSON.parse(a.severities).join(', ') : '전체'}</div>
                     </div>
+                    <button onClick={async () => {
+                      try {
+                        const r: any = await api.testSecurityAlert(a.id)
+                        showToast(r.ok ? `테스트 전달 성공 (HTTP ${r.http_status})` : `테스트 실패 (HTTP ${r.http_status})`, r.ok ? 'success' : 'error')
+                      } catch (err: any) { showToast(err.message, 'error') }
+                    }} className="btn-link">테스트</button>
+                    <button onClick={async () => {
+                      const next = window.prompt('새 webhook URL을 입력하세요 (rotate 후 이전 키는 폐기):', '')
+                      if (!next) return
+                      try {
+                        await api.rotateSecurityAlert(a.id, next)
+                        showToast('교체됨', 'success'); loadAlerts()
+                      } catch (err: any) { showToast(err.message, 'error') }
+                    }} className="btn-link">교체</button>
                     <button onClick={async () => { await api.deleteSecurityAlert(a.id); showToast('삭제됨', 'info'); loadAlerts() }} className="btn-link-danger">삭제</button>
                   </div>
                 ))}
