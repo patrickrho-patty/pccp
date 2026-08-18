@@ -35,9 +35,9 @@ type SecurityRuleOverride struct {
 	ScopeLevel     string `gorm:"type:varchar(16);uniqueIndex:idx_secrule_ov_org_scope_rule,priority:2;not null" json:"scope_level"` // team, user, harness
 	ScopeID        string `gorm:"type:varchar(64);uniqueIndex:idx_secrule_ov_org_scope_rule,priority:3;not null" json:"scope_id"`
 	RuleID         string `gorm:"type:varchar(64);uniqueIndex:idx_secrule_ov_org_scope_rule,priority:4;not null" json:"rule_id"`
-	Enabled        *bool  `gorm:"json:"enabled,omitempty"`                 // nil = inherit
+	Enabled        *bool  `gorm:"column:enabled" json:"enabled,omitempty"`    // nil = inherit
 	Severity       string `gorm:"type:varchar(32)" json:"severity,omitempty"` // empty = inherit
-	Action         string `gorm:"type:varchar(32)" json:"action,omitempty"`  // empty = inherit
+	Action         string `gorm:"type:varchar(32)" json:"action,omitempty"`   // empty = inherit
 }
 
 // TableName overrides for scoped rule overrides.

@@ -319,6 +319,12 @@ export const api = {
   securityCheck: (text: string) =>
     request<any>('/api/security/check', { method: 'POST', body: JSON.stringify({ text }) }),
   securityRules: () => request<any[]>('/api/security/rules'),
+  securityRuleOverrides: (scopeLevel: string, scopeId: string) =>
+    request<any[]>(`/api/security/rules/overrides?scope_level=${encodeURIComponent(scopeLevel)}&scope_id=${encodeURIComponent(scopeId)}`),
+  setSecurityRuleOverride: (payload: { scope_level: string; scope_id: string; rule_id: string; enabled?: boolean; severity?: string; action?: string }) =>
+    request('/api/security/rules/overrides', { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteSecurityRuleOverride: (payload: { scope_level: string; scope_id: string; rule_id: string }) =>
+    request('/api/security/rules/overrides', { method: 'DELETE', body: JSON.stringify(payload) }),
   securityFindings: (params?: Record<string, string>) =>
     request<any>(`/api/security/findings${params ? '?' + new URLSearchParams(params).toString() : ''}`),
   securityFindingDetail: (id: string) => request<any>(`/api/security/findings/${id}`),

@@ -138,3 +138,99 @@ func TestLexiconEndpointRoundTrip(t *testing.T) {
 		t.Fatalf("lexicon version wrong: %s", lexicon.Version)
 	}
 }
+
+// --- PAT-1433: catalog seeding, severity persistence, scoped overrides ---
+
+func TestSecurityRulesEndpointSeedsCatalog(t *testing.T) {
+	srv, db := securityTestServer(t)
+	org := models.Organization{Name: "seed-org", Slug: "seed-org", Status: "active"}
+	db.Create(&org)
+	// NO explicit EnsureRulesSeeded: the endpoint itself must seed.
+	rec := doJSON(t, srv, "GET", "/api/security/rules", "", org.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET rules: %d %s", rec.Code, rec.Body.String())
+	}
+	var rules []models.SecurityRule
+	if err := json.Unmarshal(rec.Body.Bytes(), &rules); err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) < 40 {
+		t.Fatalf("authoritative catalog expected (>=40 rules), got %d", len(rules))
+	}
+	sawPath := false
+	for _, r := range rules {
+		if r.RuleID == "path-etc-passwd" {
+			sawPath = true
+		}
+	}
+	if !sawPath {
+		t.Fatal("catalog must include sensitive_path rules (the old UI presets never showed these)")
+	}
+}
+
+func TestSecurityRuleSeverityPersists(t *testing.T) {
+	srv, db := securityTestServer(t)
+	org := models.Organization{Name: "sev-org", Slug: "sev-org", Status: "active"}
+	db.Create(&org)
+	rec := doJSON(t, srv, "PUT", "/api/security/policy", `{"rule_id":"pii-kr-phone","severity":"low"}`, org.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("severity PUT failed: %d %s", rec.Code, rec.Body.String())
+	}
+	// Invalid vocabulary must be rejected.
+	rec = doJSON(t, srv, "PUT", "/api/security/policy", `{"rule_id":"pii-kr-phone","severity":"ultra"}`, org.ID)
+	if rec.Code == http.StatusOK {
+		t.Fatal("invalid severity must be rejected")
+	}
+	rec = doJSON(t, srv, "GET", "/api/security/rules", "", org.ID)
+	var rules []models.SecurityRule
+	json.Unmarshal(rec.Body.Bytes(), &rules)
+	for _, r := range rules {
+		if r.RuleID == "pii-kr-phone" && r.Severity != "low" {
+			t.Fatalf("pii-kr-phone severity = %q, want low", r.Severity)
+		}
+	}
+}
+
+func TestRuleOverrideEndpoints(t *testing.T) {
+	srv, db := securityTestServer(t)
+	if err := db.AutoMigrate(&models.SecurityRuleOverride{}); err != nil {
+		t.Fatal(err)
+	}
+	org := models.Organization{Name: "ovr-org", Slug: "ovr-org", Status: "active"}
+	db.Create(&org)
+	srv.security.EnsureRulesSeeded(org.ID)
+
+	// PUT: user-scoped delta disabling kr-phone + lowering severity.
+	body := `{"scope_level":"user","scope_id":"user-7","rule_id":"pii-kr-phone","enabled":false,"severity":"low"}`
+	rec := doJSON(t, srv, "PUT", "/api/security/rules/overrides", body, org.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT override: %d %s", rec.Code, rec.Body.String())
+	}
+	// Pure no-op override must be rejected.
+	rec = doJSON(t, srv, "PUT", "/api/security/rules/overrides", `{"scope_level":"user","scope_id":"user-7","rule_id":"pii-kr-rrn"}`, org.ID)
+	if rec.Code == http.StatusOK {
+		t.Fatal("inherit-only override must be rejected")
+	}
+	// GET: the delta is listed.
+	rec = doJSON(t, srv, "GET", "/api/security/rules/overrides?scope_level=user&scope_id=user-7", "", org.ID)
+	var overrides []models.SecurityRuleOverride
+	if err := json.Unmarshal(rec.Body.Bytes(), &overrides); err != nil {
+		t.Fatal(err)
+	}
+	if len(overrides) != 1 || overrides[0].RuleID != "pii-kr-phone" {
+		t.Fatalf("override list = %+v", overrides)
+	}
+	if overrides[0].Enabled == nil || *overrides[0].Enabled || overrides[0].Severity != "low" {
+		t.Fatalf("override content wrong: %+v", overrides[0])
+	}
+	// DELETE: revert to inherit.
+	rec = doJSON(t, srv, "DELETE", "/api/security/rules/overrides", `{"scope_level":"user","scope_id":"user-7","rule_id":"pii-kr-phone"}`, org.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE override: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = doJSON(t, srv, "GET", "/api/security/rules/overrides?scope_level=user&scope_id=user-7", "", org.ID)
+	json.Unmarshal(rec.Body.Bytes(), &overrides)
+	if len(overrides) != 0 {
+		t.Fatalf("override must be reverted, got %+v", overrides)
+	}
+}

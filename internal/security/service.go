@@ -702,9 +702,18 @@ func (s *Service) ListRules(orgID string) ([]models.SecurityRule, error) {
 	return rules, nil
 }
 
-// SetRule persists an enabled/action override for a rule (creating the row if the
-// rule isn't yet in the default catalog).
-func (s *Service) SetRule(orgID, ruleID string, enabled *bool, action string, pattern ...string) error {
+// SetRule persists an enabled/action/severity override for a rule (creating
+// the row if the rule isn't yet in the default catalog). An empty severity
+// leaves the stored severity untouched; a non-empty one must match the
+// catalog vocabulary.
+func (s *Service) SetRule(orgID, ruleID string, enabled *bool, action, severity string, pattern ...string) error {
+	if severity != "" {
+		switch severity {
+		case "low", "medium", "high", "critical":
+		default:
+			return fmt.Errorf("security: invalid severity %q", severity)
+		}
+	}
 	var row models.SecurityRule
 	found := s.db.Where("organization_id = ? AND rule_id = ?", orgID, ruleID).First(&row).Error == nil
 	if !found {
@@ -721,6 +730,9 @@ func (s *Service) SetRule(orgID, ruleID string, enabled *bool, action string, pa
 	}
 	if action != "" {
 		row.Action = action
+	}
+	if severity != "" {
+		row.Severity = severity
 	}
 	// Custom rules carry a regex pattern (07 A1): validated at save —
 	// an uncompilable pattern is rejected at the API, never stored to
