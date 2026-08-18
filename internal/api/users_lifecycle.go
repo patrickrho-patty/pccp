@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"gorm.io/gorm"
 
 	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
@@ -144,41 +144,139 @@ func (s *Server) handleRevokeUserHarness(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }
 
-// handleGetUserUsage aggregates per-developer usage/cost (B6).
+// handleGetUserUsage returns the canonical, unit-safe ledger report for one
+// user. It shares aggregation and currency rules with every other scope.
 func (s *Server) handleGetUserUsage(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
-	var records []models.UsageRecord
-	s.db.Where("organization_id = ? AND user_id = ?", orgID, id).Find(&records)
-	type metricRow struct {
-		MetricType string `json:"metric_type"`
-		Unit       string `json:"unit"`
-		Quantity   int64  `json:"quantity"`
-		CostMicros int64  `json:"cost_micros"`
+	var user models.User
+	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&user).Error; err != nil {
+		writeError(w, http.StatusNotFound, "사용자를 찾을 수 없습니다")
+		return
 	}
-	byMetric := map[string]*metricRow{}
-	var totalCost int64
-	for _, rec := range records {
-		totalCost += rec.CostMicros
-		row, ok := byMetric[rec.MetricType]
-		if !ok {
-			row = &metricRow{MetricType: rec.MetricType, Unit: rec.Unit}
-			byMetric[rec.MetricType] = row
+	days, since, until := usageWindowFromRequest(r, time.Now())
+	report, err := s.buildUsageReport(orgID, usageFilter{UserID: id}, fmt.Sprintf("%dd", days), since, until)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+// The canonical user lifecycle state machine lives in
+// internal/models/user_lifecycle.go (PAT-1489) and is shared by every
+// writer of users.status. Every surface — list rows, detail header, bulk
+// actions, API validation — derives allowed actions from it.
+
+// lifecycleGuard enforces the shared mutation rules (PAT-1489): viewers
+// never mutate lifecycle state, and operators never act on their own
+// account. Returns false when the request has been rejected.
+func lifecycleGuard(w http.ResponseWriter, r *http.Request, user *models.User) bool {
+	if getRole(r) == "viewer" {
+		writeError(w, http.StatusForbidden, "viewers cannot change user lifecycle state")
+		return false
+	}
+	if claims, ok := claimsFromCtx(r.Context()); ok && claims.Email != "" && claims.Email == user.Email {
+		writeError(w, http.StatusBadRequest, "cannot change your own account lifecycle")
+		return false
+	}
+	return true
+}
+
+// decodeRequiredReason enforces the shared mutation contract (PAT-1489):
+// a well-formed body with a non-empty reason. Returns false when the
+// request has been rejected.
+func decodeRequiredReason(w http.ResponseWriter, r *http.Request) (string, bool) {
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return "", false
+	}
+	req.Reason = strings.TrimSpace(req.Reason)
+	if req.Reason == "" {
+		writeError(w, http.StatusBadRequest, "reason is required")
+		return "", false
+	}
+	return req.Reason, true
+}
+
+// handleSuspendUser transitions active → suspended via a dedicated,
+// audited endpoint (PAT-1489).
+func (s *Server) handleSuspendUser(w http.ResponseWriter, r *http.Request) {
+	s.transitionUserStatus(w, r, "suspended")
+}
+
+// handleResumeUser transitions suspended → active (재활성화) (PAT-1489).
+func (s *Server) handleResumeUser(w http.ResponseWriter, r *http.Request) {
+	s.transitionUserStatus(w, r, "active")
+}
+
+// transitionUserStatus applies one lifecycle move with full validation:
+// org-scoped lookup, reason required, RBAC + self-action guards, and an
+// atomic conditional update keyed on the CURRENT persisted state — so a
+// stale page or a racing request can never force an invalid transition.
+func (s *Server) transitionUserStatus(w http.ResponseWriter, r *http.Request, to string) {
+	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	reason, ok := decodeRequiredReason(w, r)
+	if !ok {
+		return
+	}
+	var user models.User
+	if err := s.db.First(&user, "id = ? AND organization_id = ?", id, orgID).Error; err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if !lifecycleGuard(w, r, &user) {
+		return
+	}
+	if !models.UserTransitionAllowed(user.Status, to) {
+		writeError(w, http.StatusConflict, fmt.Sprintf("invalid lifecycle transition: %s → %s", user.Status, to))
+		return
+	}
+	from := user.Status
+	eventType, action := "cp.user.suspended", "suspend_user"
+	if to == "active" {
+		eventType, action = "cp.user.resumed", "resume_user"
+	}
+	// The conditional WHERE on the prior status makes the read-validate-write
+	// window race-free: a concurrent mover wins or loses atomically.
+	var updated int64
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&models.User{}).
+			Where("id = ? AND organization_id = ? AND status = ?", id, orgID, from).
+			Update("status", to)
+		if res.Error != nil {
+			return res.Error
 		}
-		row.Quantity += rec.Quantity
-		row.CostMicros += rec.CostMicros
-	}
-	rows := make([]metricRow, 0, len(byMetric))
-	for _, row := range byMetric {
-		rows = append(rows, *row)
-	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].MetricType < rows[j].MetricType })
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"user_id":           id,
-		"metrics":           rows,
-		"total_cost_micros": totalCost,
-		"record_count":      len(records),
+		updated = res.RowsAffected
+		if updated == 0 {
+			return nil
+		}
+		details, mErr := json.Marshal(map[string]string{"from": from, "to": to, "reason": reason})
+		if mErr != nil {
+			return mErr
+		}
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: orgID, EventType: eventType, ActorType: "admin",
+			Action: action, ResourceType: "user", ResourceID: id,
+			Details:    string(details),
+			Result:     "success",
+			OccurredAt: time.Now().Format(time.RFC3339),
+		}).Error
 	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "lifecycle update failed")
+		return
+	}
+	if updated == 0 {
+		writeError(w, http.StatusConflict, fmt.Sprintf("invalid lifecycle transition: %s → %s (state changed concurrently)", from, to))
+		return
+	}
+	user.Status = to
+	writeJSON(w, http.StatusOK, user)
 }
 
 // handleOffboardUser runs the OffboardingCase workflow (B2): closes
@@ -187,26 +285,42 @@ func (s *Server) handleGetUserUsage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleOffboardUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
-	var req struct {
-		Reason string `json:"reason"`
-	}
-	_ = decodeJSON(r, &req)
-	if req.Reason == "" {
-		req.Reason = "admin offboarding"
+	reason, ok := decodeRequiredReason(w, r)
+	if !ok {
+		return
 	}
 	var user models.User
 	if err := s.db.First(&user, "id = ? AND organization_id = ?", id, orgID).Error; err != nil {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
 	}
+	if !lifecycleGuard(w, r, &user) {
+		return
+	}
+	if !models.UserTransitionAllowed(user.Status, "offboarded") {
+		writeError(w, http.StatusConflict, fmt.Sprintf("invalid lifecycle transition: %s → offboarded", user.Status))
+		return
+	}
+	// Claim the transition atomically BEFORE any cascade, so a racing
+	// offboard loses here (409) without side effects.
+	res := s.db.Model(&models.User{}).
+		Where("id = ? AND organization_id = ? AND status = ?", id, orgID, user.Status).
+		Update("status", "offboarded")
+	if res.Error != nil {
+		writeError(w, http.StatusInternalServerError, "offboard update failed")
+		return
+	}
+	if res.RowsAffected == 0 {
+		writeError(w, http.StatusConflict, fmt.Sprintf("invalid lifecycle transition: %s → offboarded (state changed concurrently)", user.Status))
+		return
+	}
 
-	// 1. Sessions: close active/idle/paused.
-	var closedSessions int64
-	s.db.Model(&models.Session{}).
+	// 1. Sessions: close active/idle/paused. RowsAffected counts exactly
+	// the sessions this run closed.
+	sessRes := s.db.Model(&models.Session{}).
 		Where("user_id = ? AND status IN ('active','idle','paused','pending')", id).
 		Update("status", "terminated")
-	s.db.Model(&models.Session{}).
-		Where("user_id = ? AND status = 'terminated'", id).Count(&closedSessions)
+	closedSessions := sessRes.RowsAffected
 
 	// 2. Harnesses: remove the user from AllowedUsers; revoke if empty.
 	var harnesses []models.Harness
@@ -234,17 +348,17 @@ func (s *Server) handleOffboardUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 3. Mark offboarded.
-	s.db.Model(&user).Updates(map[string]interface{}{
-		"status":           "offboarded",
-		"offboarding_date": time.Now().Format("2006-01-02"),
-	})
+	// 3. Record the offboarding date (status was claimed atomically above).
+	s.db.Model(&user).Update("offboarding_date", time.Now().Format("2006-01-02"))
 
 	// 4. Audit + evidence package.
+	offboardDetails, _ := json.Marshal(map[string]interface{}{
+		"reason": reason, "closed_sessions": closedSessions, "revoked_harnesses": revoked,
+	})
 	s.db.Create(&models.AuditEvent{
 		OrganizationID: orgID, EventType: "cp.user.offboarded", ActorType: "admin",
 		Action: "offboard_user", ResourceType: "user", ResourceID: id,
-		Details:    fmt.Sprintf(`{"reason":"%s","closed_sessions":%d,"revoked_harnesses":%d}`, req.Reason, closedSessions, revoked),
+		Details:    string(offboardDetails),
 		Result:     "success",
 		OccurredAt: time.Now().Format(time.RFC3339),
 	})
@@ -259,7 +373,7 @@ func (s *Server) handleOffboardUser(w http.ResponseWriter, r *http.Request) {
 		"revoked_harnesses": revoked,
 		"remaining_active":  remaining,
 		"evidence": map[string]interface{}{
-			"reason":           req.Reason,
+			"reason":           reason,
 			"offboarding_date": time.Now().Format("2006-01-02"),
 			"access_removed":   remaining == 0,
 		},
@@ -460,41 +574,3 @@ func (s *Server) handleContractorProfile(w http.ResponseWriter, r *http.Request)
 }
 
 var _ = io.EOF
-
-// handleSuspendUser records a user suspension event. PAT-1502 PR 2:
-// stub added so the router compiles after the merge; full lifecycle
-// (revoke harnesses, terminate sessions) is delivered separately.
-func (s *Server) handleSuspendUser(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	orgID := getOrgID(r)
-	var user models.User
-	if err := s.db.First(&user, "id = ? AND organization_id = ?", id, orgID).Error; err != nil {
-		writeError(w, http.StatusNotFound, "user not found")
-		return
-	}
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID, EventType: "cp.user.suspended", ActorType: "admin",
-		Action: "suspend", ResourceType: "user", ResourceID: id,
-		Result: "success", OccurredAt: time.Now().Format(time.RFC3339),
-	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "suspended"})
-}
-
-// handleResumeUser records a user unsuspension event. PAT-1502 PR 2:
-// stub added so the router compiles after the merge; full lifecycle
-// is delivered separately.
-func (s *Server) handleResumeUser(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	orgID := getOrgID(r)
-	var user models.User
-	if err := s.db.First(&user, "id = ? AND organization_id = ?", id, orgID).Error; err != nil {
-		writeError(w, http.StatusNotFound, "user not found")
-		return
-	}
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID, EventType: "cp.user.resumed", ActorType: "admin",
-		Action: "resume", ResourceType: "user", ResourceID: id,
-		Result: "success", OccurredAt: time.Now().Format(time.RFC3339),
-	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "resumed"})
-}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { useServerTable, buildQuery, ServerQuery } from '../hooks/useServerTable'
@@ -13,8 +13,9 @@ import { exportCSV } from '../utils/csv'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
 import { useRowNav } from '../hooks/useRowNav'
+import { userActions, userActionSpec, applyUserLifecycle, canIssueEnrollment, STATUS_KO, STATUS_BADGE, UserLifecycleAction } from '../userLifecycle'
 
-// Users page (web/01 plan): managed developer population — governed
+// Users page (web/01 plan): managed user population — governed
 // subjects, NOT console operators. Server-side list (B3), business-unit
 // picker (A1), harness binding (A2), enrollment codes (A3), seats (A4),
 // structured contractors (A5), audit + reasons (B1), offboard workflow
@@ -34,16 +35,6 @@ const STATUS_OPTIONS = [
   { value: 'suspended', label: '정지' },
   { value: 'offboarded', label: '퇴사' },
 ]
-
-const STATUS_KO: Record<string, string> = {
-  active: '활성', suspended: '정지', offboarded: '퇴사',
-}
-
-const STATUS_BADGE: Record<string, string> = {
-  active: 'bg-green-50 text-green-700 border-green-200',
-  suspended: 'bg-amber-50 text-amber-700 border-amber-200',
-  offboarded: 'bg-gray-100 text-gray-500 border-gray-200',
-}
 
 function initials(name: string) {
   return (name || '?').slice(0, 2).toUpperCase()
@@ -66,6 +57,11 @@ export default function Users() {
 
   const [businessUnits, setBusinessUnits] = useState<any[]>([])
   const [roles, setRoles] = useState<any[]>([])
+  const roleLabelById = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const r of roles) m.set(r.id, r.name_ko || r.name)
+    return m
+  }, [roles])
   const [seatUsage, setSeatUsage] = useState<any>(null)
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -73,7 +69,7 @@ export default function Users() {
     email: '', name: '', name_ko: '', title: '', auth_method: 'local', business_unit_id: '', employee_id: '',
   })
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [reasonTarget, setReasonTarget] = useState<{ id: string; action: 'suspend' | 'offboard' } | null>(null)
+  const [reasonTarget, setReasonTarget] = useState<{ id: string; name: string; email: string; action: UserLifecycleAction } | null>(null)
   const [reasonText, setReasonText] = useState('')
   const [enrollTarget, setEnrollTarget] = useState<any>(null)
   const [enrollCode, setEnrollCode] = useState<{ code: string; expires_at: string } | null>(null)
@@ -88,10 +84,7 @@ export default function Users() {
   const loadMeta = () => {
     api.listBusinessUnits().then(d => setBusinessUnits(Array.isArray(d) ? d : []))
     api.listRoles().then(d => setRoles(Array.isArray(d) ? d : []))
-    api.listOrganizations().then(d => {
-      const org = Array.isArray(d) && d[0] ? d[0] : null
-      if (org?.id) api.getSeatUsage?.(org.id).then(s => setSeatUsage(s)).catch(() => setSeatUsage(null))
-    })
+    api.getSeatUsage().then(s => setSeatUsage(s)).catch(() => setSeatUsage(null))
   }
   useEffect(() => { loadMeta() }, [])
 
@@ -128,7 +121,7 @@ export default function Users() {
         showToast('저장 완료 · Saved', 'success')
       } else {
         await api.createUser(form)
-        showToast('개발자 생성 완료 · Created', 'success')
+        showToast('사용자 생성 완료 · Created', 'success')
       }
       setShowForm(false)
       table.reload()
@@ -140,25 +133,35 @@ export default function Users() {
 
   const runReasonAction = async () => {
     if (!reasonTarget) return
+    if (!reasonText.trim()) {
+      showToast('사유를 입력해주세요 (감사 로그에 기록됩니다)', 'error')
+      return
+    }
     try {
-      if (reasonTarget.action === 'offboard') {
-        await api.offboardUser(reasonTarget.id, reasonText || '관리자 퇴사 처리')
+      if (reasonTarget.id === '__bulk__') {
+        let done = 0, failed = 0
+        for (const uid of selectedIds) {
+          try { await applyUserLifecycle(reasonTarget.action, uid, reasonText); done++ } catch { failed++ }
+        }
+        showToast(`일괄 처리 완료 — 성공 ${done}${failed ? `, 실패 ${failed}` : ''}`, failed ? 'error' : 'success')
+        setSelectedIds(new Set())
       } else {
-        await api.updateUser(reasonTarget.id, { status: 'suspended', reason: reasonText || '관리자 정지' })
+        await applyUserLifecycle(reasonTarget.action, reasonTarget.id, reasonText)
+        showToast('완료 · Done', 'success')
       }
-      showToast('완료 · Done', 'success')
       setReasonTarget(null)
       setReasonText('')
       table.reload()
     } catch (e: any) {
       showToast(e?.message || '실패', 'error')
+      table.reload() // a 409 usually means stale row state — refresh it
     }
   }
 
   const issueEnrollment = async (u: any) => {
     try {
       const res = await api.issueEnrollmentCode(u.id)
-      setEnrollCode(typeof res === 'string' ? { code: res, expires_at: '' } : res)
+      setEnrollCode(typeof res === 'string' ? { code: res, expires_at: '' } : (res as any))
       setEnrollTarget(u)
     } catch (e: any) {
       showToast(e?.message || '발급 실패', 'error')
@@ -202,16 +205,18 @@ export default function Users() {
 
   const exportSelected = () => {
     const sel = selectedIds.size ? rows.filter(r => selectedIds.has(r.id)) : rows
-    exportCSV(sel.map(u => ({
-      email: u.email, name: u.name, name_ko: u.name_ko, title: u.title,
-      auth_method: u.auth_method, status: u.status, employee_id: u.employee_id || '',
-      business_unit_id: u.business_unit_id || '',
-    })), 'users.csv')
+    exportCSV('users.csv',
+      ['email', 'name', 'name_ko', 'title', 'auth_method', 'status', 'employee_id', 'business_unit_id'],
+      sel.map(u => [
+        u.email, u.name, u.name_ko, u.title,
+        u.auth_method, u.status, u.employee_id || '',
+        u.business_unit_id || '',
+      ]))
   }
 
   const columns: Column<any>[] = [
     {
-      key: 'name', header: '개발자',
+      key: 'name', header: '사용자',
       render: (u) => (
         <div className="flex items-center gap-2">
           <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold ${u.status === 'offboarded' ? 'bg-gray-200 text-gray-500' : 'bg-blue-100 text-blue-700'}`}>
@@ -226,7 +231,7 @@ export default function Users() {
           {u.contractor_info && <span title="계약직" className="text-[10px] px-1 rounded bg-purple-50 text-purple-600 border border-purple-200">계약</span>}
         </div>
       ),
-      cardLabel: '개발자',
+      cardLabel: '사용자',
     },
     {
       key: 'auth', header: '인증',
@@ -259,29 +264,40 @@ export default function Users() {
     {
       key: 'status', header: '상태',
       render: (u) => (
-        <span className={`text-[10px] px-2 py-0.5 rounded-full border ${STATUS_BADGE[u.status] || STATUS_BADGE.active}`}>
+        <span className={`text-[10px] px-2 py-0.5 rounded-full border ${STATUS_BADGE[u.status] || STATUS_BADGE.offboarded}`}>
           {STATUS_KO[u.status] || u.status}
         </span>
       ),
       cardLabel: '상태',
     },
     {
+      key: 'access', header: '권한 / 하네스',
+      render: (u) => {
+        const labels = (u.role_ids || []).map((rid: string) => roleLabelById.get(rid)).filter(Boolean)
+        return <div className="text-[11px] text-gray-600"><div>{labels.join(', ') || '권한 없음'}</div><div className="text-gray-400">하네스 {u.harness_count ?? 0}대</div></div>
+      },
+      cardLabel: '권한 / 하네스',
+    },
+    {
       key: 'actions', header: '',
       render: (u) => (
         <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
           <FavoriteStar entity="users" id={u.id} />
-          <button className="btn-xs-secondary" title="초대 코드 발급"
-            onClick={() => issueEnrollment(u)}>초대 코드</button>
-          {u.status === 'active' && (
-            <button className="text-[10px] px-2 py-1 rounded hover:bg-amber-50 text-amber-600"
-              onClick={() => { setReasonTarget({ id: u.id, action: 'suspend' }); setReasonText('') }}>정지</button>
+          {canIssueEnrollment(u.status) && (
+            <button className="btn-xs-secondary" title="초대 코드 발급"
+              onClick={() => issueEnrollment(u)}>초대 코드</button>
           )}
+          {userActions(u.status).map(a => (
+            <button key={a.action}
+              className={a.action === 'offboard' ? 'btn-xs-danger'
+                : a.action === 'resume' ? 'text-[10px] px-2 py-1 rounded hover:bg-green-50 text-green-700'
+                : 'text-[10px] px-2 py-1 rounded hover:bg-amber-50 text-amber-600'}
+              onClick={() => { setReasonTarget({ id: u.id, name: u.name_ko || u.name, email: u.email, action: a.action }); setReasonText('') }}>{a.label}</button>
+          ))}
           {u.status !== 'offboarded' && (
-            <button className="btn-xs-danger"
-              onClick={() => { setReasonTarget({ id: u.id, action: 'offboard' }); setReasonText('') }}>퇴사</button>
+            <button className="btn-xs-secondary"
+              onClick={() => openEdit(u)}>수정</button>
           )}
-          <button className="btn-xs-secondary"
-            onClick={() => openEdit(u)}>수정</button>
         </div>
       ),
       cardLabel: '작업',
@@ -294,7 +310,7 @@ export default function Users() {
     <div className="p-6 space-y-4 page-enter">
       {/* Seats (A4) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard label="개발자" value={seats.users ?? table.total} accent="blue"
+        <StatCard label="사용자" value={seats.users ?? table.total} accent="blue"
           to="/users" sub={seats.max_users ? `좌석 ${seats.max_users}` : undefined} />
         <StatCard label="하네스" value={seats.harnesses ?? '—'} accent="green"
           to="/harnesses" sub={seats.max_harnesses ? `좌석 ${seats.max_harnesses}` : undefined} />
@@ -305,8 +321,8 @@ export default function Users() {
 
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <h2 className="text-sm font-bold">개발자 · Users</h2>
-          <p className="text-[11px] text-gray-400">관리 대상 개발자 (하네스 사용자) — 콘솔 운영자와 별개입니다.</p>
+          <h2 className="text-sm font-bold">사용자 · Users</h2>
+          <p className="text-[11px] text-gray-400">관리 대상 사용자 (하네스 사용자) — 콘솔 운영자와 별개입니다.</p>
         </div>
         <div className="flex gap-2 flex-wrap">
           <button className="btn-sm btn-secondary" onClick={() => setImportOpen(true)}>CSV 가져오기</button>
@@ -317,12 +333,12 @@ export default function Users() {
                 부서 일괄 배정 ({selectedIds.size})
               </button>
               <button className="btn-sm btn-danger"
-                onClick={() => { setReasonTarget({ id: '__bulk__', action: 'suspend' }); setReasonText('') }}>
+                onClick={() => { setReasonTarget({ id: '__bulk__', name: `선택 ${selectedIds.size}명`, email: '', action: 'suspend' }); setReasonText('') }}>
                 일괄 정지 ({selectedIds.size})
               </button>
             </>
           )}
-          <button className="btn-sm btn-primary" onClick={openCreate}>+ 새 개발자</button>
+          <button className="btn-sm btn-primary" onClick={openCreate}>+ 새 사용자</button>
         </div>
       </div>
 
@@ -372,7 +388,7 @@ export default function Users() {
         rowKey={u => u.id}
         expand={(u) => (
           <div className="px-3 py-2 text-[11px] text-gray-500 space-y-1">
-            <div>사번: {u.employee_id || '—'} · 권한: {roles.filter(r => u.role_ids?.includes(r.id)).map(r => r.name_ko || r.name).join(', ') || '—'}</div>
+            <div>사번: {u.employee_id || '—'} · 권한: {(u.role_ids || []).map((rid: string) => roleLabelById.get(rid)).filter(Boolean).join(', ') || '—'}</div>
             <div className="flex gap-2 shrink-0 flex-wrap">
               <Link className="text-blue-600 hover:underline" to={`/users/${u.id}`}>상세 페이지</Link>
               <Link className="text-blue-600 hover:underline" to={`/users/${u.id}?tab=usage`}>사용량</Link>
@@ -380,9 +396,9 @@ export default function Users() {
             </div>
           </div>
         )}
-        empty={<EmptyState icon="👤" title="첫 개발자를 초대하세요"
+        empty={<EmptyState icon="👤" title="첫 사용자를 초대하세요"
           message="초대 코드로 하네스를 등록하거나 CSV로 일괄 가져올 수 있습니다."
-          action={{ label: '+ 새 개발자', onClick: openCreate }} />}
+          action={{ label: '+ 새 사용자', onClick: openCreate }} />}
       />
 
       {/* Pagination */}
@@ -399,7 +415,7 @@ export default function Users() {
       )}
 
       {/* Create/Edit form (A1 business-unit picker) */}
-      <Modal open={showForm} title={editingId ? '개발자 수정' : '새 개발자'} onClose={() => setShowForm(false)}
+      <Modal open={showForm} title={editingId ? '사용자 수정' : '새 사용자'} onClose={() => setShowForm(false)}
         footer={<ModalFooter onCancel={() => setShowForm(false)} onConfirm={saveForm} confirmLabel={editingId ? '저장' : '생성'} />}>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-2">
@@ -442,16 +458,21 @@ export default function Users() {
         </div>
       </Modal>
 
-      {/* Reason modal (B1) */}
-      <Modal open={!!reasonTarget} title={reasonTarget?.action === 'offboard' ? '퇴사 처리' : '계정 정지'}
+      {/* Reason modal (B1) — driven by the shared lifecycle mapping (PAT-1489) */}
+      <Modal open={!!reasonTarget} title={reasonTarget ? userActionSpec(reasonTarget.action).title : ''}
         onClose={() => setReasonTarget(null)}
         footer={<ModalFooter onCancel={() => setReasonTarget(null)} onConfirm={runReasonAction}
-          confirmLabel={reasonTarget?.action === 'offboard' ? '퇴사 처리' : '정지'} danger />}>
+          confirmLabel={reasonTarget ? userActionSpec(reasonTarget.action).label : ''}
+          danger={reasonTarget ? userActionSpec(reasonTarget.action).danger : false} />}>
         <div className="space-y-2">
+          {reasonTarget && (
+            <p className="text-xs text-gray-700">
+              대상: <span className="font-semibold">{reasonTarget.name}</span>
+              {reasonTarget.email ? ` (${reasonTarget.email})` : ''}
+            </p>
+          )}
           <p className="text-xs text-gray-500">
-            {reasonTarget?.action === 'offboard'
-              ? '퇴사 처리 시 모든 세션이 종료되고 하네스 바인딩이 해제됩니다. 사유를 남겨주세요.'
-              : '계정을 정지하면 해당 개발자의 하네스 요청이 거부됩니다. 사유를 남겨주세요.'}
+            {reasonTarget ? `${userActionSpec(reasonTarget.action).effect} 사유를 남겨주세요.` : ''}
           </p>
           <textarea className="input text-xs w-full" rows={3} placeholder="사유 (감사 로그에 기록됩니다)"
             value={reasonText} onChange={e => setReasonText(e.target.value)} />

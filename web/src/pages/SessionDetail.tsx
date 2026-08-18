@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { api } from '../api'
 import { StatCard } from '../components/StatCard'
 import { FavoriteStar } from '../hooks/useFavorites'
+import { formatUsageAmount, UsageReport, UsageReportData } from '../components/UsageReport'
 
 const STATUS_META: Record<string, { ko: string; badge: string }> = {
   pending: { ko: '대기', badge: 'bg-gray-100 text-gray-600 border-gray-200' },
@@ -23,6 +24,7 @@ export default function SessionDetail() {
   const [decisions, setDecisions] = useState<any>(null)
   const [replay, setReplay] = useState<any>(null)
   const [visibility, setVisibility] = useState<any>(null)
+  const [usageReport, setUsageReport] = useState<UsageReportData | null>(null)
   const [tab, setTab] = useState('timeline')
   const [loading, setLoading] = useState(true)
 
@@ -34,11 +36,13 @@ export default function SessionDetail() {
       api.getSessionDecisions(id),
       api.getSessionReplay(id),
       api.getSessionVisibility(id),
-    ]).then(([d, dec, rep, vis]) => {
+      api.getSessionUsage(id),
+    ]).then(([d, dec, rep, vis, usage]) => {
       setDetail(d)
       setDecisions(dec)
       setReplay(rep)
       setVisibility(vis)
+      setUsageReport(usage)
     }).catch(() => {}).finally(() => setLoading(false))
   }, [id])
 
@@ -52,10 +56,8 @@ export default function SessionDetail() {
 
   const sess = detail.session
   const meta = STATUS_META[sess.status] || STATUS_META.pending
-  const usage = (detail.usage || []) as any[]
-  const totalTokens = usage.reduce((acc: number, r: any) =>
-    acc + (r.metric_type === 'tokens_in' || r.metric_type === 'tokens_out' ? r.quantity : 0), 0)
-  const totalCost = usage.reduce((acc: number, r: any) => acc + (r.cost_micros || 0), 0)
+  const totalTokens = usageReport?.total_tokens
+  const totalCost = usageReport?.display_total
 
   const act = async (action: string) => {
     await api.sessionAction(id!, action).catch(() => {})
@@ -93,12 +95,14 @@ export default function SessionDetail() {
           </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
-          <StatCard label="토큰" value={totalTokens} accent="blue" />
-          <StatCard label="비용 (µ¢)" value={totalCost} accent="green" />
+          <StatCard label="최근 30일 토큰" value={totalTokens == null ? '—' : totalTokens.toLocaleString()} accent="blue" to={`/sessions/${sess.session_id || sess.id}`} query="#session-usage-ledger" sub={`원장 ${usageReport?.record_count ?? '—'}건`} />
+          <StatCard label={`최근 30일 비용 (${usageReport?.display_currency || '통화 미확인'})`} value={totalCost ? formatUsageAmount(totalCost.amount_micros, totalCost.currency) : '—'} accent="green" to={`/sessions/${sess.session_id || sess.id}`} query="#session-usage-ledger" sub={usageReport?.reconciled ? '원장 대사 완료' : '대사 확인 필요'} />
           <StatCard label="익스체인지" value={(detail.exchanges || []).length} accent="purple" />
           <StatCard label="변경셋" value={(detail.change_sets || []).length} accent="orange" />
         </div>
       </div>
+
+      <UsageReport report={usageReport} id="session-usage-ledger" title="세션 사용량 및 비용 원장" />
 
       <div className="flex gap-1 border-b border-gray-200">
         {[

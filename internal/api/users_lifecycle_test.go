@@ -7,8 +7,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
@@ -185,8 +188,9 @@ func TestUsageRollup(t *testing.T) {
 	org := models.Organization{Name: "org", Slug: "orgw", Status: "active"}
 	db.Create(&org)
 	u := mkUser(t, db, org.ID, "dev@corp.kr")
+	now := time.Now().UTC().Format(time.RFC3339)
 	for i := 0; i < 3; i++ {
-		r := models.UsageRecord{MetricType: "tokens_out", Unit: "tokens", Quantity: 10, CostMicros: 2}
+		r := models.UsageRecord{MetricType: "tokens_out", Unit: "tokens", Quantity: 10, CostMicros: 2, OccurredAt: now}
 		r.OrganizationID = org.ID
 		r.UserID = u.ID
 		db.Create(&r)
@@ -200,7 +204,13 @@ func TestUsageRollup(t *testing.T) {
 		TotalCostMicros int64                    `json:"total_cost_micros"`
 	}
 	json.Unmarshal(rec.Body.Bytes(), &resp)
-	if len(resp.Metrics) != 1 || resp.Metrics[0]["quantity"].(float64) != 30 || resp.TotalCostMicros != 6 {
+	var tokensOut float64
+	for _, meter := range resp.Metrics {
+		if meter["metric_type"] == "tokens_out" {
+			tokensOut = meter["quantity"].(float64)
+		}
+	}
+	if tokensOut != 30 || resp.TotalCostMicros != 6 {
 		t.Fatalf("usage rollup wrong: %+v", resp)
 	}
 }
@@ -257,6 +267,198 @@ func TestCSVImportDryRunAndApply(t *testing.T) {
 	db.Model(&models.User{}).Where("organization_id = ?", org.ID).Count(&count)
 	if count != 2 {
 		t.Fatalf("apply imported %d rows", count)
+	}
+}
+
+// --- PAT-1489: canonical user lifecycle state machine ---
+
+func doUserJSONAs(t *testing.T, srv *Server, method, path, body, orgID, role, email string) *httptest.ResponseRecorder {
+	t.Helper()
+	var req *http.Request
+	if body != "" {
+		req = httptest.NewRequest(method, path, strings.NewReader(body))
+	} else {
+		req = httptest.NewRequest(method, path, nil)
+	}
+	req = req.WithContext(contextWithClaims(req.Context(), &identity.Claims{Email: email, OrganizationID: orgID, Role: role}))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec
+}
+
+func countAuditEvents(db *gorm.DB, resourceID, eventType string) int64 {
+	var n int64
+	db.Model(&models.AuditEvent{}).Where("resource_id = ? AND event_type = ?", resourceID, eventType).Count(&n)
+	return n
+}
+
+func TestUserLifecycleStateMachineTransitions(t *testing.T) {
+	srv, db := usersTestServer(t)
+	org := models.Organization{Name: "org", Slug: "orgsm", Status: "active"}
+	db.Create(&org)
+	u := mkUser(t, db, org.ID, "sm@corp.kr")
+
+	// active → suspended: allowed, distinct audit event.
+	rec := doUserJSONAs(t, srv, "POST", "/api/users/"+u.ID+"/suspend", `{"reason":"휴직 조사"}`, org.ID, "admin", "op@corp.kr")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("suspend active rejected: %d %s", rec.Code, rec.Body.String())
+	}
+	var reloaded models.User
+	db.First(&reloaded, "id = ?", u.ID)
+	if reloaded.Status != "suspended" {
+		t.Fatalf("status after suspend: %s", reloaded.Status)
+	}
+	if n := countAuditEvents(db, u.ID, "cp.user.suspended"); n != 1 {
+		t.Fatalf("cp.user.suspended events: %d", n)
+	}
+
+	// suspended → suspended: conflict (stale/duplicate action).
+	rec = doUserJSONAs(t, srv, "POST", "/api/users/"+u.ID+"/suspend", `{"reason":"again"}`, org.ID, "admin", "op@corp.kr")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("re-suspend not 409: %d", rec.Code)
+	}
+
+	// suspended → active (resume): allowed, distinct audit event.
+	rec = doUserJSONAs(t, srv, "POST", "/api/users/"+u.ID+"/resume", `{"reason":"복직"}`, org.ID, "admin", "op@corp.kr")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resume suspended rejected: %d %s", rec.Code, rec.Body.String())
+	}
+	db.First(&reloaded, "id = ?", u.ID)
+	if reloaded.Status != "active" {
+		t.Fatalf("status after resume: %s", reloaded.Status)
+	}
+	if n := countAuditEvents(db, u.ID, "cp.user.resumed"); n != 1 {
+		t.Fatalf("cp.user.resumed events: %d", n)
+	}
+
+	// active → active: conflict.
+	rec = doUserJSONAs(t, srv, "POST", "/api/users/"+u.ID+"/resume", `{"reason":"again"}`, org.ID, "admin", "op@corp.kr")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("resume active not 409: %d", rec.Code)
+	}
+
+	// suspended → offboarded allowed; offboarded is terminal.
+	rec = doUserJSONAs(t, srv, "POST", "/api/users/"+u.ID+"/suspend", `{"reason":"재정지"}`, org.ID, "admin", "op@corp.kr")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("re-suspend before offboard failed: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = doUserJSONAs(t, srv, "POST", "/api/users/"+u.ID+"/offboard", `{"reason":"퇴사"}`, org.ID, "admin", "op@corp.kr")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("offboard suspended rejected: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, path := range []string{"/suspend", "/resume", "/offboard"} {
+		rec = doUserJSONAs(t, srv, "POST", "/api/users/"+u.ID+path, `{"reason":"late"}`, org.ID, "admin", "op@corp.kr")
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("terminal state %s not 409: %d", path, rec.Code)
+		}
+	}
+}
+
+func TestUserLifecycleMutationGuards(t *testing.T) {
+	srv, db := usersTestServer(t)
+	org := models.Organization{Name: "org", Slug: "orggr", Status: "active"}
+	db.Create(&org)
+	other := models.Organization{Name: "other", Slug: "orggo", Status: "active"}
+	db.Create(&other)
+	u := mkUser(t, db, org.ID, "guard@corp.kr")
+
+	// Viewer role: forbidden on every lifecycle mutation.
+	for _, path := range []string{"/suspend", "/resume", "/offboard"} {
+		rec := doUserJSONAs(t, srv, "POST", "/api/users/"+u.ID+path, `{"reason":"x"}`, org.ID, "viewer", "viewer@corp.kr")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("viewer %s → %d, want 403", path, rec.Code)
+		}
+	}
+	// Self-action: an operator must not change their own lifecycle state.
+	rec := doUserJSONAs(t, srv, "POST", "/api/users/"+u.ID+"/suspend", `{"reason":"x"}`, org.ID, "admin", "guard@corp.kr")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("self-suspend → %d, want 400", rec.Code)
+	}
+	// Reason is required for every lifecycle mutation.
+	rec = doUserJSONAs(t, srv, "POST", "/api/users/"+u.ID+"/suspend", `{}`, org.ID, "admin", "op@corp.kr")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing reason → %d, want 400", rec.Code)
+	}
+	// Cross-org target: not found, never a hint that it exists.
+	rec = doUserJSONAs(t, srv, "POST", "/api/users/"+u.ID+"/suspend", `{"reason":"x"}`, other.ID, "admin", "op@other.kr")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-org suspend → %d, want 404", rec.Code)
+	}
+	// No state change leaked through the rejected calls.
+	db.First(&u, "id = ?", u.ID)
+	if u.Status != "active" {
+		t.Fatalf("rejected mutations changed status: %s", u.Status)
+	}
+}
+
+func TestUserUpdateRejectsStatusBypass(t *testing.T) {
+	srv, db := usersTestServer(t)
+	org := models.Organization{Name: "org", Slug: "orgbp", Status: "active"}
+	db.Create(&org)
+	u := mkUser(t, db, org.ID, "bypass@corp.kr")
+
+	// Generic PUT can no longer flip lifecycle status.
+	rec := doUserJSONAs(t, srv, "PUT", "/api/users/"+u.ID, `{"status":"suspended","reason":"우회"}`, org.ID, "admin", "op@corp.kr")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("PUT status bypass → %d, want 409", rec.Code)
+	}
+	// Same-value status is a no-op and must not block profile edits.
+	rec = doUserJSONAs(t, srv, "PUT", "/api/users/"+u.ID, `{"status":"active","title":"Staff Engineer"}`, org.ID, "admin", "op@corp.kr")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT same-status edit → %d: %s", rec.Code, rec.Body.String())
+	}
+	var reloaded models.User
+	db.First(&reloaded, "id = ?", u.ID)
+	if reloaded.Status != "active" || reloaded.Title != "Staff Engineer" {
+		t.Fatalf("unexpected state after PUT: %+v", reloaded)
+	}
+}
+
+func TestUserLifecycleConcurrentSuspendExactlyOnce(t *testing.T) {
+	srv, db := usersTestServer(t)
+	org := models.Organization{Name: "org", Slug: "orgcc", Status: "active"}
+	db.Create(&org)
+	u := mkUser(t, db, org.ID, "race@corp.kr")
+
+	// Two racing suspends: the conditional update must let exactly one
+	// win with 200; the loser gets 409 and no second audit event.
+	const racers = 2
+	codes := make([]int, racers)
+	var wg sync.WaitGroup
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			rec := doUserJSONAs(t, srv, "POST", "/api/users/"+u.ID+"/suspend", `{"reason":"경합"}`, org.ID, "admin", "op@corp.kr")
+			codes[i] = rec.Code
+		}(i)
+	}
+	wg.Wait()
+	sort.Ints(codes)
+	if codes[0] != http.StatusOK || codes[1] != http.StatusConflict {
+		t.Fatalf("race outcomes = %v, want [200 409]", codes)
+	}
+	if n := countAuditEvents(db, u.ID, "cp.user.suspended"); n != 1 {
+		t.Fatalf("suspended audit events after race: %d, want 1", n)
+	}
+}
+
+func TestUserLifecycleExternallyManagedSameTable(t *testing.T) {
+	srv, db := usersTestServer(t)
+	org := models.Organization{Name: "org", Slug: "orgx", Status: "active"}
+	db.Create(&org)
+	u := mkUser(t, db, org.ID, "oidc@corp.kr")
+	db.Model(u).Updates(map[string]interface{}{"auth_method": "oidc", "external_id": "sub-1"})
+
+	// SCIM/IdP-managed accounts follow the same transition table — no
+	// special casing that would let their state drift outside the machine.
+	rec := doUserJSONAs(t, srv, "POST", "/api/users/"+u.ID+"/suspend", `{"reason":"IdP 계정 정지"}`, org.ID, "admin", "op@corp.kr")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("oidc suspend → %d %s", rec.Code, rec.Body.String())
+	}
+	rec = doUserJSONAs(t, srv, "POST", "/api/users/"+u.ID+"/resume", `{"reason":"IdP 계정 복원"}`, org.ID, "admin", "op@corp.kr")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("oidc resume → %d %s", rec.Code, rec.Body.String())
 	}
 }
 

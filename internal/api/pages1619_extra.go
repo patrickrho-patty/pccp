@@ -27,62 +27,29 @@ import (
 
 // --- 16: analytics ---
 
-// handleUsageSummaryExtended adds range, cost, per-model/per-user
-// breakdown, and CSV export.
+// handleUsageSummaryExtended returns the same reconciled report used by the
+// user, session, and project scopes. CSV exports the exact ledger rows rather
+// than a second independently calculated summary.
 func (s *Server) handleUsageSummaryExtended(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	rangeParam := r.URL.Query().Get("range")
-	since := time.Now().Add(-30 * 24 * time.Hour)
-	switch rangeParam {
-	case "7d":
-		since = time.Now().Add(-7 * 24 * time.Hour)
-	case "90d":
-		since = time.Now().Add(-90 * 24 * time.Hour)
-	case "365d":
-		since = time.Now().Add(-365 * 24 * time.Hour)
-	}
-	q := s.db.Model(&models.UsageRecord{}).
-		Where("organization_id = ? AND created_at >= ?", orgID, since.Format(time.RFC3339))
-	var records []models.UsageRecord
-	q.Find(&records)
-
-	byMetric := map[string]int64{}
-	byModel := map[string]int64{}
-	byUser := map[string]int64{}
-	var totalCost int64
-	for _, rec := range records {
-		byMetric[rec.MetricType] += rec.Quantity
-		byModel[rec.ModelPackageID] += rec.Quantity
-		byUser[rec.UserID] += rec.Quantity
-		totalCost += rec.CostMicros
-	}
-	resp := map[string]interface{}{
-		"range":             rangeParam,
-		"total_cost_micros": totalCost,
-		"currency":          "KRW",
-		"by_metric":         byMetric,
-		"by_model":          byModel,
-		"by_user":           byUser,
-		"record_count":      len(records),
+	days, since, until := usageWindowFromRequest(r, time.Now())
+	report, err := s.buildUsageReport(orgID, usageFilter{}, fmt.Sprintf("%dd", days), since, until)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	if r.URL.Query().Get("format") == "csv" {
 		w.Header().Set("Content-Type", "text/csv")
 		w.Header().Set("Content-Disposition", "attachment; filename=usage-summary.csv")
 		cw := csv.NewWriter(w)
-		cw.Write([]string{"dimension", "key", "quantity"})
-		for k, v := range byMetric {
-			cw.Write([]string{"metric", k, strconv.FormatInt(v, 10)})
-		}
-		for k, v := range byModel {
-			cw.Write([]string{"model", k, strconv.FormatInt(v, 10)})
-		}
-		for k, v := range byUser {
-			cw.Write([]string{"user", k, strconv.FormatInt(v, 10)})
+		_ = cw.Write([]string{"occurred_at", "record_id", "metric_type", "unit", "quantity", "rate_micros_per_unit", "amount_micros", "currency", "user_id", "harness_id", "session_id", "model_package_id", "endpoint_id"})
+		for _, row := range report.Drilldown {
+			_ = cw.Write([]string{row.OccurredAt, row.ID, row.Bucket, row.Unit, strconv.FormatInt(row.Quantity, 10), row.RateMicrosPerUnit, strconv.FormatInt(row.AmountMicros, 10), row.Currency, row.UserID, row.HarnessID, row.SessionID, row.ModelPackageID, row.EndpointID})
 		}
 		cw.Flush()
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, report)
 }
 
 // --- 17: audit ---

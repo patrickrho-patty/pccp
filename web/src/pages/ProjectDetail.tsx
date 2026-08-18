@@ -7,6 +7,7 @@ import { Modal, ModalFooter } from '../components/Modal'
 import { formatRelative } from '../utils/format'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
+import { formatUsageAmount, UsageReport } from '../components/UsageReport'
 
 const ROLES = [
   { value: 'owner', label: '소유자 · Owner' },
@@ -50,7 +51,7 @@ export default function ProjectDetail() {
   const auditEvents = detail.audit_events || []
   const pendingChanges = changeRequests.filter((c: any) => c.status === 'pending')
   const activeSessions = sessions.filter((s: any) => s.status === 'active')
-  const costKrw = usage?.cost_micros ? (usage.cost_micros / 10000).toLocaleString() : '0'
+  const displayCost = usage?.display_total ? formatUsageAmount(usage.display_total.amount_micros, usage.display_total.currency) : '—'
 
   const submitMember = async () => {
     if (!memberForm.user_id) { showToast('사용자를 선택하세요', 'error'); return }
@@ -109,8 +110,8 @@ export default function ProjectDetail() {
         <StatCard label="저장소" value={repos.length} accent="blue" />
         <StatCard label="멤버" value={members.length} accent="green" />
         <StatCard label="활성 세션" value={activeSessions.length} accent="purple" to="/sessions" query={`?project_id=${proj.id}`} />
-        <StatCard label="토큰 사용" value={usage ? (usage.total_tokens || 0).toLocaleString() : '-'} accent="orange" />
-        <StatCard label="비용 (KRW)" value={costKrw} accent="red" sub="chargeback · §29.12" />
+        <StatCard label="최근 30일 토큰" value={usage ? (usage.total_tokens || 0).toLocaleString() : '—'} accent="orange" to={`/projects/${proj.id}`} query="#project-usage-ledger" sub={`원장 ${usage?.record_count ?? '—'}건`} />
+        <StatCard label={`최근 30일 비용 (${usage?.display_currency || '통화 미확인'})`} value={displayCost} accent="red" to={`/projects/${proj.id}`} query="#project-usage-ledger" sub={usage?.reconciled ? '원장 대사 완료' : '대사 확인 필요'} />
       </div>
 
       {pendingChanges.length > 0 && (
@@ -162,6 +163,8 @@ export default function ProjectDetail() {
               {(!proj.allowed_model_classes || proj.allowed_model_classes.length === 0) && <span className="text-xs text-gray-400">제한 없음</span>}
             </div>
           </div>
+
+          <UsageReport report={usage} id="project-usage-ledger" title="프로젝트 사용량 및 비용 원장" />
         </>
       )}
 

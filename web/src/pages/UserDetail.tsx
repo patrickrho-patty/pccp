@@ -4,6 +4,8 @@ import { api } from '../api'
 import { EntitySelect } from '../components/EntitySelect'
 import { FavoriteStar } from '../hooks/useFavorites'
 import { showToast } from '../components/Toast'
+import { formatUsageAmount, UsageReport } from '../components/UsageReport'
+import { userActions, userActionSpec, applyUserLifecycle, canIssueEnrollment, STATUS_KO, STATUS_BADGE, UserLifecycleAction } from '../userLifecycle'
 
 // UserDetail (web/01 B4): /users/:id with tabs — Overview /
 // Entitlement / Sessions / Harnesses / Usage / Audit / Contractor.
@@ -16,13 +18,6 @@ const TABS = [
   { id: 'audit', label: '감사', en: 'Audit' },
   { id: 'contractor', label: '계약', en: 'Contractor' },
 ]
-
-const STATUS_BADGE: Record<string, string> = {
-  active: 'bg-green-50 text-green-700 border-green-200',
-  suspended: 'bg-amber-50 text-amber-700 border-amber-200',
-  offboarded: 'bg-gray-100 text-gray-500 border-gray-200',
-}
-const STATUS_KO: Record<string, string> = { active: '활성', suspended: '정지', offboarded: '퇴사' }
 
 export default function UserDetail() {
   const { id } = useParams<{ id: string }>()
@@ -45,20 +40,24 @@ export default function UserDetail() {
   })
   const [enrollmentCode, setEnrollmentCode] = useState<any>(null)
   const [reasonText, setReasonText] = useState('')
+  const [pendingAction, setPendingAction] = useState<UserLifecycleAction | null>(null)
+  const [lifecycleBusy, setLifecycleBusy] = useState(false)
   const [loading, setLoading] = useState(true)
 
-  const load = () => {
+  const load = async () => {
     if (!id) return
     setLoading(true)
-    api.getUser(id).then(setUser).catch(() => setUser(null))
-    api.listSessions().then((d: any[]) => setSessions((Array.isArray(d) ? d : []).filter((s: any) => s.user_id === id))).catch(() => {})
-    api.getUserHarnesses(id).then(d => setHarnesses(Array.isArray(d) ? d : [])).catch(() => {})
-    api.listHarnesses().then(d => setAllHarnesses(Array.isArray(d) ? d : [])).catch(() => {})
-    api.getUserAudit(id).then(d => setAuditEvents(Array.isArray(d) ? d : [])).catch(() => {})
-    api.getUserUsage(id).then(setUsage).catch(() => setUsage(null))
-    api.getUserEntitlements(id).then(setEntitlements).catch(() => {})
-    api.listRoles().then(d => setRoles(Array.isArray(d) ? d : [])).catch(() => {})
-    api.getUserSSOStatus(id).then(setSsoStatus).catch(() => setSsoStatus(null))
+    await Promise.all([
+      api.getUser(id).then(setUser).catch(() => setUser(null)),
+      api.listSessions().then((d: any[]) => setSessions((Array.isArray(d) ? d : []).filter((s: any) => s.user_id === id))).catch(() => {}),
+      api.getUserHarnesses(id).then(d => setHarnesses(Array.isArray(d) ? d : [])).catch(() => {}),
+      api.listHarnesses().then(d => setAllHarnesses(Array.isArray(d) ? d : [])).catch(() => {}),
+      api.getUserAudit(id).then(d => setAuditEvents(Array.isArray(d) ? d : [])).catch(() => {}),
+      api.getUserUsage(id).then(setUsage).catch(() => setUsage(null)),
+      api.getUserEntitlements(id).then(setEntitlements).catch(() => {}),
+      api.listRoles().then(d => setRoles(Array.isArray(d) ? d : [])).catch(() => {}),
+      api.getUserSSOStatus(id).then(setSsoStatus).catch(() => setSsoStatus(null)),
+    ])
     if (user?.contractor_info) {
       try { setContractor({ ...contractor, ...JSON.parse(user.contractor_info) }) } catch { /* legacy blob */ }
     }
@@ -69,14 +68,47 @@ export default function UserDetail() {
   if (loading && !user) return <div className="text-gray-400 p-8 text-center">로딩 중...</div>
   if (!user) return <div className="text-gray-400 p-8 text-center">사용자를 찾을 수 없습니다</div>
 
-  const offboard = async () => {
-    if (!id) return
+  // Lifecycle moves run through the dedicated endpoints with a captured
+  // reason (PAT-1489). A 409 means the page state is stale — reload so the
+  // header re-derives valid actions from the persisted state. Suspend and
+  // resume only invalidate user + audit (targeted reload); offboard changes
+  // sessions and harnesses too (full reload).
+  const refreshCore = async () => {
+    const [u, audit] = await Promise.all([
+      api.getUser(id!).catch(() => null),
+      api.getUserAudit(id!).catch(() => [] as any[]),
+    ])
+    if (u) setUser(u)
+    setAuditEvents(Array.isArray(audit) ? audit : [])
+  }
+
+  const runLifecycle = async () => {
+    if (!id || !pendingAction) return
+    if (!reasonText.trim()) {
+      showToast('사유를 입력해주세요 (감사 로그에 기록됩니다)', 'error')
+      return
+    }
+    setLifecycleBusy(true)
     try {
-      const res = await api.offboardUser(id, reasonText || '관리자 퇴사 처리')
-      showToast(`퇴사 완료 — 세션 ${res.closed_sessions} 종료, 하네스 ${res.revoked_harnesses} 해제`, 'success')
+      const res = await applyUserLifecycle(pendingAction, id, reasonText)
+      if (pendingAction === 'offboard') {
+        showToast(`퇴사 완료 — 세션 ${res.closed_sessions} 종료, 하네스 ${res.revoked_harnesses} 해제`, 'success')
+      } else {
+        showToast(pendingAction === 'suspend' ? '정지 완료 — 상태가 반영되었습니다' : '재활성화 완료 — 상태가 반영되었습니다', 'success')
+      }
+      setPendingAction(null)
       setReasonText('')
-      load()
-    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+      if (pendingAction === 'offboard') {
+        await load()
+      } else {
+        await refreshCore()
+      }
+    } catch (e: any) {
+      showToast(e?.message || '실패', 'error')
+      await refreshCore() // a 409 means stale page state — re-derive from persisted state
+    } finally {
+      setLifecycleBusy(false)
+    }
   }
 
   const assignRole = async (roleId: string, scope: string, scopeId: string) => {
@@ -159,7 +191,7 @@ export default function UserDetail() {
               </h1>
               <p className="text-xs text-gray-400">{user.email} · {user.title || user.title_ko || '직함 없음'} · 사번 {user.employee_id || '—'}</p>
               <div className="flex gap-2 mt-1 items-center">
-                <span className={`text-[10px] px-2 py-0.5 rounded-full border ${STATUS_BADGE[user.status] || ''}`}>{STATUS_KO[user.status] || user.status}</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full border ${STATUS_BADGE[user.status] || STATUS_BADGE.offboarded}`}>{STATUS_KO[user.status] || user.status}</span>
                 {ssoStatus && (
                   <span className="text-[10px] text-gray-500">
                     {ssoStatus.connected ? 'SSO 연결됨' : 'SSO 미연결'} · {ssoStatus.last_login_at ? `최근 로그인 ${ssoStatus.last_login_at.slice(0, 10)}` : '로그인 기록 없음'}
@@ -169,13 +201,14 @@ export default function UserDetail() {
             </div>
           </div>
           <div className="flex gap-2 shrink-0 flex-wrap">
-            <button className="btn-sm btn-secondary" onClick={issueEnrollment}>초대 코드 발급</button>
-            {user.status !== 'offboarded' && (
-              <>
-                <button className="btn-sm btn-secondary" onClick={() => api.updateUser(id!, { status: 'suspended', reason: 'detail page' }).then(() => { load(); showToast('정지 완료', 'success') })}>정지</button>
-                <button className="btn-sm btn-danger" onClick={() => setReasonText(reasonText ? '' : ' ')}>퇴사 처리</button>
-              </>
+            {canIssueEnrollment(user.status) && (
+              <button className="btn-sm btn-secondary" onClick={issueEnrollment}>초대 코드 발급</button>
             )}
+            {userActions(user.status).map(a => (
+              <button key={a.action} disabled={lifecycleBusy}
+                className={a.action === 'offboard' ? 'btn-sm btn-danger' : 'btn-sm btn-secondary'}
+                onClick={() => { setPendingAction(a.action); setReasonText('') }}>{a.label}</button>
+            ))}
           </div>
         </div>
         {enrollmentCode && (
@@ -185,14 +218,18 @@ export default function UserDetail() {
             {enrollmentCode.expires_at && <div className="text-[10px] text-gray-400">만료: {enrollmentCode.expires_at}</div>}
           </div>
         )}
-        {user.status !== 'offboarded' && reasonText !== '' && (
-          <div className="mt-3 p-3 bg-red-50 rounded-lg space-y-2">
-            <textarea className="input text-xs w-full" rows={2} placeholder="퇴사 사유 (감사 로그에 기록됩니다)"
-              value={reasonText.trim()} onChange={e => setReasonText(e.target.value)} />
+        {pendingAction && (
+          <div className={`mt-3 p-3 rounded-lg space-y-2 ${userActionSpec(pendingAction).danger ? 'bg-red-50' : 'bg-green-50'}`}>
+            <p className={`text-[11px] ${userActionSpec(pendingAction).danger ? 'text-red-600' : 'text-green-700'}`}>
+              {userActionSpec(pendingAction).effect} 대상: {user.name_ko || user.name} ({user.email}). 사유를 남겨주세요.
+            </p>
+            <textarea className="input text-xs w-full" rows={2} placeholder="사유 (감사 로그에 기록됩니다)"
+              value={reasonText} onChange={e => setReasonText(e.target.value)} />
             <div className="flex items-center gap-2">
-            <span className="text-[11px] text-red-600">퇴사 처리 시 세션 종료 + 하네스 바인딩 해제</span>
-            <button className="btn-sm btn-danger" onClick={offboard}>퇴사 확정</button>
-            <button className="btn-sm btn-secondary" onClick={() => setReasonText('')}>취소</button>
+              <button className={userActionSpec(pendingAction).danger ? 'btn-sm btn-danger' : 'btn-sm btn-primary'} disabled={lifecycleBusy} onClick={runLifecycle}>
+                {lifecycleBusy ? '처리 중...' : `${userActionSpec(pendingAction).label} 확정`}
+              </button>
+              <button className="btn-sm btn-secondary" onClick={() => setPendingAction(null)}>취소</button>
             </div>
           </div>
         )}
@@ -227,7 +264,7 @@ export default function UserDetail() {
               <div className="flex justify-between"><span className="text-gray-400">세션</span><span>{sessions.length}</span></div>
               <div className="flex justify-between"><span className="text-gray-400">하네스</span><span>{harnesses.length}</span></div>
               <div className="flex justify-between"><span className="text-gray-400">감사 이벤트</span><span>{auditEvents.length}</span></div>
-              {usage && <div className="flex justify-between"><span className="text-gray-400">누적 비용</span><span>{usage.total_cost_micros ?? 0} µ¢</span></div>}
+              {usage && <button type="button" onClick={() => setTab('usage')} className="flex w-full justify-between text-left hover:text-blue-600"><span className="text-gray-400">최근 30일 비용</span><span>{formatUsageAmount(usage.display_total?.amount_micros, usage.display_total?.currency)}</span></button>}
             </div>
           </div>
         </div>
@@ -235,8 +272,8 @@ export default function UserDetail() {
 
       {tab === 'entitlements' && (
         <div className="card p-4 space-y-3">
-          <h3 className="text-xs font-bold">개발자 권한 (Entitlement)</h3>
-          <p className="text-[10px] text-gray-400">하네스를 통한 개발자 권한 범위입니다 (콘솔 운영자 권한과 별개).</p>
+          <h3 className="text-xs font-bold">사용자 권한 (Entitlement)</h3>
+          <p className="text-[10px] text-gray-400">하네스를 통한 사용자 권한 범위입니다 (콘솔 운영자 권한과 별개).</p>
           <div className="space-y-2">
             {roles.map(r => {
               const assigned = (entitlements.assignments || []).filter((a: any) => a.role_id === r.id)
@@ -306,28 +343,7 @@ export default function UserDetail() {
       )}
 
       {tab === 'usage' && (
-        <div className="card p-4">
-          <h3 className="text-xs font-bold mb-2">사용량 / 비용 (Usage)</h3>
-          {!usage ? <p className="text-[11px] text-gray-400">사용 기록 없음</p> : (
-            <div className="space-y-2">
-              <div className="text-[11px] text-gray-500">누적 비용: <span className="font-semibold">{usage.total_cost_micros} µ¢</span> · 기록 {usage.record_count}건</div>
-              <table className="w-full text-[11px]">
-                <thead><tr className="text-left text-gray-400">
-                  <th>지표</th><th>단위</th><th className="text-right">수량</th><th className="text-right">비용</th>
-                </tr></thead>
-                <tbody>
-                  {(usage.metrics || []).map((m: any) => (
-                    <tr key={m.metric_type} className="border-t border-gray-50">
-                      <td>{m.metric_type}</td><td>{m.unit}</td>
-                      <td className="text-right">{m.quantity}</td>
-                      <td className="text-right">{m.cost_micros} µ¢</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        <UsageReport report={usage} title={`${user.name_ko || user.name} 사용량 및 비용 원장`} />
       )}
 
       {tab === 'audit' && (

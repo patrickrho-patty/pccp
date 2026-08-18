@@ -156,6 +156,11 @@ func (s *Service) EvaluateEntitlement(orgID, userID, permission string) (bool, e
 
 // SweepExpiredContractors auto-disables users whose contract window has
 // ended (web/01 A5). Returns the number of users disabled.
+//
+// INVARIANT: this system actor only ever performs active → suspended,
+// which is a legal edge in the canonical user lifecycle table
+// (internal/models/user_lifecycle.go, shared by all status writers).
+// If that table changes, this sweep must change with it.
 func (s *Service) SweepExpiredContractors() int {
 	var users []models.User
 	s.db.Where("contractor_info IS NOT NULL AND contractor_info != '' AND status = 'active'").

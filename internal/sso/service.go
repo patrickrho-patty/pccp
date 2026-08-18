@@ -423,6 +423,11 @@ func (s *Service) ProvisionUserFromSSO(orgID string, saml *SAMLResponse) (*model
 	if err != nil {
 		return nil, fmt.Errorf("sso: lookup user: %w", err)
 	}
+	// Lifecycle enforcement: only active users may obtain a console
+	// session (canonical state machine — suspended/offboarded may not).
+	if user.Status != "active" {
+		return nil, fmt.Errorf("sso: account is %s", user.Status)
+	}
 	if saml.Name != "" {
 		user.Name = saml.Name
 	}
@@ -512,10 +517,18 @@ func (s *Service) HandleSCIMRequest(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "userID required", http.StatusBadRequest)
 			return
 		}
-		// Deletes are scoped to the caller's org.
+		// Deletes are scoped to the caller's org. The canonical user
+		// lifecycle treats offboarded as terminal (PAT-1489) — a SCIM
+		// delete on an already-offboarded account is a no-op, not a
+		// second transition.
 		var user models.User
 		if err := s.db.Where("id = ? AND organization_id = ?", userID, orgID).First(&user).Error; err != nil {
 			http.Error(w, "user not found in org", http.StatusNotFound)
+			return
+		}
+		if user.Status == "offboarded" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "offboarded"})
 			return
 		}
 		if err := s.db.Model(&user).Update("status", "offboarded").Error; err != nil {
@@ -581,6 +594,11 @@ func (s *Service) ProvisionOIDCUser(orgID string, info *OIDCUserInfo) (*models.U
 	}
 	if err != nil {
 		return nil, fmt.Errorf("sso: lookup user: %w", err)
+	}
+	// Lifecycle enforcement: only active users may obtain a console
+	// session (canonical state machine — suspended/offboarded may not).
+	if user.Status != "active" {
+		return nil, fmt.Errorf("sso: account is %s", user.Status)
 	}
 	if info.Name != "" {
 		user.Name = info.Name

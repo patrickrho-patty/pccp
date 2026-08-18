@@ -13,6 +13,7 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/config"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -2427,38 +2428,19 @@ func (s *Server) handleGetSessionTimeline(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleGetSessionUsage(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
 	var sess models.Session
-	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+	if err := s.db.Where("organization_id = ? AND (id = ? OR session_id = ?)", orgID, id, id).First(&sess).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	var records []models.UsageRecord
-	s.db.Where("session_id = ?", sess.SessionID).Find(&records)
-
-	summary := map[string]interface{}{
-		"total_records": len(records),
-		"input_tokens":  0,
-		"output_tokens": 0,
-		"total_tokens":  0,
-		"by_metric":     map[string]int64{},
-		"by_model":      map[string]int64{},
+	days, since, until := usageWindowFromRequest(r, time.Now())
+	report, err := s.buildUsageReport(orgID, usageFilter{SessionID: sess.SessionID}, fmt.Sprintf("%dd", days), since, until)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	totalIn, totalOut := 0, 0
-	for _, rec := range records {
-		if rec.MetricType == "tokens_in" {
-			totalIn += int(rec.Quantity)
-		}
-		if rec.MetricType == "tokens_out" {
-			totalOut += int(rec.Quantity)
-		}
-		summary["by_metric"].(map[string]int64)[rec.MetricType] += rec.Quantity
-		summary["by_model"].(map[string]int64)[rec.ModelPackageID] += rec.Quantity
-	}
-	summary["input_tokens"] = totalIn
-	summary["output_tokens"] = totalOut
-	summary["total_tokens"] = totalIn + totalOut
-
-	writeJSON(w, http.StatusOK, summary)
+	writeJSON(w, http.StatusOK, report)
 }
 
 func (s *Server) handleGetProvenance(w http.ResponseWriter, r *http.Request) {
@@ -3195,15 +3177,18 @@ func (s *Server) handleExportMetrics(w http.ResponseWriter, r *http.Request) {
 // modelCostRow is one model's server-computed cost line. PAT-1501:
 // the row is a by-unit breakdown — no cross-unit aggregation.
 type modelCostRow struct {
-	ModelPackageID string         `json:"model_package_id"`
-	ModelName      string         `json:"model_name,omitempty"`
-	TokensIn       int64          `json:"tokens_in"`
-	TokensOut      int64          `json:"tokens_out"`
-	TokensUnit     string         `json:"tokens_unit"` // always "tokens"
-	CostKRW        float64        `json:"cost_krw"`
-	CostUnit       string         `json:"cost_unit"` // always "krw"
-	Priced         bool           `json:"priced"`   // false when the package has no unit price configured
-	Reconciled     bool           `json:"reconciled"`
+	ModelPackageID     string  `json:"model_package_id"`
+	ModelName          string  `json:"model_name,omitempty"`
+	TokensIn           int64   `json:"tokens_in"`
+	TokensOut          int64   `json:"tokens_out"`
+	TokensUnit         string  `json:"tokens_unit"` // always "tokens"
+	CostKRW            float64 `json:"cost_krw"`
+	CostUnit           string  `json:"cost_unit"` // always "krw"
+	RecordedCostMicros int64   `json:"recorded_cost_micros"`
+	RecordedCurrency   string  `json:"recorded_currency,omitempty"`
+	DifferenceMicros   int64   `json:"difference_micros"`
+	Priced             bool    `json:"priced"` // false when the package has no unit price configured
+	Reconciled         bool    `json:"reconciled"`
 }
 
 // handleGetCostAnalysis computes per-model cost for the org server-side:
@@ -3213,12 +3198,12 @@ type modelCostRow struct {
 // as separate unit-typed rows; the UI must not sum them.
 func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	days := 30
-	if d, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && d > 0 {
-		days = d
+	days, since, until := usageWindowFromRequest(r, time.Now())
+	usageReport, err := s.buildUsageReport(orgID, usageFilter{}, fmt.Sprintf("%dd", days), since, until)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	since := time.Now().AddDate(0, 0, -days).Format(time.RFC3339)
-	until := time.Now().Format(time.RFC3339)
 
 	var sums []struct {
 		ModelPackageID string
@@ -3263,6 +3248,29 @@ func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
 	rowsOut := make([]modelCostRow, 0, len(order))
 	totalKRW := 0.0
 	anyPriced := false
+	allReconciled := true
+	type recordedModelCost struct {
+		amount   int64
+		currency string
+		present  bool
+		mixed    bool
+	}
+	recordedByModel := map[string]recordedModelCost{}
+	for _, row := range usageReport.Drilldown {
+		if row.ModelPackageID == "" {
+			continue
+		}
+		recorded := recordedByModel[row.ModelPackageID]
+		recorded.present = true
+		if recorded.currency != "" && row.Currency != "" && recorded.currency != row.Currency {
+			recorded.mixed = true
+		}
+		if recorded.currency == "" {
+			recorded.currency = row.Currency
+		}
+		recorded.amount += row.AmountMicros
+		recordedByModel[row.ModelPackageID] = recorded
+	}
 	for _, pid := range order {
 		mc := byPkg[pid]
 		if p, ok := pkgBy[pid]; ok {
@@ -3272,9 +3280,15 @@ func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
 				mc.CostKRW = float64(mc.TokensIn)/1000*p.PriceInputPer1K + float64(mc.TokensOut)/1000*p.PriceOutputPer1K
 			}
 		}
-		// Reconciled when tokens match ledger line items (no
-		// fabrication; matches the token sums the UI sees).
-		mc.Reconciled = true
+		recorded := recordedByModel[pid]
+		mc.RecordedCostMicros = recorded.amount
+		mc.RecordedCurrency = recorded.currency
+		expectedMicros := int64(math.Round(mc.CostKRW * 1_000_000))
+		mc.DifferenceMicros = recorded.amount - expectedMicros
+		mc.Reconciled = mc.Priced && recorded.present && !recorded.mixed && strings.EqualFold(recorded.currency, "KRW") && mc.DifferenceMicros == 0
+		if !mc.Reconciled {
+			allReconciled = false
+		}
 		if mc.Priced {
 			anyPriced = true
 			totalKRW += mc.CostKRW
@@ -3284,15 +3298,16 @@ func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
 
 	// PAT-1501: total in KRW is its own typed row, not a number
 	// sitting next to tokens.
-	totalUsage := Usage{Quantity: int64(totalKRW * 1000), Unit: UnitKRW, Currency: UnitKRW, WindowStart: since, WindowEnd: until, Reconciled: anyPriced}
+	totalUsage := Usage{Quantity: int64(math.Round(totalKRW)), Unit: UnitKRW, Currency: UnitKRW, WindowStart: since, WindowEnd: until, Reconciled: anyPriced && allReconciled}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"days":           days,
-		"window_start":   since,
-		"window_end":     until,
-		"models":         rowsOut,
-		"total":          totalUsage,
-		"any_priced":     anyPriced,
+		"days":             days,
+		"window_start":     since,
+		"window_end":       until,
+		"models":           rowsOut,
+		"total":            totalUsage,
+		"any_priced":       anyPriced,
 		"display_currency": UnitKRW,
+		"usage_report":     usageReport,
 	})
 }
 
@@ -3302,63 +3317,35 @@ func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
 // PAT-1501.
 func (s *Server) handleGetUsageBreakdown(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	days := 30
-	if d, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && d > 0 {
-		days = d
-	}
-	since := time.Now().AddDate(0, 0, -days).Format(time.RFC3339)
-	until := time.Now().Format(time.RFC3339)
-
-	var rows []struct {
-		MetricType string
-		Total      int64
-	}
-	if err := s.db.Model(&models.UsageRecord{}).
-		Select("metric_type, SUM(quantity) as total").
-		Where("organization_id = ? AND occurred_at >= ?", orgID, since).
-		Group("metric_type").Scan(&rows).Error; err != nil {
+	days, since, until := usageWindowFromRequest(r, time.Now())
+	report, err := s.buildUsageReport(orgID, usageFilter{}, fmt.Sprintf("%dd", days), since, until)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	writeJSON(w, http.StatusOK, report)
+}
 
-	byUnit := map[string]Usage{}
-	drilldown := []UsageLedgerRow{}
-	for _, row := range rows {
-		unit := unitForMetric(row.MetricType)
-		if unit == "" {
-			// Unknown metric type — surface as an error state per
-			// PAT-1501 (no silent cross-unit inclusion).
-			continue
-		}
-		cur := byUnit[unit]
-		cur.Unit = unit
-		cur.Quantity += row.Total
-		cur.WindowStart = since
-		cur.WindowEnd = until
-		byUnit[unit] = cur
-
-		drilldown = append(drilldown, UsageLedgerRow{
-			Bucket:   row.MetricType,
-			Unit:     unit,
-			Quantity: row.Total,
-		})
-	}
-	// Ensure every expected unit is present so the UI never sums
-	// across rows of different units to fill a missing cell.
-	for _, u := range []string{UnitTokens, UnitSeconds, UnitBytes, UnitCount, UnitUSDMicro} {
-		if _, ok := byUnit[u]; !ok {
-			byUnit[u] = Usage{Unit: u, Quantity: 0, WindowStart: since, WindowEnd: until}
+func usageWindowFromRequest(r *http.Request, now time.Time) (days int, since, until string) {
+	now = now.UTC()
+	days = 30
+	switch r.URL.Query().Get("range") {
+	case "7d":
+		days = 7
+	case "30d":
+		days = 30
+	case "90d":
+		days = 90
+	case "365d":
+		days = 365
+	default:
+		if d, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && d > 0 {
+			days = d
 		}
 	}
-
-	writeJSON(w, http.StatusOK, UsageTotal{
-		WindowStart:     since,
-		WindowEnd:       until,
-		ByUnit:          byUnit,
-		DisplayCurrency: UnitKRW,
-		Reconciled:      true,
-		Drilldown:       drilldown,
-	})
+	since = now.AddDate(0, 0, -days).Format(time.RFC3339)
+	until = now.Format(time.RFC3339)
+	return days, since, until
 }
 
 // unitForMetric maps a UsageRecord metric_type to its unit. Unknown
@@ -3636,40 +3623,42 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	// Lifecycle status moves exclusively through the dedicated endpoints
 	// (PAT-1489) — a generic profile edit must never bypass the state
-	// machine. A same-value status is a no-op and stays allowed.
+	// machine. A same-value status is a no-op and stays allowed (it is
+	// simply not written).
 	if updates.Status != nil && *updates.Status != user.Status {
 		writeError(w, http.StatusConflict, "lifecycle status changes require the dedicated /suspend, /resume, or /offboard endpoints")
 		return
 	}
+	// Column-scoped update: writing only the requested editable fields (never
+	// Status) prevents a stale full-struct Save from reverting a lifecycle
+	// transition that committed between the First read and this write.
+	cols := map[string]interface{}{}
 	if updates.Name != nil {
-		user.Name = *updates.Name
+		cols["name"] = *updates.Name
 	}
 	if updates.NameKo != nil {
-		user.NameKo = *updates.NameKo
+		cols["name_ko"] = *updates.NameKo
 	}
 	if updates.Email != nil {
-		user.Email = *updates.Email
+		cols["email"] = *updates.Email
 	}
 	if updates.Title != nil {
-		user.Title = *updates.Title
-	}
-	if updates.Status != nil {
-		user.Status = *updates.Status
+		cols["title"] = *updates.Title
 	}
 	if updates.AuthMethod != nil {
-		user.AuthMethod = *updates.AuthMethod
+		cols["auth_method"] = *updates.AuthMethod
 	}
 	if updates.Locale != nil {
-		user.Locale = *updates.Locale
+		cols["locale"] = *updates.Locale
 	}
 	if updates.Timezone != nil {
-		user.Timezone = *updates.Timezone
+		cols["timezone"] = *updates.Timezone
 	}
 	if updates.BusinessUnitID != nil {
-		user.BusinessUnitID = *updates.BusinessUnitID
+		cols["business_unit_id"] = *updates.BusinessUnitID
 	}
 	if updates.EmployeeID != nil {
-		user.EmployeeId = *updates.EmployeeID
+		cols["employee_id"] = *updates.EmployeeID
 	}
 	if updates.ContractorInfo != nil {
 		// Validate the structured contractor record (web/01 A5).
@@ -3682,16 +3671,19 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "contract_end precedes contract_start")
 			return
 		}
-		user.ContractorInfo = *updates.ContractorInfo
+		cols["contractor_info"] = *updates.ContractorInfo
 	}
 	if updates.MFAEnrolled != nil {
-		user.MFAEnrolled = *updates.MFAEnrolled
+		cols["mfa_enrolled"] = *updates.MFAEnrolled
 	}
 	reason := ""
 	if updates.Reason != nil {
 		reason = *updates.Reason
 	}
-	s.db.Save(&user)
+	if len(cols) > 0 {
+		s.db.Model(&user).Updates(cols)
+	}
+	updateDetails, _ := json.Marshal(map[string]string{"reason": reason})
 	s.db.Create(&models.AuditEvent{
 		OrganizationID: getOrgID(r),
 		EventType:      "cp.user.updated",
@@ -3699,69 +3691,19 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		Action:         "update_user",
 		ResourceType:   "user",
 		ResourceID:     id,
-		Details:        fmt.Sprintf(`{"reason":"%s"}`, reason),
+		Details:        string(updateDetails),
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusOK, user)
 }
 
+// handleDeleteUser historically reimplemented offboarding without the
+// lifecycle guards. It now delegates to the canonical offboard endpoint
+// (PAT-1489) so DELETE cannot bypass the state machine: same org scoping,
+// reason requirement, RBAC/self-action guards, and transition validation.
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	orgID := getOrgID(r)
-	var req struct {
-		Reason string `json:"reason"`
-	}
-	_ = decodeJSON(r, &req)
-	if req.Reason == "" {
-		req.Reason = "admin offboarding"
-	}
-
-	// 1. Mark user as offboarded + record date
-	s.db.Model(&models.User{}).Where("id = ?", id).Updates(map[string]interface{}{
-		"status":           "offboarded",
-		"offboarding_date": time.Now().Format("2006-01-02"),
-	})
-
-	// 2. Cascade: terminate active sessions for this user
-	s.db.Model(&models.Session{}).
-		Where("user_id = ? AND status = 'active'", id).
-		Update("status", "terminated")
-
-	// 3. Cascade: revoke harnesses that include this user
-	var harnesses []models.Harness
-	s.db.Where("organization_id = ?", orgID).Find(&harnesses)
-	for _, h := range harnesses {
-		if h.AllowedUsers == "" {
-			continue
-		}
-		var allowed []string
-		json.Unmarshal([]byte(h.AllowedUsers), &allowed)
-		for _, uid := range allowed {
-			if uid == id {
-				s.db.Model(&h).Updates(map[string]interface{}{
-					"status":            "revoked",
-					"revocation_reason": "user offboarded",
-				})
-				break
-			}
-		}
-	}
-
-	// 4. Audit
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID,
-		EventType:      "cp.user.offboarded",
-		ActorType:      "admin",
-		Action:         "offboard_user",
-		ResourceType:   "user",
-		ResourceID:     id,
-		Details:        fmt.Sprintf(`{"reason":"%s"}`, req.Reason),
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
-	})
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": "offboarded"})
+	s.handleOffboardUser(w, r)
 }
 
 // --- Business Units (Korean enterprise hierarchy, PRD §12.1) ---
@@ -4139,41 +4081,25 @@ func (s *Server) handleRestoreProject(w http.ResponseWriter, r *http.Request) {
 // project's sessions.
 func (s *Server) handleProjectUsage(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
 	var proj models.Project
-	if err := s.db.First(&proj, "id = ?", id).Error; err != nil {
+	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&proj).Error; err != nil {
 		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
 		return
 	}
 	var sessionIDs []string
-	s.db.Model(&models.Session{}).Where("project_id = ?", id).Pluck("session_id", &sessionIDs)
-
-	summary := map[string]interface{}{
-		"project_id":    id,
-		"session_count": len(sessionIDs),
-		"input_tokens":  int64(0),
-		"output_tokens": int64(0),
-		"total_tokens":  int64(0),
-		"cost_micros":   int64(0),
-		"currency":      "KRW",
-		"by_model":      map[string]int64{},
-		"by_session":    map[string]int64{},
+	if err := s.db.Model(&models.Session{}).Where("organization_id = ? AND project_id = ?", orgID, id).Pluck("session_id", &sessionIDs).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	if len(sessionIDs) > 0 {
-		var records []models.UsageRecord
-		s.db.Where("session_id IN ?", sessionIDs).Find(&records)
-		for _, rec := range records {
-			if rec.MetricType == "tokens_in" {
-				summary["input_tokens"] = summary["input_tokens"].(int64) + rec.Quantity
-			} else if rec.MetricType == "tokens_out" {
-				summary["output_tokens"] = summary["output_tokens"].(int64) + rec.Quantity
-			}
-			summary["total_tokens"] = summary["total_tokens"].(int64) + rec.Quantity
-			summary["cost_micros"] = summary["cost_micros"].(int64) + rec.CostMicros
-			summary["by_model"].(map[string]int64)[rec.ModelPackageID] += rec.Quantity
-			summary["by_session"].(map[string]int64)[rec.SessionID] += rec.Quantity
-		}
+	days, since, until := usageWindowFromRequest(r, time.Now())
+	report, err := s.buildUsageReport(orgID, usageFilter{SessionIDs: sessionIDs}, fmt.Sprintf("%dd", days), since, until)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	writeJSON(w, http.StatusOK, summary)
+	report.SessionCount = len(sessionIDs)
+	writeJSON(w, http.StatusOK, report)
 }
 
 // handleListProjectMembers returns the real roster with user info
@@ -5212,8 +5138,8 @@ func (s *Server) handleRotateAlertEndpoint(w http.ResponseWriter, r *http.Reques
 	if err := s.db.Model(&models.AlertEndpoint{}).
 		Where("id = ? AND organization_id = ?", id, orgID).
 		Updates(map[string]interface{}{
-			"target":      "",
-			"target_enc":  enc,
+			"target":        "",
+			"target_enc":    enc,
 			"target_kek_id": kekID,
 		}).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

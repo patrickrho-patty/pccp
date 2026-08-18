@@ -76,6 +76,10 @@ export const api = {
     request<any>(`/api/users/${id}`, { method: 'DELETE', body: JSON.stringify({ reason }) }),
   offboardUser: (id: string, reason: string) =>
     request<any>(`/api/users/${id}/offboard`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  suspendUser: (id: string, reason: string) =>
+    request<any>(`/api/users/${id}/suspend`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  resumeUser: (id: string, reason: string) =>
+    request<any>(`/api/users/${id}/resume`, { method: 'POST', body: JSON.stringify({ reason }) }),
   getUser: (id: string) =>
     request<any>(`/api/users/${id}`),
   getUserAudit: (id: string) =>
@@ -86,8 +90,8 @@ export const api = {
     request<any>(`/api/users/${id}/harnesses`, { method: 'POST', body: JSON.stringify({ harness_id: harnessId }) }),
   revokeUserHarness: (id: string, harnessId: string) =>
     request<any>(`/api/users/${id}/harnesses/${harnessId}`, { method: 'DELETE' }),
-  getUserUsage: (id: string) =>
-    request<any>(`/api/users/${id}/usage`),
+  getUserUsage: (id: string, rangeParam = '30d') =>
+    request<any>(`/api/users/${id}/usage?range=${rangeParam}`),
   importUsersCSV: (file: File, apply: boolean) => {
     const form = new FormData()
     form.append('file', file)
@@ -152,7 +156,7 @@ export const api = {
   restoreProject: (id: string) =>
     request<any>(`/api/projects/${id}/restore`, { method: 'POST' }),
   projectArchiveImpact: (id: string) => request<any>(`/api/projects/${id}/archive-impact`),
-  projectUsage: (id: string) => request<any>(`/api/projects/${id}/usage`),
+  projectUsage: (id: string, rangeParam = '30d') => request<any>(`/api/projects/${id}/usage?range=${rangeParam}`),
   projectChangeRequests: (id: string) => request<any[]>(`/api/projects/${id}/change-requests`),
   decideChangeRequest: (id: string, approve: boolean, reason?: string) =>
     request<any>(`/api/change-requests/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve, reason }) }),
@@ -200,6 +204,7 @@ export const api = {
   bulkSessions: (ids: string[], action: string) =>
     request<any>('/api/sessions/bulk', { method: 'POST', body: JSON.stringify({ ids, action }) }),
   getSessionDetail: (id: string) => request<any>(`/api/sessions/${id}/detail`),
+  getSessionUsage: (id: string, rangeParam = '30d') => request<any>(`/api/sessions/${id}/usage?range=${rangeParam}`),
   getSessionDecisions: (id: string) => request<any>(`/api/sessions/${id}/decisions`),
   getSessionReplay: (id: string) => request<any>(`/api/sessions/${id}/replay`),
   getSessionVisibility: (id: string) => request<any>(`/api/sessions/${id}/visibility`),

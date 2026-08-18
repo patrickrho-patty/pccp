@@ -19,10 +19,10 @@ func securityTestServer(t *testing.T) (*Server, *gorm.DB) {
 		t.Fatal(err)
 	}
 	for _, m := range []interface{}{
-		&models.Organization{}, &models.Session{}, &models.Harness{}, &models.Project{},
+		&models.Organization{}, &models.User{}, &models.Session{}, &models.Harness{}, &models.Project{},
 		&models.SecurityFinding{}, &models.SecurityRule{}, &models.AlertEndpoint{},
 		&models.PIILexicon{}, &models.AuditEvent{}, &models.ServiceSigningKey{},
-		&models.PromptExchange{}, &models.UsageRecord{}, &models.ModelPackage{},
+		&models.PromptExchange{}, &models.UsageRecord{}, &models.ModelPackage{}, &models.OrgSetting{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
 			t.Fatal(err)

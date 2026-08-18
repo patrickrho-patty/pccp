@@ -1,77 +1,109 @@
 package api
 
-// Usage DTOs — PAT-1501.
-//
-// Every metric in the response carries an explicit unit discriminator.
-// Cross-unit aggregation at the type level is impossible; consumers
-// must sum per-unit rows or use the explicit TotalByUnit shape.
-
 const (
-	UnitTokens       = "tokens"
-	UnitSeconds      = "seconds"
-	UnitBytes        = "bytes"
-	UnitCount        = "count"
-	UnitUSDMicro     = "usd_micro"
-	UnitKRW          = "krw"
+	UnitTokens   = "tokens"
+	UnitSeconds  = "seconds"
+	UnitBytes    = "bytes"
+	UnitCount    = "count"
+	UnitUSDMicro = "usd_micro"
+	UnitKRW      = "krw"
+	UnitUnknown  = "unknown"
 )
 
-// Usage is one row of metered consumption with its unit, window, and
-// freshness. PAT-1501: a single number without a unit is a bug.
+type MeterState string
+
+const (
+	MeterStateRecorded    MeterState = "recorded"
+	MeterStateZero        MeterState = "zero"
+	MeterStateUnavailable MeterState = "unavailable"
+	MeterStateDelayed     MeterState = "delayed"
+	MeterStateError       MeterState = "error"
+)
+
+// Usage is one unit-safe aggregate. A quantity without its unit, window,
+// freshness, and state is not a valid usage value.
 type Usage struct {
-	Quantity    int64  `json:"quantity"`
-	Unit        string `json:"unit"` // tokens | seconds | bytes | count | usd_micro | krw
-	Currency    string `json:"currency,omitempty"` // for usd_micro / krw
-	WindowStart string `json:"window_start,omitempty"` // RFC3339
-	WindowEnd   string `json:"window_end,omitempty"`
-	LastUpdated string `json:"last_updated,omitempty"` // RFC3339
-	Reconciled  bool   `json:"reconciled"`             // true when line items match the displayed total
-	// SourceQuantity preserves the original quantity in the source
-	// unit so the UI can display both source and display values
-	// (e.g., µ¢ and KRW for chargeback rows).
-	SourceQuantity int64  `json:"source_quantity,omitempty"`
-	SourceUnit     string `json:"source_unit,omitempty"`
-	DisplayRate    string `json:"display_rate,omitempty"` // "1 USD = 1,389 KRW (2026-08-18 NBR)"
+	Quantity       int64      `json:"quantity"`
+	Unit           string     `json:"unit"`
+	Currency       string     `json:"currency,omitempty"`
+	WindowStart    string     `json:"window_start,omitempty"`
+	WindowEnd      string     `json:"window_end,omitempty"`
+	LastUpdated    string     `json:"last_updated,omitempty"`
+	Reconciled     bool       `json:"reconciled"`
+	SourceQuantity int64      `json:"source_quantity,omitempty"`
+	SourceUnit     string     `json:"source_unit,omitempty"`
+	DisplayRate    string     `json:"display_rate,omitempty"`
+	State          MeterState `json:"state,omitempty"`
+	Reason         string     `json:"reason,omitempty"`
 }
 
-// UsageTotal is a window-aggregated total with one row per unit.
-// PAT-1501: the UI MUST NOT compute cross-unit totals.
+type UsageMeter struct {
+	MetricType        string     `json:"metric_type"`
+	Unit              string     `json:"unit"`
+	Quantity          int64      `json:"quantity"`
+	RateMicrosPerUnit string     `json:"rate_micros_per_unit,omitempty"`
+	AmountMicros      int64      `json:"amount_micros"`
+	Currency          string     `json:"currency,omitempty"`
+	State             MeterState `json:"state"`
+	Reason            string     `json:"reason,omitempty"`
+	LastUpdated       string     `json:"last_updated,omitempty"`
+}
+
+type UsageAmount struct {
+	AmountMicros int64      `json:"amount_micros"`
+	Currency     string     `json:"currency"`
+	State        MeterState `json:"state"`
+	Reason       string     `json:"reason,omitempty"`
+	Rate         string     `json:"rate,omitempty"`
+	RateSource   string     `json:"rate_source,omitempty"`
+	RateAsOf     string     `json:"rate_as_of,omitempty"`
+}
+
+// UsageTotal is the canonical usage response shared by organization, user,
+// session, project, and analytics surfaces.
 type UsageTotal struct {
-	WindowStart string            `json:"window_start,omitempty"`
-	WindowEnd   string            `json:"window_end,omitempty"`
-	ByUnit      map[string]Usage  `json:"by_unit"`             // keyed by Unit
-	DisplayCurrency string         `json:"display_currency,omitempty"`
-	DisplayTotal   Usage           `json:"display_total"`      // totals in display currency; zero-value unit when no display
-	Reconciled     bool            `json:"reconciled"`
-	Drilldown      []UsageLedgerRow `json:"drilldown,omitempty"` // ledger lines that compose the total
+	Range                string                 `json:"range,omitempty"`
+	WindowStart          string                 `json:"window_start,omitempty"`
+	WindowEnd            string                 `json:"window_end,omitempty"`
+	LastUpdated          string                 `json:"last_updated,omitempty"`
+	ByUnit               map[string]Usage       `json:"by_unit"`
+	DisplayCurrency      string                 `json:"display_currency,omitempty"`
+	DisplayTotal         UsageAmount            `json:"display_total"`
+	CostByCurrency       map[string]UsageAmount `json:"cost_by_currency"`
+	Meters               []UsageMeter           `json:"meters"`
+	Metrics              []UsageMeter           `json:"metrics"`
+	ByMetric             map[string]UsageMeter  `json:"by_metric"`
+	ByModel              map[string]Usage       `json:"by_model"`
+	ByUser               map[string]Usage       `json:"by_user"`
+	BySession            map[string]Usage       `json:"by_session"`
+	InputTokens          int64                  `json:"input_tokens"`
+	OutputTokens         int64                  `json:"output_tokens"`
+	TotalTokens          int64                  `json:"total_tokens"`
+	TotalCostMicros      int64                  `json:"total_cost_micros"`
+	CostMicros           int64                  `json:"cost_micros"`
+	Currency             string                 `json:"currency,omitempty"`
+	RecordCount          int                    `json:"record_count"`
+	SessionCount         int                    `json:"session_count,omitempty"`
+	Reconciled           bool                   `json:"reconciled"`
+	ReconciliationErrors []string               `json:"reconciliation_errors,omitempty"`
+	Drilldown            []UsageLedgerRow       `json:"drilldown"`
 }
 
-// UsageLedgerRow is one ledger line (the audit trail behind a total).
-// PAT-1501: every visible total must reconcile to a drill-down.
 type UsageLedgerRow struct {
-	OccurredAt  string `json:"occurred_at"`
-	Bucket      string `json:"bucket"`        // workspace_chat, editor_lex, tool_call, reservation, refund, ...
-	Unit        string `json:"unit"`
-	Quantity    int64  `json:"quantity"`
-	Note        string `json:"note,omitempty"`
-	RefType     string `json:"ref_type,omitempty"`
-	RefID       string `json:"ref_id,omitempty"`
-}
-
-// MeterState distinguishes zero from unavailable from error in the UI.
-// PAT-1501: meter ran + zero result ≠ meter hasn't run yet.
-type MeterState int
-
-const (
-	MeterStateZero MeterState = iota
-	MeterStateUnavailable
-	MeterStateError
-)
-
-// MeterCell is the cell the UI renders for one (scope, unit) pair.
-// PAT-1501: UI components MUST render this struct; they MUST NOT
-// format raw numbers that arrive without the Unit field.
-type MeterCell struct {
-	State      MeterState `json:"state"`
-	Usage      Usage      `json:"usage,omitempty"`
-	Reason     string     `json:"reason,omitempty"` // for Unavailable / Error
+	ID                string `json:"id"`
+	OccurredAt        string `json:"occurred_at"`
+	Bucket            string `json:"bucket"`
+	Unit              string `json:"unit"`
+	Quantity          int64  `json:"quantity"`
+	RateMicrosPerUnit string `json:"rate_micros_per_unit,omitempty"`
+	AmountMicros      int64  `json:"amount_micros"`
+	Currency          string `json:"currency,omitempty"`
+	Note              string `json:"note,omitempty"`
+	RefType           string `json:"ref_type,omitempty"`
+	RefID             string `json:"ref_id,omitempty"`
+	UserID            string `json:"user_id,omitempty"`
+	HarnessID         string `json:"harness_id,omitempty"`
+	SessionID         string `json:"session_id,omitempty"`
+	ModelPackageID    string `json:"model_package_id,omitempty"`
+	EndpointID        string `json:"endpoint_id,omitempty"`
 }
