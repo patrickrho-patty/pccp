@@ -1622,9 +1622,7 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 func (s *Server) decorateProjects(projects []models.Project) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(projects))
 	for _, proj := range projects {
-		row := map[string]interface{}{}
-		b, _ := json.Marshal(proj)
-		json.Unmarshal(b, &row)
+		row := projectViewRow(proj)
 		var memberCount, repoCount, sessionCount, activeCount int64
 		s.db.Model(&models.ProjectMember{}).Where("project_id = ?", proj.ID).Count(&memberCount)
 		s.db.Model(&models.Repository{}).Where("project_id = ?", proj.ID).Count(&repoCount)
@@ -1682,7 +1680,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	if len(updates) > 0 {
 		s.db.Model(proj).Updates(updates)
 	}
-	writeJSON(w, http.StatusCreated, proj)
+	writeJSON(w, http.StatusCreated, projectViewRow(*proj))
 }
 
 func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
@@ -1692,7 +1690,7 @@ func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
 		return
 	}
-	writeJSON(w, http.StatusOK, proj)
+	writeJSON(w, http.StatusOK, projectViewRow(proj))
 }
 
 func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) {
@@ -3989,7 +3987,9 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	if updates.Status != nil {
 		proj.Status = *updates.Status
 	}
-	if len(updates.AllowedModels) > 0 {
+	// Explicit empty array clears the allowance (제한 없음); absent key
+	// leaves it unchanged (PAT-1491).
+	if updates.AllowedModels != nil {
 		b, _ := json.Marshal(updates.AllowedModels)
 		proj.AllowedModelClasses = string(b)
 	}
@@ -4014,7 +4014,7 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	})
-	writeJSON(w, http.StatusOK, proj)
+	writeJSON(w, http.StatusOK, projectViewRow(proj))
 }
 
 func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
@@ -4236,7 +4236,7 @@ func (s *Server) handleGetProjectDetail(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
 		return
 	}
-	result := map[string]interface{}{"project": proj}
+	result := map[string]interface{}{"project": projectViewRow(proj)}
 
 	var repos []models.Repository
 	s.db.Where("project_id = ?", id).Find(&repos)

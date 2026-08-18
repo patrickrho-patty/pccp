@@ -44,6 +44,7 @@ func (s *Server) buildUsageReport(orgID string, filter usageFilter, rangeLabel, 
 		WindowEnd:      until,
 		ByUnit:         map[string]Usage{},
 		CostByCurrency: map[string]UsageAmount{},
+		Conversions:    []UsageConversion{},
 		Meters:         []UsageMeter{},
 		Metrics:        []UsageMeter{},
 		ByMetric:       map[string]UsageMeter{},
@@ -205,7 +206,8 @@ func (s *Server) buildUsageReport(orgID string, filter usageFilter, rangeLabel, 
 func (s *Server) finishUsageReport(orgID string, report UsageTotal) UsageTotal {
 	report.DisplayCurrency = "KRW"
 	var displaySetting models.OrgSetting
-	if err := s.db.Where("organization_id = ? AND key = ?", orgID, "billing.display_currency").First(&displaySetting).Error; err == nil {
+	displayResult := s.db.Where("organization_id = ? AND key = ?", orgID, "billing.display_currency").Limit(1).Find(&displaySetting)
+	if displayResult.Error == nil && displayResult.RowsAffected == 1 {
 		if value := strings.ToUpper(strings.TrimSpace(displaySetting.Value)); value != "" {
 			report.DisplayCurrency = value
 		}
@@ -218,19 +220,33 @@ func (s *Server) finishUsageReport(orgID string, report UsageTotal) UsageTotal {
 
 	rates := map[string]fxRate{}
 	var rateSetting models.OrgSetting
-	if err := s.db.Where("organization_id = ? AND key = ?", orgID, "billing.fx_rates").First(&rateSetting).Error; err == nil {
+	rateResult := s.db.Where("organization_id = ? AND key = ?", orgID, "billing.fx_rates").Limit(1).Find(&rateSetting)
+	if rateResult.Error == nil && rateResult.RowsAffected == 1 {
 		_ = json.Unmarshal([]byte(rateSetting.Value), &rates)
 	}
 	display := UsageAmount{Currency: report.DisplayCurrency, State: MeterStateZero}
-	for source, amount := range report.CostByCurrency {
+	sourceCurrencies := make([]string, 0, len(report.CostByCurrency))
+	for source := range report.CostByCurrency {
+		sourceCurrencies = append(sourceCurrencies, source)
+	}
+	sort.Strings(sourceCurrencies)
+	for _, source := range sourceCurrencies {
+		amount := report.CostByCurrency[source]
 		if source == report.DisplayCurrency {
 			display.AmountMicros += amount.AmountMicros
 			continue
+		}
+		conversion := UsageConversion{
+			SourceCurrency: source, TargetCurrency: report.DisplayCurrency,
+			SourceAmountMicros: amount.AmountMicros, State: MeterStateRecorded,
 		}
 		rateDef, ok := rates[source]
 		if !ok {
 			display.State = MeterStateUnavailable
 			display.Reason = "missing conversion rate from " + source + " to " + report.DisplayCurrency
+			conversion.State = MeterStateUnavailable
+			conversion.Reason = display.Reason
+			report.Conversions = append(report.Conversions, conversion)
 			report.Reconciled = false
 			report.ReconciliationErrors = append(report.ReconciliationErrors, display.Reason)
 			continue
@@ -239,17 +255,29 @@ func (s *Server) finishUsageReport(orgID string, report UsageTotal) UsageTotal {
 		if _, ok := rate.SetString(rateDef.Rate); !ok {
 			display.State = MeterStateError
 			display.Reason = "invalid conversion rate for " + source
+			conversion.State = MeterStateError
+			conversion.Reason = display.Reason
+			report.Conversions = append(report.Conversions, conversion)
 			report.Reconciled = false
 			report.ReconciliationErrors = append(report.ReconciliationErrors, display.Reason)
 			continue
 		}
 		converted := new(big.Rat).Mul(new(big.Rat).SetInt64(amount.AmountMicros), rate)
-		display.AmountMicros += roundRat(converted)
+		convertedMicros := roundRat(converted)
+		display.AmountMicros += convertedMicros
+		conversion.Rate = rateDef.Rate
+		conversion.ConvertedAmountMicros = convertedMicros
+		conversion.RateSource = rateDef.Source
+		conversion.RateAsOf = rateDef.AsOf
+		report.Conversions = append(report.Conversions, conversion)
 		display.Rate = rateDef.Rate
 		display.RateSource = rateDef.Source
 		display.RateAsOf = rateDef.AsOf
 	}
-	if display.State != MeterStateUnavailable && display.State != MeterStateError {
+	if report.RecordCount == 0 {
+		display.State = MeterStateUnavailable
+		display.Reason = "no usage ledger records in selected window"
+	} else if display.State != MeterStateUnavailable && display.State != MeterStateError {
 		display.State = usageStateForQuantity(display.AmountMicros)
 	}
 	report.DisplayTotal = display

@@ -29,6 +29,8 @@ export default function Analytics() {
   const userName = (id: string) => users.find(u => u.id === id)?.name_ko || users.find(u => u.id === id)?.name || id?.slice(0, 8)
   const modelName = (id: string) => models.find((m: any) => m.id === id || m.package_id === id)?.name || id?.slice(0, 8)
   const periodLabel = RANGES.find(item => item.value === range)?.label || range
+  const hasLedger = Boolean(data?.record_count)
+  const delayedMeters = (data?.meters || []).filter(meter => meter.state === 'delayed').length
 
   const exportCSV2 = async () => {
     const token = localStorage.getItem('pccp_token')
@@ -65,10 +67,10 @@ export default function Analytics() {
       {loadError && <div className="rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700">사용량 원장을 불러오지 못했습니다. 0으로 표시하지 않았습니다.</div>}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <a href="#usage-ledger"><StatCard label="총 토큰" value={data ? data.total_tokens.toLocaleString() : '—'} accent="blue" sub={`${periodLabel} · 원장 ${data?.record_count ?? '—'}건`} /></a>
-        <a href="#usage-ledger"><StatCard label="입력 토큰" value={data ? data.input_tokens.toLocaleString() : '—'} accent="green" sub={periodLabel} /></a>
-        <a href="#usage-ledger"><StatCard label="출력 토큰" value={data ? data.output_tokens.toLocaleString() : '—'} accent="purple" sub={periodLabel} /></a>
-        <a href="#usage-ledger"><StatCard label={`비용 (${data?.display_currency || '통화 미확인'})`} value={data?.display_total ? formatUsageAmount(data.display_total.amount_micros, data.display_total.currency) : '—'} accent="orange" sub={data?.display_total?.state === 'unavailable' ? '환율 미설정' : `${periodLabel} · 대사 ${data?.reconciled ? '완료' : '필요'}`} /></a>
+        <a href="#usage-ledger"><StatCard label="총 토큰" value={hasLedger ? data!.total_tokens.toLocaleString() : '미수집'} accent="blue" sub={`${periodLabel} · 원장 ${data?.record_count ?? '—'}건`} /></a>
+        <a href="#usage-ledger"><StatCard label="입력 토큰" value={hasLedger ? data!.input_tokens.toLocaleString() : '미수집'} accent="green" sub={periodLabel} /></a>
+        <a href="#usage-ledger"><StatCard label="출력 토큰" value={hasLedger ? data!.output_tokens.toLocaleString() : '미수집'} accent="purple" sub={periodLabel} /></a>
+        <a href="#usage-ledger"><StatCard label={`비용 (${data?.display_currency || '통화 미확인'})`} value={data?.display_total?.state === 'unavailable' ? '미수집' : data?.display_total ? formatUsageAmount(data.display_total.amount_micros, data.display_total.currency) : '—'} accent="orange" sub={!hasLedger ? '원장 기록 없음' : data?.display_total?.state === 'unavailable' ? '환율 미설정' : `${periodLabel} · 대사 ${data?.reconciled ? '완료' : '필요'}${delayedMeters ? ` · 지연 ${delayedMeters}` : ''}`} /></a>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -76,7 +78,7 @@ export default function Analytics() {
           <h3 className="text-xs font-bold mb-2">모델별 토큰</h3>
           {Object.keys(data?.by_model || {}).length === 0 && <p className="text-[11px] text-gray-400">기록 없음</p>}
           {Object.entries(data?.by_model || {}).sort((a: any, b: any) => b[1].quantity - a[1].quantity).map(([model, usage]: any) => (
-            <Link key={model} to={`/model-infra`} className="flex items-center justify-between text-[11px] border-b border-gray-50 py-1 hover:bg-gray-50 px-1 rounded">
+            <Link key={model} to={`/models/${model}`} className="flex items-center justify-between text-[11px] border-b border-gray-50 py-1 hover:bg-gray-50 px-1 rounded">
               <span className="text-gray-700">{modelName(model)}</span>
               <span className="text-gray-500">{formatUsageQuantity(usage)}</span>
             </Link>

@@ -151,3 +151,76 @@ func TestHighRiskChangeSetQueuesChangeRequest(t *testing.T) {
 		t.Fatalf("expected approved, got %s", crs[0].Status)
 	}
 }
+
+// --- PAT-1491: allowed-model classes as a typed view model ---
+
+func TestProjectAllowedModelClassesParsedInView(t *testing.T) {
+	srv, db := projectTestServer(t)
+	org := models.Organization{Name: "org", Slug: "orgam", Status: "active"}
+	db.Create(&org)
+
+	cases := []struct {
+		name  string
+		stored string
+		want  []string
+	}{
+		{"one", `["code"]`, []string{"code"}},
+		{"many", `["code","reasoning"]`, []string{"code", "reasoning"}},
+		{"empty", `[]`, []string{}},
+		{"empty-legacy", ``, []string{}},
+		{"duplicates deduped in order", `["code","reasoning","code"]`, []string{"code", "reasoning"}},
+		{"special characters stay separate items", `["클래스/특수:값","a b&c=d"]`, []string{"클래스/특수:값", "a b&c=d"}},
+		{"malformed stored JSON yields empty, never raw", `["code",`, []string{}},
+	}
+	for _, tc := range cases {
+		proj := models.Project{Name: "p-" + tc.name, Slug: "p-" + tc.name}
+		proj.OrganizationID = org.ID
+		proj.AllowedModelClasses = tc.stored
+		if err := db.Create(&proj).Error; err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range []string{"/api/projects/" + proj.ID, "/api/projects/" + proj.ID + "/detail", "/api/projects?page=1&size=50"} {
+			rec := doJSON(t, srv, "GET", path, "", org.ID)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s: %s → %d", tc.name, path, rec.Code)
+			}
+			var body map[string]interface{}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("%s: %s: %v", tc.name, path, err)
+			}
+			row, ok := body["project"].(map[string]interface{})
+			if !ok {
+				row = body // detail nests under "project"; get/list return the row
+			}
+			if path == "/api/projects?page=1&size=50" {
+				rows, ok := body["data"].([]interface{})
+				if !ok || len(rows) == 0 {
+					t.Fatalf("%s: list returned no data", tc.name)
+				}
+				found := false
+				for _, r := range rows {
+					rm := r.(map[string]interface{})
+					if rm["id"] == proj.ID {
+						row = rm
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("%s: project missing from list", tc.name)
+				}
+			}
+			got, ok := row["allowed_model_classes"].([]interface{})
+			if !ok {
+				t.Fatalf("%s: %s: allowed_model_classes is %T, want array", tc.name, path, row["allowed_model_classes"])
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("%s: %s: got %v, want %v", tc.name, path, got, tc.want)
+			}
+			for i, w := range tc.want {
+				if got[i] != w {
+					t.Fatalf("%s: %s: got %v, want %v", tc.name, path, got, tc.want)
+				}
+			}
+		}
+	}
+}

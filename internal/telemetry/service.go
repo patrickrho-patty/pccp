@@ -1,12 +1,15 @@
 package telemetry
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Service implements telemetry and metering (DARI §50).
@@ -146,6 +149,7 @@ type MeteringEvent struct {
 	HarnessID      string     `json:"harness_id"`
 	ModelPackageID string     `json:"model_package_id"`
 	EndpointID     string     `json:"endpoint_id"`
+	Sequence       uint64     `json:"sequence"`
 	MetricType     MetricType `json:"metric_type"`
 	Quantity       int64      `json:"quantity"`
 	Unit           string     `json:"unit"`
@@ -160,21 +164,35 @@ func (s *Service) RecordMetering(event MeteringEvent) error {
 	if event.OrganizationID == "" {
 		return fmt.Errorf("telemetry: metering requires organization ID")
 	}
+	if event.ExchangeID == "" {
+		return fmt.Errorf("telemetry: metering requires authenticated exchange ID")
+	}
+	if event.OccurredAt.IsZero() {
+		return fmt.Errorf("telemetry: metering requires occurrence time")
+	}
+
+	keyInput := fmt.Sprintf("usage:v1:%s:%s:%s:%d", event.OrganizationID, event.ExchangeID, event.MetricType, event.Sequence)
+	digest := sha256.Sum256([]byte(keyInput))
+	eventKey := hex.EncodeToString(digest[:])
+	meteredAt := event.OccurredAt.UTC()
 
 	usage := &models.UsageRecord{
 		OrganizationID: event.OrganizationID,
 		UserID:         event.UserID,
 		HarnessID:      event.HarnessID,
 		SessionID:      event.SessionID,
+		ExchangeID:     event.ExchangeID,
+		EventKey:       &eventKey,
 		ModelPackageID: event.ModelPackageID,
 		EndpointID:     event.EndpointID,
 		MetricType:     string(event.MetricType),
 		Quantity:       event.Quantity,
 		Unit:           event.Unit,
-		Currency:       "KRW",
-		OccurredAt:     event.OccurredAt.Format(time.RFC3339),
+		PricingState:   models.UsagePricingUnpriced,
+		OccurredAt:     meteredAt.Format(time.RFC3339),
+		MeteredAt:      &meteredAt,
 	}
-	return s.db.Create(usage).Error
+	return s.db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "event_key"}}, DoNothing: true}).Create(usage).Error
 }
 
 // Snapshot returns all current telemetry values.

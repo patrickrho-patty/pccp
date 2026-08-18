@@ -1,10 +1,11 @@
-import { useState, useEffect, Fragment } from 'react'
+import { useState, useEffect, useMemo, Fragment } from 'react'
 import EmptyState from '../components/EmptyState'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
+import { modelClassOptions } from '../allowedModels'
 
 const MODEL_FILTER: FilterConfig = {
   searchFields: ['name', 'name_ko', 'package_id', 'model_id'],
@@ -17,6 +18,7 @@ const MODEL_FILTER: FilterConfig = {
     { key: 'family', label: '패밀리', options: [
       { value: 'code', label: 'Code' }, { value: 'chat', label: 'Chat' },
     ]},
+    { key: 'entitlement_class', label: '클래스', options: modelClassOptions() },
   ],
 }
 
@@ -33,7 +35,11 @@ const EP_FILTER: FilterConfig = {
 
 export default function ModelInfra() {
   const confirm = useConfirm()
-  const [tab, setTab] = useState<'catalog' | 'packages' | 'endpoints'>('catalog')
+  // A class deep link (?class=…) filters the Packages (PMP) registry, so
+  // land directly on that tab (PAT-1491).
+  const [searchParams] = useSearchParams()
+  const [tab, setTab] = useState<'catalog' | 'packages' | 'endpoints'>(
+    searchParams.get('class') ? 'packages' : 'catalog')
 
   return (
     <div>
@@ -150,7 +156,21 @@ function PackagesTab() {
   const [endpoints, setEndpoints] = useState<any[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
+  // Deep-linkable class filter (PAT-1491): /models?class=code lands here.
+  // FilterBar seeds the select DISPLAY from defaultValue but only emits
+  // changes on user interaction — so the data filter is seeded here too,
+  // and a key=deepClass remount re-seeds both when the param changes.
+  const [searchParams] = useSearchParams()
+  const deepClass = searchParams.get('class') || ''
+  const modelFilter = useMemo(() => ({
+    ...MODEL_FILTER,
+    dropdowns: (MODEL_FILTER.dropdowns || []).map(d => {
+      if (d.key !== 'entitlement_class' || !deepClass) return d
+      const has = d.options.some(o => o.value === deepClass)
+      return { ...d, defaultValue: deepClass, options: has ? d.options : [...d.options, { value: deepClass, label: deepClass }] }
+    }),
+  }), [deepClass])
+  const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: (deepClass ? { entitlement_class: deepClass } : {}) as Record<string, string> })
   const [page, setPage] = useState(1)
   const [form, setForm] = useState({ package_id: '', model_id: '', name: '', name_ko: '', family: 'code', version: '1.0.0' })
   const [impactTarget, setImpactTarget] = useState<any>(null)
@@ -172,7 +192,7 @@ function PackagesTab() {
   }
   useEffect(() => { load() }, [])
 
-  const filtered = useFilteredData(models, filters, MODEL_FILTER)
+  const filtered = useFilteredData(models, filters, modelFilter)
   const paged = filtered.slice((page - 1) * pageSize, page * pageSize)
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -214,7 +234,7 @@ function PackagesTab() {
         </form>
       )}
 
-      <FilterBar config={MODEL_FILTER} onChange={setFilters} />
+      <FilterBar key={deepClass} config={modelFilter} onChange={setFilters} />
 
       <div className="card">
         <table className="w-full overflow-x-auto block">

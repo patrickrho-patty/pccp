@@ -59,6 +59,18 @@ type UsageAmount struct {
 	RateAsOf     string     `json:"rate_as_of,omitempty"`
 }
 
+type UsageConversion struct {
+	SourceCurrency        string     `json:"source_currency"`
+	TargetCurrency        string     `json:"target_currency"`
+	SourceAmountMicros    int64      `json:"source_amount_micros"`
+	Rate                  string     `json:"rate,omitempty"`
+	ConvertedAmountMicros int64      `json:"converted_amount_micros"`
+	RateSource            string     `json:"rate_source,omitempty"`
+	RateAsOf              string     `json:"rate_as_of,omitempty"`
+	State                 MeterState `json:"state"`
+	Reason                string     `json:"reason,omitempty"`
+}
+
 // UsageTotal is the canonical usage response shared by organization, user,
 // session, project, and analytics surfaces.
 type UsageTotal struct {
@@ -70,6 +82,7 @@ type UsageTotal struct {
 	DisplayCurrency      string                 `json:"display_currency,omitempty"`
 	DisplayTotal         UsageAmount            `json:"display_total"`
 	CostByCurrency       map[string]UsageAmount `json:"cost_by_currency"`
+	Conversions          []UsageConversion      `json:"conversions"`
 	Meters               []UsageMeter           `json:"meters"`
 	Metrics              []UsageMeter           `json:"metrics"`
 	ByMetric             map[string]UsageMeter  `json:"by_metric"`

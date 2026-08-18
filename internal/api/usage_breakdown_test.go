@@ -74,6 +74,9 @@ func TestUsageBreakdownEveryUnitPresentEvenZero(t *testing.T) {
 			t.Fatalf("by_unit must include %q even when zero, got keys=%v", u, keysOf(resp.ByUnit))
 		}
 	}
+	if resp.DisplayTotal.State != MeterStateUnavailable {
+		t.Fatalf("an empty ledger must be unavailable, not a trustworthy zero: %+v", resp.DisplayTotal)
+	}
 }
 
 func TestUsageCostAnalysisRowsCarryUnits(t *testing.T) {
@@ -388,6 +391,7 @@ func TestUsageBreakdownUsesTenantDisplayCurrencyWithAuditableRate(t *testing.T) 
 			RateSource   string `json:"rate_source"`
 			RateAsOf     string `json:"rate_as_of"`
 		} `json:"display_total"`
+		Conversions []UsageConversion `json:"conversions"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
@@ -397,6 +401,35 @@ func TestUsageBreakdownUsesTenantDisplayCurrencyWithAuditableRate(t *testing.T) 
 	}
 	if resp.DisplayTotal.RateSource != "organization-admin" || resp.DisplayTotal.RateAsOf != "2026-08-18" {
 		t.Fatalf("FX provenance missing: %+v", resp.DisplayTotal)
+	}
+	if len(resp.Conversions) != 1 || resp.Conversions[0].SourceCurrency != "KRW" || resp.Conversions[0].TargetCurrency != "USD" || resp.Conversions[0].ConvertedAmountMicros != 720 {
+		t.Fatalf("auditable conversion line missing: %+v", resp.Conversions)
+	}
+}
+
+func TestUsageBreakdownReconcilesMultipleSourceCurrenciesDeterministically(t *testing.T) {
+	srv, db := securityTestServer(t)
+	org := models.Organization{Name: "o", Slug: "o-multi-currency", Status: "active"}
+	db.Create(&org)
+	db.Create(&models.OrgSetting{OrganizationID: org.ID, Key: "billing.display_currency", Value: "USD"})
+	db.Create(&models.OrgSetting{OrganizationID: org.ID, Key: "billing.fx_rates", Value: `{"KRW":{"rate":"0.00072","as_of":"2026-08-18","source":"organization-admin"},"EUR":{"rate":"1.1","as_of":"2026-08-18","source":"organization-admin"}}`})
+	now := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	db.Create(&models.UsageRecord{OrganizationID: org.ID, MetricType: "flat_fee", Unit: "count", Quantity: 1, CostMicros: 1_000_000, Currency: "KRW", OccurredAt: now})
+	db.Create(&models.UsageRecord{OrganizationID: org.ID, MetricType: "reservation", Unit: "count", Quantity: 1, CostMicros: 2_000_000, Currency: "EUR", OccurredAt: now})
+
+	rec := doJSONAsRole(t, srv, "GET", "/api/analytics/usage-breakdown?range=7d", "", org.ID, "admin")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("breakdown: %d %s", rec.Code, rec.Body.String())
+	}
+	var report UsageTotal
+	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if !report.Reconciled || report.DisplayTotal.AmountMicros != 2_200_720 {
+		t.Fatalf("multi-currency total was not reconciled: %+v", report.DisplayTotal)
+	}
+	if len(report.Conversions) != 2 || report.Conversions[0].SourceCurrency != "EUR" || report.Conversions[1].SourceCurrency != "KRW" {
+		t.Fatalf("conversion lines must be complete and deterministic: %+v", report.Conversions)
 	}
 }
 

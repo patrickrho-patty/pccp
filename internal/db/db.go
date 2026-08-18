@@ -66,8 +66,25 @@ func AutoMigrate(db *gorm.DB) error {
 	if err := db.AutoMigrate(append(models.AllModels(), &identity.AdminCredentials{})...); err != nil {
 		return fmt.Errorf("db: auto-migrate: %w", err)
 	}
+	if err := normalizeUsageLedger(db); err != nil {
+		return fmt.Errorf("db: normalize usage ledger: %w", err)
+	}
 	log.Printf("db: auto-migration complete (%d models)", len(models.AllModels())+1)
 	return nil
+}
+
+func normalizeUsageLedger(db *gorm.DB) error {
+	validOccurrence := "occurred_at IS NOT NULL"
+	if db.Dialector.Name() == "sqlite" {
+		validOccurrence += " AND occurred_at <> ''"
+	}
+	if err := db.Exec("UPDATE usage_records SET metered_at = occurred_at WHERE metered_at IS NULL AND " + validOccurrence).Error; err != nil {
+		return err
+	}
+	if err := db.Exec("UPDATE usage_records SET pricing_state = ? WHERE (pricing_state IS NULL OR pricing_state = '') AND cost_micros <> 0", models.UsagePricingPriced).Error; err != nil {
+		return err
+	}
+	return db.Exec("UPDATE usage_records SET pricing_state = ? WHERE pricing_state IS NULL OR pricing_state = ''", models.UsagePricingUnpriced).Error
 }
 
 // FromEnv creates a database connection from environment variables.

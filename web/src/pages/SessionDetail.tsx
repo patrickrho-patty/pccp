@@ -58,6 +58,8 @@ export default function SessionDetail() {
   const meta = STATUS_META[sess.status] || STATUS_META.pending
   const totalTokens = usageReport?.total_tokens
   const totalCost = usageReport?.display_total
+  const hasUsageLedger = Boolean(usageReport?.record_count)
+  const delayedUsageMeters = (usageReport?.meters || []).filter(meter => meter.state === 'delayed').length
 
   const act = async (action: string) => {
     await api.sessionAction(id!, action).catch(() => {})
@@ -95,8 +97,8 @@ export default function SessionDetail() {
           </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
-          <StatCard label="최근 30일 토큰" value={totalTokens == null ? '—' : totalTokens.toLocaleString()} accent="blue" to={`/sessions/${sess.session_id || sess.id}`} query="#session-usage-ledger" sub={`원장 ${usageReport?.record_count ?? '—'}건`} />
-          <StatCard label={`최근 30일 비용 (${usageReport?.display_currency || '통화 미확인'})`} value={totalCost ? formatUsageAmount(totalCost.amount_micros, totalCost.currency) : '—'} accent="green" to={`/sessions/${sess.session_id || sess.id}`} query="#session-usage-ledger" sub={usageReport?.reconciled ? '원장 대사 완료' : '대사 확인 필요'} />
+          <StatCard label="최근 30일 토큰" value={hasUsageLedger && totalTokens != null ? totalTokens.toLocaleString() : '미수집'} accent="blue" to={`/sessions/${sess.session_id || sess.id}`} query="#session-usage-ledger" sub={`원장 ${usageReport?.record_count ?? '—'}건`} />
+          <StatCard label={`최근 30일 비용 (${usageReport?.display_currency || '통화 미확인'})`} value={totalCost?.state === 'unavailable' ? '미수집' : totalCost ? formatUsageAmount(totalCost.amount_micros, totalCost.currency) : '—'} accent="green" to={`/sessions/${sess.session_id || sess.id}`} query="#session-usage-ledger" sub={!hasUsageLedger ? '원장 기록 없음' : `${usageReport?.reconciled ? '원장 대사 완료' : '대사 확인 필요'}${delayedUsageMeters ? ` · 지연 ${delayedUsageMeters}` : ''}`} />
           <StatCard label="익스체인지" value={(detail.exchanges || []).length} accent="purple" />
           <StatCard label="변경셋" value={(detail.change_sets || []).length} accent="orange" />
         </div>

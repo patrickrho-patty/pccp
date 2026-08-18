@@ -264,7 +264,7 @@ export default function UserDetail() {
               <div className="flex justify-between"><span className="text-gray-400">세션</span><span>{sessions.length}</span></div>
               <div className="flex justify-between"><span className="text-gray-400">하네스</span><span>{harnesses.length}</span></div>
               <div className="flex justify-between"><span className="text-gray-400">감사 이벤트</span><span>{auditEvents.length}</span></div>
-              {usage && <button type="button" onClick={() => setTab('usage')} className="flex w-full justify-between text-left hover:text-blue-600"><span className="text-gray-400">최근 30일 비용</span><span>{formatUsageAmount(usage.display_total?.amount_micros, usage.display_total?.currency)}</span></button>}
+              {usage && <button type="button" onClick={() => setTab('usage')} className="flex w-full justify-between text-left hover:text-blue-600"><span className="text-gray-400">최근 30일 비용</span><span>{usage.display_total?.state === 'unavailable' ? '미수집' : formatUsageAmount(usage.display_total?.amount_micros, usage.display_total?.currency)}</span></button>}
             </div>
           </div>
         </div>

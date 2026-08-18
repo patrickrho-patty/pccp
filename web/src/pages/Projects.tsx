@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import { AllowedModelChips, resolveAllowedModels, parseAllowedModelClasses, classLabel } from '../allowedModels'
 import { useServerTable } from '../hooks/useServerTable'
 import { useFavorites, FavoriteStar } from '../hooks/useFavorites'
 import { StatCard } from '../components/StatCard'
@@ -34,6 +35,8 @@ export default function Projects() {
   const [catalogModels, setCatalogModels] = useState<any[]>([])
   const [packTarget, setPackTarget] = useState<any | null>(null)
   const [packs, setPacks] = useState<any[]>([])
+  const [modelPackages, setModelPackages] = useState<any[]>([])
+  const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set())
   const { favorites, sortPinnedFirst } = useFavorites('projects')
   const [tab, setTab] = useState('active')
   const [repos, setRepos] = useState<any[]>([])
@@ -55,6 +58,7 @@ export default function Projects() {
     api.catalogModels().then(data => setCatalogModels(Array.isArray(data) ? data : [])).catch(() => {})
     api.listPolicyPacks().then(data => setPacks(Array.isArray(data) ? data : [])).catch(() => {})
     api.listRepositories().then(data => setRepos(Array.isArray(data) ? data : [])).catch(() => {})
+    api.listModels().then(data => setModelPackages(Array.isArray(data) ? data : [])).catch(() => setModelPackages([]))
   }
   useEffect(() => { load() }, [])
   useEffect(() => { table.reload() }, [tab])
@@ -76,7 +80,7 @@ export default function Projects() {
     setEditingId(proj.id)
     setForm({
       name: proj.name || '', name_ko: proj.name_ko || '', slug: proj.slug || '',
-      allowed_models: Array.isArray(proj.allowed_model_classes) ? proj.allowed_model_classes : (proj.allowed_model_classes ? [proj.allowed_model_classes] : ['patty-code-standard']),
+      allowed_models: parseAllowedModelClasses(proj.allowed_model_classes),
       description: proj.description || '', project_code: proj.project_code || '',
       group_affiliate: proj.group_affiliate || '', policy_pack_id: proj.policy_pack_id || '',
     })
@@ -268,16 +272,12 @@ export default function Projects() {
                 )}
               </div>
 
-              {p.allowed_model_classes && (
-                <div className="mb-3">
-                  <div className="text-xs font-medium text-gray-500 mb-1">허용 모델</div>
-                  <div className="flex flex-wrap gap-1">
-                    {(Array.isArray(p.allowed_model_classes) ? p.allowed_model_classes : [p.allowed_model_classes]).map((m: string) => (
-                      <Link key={m} to={`/models/${m}`} className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded hover:bg-blue-100" title="모델 상세 →">{m}</Link>
-                    ))}
-                  </div>
+              <div className="mb-3">
+                <div className="text-xs font-medium text-gray-500 mb-1">허용 모델</div>
+                <div className="flex flex-wrap gap-1">
+                  <AllowedModelChips items={resolveAllowedModels(p.allowed_model_classes, modelPackages)} />
                 </div>
-              )}
+              </div>
 
               <div className="flex gap-2 pt-2 border-t border-gray-50 flex-wrap">
                 <button onClick={() => setExpandedId(expandedId === p.id ? null : p.id)} className="btn-link">{expandedId === p.id ? '접기' : '상세'}</button>
@@ -293,9 +293,7 @@ export default function Projects() {
                 <div className="mt-3 pt-3 border-t border-gray-100 space-y-2 expand-enter">
                   <div className="text-xs text-gray-500"><span className="font-medium">프로젝트 ID:</span> <span className="font-mono">{p.id}</span></div>
                   <div className="text-xs text-gray-500"><span className="font-medium">생성일:</span> {formatRelative(p.created_at)}</div>
-                  {p.allowed_model_classes && (
-                    <div className="text-xs text-gray-500"><span className="font-medium">허용 모델:</span> {Array.isArray(p.allowed_model_classes) ? p.allowed_model_classes.join(', ') : p.allowed_model_classes}</div>
-                  )}
+                  <div className="text-xs text-gray-500"><span className="font-medium">허용 모델:</span> {parseAllowedModelClasses(p.allowed_model_classes).map(c => classLabel(c)).join(', ') || '제한 없음'}</div>
                   <div className="text-xs text-gray-500"><span className="font-medium">정책 팩:</span> {packs.find(pk => pk.id === p.policy_pack_id)?.name || p.policy_pack_id || '-'}</div>
                   <Link to={`/projects/${p.id}`} className="text-xs text-blue-600 hover:underline block">멤버/사용량/변경승인 큐 → 상세 페이지</Link>
                 </div>

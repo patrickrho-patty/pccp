@@ -8,6 +8,7 @@ import { formatRelative } from '../utils/format'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
 import { formatUsageAmount, UsageReport } from '../components/UsageReport'
+import { AllowedModelChips, resolveAllowedModels } from '../allowedModels'
 
 const ROLES = [
   { value: 'owner', label: '소유자 · Owner' },
@@ -30,6 +31,7 @@ export default function ProjectDetail() {
   const [memberForm, setMemberForm] = useState({ user_id: '', role: 'member' })
   const [packTarget, setPackTarget] = useState(false)
   const [packs, setPacks] = useState<any[]>([])
+  const [modelPackages, setModelPackages] = useState<any[]>([])
   const [packPick, setPackPick] = useState('')
 
   const load = () => {
@@ -37,6 +39,7 @@ export default function ProjectDetail() {
     api.getProjectDetail(id).then(setDetail).catch(() => setDetail(null)).finally(() => setLoading(false))
     api.projectUsage(id).then(setUsage).catch(() => setUsage(null))
     api.listPolicyPacks().then(d => setPacks(Array.isArray(d) ? d : [])).catch(() => {})
+    api.listModels().then(d => setModelPackages(Array.isArray(d) ? d : [])).catch(() => setModelPackages([]))
   }
   useEffect(() => { load() }, [id])
 
@@ -51,7 +54,9 @@ export default function ProjectDetail() {
   const auditEvents = detail.audit_events || []
   const pendingChanges = changeRequests.filter((c: any) => c.status === 'pending')
   const activeSessions = sessions.filter((s: any) => s.status === 'active')
-  const displayCost = usage?.display_total ? formatUsageAmount(usage.display_total.amount_micros, usage.display_total.currency) : '—'
+  const hasUsageLedger = Boolean(usage?.record_count)
+  const delayedUsageMeters = (usage?.meters || []).filter((meter: any) => meter.state === 'delayed').length
+  const displayCost = usage?.display_total?.state === 'unavailable' ? '미수집' : usage?.display_total ? formatUsageAmount(usage.display_total.amount_micros, usage.display_total.currency) : '—'
 
   const submitMember = async () => {
     if (!memberForm.user_id) { showToast('사용자를 선택하세요', 'error'); return }
@@ -110,8 +115,8 @@ export default function ProjectDetail() {
         <StatCard label="저장소" value={repos.length} accent="blue" />
         <StatCard label="멤버" value={members.length} accent="green" />
         <StatCard label="활성 세션" value={activeSessions.length} accent="purple" to="/sessions" query={`?project_id=${proj.id}`} />
-        <StatCard label="최근 30일 토큰" value={usage ? (usage.total_tokens || 0).toLocaleString() : '—'} accent="orange" to={`/projects/${proj.id}`} query="#project-usage-ledger" sub={`원장 ${usage?.record_count ?? '—'}건`} />
-        <StatCard label={`최근 30일 비용 (${usage?.display_currency || '통화 미확인'})`} value={displayCost} accent="red" to={`/projects/${proj.id}`} query="#project-usage-ledger" sub={usage?.reconciled ? '원장 대사 완료' : '대사 확인 필요'} />
+        <StatCard label="최근 30일 토큰" value={hasUsageLedger ? (usage.total_tokens || 0).toLocaleString() : '미수집'} accent="orange" to={`/projects/${proj.id}`} query="#project-usage-ledger" sub={`원장 ${usage?.record_count ?? '—'}건`} />
+        <StatCard label={`최근 30일 비용 (${usage?.display_currency || '통화 미확인'})`} value={displayCost} accent="red" to={`/projects/${proj.id}`} query="#project-usage-ledger" sub={!hasUsageLedger ? '원장 기록 없음' : `${usage?.reconciled ? '원장 대사 완료' : '대사 확인 필요'}${delayedUsageMeters ? ` · 지연 ${delayedUsageMeters}` : ''}`} />
       </div>
 
       {pendingChanges.length > 0 && (
@@ -157,10 +162,7 @@ export default function ProjectDetail() {
           <div className="card">
             <h3 className="text-sm font-semibold mb-3">허용 모델 · Allowed Models</h3>
             <div className="flex flex-wrap gap-1">
-              {(Array.isArray(proj.allowed_model_classes) ? proj.allowed_model_classes : (proj.allowed_model_classes ? [proj.allowed_model_classes] : [])).map((m: string) => (
-                <Link key={m} to={`/models/${m}`} className="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded hover:bg-blue-100">{m}</Link>
-              ))}
-              {(!proj.allowed_model_classes || proj.allowed_model_classes.length === 0) && <span className="text-xs text-gray-400">제한 없음</span>}
+              <AllowedModelChips items={resolveAllowedModels(proj.allowed_model_classes, modelPackages)} />
             </div>
           </div>
 

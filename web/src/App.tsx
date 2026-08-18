@@ -110,6 +110,7 @@ function AppContent() {
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/sessions/:id" element={<SessionDetail />} />
           <Route path="/sessions/:id/provenance" element={<Provenance />} />
+          <Route path="/models" element={<ModelInfra />} />
           <Route path="/models/:id" element={<ModelDetail />} />
           <Route path="/endpoints/:id" element={<EndpointDetail />} />
           <Route path="/findings/:id" element={<FindingDetail />} />

@@ -1,5 +1,12 @@
 package models
 
+import (
+	"fmt"
+	"time"
+
+	"gorm.io/gorm"
+)
+
 // Conversation is a chat conversation between users (PRD §21.4).
 type Conversation struct {
 	AuditBase
@@ -97,18 +104,51 @@ type Broadcast struct {
 // UsageRecord tracks billable usage (PRD §29).
 type UsageRecord struct {
 	Base
-	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
-	UserID         string `gorm:"type:varchar(64);index" json:"user_id,omitempty"`
-	HarnessID      string `gorm:"type:varchar(64);index" json:"harness_id,omitempty"`
-	SessionID      string `gorm:"type:varchar(64);index" json:"session_id,omitempty"`
-	ModelPackageID string `gorm:"type:varchar(64)" json:"model_package_id,omitempty"`
-	EndpointID     string `gorm:"type:varchar(64)" json:"endpoint_id,omitempty"`
+	OrganizationID string  `gorm:"type:varchar(64);index;index:idx_usage_org_metered,priority:1;index:idx_usage_org_user_metered,priority:1;index:idx_usage_org_session_metered,priority:1;not null" json:"organization_id"`
+	UserID         string  `gorm:"type:varchar(64);index;index:idx_usage_org_user_metered,priority:2" json:"user_id,omitempty"`
+	HarnessID      string  `gorm:"type:varchar(64);index" json:"harness_id,omitempty"`
+	SessionID      string  `gorm:"type:varchar(64);index;index:idx_usage_org_session_metered,priority:2" json:"session_id,omitempty"`
+	ExchangeID     string  `gorm:"type:varchar(64);index" json:"exchange_id,omitempty"`
+	EventKey       *string `gorm:"type:varchar(128);uniqueIndex:idx_usage_event_key" json:"event_key,omitempty"`
+	ModelPackageID string  `gorm:"type:varchar(64)" json:"model_package_id,omitempty"`
+	EndpointID     string  `gorm:"type:varchar(64)" json:"endpoint_id,omitempty"`
 	// Usage metrics
 	MetricType string `gorm:"type:varchar(32);not null" json:"metric_type"` // tokens_in, tokens_out, gpu_seconds, storage_bytes
 	Quantity   int64  `json:"quantity"`
 	Unit       string `gorm:"type:varchar(32)" json:"unit"` // tokens, seconds, bytes
 	// Cost
-	CostMicros int64  `json:"cost_micros,omitempty"` // cost in micro-cents
-	Currency   string `gorm:"type:varchar(8);default:'KRW'" json:"currency"`
-	OccurredAt string `gorm:"type:timestamp" json:"occurred_at"`
+	CostMicros   int64  `json:"cost_micros,omitempty"` // millionths of Currency
+	Currency     string `gorm:"type:varchar(8);default:'KRW'" json:"currency,omitempty"`
+	PricingState string `gorm:"type:varchar(16);index" json:"pricing_state"` // priced, unpriced, pending, error
+	// OccurredAt is retained for wire/backward compatibility. MeteredAt is the
+	// canonical nullable timestamp used by indexed ledger queries.
+	OccurredAt string     `gorm:"type:timestamp" json:"occurred_at"`
+	MeteredAt  *time.Time `gorm:"type:timestamp;index:idx_usage_org_metered,priority:2;index:idx_usage_org_user_metered,priority:3;index:idx_usage_org_session_metered,priority:3" json:"-"`
+}
+
+const (
+	UsagePricingPriced   = "priced"
+	UsagePricingUnpriced = "unpriced"
+	UsagePricingPending  = "pending"
+	UsagePricingError    = "error"
+)
+
+func (u *UsageRecord) BeforeSave(_ *gorm.DB) error {
+	if u.MeteredAt == nil && u.OccurredAt != "" {
+		occurred, err := time.Parse(time.RFC3339, u.OccurredAt)
+		if err != nil {
+			return fmt.Errorf("usage record occurred_at: %w", err)
+		}
+		occurred = occurred.UTC()
+		u.MeteredAt = &occurred
+		u.OccurredAt = occurred.Format(time.RFC3339)
+	}
+	if u.PricingState == "" {
+		if u.CostMicros != 0 {
+			u.PricingState = UsagePricingPriced
+		} else {
+			u.PricingState = UsagePricingUnpriced
+		}
+	}
+	return nil
 }
