@@ -205,6 +205,8 @@ func (s *Server) setupRouter() {
 			r.Delete("/{id}/harnesses/{harnessId}", s.handleRevokeUserHarness)
 			r.Get("/{id}/usage", s.handleGetUserUsage)
 			r.Post("/{id}/offboard", s.handleOffboardUser)
+			r.Post("/{id}/suspend", s.handleSuspendUser)
+			r.Post("/{id}/resume", s.handleResumeUser)
 			r.Get("/{id}/entitlements", s.handleGetUserEntitlements)
 			r.Put("/{id}/entitlements", s.handlePutUserEntitlements)
 			r.Get("/{id}/sso-status", s.handleUserSSOStatus)
@@ -1013,14 +1015,49 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		q.Count(&total)
 		var users []models.User
 		q.Offset((page - 1) * size).Limit(size).Find(&users)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"data": users, "total": total, "page": page, "size": size})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"data": s.decorateUsers(users), "total": total, "page": page, "size": size})
 		return
 	}
 
 	// Full list (backward compatible — used by cross-page lookups)
 	var users []models.User
 	q.Find(&users)
-	writeJSON(w, http.StatusOK, users)
+	writeJSON(w, http.StatusOK, s.decorateUsers(users))
+}
+
+// decorateUsers keeps list-level relationship summaries consistent with the
+// user detail view. Harness membership is stored as a JSON array, so matching
+// is done after decoding rather than with an unsafe substring query.
+func (s *Server) decorateUsers(users []models.User) []map[string]interface{} {
+	harnessesByOrg := map[string][]models.Harness{}
+	for _, user := range users {
+		if _, loaded := harnessesByOrg[user.OrganizationID]; loaded {
+			continue
+		}
+		var harnesses []models.Harness
+		s.db.Where("organization_id = ? AND status != ?", user.OrganizationID, "revoked").Find(&harnesses)
+		harnessesByOrg[user.OrganizationID] = harnesses
+	}
+
+	out := make([]map[string]interface{}, 0, len(users))
+	for _, user := range users {
+		row := map[string]interface{}{}
+		b, _ := json.Marshal(user)
+		_ = json.Unmarshal(b, &row)
+		var roleIDs []string
+		s.db.Model(&models.UserRole{}).Where("organization_id = ? AND user_id = ?", user.OrganizationID, user.ID).Pluck("role_id", &roleIDs)
+		var harnessCount int64
+		for _, harness := range harnessesByOrg[user.OrganizationID] {
+			var allowedUsers []string
+			if json.Unmarshal([]byte(harness.AllowedUsers), &allowedUsers) == nil && containsStr(allowedUsers, user.ID) {
+				harnessCount++
+			}
+		}
+		row["role_ids"] = roleIDs
+		row["harness_count"] = harnessCount
+		out = append(out, row)
+	}
+	return out
 }
 
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
@@ -1849,53 +1886,76 @@ func (s *Server) handleListRepoBranches(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, branches)
 }
 
-// handleGetRepoWebhook returns the webhook ingest URL + secret for the
-// repository (repositories UX13): SCM systems POST push events here.
+// handleGetRepoWebhook returns the webhook ingest URL and a safe secret
+// projection for the repository (repositories UX13). The signing secret is
+// never returned by a normal read.
 func (s *Server) handleGetRepoWebhook(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var repo models.Repository
-	if err := s.db.First(&repo, "id = ?", id).Error; err != nil {
+	if err := s.db.Where("id = ? AND organization_id = ?", id, getOrgID(r)).First(&repo).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return
-	}
-	if repo.WebhookSecret == "" {
-		if err := s.rotateRepoWebhookSecret(&repo); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
 	}
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
+	maskedSecret := ""
+	if repo.WebhookSecret != "" {
+		maskedSecret = "••••••••"
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"url":    scheme + "://" + r.Host + "/webhooks/scm/" + id,
-		"secret": repo.WebhookSecret,
+		"url":           scheme + "://" + r.Host + "/webhooks/scm/" + id,
+		"secret_set":    repo.WebhookSecret != "",
+		"masked_secret": maskedSecret,
 	})
 }
 
-// handleRotateRepoWebhookSecret issues a fresh webhook secret.
+// handleRotateRepoWebhookSecret issues a fresh one-time webhook secret to an
+// organization administrator. The secret is intentionally omitted from audit
+// evidence and from all normal read projections.
 func (s *Server) handleRotateRepoWebhookSecret(w http.ResponseWriter, r *http.Request) {
+	role := getRole(r)
+	if role != "admin" && role != "owner" && role != "super_admin" {
+		writeError(w, http.StatusForbidden, "organization administrator role required")
+		return
+	}
 	id := chi.URLParam(r, "id")
 	var repo models.Repository
-	if err := s.db.First(&repo, "id = ?", id).Error; err != nil {
+	if err := s.db.Where("id = ? AND organization_id = ?", id, getOrgID(r)).First(&repo).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	if err := s.rotateRepoWebhookSecret(&repo); err != nil {
+	if err := s.rotateRepoWebhookSecret(&repo, getOperatorEmail(r)); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "rotated", "secret": repo.WebhookSecret})
 }
 
-func (s *Server) rotateRepoWebhookSecret(repo *models.Repository) error {
+func (s *Server) rotateRepoWebhookSecret(repo *models.Repository, actor string) error {
 	secretBytes := make([]byte, 32)
 	if _, err := rand.Read(secretBytes); err != nil {
 		return err
 	}
 	repo.WebhookSecret = hex.EncodeToString(secretBytes)
-	return s.db.Save(repo).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(repo).Error; err != nil {
+			return err
+		}
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: repo.OrganizationID,
+			EventType:      "repository.webhook_secret_rotated",
+			ActorID:        actor,
+			ActorType:      "admin",
+			Action:         "repository.webhook_secret_rotated",
+			ResourceType:   "repository",
+			ResourceID:     repo.ID,
+			Details:        `{"secret_rotated":true}`,
+			Result:         "success",
+			OccurredAt:     time.Now().UTC().Format(time.RFC3339),
+		}).Error
+	})
 }
 
 // handleScmWebhook ingests an SCM webhook delivery (repositories C1):
@@ -2542,8 +2602,38 @@ func (s *Server) handleRecallModel(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListEndpoints(w http.ResponseWriter, r *http.Request) {
 	var endpoints []models.InferenceEndpoint
-	s.db.Order("created_at DESC").Find(&endpoints)
-	writeJSON(w, http.StatusOK, endpoints)
+	q := s.db
+	if orgID := getOrgID(r); orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	q.Order("created_at DESC").Find(&endpoints)
+	writeJSON(w, http.StatusOK, s.decorateEndpoints(endpoints))
+}
+
+// decorateEndpoints exposes the operational fields rendered in the customer
+// console while preserving the endpoint record as the source of truth.
+func (s *Server) decorateEndpoints(endpoints []models.InferenceEndpoint) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		row := map[string]interface{}{}
+		b, _ := json.Marshal(endpoint)
+		_ = json.Unmarshal(b, &row)
+		row["address"] = endpoint.ServingURL
+		row["engine"] = endpoint.ServingEngine
+		lastAttestation := endpoint.LastAttestation
+		if lastAttestation == "" {
+			var attestation models.EndpointAttestation
+			if s.db.Where("endpoint_id = ?", endpoint.EndpointID).Order("timestamp DESC").First(&attestation).Error == nil {
+				lastAttestation = attestation.Timestamp
+			}
+		}
+		row["last_attestation_at"] = lastAttestation
+		var leaseCount int64
+		s.db.Model(&models.EndpointLease{}).Where("endpoint_id = ? AND status = ?", endpoint.EndpointID, "active").Count(&leaseCount)
+		row["lease_count"] = leaseCount
+		out = append(out, row)
+	}
+	return out
 }
 
 func (s *Server) handleEnrollEndpoint(w http.ResponseWriter, r *http.Request) {
@@ -2594,11 +2684,11 @@ func (s *Server) handleEnrollEndpoint(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetEndpoint(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var ep models.InferenceEndpoint
-	if err := s.db.Where("id = ? OR endpoint_id = ?", id, id).First(&ep).Error; err != nil {
+	if err := s.db.Where("(id = ? OR endpoint_id = ?) AND organization_id = ?", id, id, getOrgID(r)).First(&ep).Error; err != nil {
 		writeError(w, http.StatusNotFound, "엔드포인트를 찾을 수 없습니다")
 		return
 	}
-	writeJSON(w, http.StatusOK, ep)
+	writeJSON(w, http.StatusOK, s.decorateEndpoints([]models.InferenceEndpoint{ep})[0])
 }
 
 func (s *Server) handleIssueEndpointLease(w http.ResponseWriter, r *http.Request) {
@@ -3393,7 +3483,7 @@ func (s *Server) handleEmitEvent(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var user models.User
-	if err := s.db.First(&user, "id = ?", id).Error; err != nil {
+	if err := s.db.First(&user, "id = ? AND organization_id = ?", id, getOrgID(r)).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
@@ -3414,6 +3504,13 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decodeJSON(r, &updates); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	// Lifecycle status moves exclusively through the dedicated endpoints
+	// (PAT-1489) — a generic profile edit must never bypass the state
+	// machine. A same-value status is a no-op and stays allowed.
+	if updates.Status != nil && *updates.Status != user.Status {
+		writeError(w, http.StatusConflict, "lifecycle status changes require the dedicated /suspend, /resume, or /offboard endpoints")
 		return
 	}
 	if updates.Name != nil {
@@ -4821,28 +4918,35 @@ func (s *Server) handleScanSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- Alert endpoints (security C2/C3) ---
+//
+// PAT-1502 PR 1: response redaction boundary. The GORM model holds
+// `Target` as a write-only secret (json:"-"). All read paths go through
+// redactAlertEndpoint; the raw URL never reaches the client.
+//
+// PAT-1502 PR 2 will replace the plaintext column with a keymgmt
+// secret reference and add test/rotate endpoints. PR 1 keeps the
+// surface minimal so PR 2's durability work is reviewable on its own.
 
 func (s *Server) handleListAlertEndpoints(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
 	var endpoints []models.AlertEndpoint
 	s.db.Where("organization_id = ?", orgID).Order("created_at DESC").Find(&endpoints)
-	writeJSON(w, http.StatusOK, endpoints)
+	writeJSON(w, http.StatusOK, redactAlertEndpoints(endpoints))
 }
 
 func (s *Server) handleCreateAlertEndpoint(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	var req struct {
-		Name       string   `json:"name"`
-		Type       string   `json:"type"` // slack, webhook, siem
-		Target     string   `json:"target"`
-		Severities []string `json:"severities"`
-		Enabled    *bool    `json:"enabled"`
+	role := getRole(r)
+	if role != "admin" && role != "owner" && role != "super_admin" {
+		writeError(w, http.StatusForbidden, "organization administrator role required")
+		return
 	}
+	var req AlertEndpointCreateRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Name == "" || req.Target == "" {
+	if req.Name == "" || strings.TrimSpace(req.Target) == "" {
 		writeError(w, http.StatusBadRequest, "name and target are required")
 		return
 	}
@@ -4862,13 +4966,52 @@ func (s *Server) handleCreateAlertEndpoint(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, ep)
+	// Audit create with the credential identifier (NOT the URL). The
+	// request body and any provider response are deliberately omitted
+	// from the audit trail.
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		ActorID:        getActorID(r),
+		ActorType:      "user",
+		EventType:      "security.alert_endpoint.create",
+		Action:         "create",
+		ResourceType:   "alert_endpoint",
+		ResourceID:     ep.ID,
+		Result:         "success",
+		Details:        fmt.Sprintf(`{"credential_id":%q,"type":%q,"name":%q}`, credentialIDForTarget(ep.Target), ep.Type, ep.Name),
+	})
+	writeJSON(w, http.StatusCreated, redactAlertEndpoint(*ep))
 }
 
 func (s *Server) handleDeleteAlertEndpoint(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
-	s.db.Where("id = ? AND organization_id = ?", id, orgID).Delete(&models.AlertEndpoint{})
+	role := getRole(r)
+	if role != "admin" && role != "owner" && role != "super_admin" {
+		writeError(w, http.StatusForbidden, "organization administrator role required")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	var ep models.AlertEndpoint
+	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&ep).Error; err != nil {
+		writeError(w, http.StatusNotFound, "alert endpoint not found")
+		return
+	}
+	credID := credentialIDForTarget(ep.Target)
+	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).Delete(&models.AlertEndpoint{}).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		ActorID:        getActorID(r),
+		ActorType:      "user",
+		EventType:      "security.alert_endpoint.delete",
+		Action:         "delete",
+		ResourceType:   "alert_endpoint",
+		ResourceID:     id,
+		Result:         "success",
+		Details:        fmt.Sprintf(`{"credential_id":%q,"type":%q,"name":%q}`, credID, ep.Type, ep.Name),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -5091,6 +5234,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	q.Order("occurred_at DESC").Limit(20).Find(&recentEvents)
 	dash["recent_events"] = recentEvents
+	dash["recent_activity"] = recentEvents
 
 	// Active incidents (A5): security findings with severity critical/
 	// high + open remediation tasks are surfaced for the ops view.

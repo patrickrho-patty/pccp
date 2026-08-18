@@ -741,10 +741,14 @@ export default function Security() {
               <div className="space-y-2">
                 {alerts.map(a => (
                   <div key={a.id} className="card flex items-center gap-3 py-3 px-4">
-                    <span>{a.type === 'slack' ? '💬' : a.type === 'siem' ? '📡' : '🪝'}</span>
+                    <span>{a.type === 'slack' ? '💬' : a.type === 'siem' ? '📡' : '�'}</span>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium">{a.name} <span className="text-xs text-gray-400">{a.type}</span></div>
-                      <div className="text-[10px] text-gray-400 font-mono truncate">{a.target}</div>
+                      <div className="text-[10px] text-gray-400 font-mono truncate">
+                        {a.secret_configured
+                          ? `credential: ${a.credential_id || 'configured'} · ${a.target_redacted || '***'}`
+                          : 'credential: not configured'}
+                      </div>
                       <div className="text-[10px] text-gray-400">심각도: {JSON.parse(a.severities || '[]').length ? JSON.parse(a.severities).join(', ') : '전체'}</div>
                     </div>
                     <button onClick={async () => { await api.deleteSecurityAlert(a.id); showToast('삭제됨', 'info'); loadAlerts() }} className="btn-link-danger">삭제</button>
@@ -868,15 +872,35 @@ export default function Security() {
         </div>
       </Modal>
 
-      {/* Alert create modal */}
-      <Modal open={alertModal} title="알림 라우트 추가 · Add Alert Route" onClose={() => setAlertModal(false)} size="sm"
-        footer={<ModalFooter onCancel={() => setAlertModal(false)} onConfirm={submitAlert} confirmLabel="추가" disabled={!alertForm.name || !alertForm.target} />}>
+      {/* Alert create modal — PAT-1502 PR 1. Target field is write-only:
+          type=password, autocomplete=new-password, no reveal action, and the
+          field is cleared on close so it cannot leak through subsequent form
+          renders, autofill, or browser-extension snapshots. */}
+      <Modal open={alertModal} title="알림 라우트 추가 · Add Alert Route" onClose={() => { setAlertModal(false); setAlertForm({ name: '', type: 'webhook', target: '', severities: ['critical', 'high'] }) }} size="sm"
+        footer={<ModalFooter onCancel={() => { setAlertModal(false); setAlertForm({ name: '', type: 'webhook', target: '', severities: ['critical', 'high'] }); }} onConfirm={submitAlert} confirmLabel="추가" disabled={!alertForm.name || !alertForm.target} />}>
         <div className="space-y-3">
           <div><label className="label">이름 · Name</label><input className="input" value={alertForm.name} onChange={e => setAlertForm({ ...alertForm, name: e.target.value })} placeholder="oncall-webhook" /></div>
           <div><label className="label">유형 · Type</label><select className="input" value={alertForm.type} onChange={e => setAlertForm({ ...alertForm, type: e.target.value })}>
             <option value="webhook">웹훅 (온콜)</option><option value="slack">Slack 웹훅</option><option value="siem">SIEM 포워더 (§32.4)</option>
           </select></div>
-          <div><label className="label">대상 URL · Target</label><input className="input" value={alertForm.target} onChange={e => setAlertForm({ ...alertForm, target: e.target.value })} placeholder="https://hooks.slack.com/..." /></div>
+          <div>
+            <label className="label">대상 URL · Target (write-only)</label>
+            <input
+              className="input font-mono text-xs"
+              type="password"
+              autoComplete="new-password"
+              data-1p-ignore="true"
+              data-bwignore="true"
+              data-form-type="other"
+              spellCheck={false}
+              value={alertForm.target}
+              onChange={e => setAlertForm({ ...alertForm, target: e.target.value })}
+              placeholder="https://hooks.slack.com/services/…"
+            />
+            <p className="text-[10px] text-gray-400 mt-1">
+              작성 후 서버로 보내고 화면에서 사라집니다. 다시 보려면 새 값을 입력해 교체하세요.
+            </p>
+          </div>
           <div><label className="label">라우팅 심각도</label>
             <div className="flex gap-2 flex-wrap">
               {['critical', 'high', 'medium', 'low'].map(s => (
