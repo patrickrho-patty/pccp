@@ -51,7 +51,11 @@ type AlertEndpoint struct {
 	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
 	Name           string `gorm:"type:varchar(255)" json:"name"`
 	Type           string `gorm:"type:varchar(32)" json:"type"` // slack, webhook, siem
-	Target         string `gorm:"type:varchar(1024)" json:"target"`
+	// Target is a write-only secret: stored on disk for server-side
+	// delivery, but never marshalled to JSON. PAT-1502 PR 1 (response
+	// redaction boundary). PR 2 will replace the plaintext column with
+	// a keymgmt secret reference.
+	Target         string `gorm:"type:varchar(1024)" json:"-"`
 	SeveritiesJSON string `gorm:"type:text" json:"severities,omitempty"` // JSON array of severities to route
 	Enabled        bool   `gorm:"default:true" json:"enabled"`
 }
