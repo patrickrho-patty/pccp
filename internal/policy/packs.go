@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"gorm.io/gorm"
 )
 
 // packInput is the exported/imported pack document (policy B2/UX12).
@@ -106,8 +107,16 @@ func (s *Service) AssignPack(orgID, packID, scope, scopeID string) error {
 		if scopeID == "" {
 			return fmt.Errorf("policy: project assignment requires scope_id")
 		}
-		return s.db.Model(&models.Project{}).Where("id = ?", scopeID).
-			Update("policy_pack_id", packID).Error
+		result := s.db.Model(&models.Project{}).
+			Where("id = ? AND organization_id = ?", scopeID, orgID).
+			Update("policy_pack_id", packID)
+		if result.Error != nil {
+			return fmt.Errorf("policy: assign project pack: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return fmt.Errorf("policy: project not found")
+		}
+		return nil
 	default:
 		return fmt.Errorf("policy: unsupported assign scope %s", scope)
 	}
@@ -256,13 +265,23 @@ func (s *Service) ListAcks(orgID, epochID string) ([]map[string]interface{}, err
 
 // AckEpoch records a user's acknowledgement.
 func (s *Service) AckEpoch(orgID, epochID, userID string) error {
-	ack := models.PolicyAcknowledgement{
-		OrganizationID: orgID, EpochID: epochID, UserID: userID,
-		AckedAt: time.Now().Format(time.RFC3339),
-	}
-	return s.db.Where("epoch_id = ? AND user_id = ?", epochID, userID).
-		Assign(models.PolicyAcknowledgement{AckedAt: ack.AckedAt}).
-		FirstOrCreate(&ack).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var epoch models.PolicyEpoch
+		if err := tx.Where("organization_id = ? AND epoch_id = ?", orgID, epochID).First(&epoch).Error; err != nil {
+			return fmt.Errorf("policy: epoch not found in organization")
+		}
+		var user models.User
+		if err := tx.Where("organization_id = ? AND id = ? AND status = 'active'", orgID, userID).First(&user).Error; err != nil {
+			return fmt.Errorf("policy: active user not found in organization")
+		}
+		ack := models.PolicyAcknowledgement{
+			OrganizationID: orgID, EpochID: epoch.EpochID, UserID: user.ID,
+			AckedAt: time.Now().Format(time.RFC3339),
+		}
+		return tx.Where("organization_id = ? AND epoch_id = ? AND user_id = ?", orgID, epochID, userID).
+			Assign(models.PolicyAcknowledgement{AckedAt: ack.AckedAt}).
+			FirstOrCreate(&ack).Error
+	})
 }
 
 // HasAcked reports whether the user acknowledged the epoch (policy C2
@@ -270,7 +289,7 @@ func (s *Service) AckEpoch(orgID, epochID, userID string) error {
 func (s *Service) HasAcked(orgID, epochID, userID string) bool {
 	var count int64
 	s.db.Model(&models.PolicyAcknowledgement{}).
-		Where("epoch_id = ? AND user_id = ?", epochID, userID).Count(&count)
+		Where("organization_id = ? AND epoch_id = ? AND user_id = ?", orgID, epochID, userID).Count(&count)
 	return count > 0
 }
 

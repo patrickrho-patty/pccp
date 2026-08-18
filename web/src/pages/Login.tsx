@@ -10,8 +10,8 @@ export default function Login() {
   const [loading, setLoading] = useState(false)
   const [ssoMode, setSsoMode] = useState<'none' | 'oidc' | 'saml'>('none')
   const [showPassword, setShowPassword] = useState(false)
-  const [oidcForm, setOidcForm] = useState({ issuer: '', client_id: '' })
-  const [samlForm, setSamlForm] = useState({ idp_entity_id: '', idp_sso_url: '' })
+  const [oidcOrganization, setOidcOrganization] = useState('')
+  const [samlOrganization, setSamlOrganization] = useState('')
   const [showMfa, setShowMfa] = useState(false)
   const [mfaCode, setMfaCode] = useState('')
   const [ssoError, setSsoError] = useState('')
@@ -20,49 +20,27 @@ export default function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
 
-  const redirectUri = () => `${window.location.origin}/login`
-
-  // OIDC return (?code&state) / SAML Redirect-binding return (?SAMLResponse) —
-  // wired to the real /api/sso/*/callback endpoints.
+  // Both IdPs complete against bounded backend callbacks, which redirect here
+  // with the same one-time browser-bound handoff contract.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const code = params.get('code')
-    const state = params.get('state')
-    const samlResponse = params.get('SAMLResponse')
+	const params = new URLSearchParams(window.location.search)
+	const ssoHandoff = params.get('sso_handoff')
+	const ssoProvider = params.get('sso_provider')
 
     const cleanup = () => window.history.replaceState({}, '', '/login')
 
-    if (code) {
-      const expected = sessionStorage.getItem('pccp_oidc_state')
-      if (expected && state !== expected) {
-        setSsoError('SSO state 불일치 · state mismatch — 다시 시도하세요')
-        cleanup()
-        return
-      }
-      api.ssoOIDCCallback(code, redirectUri())
-        .then((resp: any) => {
-          if (resp?.token) {
-            login(resp.token)
-          } else {
-            setSsoError('OIDC 로그인에 실패했습니다 (세션 토큰 미발급)')
-          }
-        })
-        .catch(err => setSsoError('OIDC 콜백 실패: ' + err.message))
-        .finally(() => { sessionStorage.removeItem('pccp_oidc_state'); cleanup() })
-      return
-    }
-    if (samlResponse) {
-      api.ssoSAMLCallback(samlResponse, params.get('RelayState') || '')
-        .then((resp: any) => {
-          if (resp?.token) {
-            login(resp.token)
-          } else {
-            setSsoError('SAML 로그인에 실패했습니다 (세션 토큰 미발급)')
-          }
-        })
-        .catch(err => setSsoError('SAML 콜백 실패: ' + err.message))
-        .finally(cleanup)
-    }
+	if (ssoHandoff && (ssoProvider === 'oidc' || ssoProvider === 'saml')) {
+	  api.ssoSessionExchange(ssoHandoff, ssoProvider)
+		.then((resp: any) => {
+		  if (resp?.token) {
+			login(resp.token)
+		  } else {
+			setSsoError('SSO 로그인에 실패했습니다 (세션 토큰 미발급)')
+		  }
+		})
+		.catch(err => setSsoError('SSO 콜백 실패: ' + err.message))
+		.finally(cleanup)
+	}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -90,14 +68,11 @@ export default function Login() {
     e.preventDefault()
     setSsoError('')
     setSsoLoading(true)
-    try {
-      const state = crypto.randomUUID()
-      sessionStorage.setItem('pccp_oidc_state', state)
-      const { auth_url } = await api.ssoOIDCAuthUrl(redirectUri(), state, oidcForm.issuer, oidcForm.client_id)
-      window.location.assign(auth_url)
-    } catch (err: any) {
-      sessionStorage.removeItem('pccp_oidc_state')
-      setSsoError('OIDC 시작 실패: ' + err.message)
+	try {
+	  const { auth_url } = await api.ssoOIDCAuthUrl(oidcOrganization)
+	  window.location.assign(auth_url)
+	} catch (err: any) {
+	  setSsoError('OIDC 시작 실패: ' + err.message)
       setSsoLoading(false)
     }
   }
@@ -107,7 +82,7 @@ export default function Login() {
     setSsoError('')
     setSsoLoading(true)
     try {
-      const { redirect_url } = await api.ssoSAMLRedirect(samlForm.idp_entity_id, samlForm.idp_sso_url, redirectUri())
+      const { redirect_url } = await api.ssoSAMLRedirect(samlOrganization)
       window.location.assign(redirect_url)
     } catch (err: any) {
       setSsoError('SAML 시작 실패: ' + err.message)
@@ -212,12 +187,8 @@ export default function Login() {
               {ssoMode === 'oidc' ? (
                 <form onSubmit={startOIDC} className="space-y-3">
                   <div>
-                    <label className="label text-gray-400 text-xs">OIDC Issuer</label>
-                    <input className={ssoInput} value={oidcForm.issuer} onChange={e => setOidcForm({ ...oidcForm, issuer: e.target.value })} placeholder="https://idp.example.com" required />
-                  </div>
-                  <div>
-                    <label className="label text-gray-400 text-xs">Client ID</label>
-                    <input className={ssoInput} value={oidcForm.client_id} onChange={e => setOidcForm({ ...oidcForm, client_id: e.target.value })} required />
+                    <label className="label text-gray-400 text-xs">조직 ID 또는 슬러그</label>
+                    <input className={ssoInput} value={oidcOrganization} onChange={e => setOidcOrganization(e.target.value)} placeholder="patty" required />
                   </div>
                   <button type="submit" disabled={ssoLoading} className="btn-primary w-full text-sm">
                     {ssoLoading ? '이동 중...' : 'IdP로 이동 · Continue with OIDC'}
@@ -226,12 +197,8 @@ export default function Login() {
               ) : (
                 <form onSubmit={startSAML} className="space-y-3">
                   <div>
-                    <label className="label text-gray-400 text-xs">IdP Entity ID</label>
-                    <input className={ssoInput} value={samlForm.idp_entity_id} onChange={e => setSamlForm({ ...samlForm, idp_entity_id: e.target.value })} required />
-                  </div>
-                  <div>
-                    <label className="label text-gray-400 text-xs">IdP SSO URL</label>
-                    <input className={ssoInput} type="url" value={samlForm.idp_sso_url} onChange={e => setSamlForm({ ...samlForm, idp_sso_url: e.target.value })} placeholder="https://idp.example.com/sso" required />
+                    <label className="label text-gray-400 text-xs">조직 ID 또는 슬러그</label>
+                    <input className={ssoInput} value={samlOrganization} onChange={e => setSamlOrganization(e.target.value)} placeholder="patty" required />
                   </div>
                   <button type="submit" disabled={ssoLoading} className="btn-primary w-full text-sm">
                     {ssoLoading ? '이동 중...' : 'IdP로 이동 · Continue with SAML'}
@@ -239,7 +206,7 @@ export default function Login() {
                 </form>
               )}
               <p className="text-[10px] text-gray-500 mt-3 leading-relaxed">
-                ℹ️ /api/sso/* 엔드포인트는 실제 라우팅되어 있으나 현재 관리자 인증 미들웨어 뒤에 있어 로그인 전 호출 시 401이 반환될 수 있으며, SSO 완료 후 콘솔 세션(JWT) 발급 연결은 아직 준비 중입니다 (§8.2).
+                조직의 관리자가 등록한 IdP 설정으로만 연결됩니다. 로그인 요청에서 IdP 주소나 클라이언트 정보를 변경할 수 없습니다.
               </p>
             </div>
           )}

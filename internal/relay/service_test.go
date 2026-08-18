@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -37,6 +38,66 @@ func setupGovernedTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+func seedGovernedSession(t *testing.T, db *gorm.DB, orgID, userID, harnessID, sessionID string) {
+	t.Helper()
+	if err := db.FirstOrCreate(&models.User{AuditBase: models.AuditBase{Base: models.Base{ID: userID}, OrganizationID: orgID}, Email: userID + "@example.test", Name: userID, Status: "active"}, "organization_id = ? AND email = ?", orgID, userID+"@example.test").Error; err != nil {
+		t.Fatalf("seed governed user: %v", err)
+	}
+	if err := db.FirstOrCreate(&models.Harness{OrganizationID: orgID, HarnessID: harnessID, Status: "enrolled"}, "organization_id = ? AND harness_id = ?", orgID, harnessID).Error; err != nil {
+		t.Fatalf("seed governed harness: %v", err)
+	}
+	if err := db.FirstOrCreate(&models.Session{AuditBase: models.AuditBase{OrganizationID: orgID}, HarnessID: harnessID, UserID: userID, SessionID: sessionID, Status: "active"}, "organization_id = ? AND session_id = ?", orgID, sessionID).Error; err != nil {
+		t.Fatalf("seed governed session: %v", err)
+	}
+}
+
+func TestGovernInferenceRejectsDurableFleetRestrictionBeforeCachedAuthority(t *testing.T) {
+	db := setupGovernedTestDB(t)
+	const orgID, userID, harnessID, sessionID = "org-desired", "user-desired", "harness-desired", "session-desired"
+	seedGovernedSession(t, db, orgID, userID, harnessID, sessionID)
+	if err := db.Create(&models.FleetDesiredState{
+		OrganizationID: orgID, HarnessID: harnessID, Action: models.FleetStateSuspendModel,
+		Status: "active", Reason: "security review", SetAt: time.Now().UTC(),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc, err := New(db, "http://localhost:8080", "relay-desired-state-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = svc.GovernInference(context.Background(), GovernRequest{
+		HarnessID: harnessID, SessionID: sessionID, Model: "cached-model",
+	})
+	if err == nil || !strings.Contains(err.Error(), "admission blocked by "+models.FleetStateSuspendModel) {
+		t.Fatalf("durable fleet restriction did not fail closed: %v", err)
+	}
+}
+
+func TestGovernInferenceRejectsDurableProjectLockdown(t *testing.T) {
+	db := setupGovernedTestDB(t)
+	const orgID, userID, harnessID, sessionID, projectID = "org-lockdown", "user-lockdown", "harness-lockdown", "session-lockdown", "project-lockdown"
+	seedGovernedSession(t, db, orgID, userID, harnessID, sessionID)
+	if err := db.Model(&models.Session{}).Where("organization_id = ? AND session_id = ?", orgID, sessionID).Update("project_id", projectID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.SecurityLockdown{
+		OrganizationID: orgID, Scope: "project", ProjectID: projectID, Status: "active",
+		Reason: "incident", ActivatedBy: "admin", ActivatedAt: time.Now().UTC().Format(time.RFC3339),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc, err := New(db, "http://localhost:8080", "relay-lockdown-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = svc.GovernInference(context.Background(), GovernRequest{
+		HarnessID: harnessID, SessionID: sessionID, Model: "cached-model",
+	})
+	if err == nil || !strings.Contains(err.Error(), "security lockdown is active") {
+		t.Fatalf("durable project lockdown did not fail closed: %v", err)
+	}
+}
+
 // TestGovernedExchange_AuthorizesMetersAndEvidences proves the governed
 // inference flow (OpenExchange → RouteInference → CloseExchange): a request
 // with a valid lease/epoch/endpoint is ALLOWED, a provenance action is
@@ -60,6 +121,7 @@ func TestGovernedExchange_AuthorizesMetersAndEvidences(t *testing.T) {
 	)
 	future := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 	past := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
+	seedGovernedSession(t, db, orgID, userID, harnessID, sessionID)
 
 	if err := db.Create(&models.CapabilityLease{
 		OrganizationID: orgID, LeaseID: leaseID, SubjectPeerID: harnessID,
@@ -140,6 +202,165 @@ func TestGovernedExchange_AuthorizesMetersAndEvidences(t *testing.T) {
 	}
 }
 
+func TestOpenExchangeRejectsLeaseAuthorityContextMismatch(t *testing.T) {
+	db := setupGovernedTestDB(t)
+	const (
+		orgID      = "org-authority"
+		userID     = "user-authority"
+		harnessID  = "hrn-authority"
+		sessionID  = "ses-authority"
+		leaseID    = "lease-authority"
+		epochID    = "epoch-authority"
+		modelPkgID = "pmp-authority"
+	)
+	past := time.Now().Add(-time.Hour).Format(time.RFC3339)
+	future := time.Now().Add(time.Hour).Format(time.RFC3339)
+	seedGovernedSession(t, db, orgID, userID, harnessID, sessionID)
+	if err := db.Create(&models.CapabilityLease{
+		OrganizationID: orgID, LeaseID: leaseID, SubjectPeerID: harnessID,
+		UserID: userID, SessionID: sessionID, PolicyEpochID: epochID,
+		AllowedModelPackages: `["` + modelPkgID + `"]`, NotBefore: past, NotAfter: future, Status: "active",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.PolicyEpoch{OrganizationID: orgID, EpochID: epochID, AllowedModelsJSON: `["` + modelPkgID + `"]`, Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ModelPackage{PackageID: modelPkgID, ModelID: "model-authority", Name: "Authority", State: "published"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.InferenceEndpoint{OrganizationID: orgID, EndpointID: "ep-authority", ModelPackageID: modelPkgID, Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.EndpointLease{OrganizationID: orgID, EndpointID: "ep-authority", ModelPackageID: modelPkgID, LeaseID: "epl-authority", NotAfter: future, Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc, err := New(db, "", "relay-authority-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := OpenExchangeRequest{
+		OrganizationID: orgID, SessionID: sessionID, UserID: userID, HarnessID: harnessID,
+		LeaseID: leaseID, PolicyEpochID: epochID, ModelPackageID: modelPkgID,
+	}
+	if _, verdict, err := svc.OpenExchange(context.Background(), base); err != nil || verdict != dari.VerdictAllow {
+		t.Fatalf("valid authority context rejected: verdict=%s err=%v", verdict, err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(OpenExchangeRequest) OpenExchangeRequest
+	}{
+		{"organization", func(req OpenExchangeRequest) OpenExchangeRequest { req.OrganizationID = "org-other"; return req }},
+		{"harness", func(req OpenExchangeRequest) OpenExchangeRequest { req.HarnessID = "hrn-other"; return req }},
+		{"session", func(req OpenExchangeRequest) OpenExchangeRequest { req.SessionID = "ses-other"; return req }},
+		{"user", func(req OpenExchangeRequest) OpenExchangeRequest { req.UserID = "user-other"; return req }},
+		{"epoch", func(req OpenExchangeRequest) OpenExchangeRequest { req.PolicyEpochID = "epoch-other"; return req }},
+		{"model", func(req OpenExchangeRequest) OpenExchangeRequest { req.ModelPackageID = "pmp-other"; return req }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, verdict, err := svc.OpenExchange(context.Background(), tc.mutate(base)); err == nil || verdict != dari.VerdictDeny {
+				t.Fatalf("mismatched %s authority was not denied: verdict=%s err=%v", tc.name, verdict, err)
+			}
+		})
+	}
+
+	if err := db.Model(&models.CapabilityLease{}).Where("lease_id = ?", leaseID).
+		Update("allowed_model_packages", `["pmp-other"]`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, verdict, err := svc.OpenExchange(context.Background(), base); err == nil || verdict != dari.VerdictDeny {
+		t.Fatalf("out-of-scope model was not denied: verdict=%s err=%v", verdict, err)
+	}
+}
+
+func TestRecordUsagePreservesReportedZeroAndNormalizesProviderTokenKeys(t *testing.T) {
+	db := setupGovernedTestDB(t)
+	seedGovernedSession(t, db, "org-meter", "user-meter", "harness-meter", "session-meter")
+	if err := db.Create(&models.ModelPackage{
+		PackageID: "model-meter", ModelID: "meter", Name: "Meter", State: "published",
+		PriceInputMicrosPer1K: 1_500_000, PriceOutputMicrosPer1K: 0,
+		PriceInputConfigured: true, PriceOutputConfigured: true,
+		PriceVersion: "catalog-v3", PriceSource: "model-catalog",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc, err := New(db, "", "relay-meter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exchange := &Exchange{ID: "exchange-meter", OrganizationID: "org-meter", SessionID: "session-meter", UserID: "user-meter", HarnessID: "harness-meter", ModelPackageID: "model-meter"}
+	response := &InferenceResponse{Usage: map[string]int{"prompt_tokens": 11, "completion_tokens": 0, "input_tokens": 99, "output_tokens": 99}}
+	disconnected, disconnect := context.WithCancel(context.Background())
+	disconnect()
+	if err := svc.recordUsageContext(disconnected, exchange, response); err != nil {
+		t.Fatal(err)
+	}
+
+	var rows []models.UsageRecord
+	if err := db.Where("exchange_id = ?", exchange.ID).Order("metric_type ASC").Find(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("reported input/output meters = %d, want 2 (including explicit zero output)", len(rows))
+	}
+	if rows[0].MetricType != "tokens_in" || rows[0].Quantity != 11 || rows[1].MetricType != "tokens_out" || rows[1].Quantity != 0 {
+		t.Fatalf("provider token keys were not normalized once: %+v", rows)
+	}
+	if rows[0].PricingState != models.UsagePricingPriced || rows[0].CostMicros != 16_500 || rows[1].PricingState != models.UsagePricingPriced || rows[1].CostMicros != 0 {
+		t.Fatalf("configured exact/free prices were not applied: %+v", rows)
+	}
+	for _, row := range rows {
+		if row.Currency != "KRW" || row.AppliedPriceVersion != "catalog-v3" || row.AppliedPriceSource != "model-catalog" {
+			t.Fatalf("applied pricing provenance missing: %+v", row)
+		}
+	}
+	if got := strings.Join(exchange.EvidenceChain, "\n"); !strings.Contains(got, "in=11 out=0") {
+		t.Fatalf("evidence disagrees with canonical meter values: %q", got)
+	}
+}
+
+func TestCanonicalTokenUsageRejectsNegativeAndDistinguishesAbsentFromZero(t *testing.T) {
+	usage, err := extractCanonicalTokenUsage(map[string]int{"prompt_tokens": 0, "input_tokens": 41, "output_tokens": 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !usage.InputReported || usage.Input != 0 || !usage.OutputReported || usage.Output != 7 {
+		t.Fatalf("canonical provider precedence/presence = %+v", usage)
+	}
+	if _, err := extractCanonicalTokenUsage(map[string]int{"completion_tokens": -1}); err == nil {
+		t.Fatal("negative provider usage was accepted")
+	}
+}
+
+func TestRecordUsageDoesNotSilentlyDowngradePricingOnCatalogFailure(t *testing.T) {
+	db := setupGovernedTestDB(t)
+	seedGovernedSession(t, db, "org-meter-failure", "user-meter-failure", "harness-meter-failure", "session-meter-failure")
+	svc, err := New(db, "", "relay-meter-failure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrator().DropTable(&models.ModelPackage{}); err != nil {
+		t.Fatal(err)
+	}
+	exchange := &Exchange{
+		ID: "exchange-meter-failure", OrganizationID: "org-meter-failure", SessionID: "session-meter-failure",
+		UserID: "user-meter-failure", HarnessID: "harness-meter-failure", ModelPackageID: "model-meter-failure",
+	}
+	err = svc.recordUsage(exchange, &InferenceResponse{Usage: map[string]int{"prompt_tokens": 1}})
+	if err == nil {
+		t.Fatal("catalog read failure silently produced an unpriced usage row")
+	}
+	var count int64
+	if err := db.Model(&models.UsageRecord{}).Where("exchange_id = ?", exchange.ID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("catalog read failure persisted %d downgraded usage rows", count)
+	}
+}
+
 // TestGovernInference_ResolvesFromHarnessID proves the live-path entry point:
 // given only an authenticated harness ID + a model, the relay resolves org,
 // active lease, active policy epoch, and model package from the DB, then runs
@@ -163,6 +384,7 @@ func TestGovernInference_ResolvesFromHarnessID(t *testing.T) {
 	past := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
 
 	db.Create(&models.Harness{OrganizationID: orgID, HarnessID: harnessID, Status: "enrolled"})
+	seedGovernedSession(t, db, orgID, userID, harnessID, sessionID)
 	db.Create(&models.CapabilityLease{
 		OrganizationID: orgID, LeaseID: leaseID, SubjectPeerID: harnessID,
 		UserID: userID, SessionID: sessionID, PolicyEpochID: epochID,
@@ -278,6 +500,7 @@ func TestGovernInference_BlocksOnSecurityDeny(t *testing.T) {
 	future := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 	past := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
 	db.Create(&models.Harness{OrganizationID: orgID, HarnessID: harnessID, Status: "enrolled"})
+	seedGovernedSession(t, db, orgID, userID, harnessID, sessionID)
 	allowed, _ := json.Marshal([]string{modelPkg})
 	db.Create(&models.CapabilityLease{OrganizationID: orgID, LeaseID: leaseID, SubjectPeerID: harnessID, UserID: userID, SessionID: sessionID, PolicyEpochID: epochID, AllowedModelPackages: string(allowed), NotBefore: past, NotAfter: future, Status: "active"})
 	db.Create(&models.PolicyEpoch{OrganizationID: orgID, EpochID: epochID, AllowedModelsJSON: string(allowed), Status: "active"})
@@ -310,5 +533,71 @@ func TestGovernInference_BlocksOnSecurityDeny(t *testing.T) {
 	db.Model(&models.SecurityFinding{}).Where("organization_id = ?", orgID).Count(&findingCount)
 	if findingCount == 0 {
 		t.Error("expected security finding recorded from the blocked request")
+	}
+}
+
+func TestRouteInferenceRejectsExchangeBindingMismatchBeforeForwarding(t *testing.T) {
+	t.Setenv("PCCP_PIA_URL", "")
+	t.Setenv("YOLO_AUTO_ENDPOINT", "")
+	db := setupGovernedTestDB(t)
+	const (
+		orgID     = "org-bound"
+		userID    = "user-bound"
+		harnessID = "hrn-bound"
+		sessionID = "ses-bound"
+		modelPkg  = "pmp-bound"
+	)
+	seedGovernedSession(t, db, orgID, userID, harnessID, sessionID)
+	db.Create(&models.ModelPackage{PackageID: modelPkg, ModelID: "model-bound", Name: "Bound", State: "published"})
+
+	for _, stream := range []bool{false, true} {
+		stream := stream
+		for _, tc := range []struct {
+			name   string
+			mutate func(*InferenceRequest)
+		}{
+			{"organization", func(req *InferenceRequest) { req.OrganizationID = "org-other" }},
+			{"session", func(req *InferenceRequest) { req.SessionID = "ses-other" }},
+			{"model_package", func(req *InferenceRequest) { req.ModelPackageID = "pmp-other" }},
+		} {
+			t.Run(fmt.Sprintf("stream=%t/%s", stream, tc.name), func(t *testing.T) {
+				svc, err := New(db, "", "relay-bound")
+				if err != nil {
+					t.Fatal(err)
+				}
+				forwarded := false
+				svc.SetForwarder(func(context.Context, InferenceRequest, string) (*InferenceResponse, error) {
+					forwarded = true
+					return &InferenceResponse{Usage: map[string]int{"prompt_tokens": 1}}, nil
+				})
+				exchange := &Exchange{
+					ID: "ex-bound-" + tc.name, OrganizationID: orgID, SessionID: sessionID,
+					UserID: userID, HarnessID: harnessID, ModelPackageID: modelPkg,
+					EndpointID: "ep-bound", State: dari.ExchangeAuthorized,
+				}
+				svc.exchanges[exchange.ID] = exchange
+				req := InferenceRequest{
+					ExchangeID: exchange.ID, OrganizationID: orgID, SessionID: sessionID,
+					ModelPackageID: modelPkg, Model: "model-bound",
+				}
+				tc.mutate(&req)
+				if stream {
+					_, err = svc.RouteInferenceStream(context.Background(), req, nil)
+				} else {
+					_, err = svc.RouteInference(context.Background(), req)
+				}
+				if err == nil {
+					t.Fatal("mismatched request must be rejected")
+				}
+				if forwarded {
+					t.Fatal("mismatched request reached the inference forwarder")
+				}
+				var count int64
+				db.Model(&models.UsageRecord{}).Where("exchange_id = ?", exchange.ID).Count(&count)
+				if count != 0 {
+					t.Fatalf("mismatched request wrote %d usage records", count)
+				}
+			})
+		}
 	}
 }

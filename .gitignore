@@ -11,7 +11,8 @@ web/dist/
 .DS_Store
 
 # Patty Code Harness worktree (separate repo)
-patty-code-pccp/
+# No trailing slash — entry is a symlink, and `patty-code/` only matches directories.
+patty-code
 
 # Reference checkouts for distributed-systems research (not part of this repo)
 # Anchored to the top level ONLY: an unanchored `tools/` also ignored

@@ -2,12 +2,12 @@ package secret
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
 )
@@ -159,18 +159,26 @@ func (s *Service) Revoke(orgID, credID, reason string) error {
 	return nil
 }
 
-// ExpireAllForSession revokes all credentials for a session (called on session close).
-func (s *Service) ExpireAllForSession(orgID, sessionID string) {
+// ExpireAllForSession revokes all credentials for one exact tenant/session.
+// Audit persistence failures are returned to lifecycle orchestration so the
+// committed transition is reported with an explicit cleanup warning.
+func (s *Service) ExpireAllForSession(orgID, sessionID string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	revoked := make([]string, 0)
 	for _, cred := range s.activeCredentials {
-		if cred.SessionID == sessionID {
+		if cred.OrganizationID == orgID && cred.SessionID == sessionID {
 			cred.Revoked = true
-			s.recordAudit(orgID, "secret.session_expired", cred.ID,
-				fmt.Sprintf(`{"session":"%s"}`, sessionID))
+			revoked = append(revoked, cred.ID)
 		}
 	}
+	s.mu.Unlock()
+	for _, credID := range revoked {
+		if err := s.recordAudit(orgID, "secret.session_expired", credID,
+			fmt.Sprintf(`{"session":"%s"}`, sessionID)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // CleanupExpired removes expired credentials from the active set.
@@ -211,7 +219,7 @@ func (s *Service) GetCredentialValue(credID string) (string, error) {
 	return cred.CredentialValue, nil
 }
 
-func (s *Service) recordAudit(orgID, action, resourceID, details string) {
+func (s *Service) recordAudit(orgID, action, resourceID, details string) error {
 	event := &models.AuditEvent{
 		OrganizationID: orgID,
 		EventType:      "cp." + action,
@@ -223,7 +231,7 @@ func (s *Service) recordAudit(orgID, action, resourceID, details string) {
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	}
-	s.db.Create(event)
+	return s.db.Create(event).Error
 }
 
 func generateScopedToken() string {
@@ -235,8 +243,7 @@ func generateScopedToken() string {
 func hashCredential(cred string) string {
 	// Domain-separated SHA-256 fingerprint for the audit trail (the
 	// old 16-byte XOR fold was trivially collidable).
-	sum := sha256.Sum256([]byte("DARI-SECRET-CRED-v1\x00" + cred))
-	return "h:" + hex.EncodeToString(sum[:])
+	return keymgmt.DomainFingerprint("DARI-SECRET-CRED-v1", cred)
 }
 
 func generateCredID() string {

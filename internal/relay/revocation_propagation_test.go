@@ -50,9 +50,19 @@ func TestRevokeHarnessTerminatesActiveStreams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	user := models.User{
+		AuditBase: models.AuditBase{OrganizationID: orgID},
+		Email:     "revoke-test@example.com",
+		Name:      "Revoke Test",
+		Status:    "active",
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
 	_, _, err = svc.Identity().EnrollHarness(identity.EnrollHarnessRequest{
 		OrganizationID: orgID,
 		HarnessID:      harnessID,
+		UserID:         user.ID,
 		PublicKeyHex:   hex.EncodeToString(pub),
 		BinaryVersion:  "test",
 		BinaryHash:     "test",

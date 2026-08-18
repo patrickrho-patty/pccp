@@ -22,15 +22,27 @@ import (
 // accountRow is the account list row enriched with live signals.
 type accountRow struct {
 	models.Account
-	RiskScore      int    `json:"risk_score"`
-	SignalCount    int    `json:"signal_count"`
-	ActiveSessions int    `json:"active_sessions"`
-	HarnessCount   int    `json:"harness_count"`
-	LeaseCount     int64  `json:"lease_count"`
-	OpenCases      int64  `json:"open_support_cases"`
-	OpenAbuse      int64  `json:"open_abuse_cases"`
-	LadderRung     string `json:"ladder_rung"`
-	LadderNext     string `json:"ladder_next"`
+	RiskScore      int                `json:"risk_score"`
+	SignalCount    int                `json:"signal_count"`
+	ActiveSessions int                `json:"active_sessions"`
+	HarnessCount   int                `json:"harness_count"`
+	LeaseCount     int64              `json:"lease_count"`
+	OpenCases      int64              `json:"open_support_cases"`
+	OpenAbuse      int64              `json:"open_abuse_cases"`
+	LadderRung     string             `json:"ladder_rung"`
+	LadderNext     string             `json:"ladder_next"`
+	Usage          publicAccountUsage `json:"usage"`
+}
+
+type publicAccountUsage struct {
+	InputTokens  int64      `json:"input_tokens,string"`
+	OutputTokens int64      `json:"output_tokens,string"`
+	RecordCount  int64      `json:"record_count,string"`
+	State        MeterState `json:"state"`
+	ReasonCode   string     `json:"reason_code,omitempty"`
+	Complete     bool       `json:"complete"`
+	WindowStart  string     `json:"window_start"`
+	WindowEnd    string     `json:"window_end"`
 }
 
 // graduatedLadder derives the current rung + next action from the
@@ -74,11 +86,99 @@ func (s *Server) handlePublicAccounts(w http.ResponseWriter, r *http.Request) {
 		q = q.Where("email LIKE ? OR display_name LIKE ? OR display_name_ko LIKE ?", "%"+v+"%", "%"+v+"%", "%"+v+"%")
 	}
 	var accounts []models.Account
-	q.Order("created_at DESC").Find(&accounts)
+	if err := q.Order("created_at DESC").Find(&accounts).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list accounts")
+		return
+	}
+
+	until := time.Now().UTC()
+	since := until.AddDate(0, 0, -30)
+	usageByAccount := make(map[string]publicAccountUsage, len(accounts))
+	accountIDs := make([]string, 0, len(accounts))
+	for _, account := range accounts {
+		accountIDs = append(accountIDs, account.ID)
+		usageByAccount[account.ID] = publicAccountUsage{
+			State: MeterStateUnavailable, ReasonCode: "no_meter_event", Complete: true,
+			WindowStart: since.Format(time.RFC3339), WindowEnd: until.Format(time.RFC3339),
+		}
+	}
+	if len(accountIDs) > 0 {
+		delayedExpr := "SUM(CASE WHEN timing_source = 'reported' AND created_at > datetime(metered_at, '+15 minutes') THEN 1 ELSE 0 END)"
+		if s.db.Dialector.Name() == "postgres" {
+			delayedExpr = "SUM(CASE WHEN timing_source = 'reported' AND created_at > metered_at + INTERVAL '15 minutes' THEN 1 ELSE 0 END)"
+		}
+		var usageRows []struct {
+			AccountID    string
+			MetricType   string
+			Unit         string
+			Quantity     int64
+			RecordCount  int64
+			DelayedCount int64
+		}
+		if err := s.db.Model(&models.UsageRecord{}).
+			Select("organization_id AS account_id, metric_type, unit, SUM(quantity) AS quantity, COUNT(*) AS record_count, "+delayedExpr+" AS delayed_count").
+			Where("organization_id IN ? AND metered_at >= ? AND metered_at < ? AND created_at <= ?", accountIDs, since, until, until).
+			Where("metric_type IN ?", []string{"tokens_in", "tokens_out"}).
+			Group("organization_id, metric_type, unit").Scan(&usageRows).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to aggregate account usage")
+			return
+		}
+		for _, usageRow := range usageRows {
+			summary := usageByAccount[usageRow.AccountID]
+			if summary.State == MeterStateError {
+				continue
+			}
+			if normalizeUsageUnit(usageRow.Unit) != UnitTokens {
+				summary.InputTokens = 0
+				summary.OutputTokens = 0
+				summary.RecordCount = 0
+				summary.State = MeterStateError
+				summary.ReasonCode = "invalid_meter_unit"
+				summary.Complete = false
+				usageByAccount[usageRow.AccountID] = summary
+				continue
+			}
+			var ok bool
+			switch usageRow.MetricType {
+			case "tokens_in":
+				summary.InputTokens, ok = addInt64(summary.InputTokens, usageRow.Quantity)
+			case "tokens_out":
+				summary.OutputTokens, ok = addInt64(summary.OutputTokens, usageRow.Quantity)
+			default:
+				continue
+			}
+			if ok {
+				summary.RecordCount, ok = addInt64(summary.RecordCount, usageRow.RecordCount)
+			}
+			if !ok {
+				summary.InputTokens = 0
+				summary.OutputTokens = 0
+				summary.RecordCount = 0
+				summary.State = MeterStateError
+				summary.ReasonCode = "quantity_total_overflow"
+				summary.Complete = false
+			} else {
+				if usageRow.DelayedCount > 0 {
+					summary.State = MeterStateDelayed
+					summary.ReasonCode = "meter_delayed"
+				} else if summary.State != MeterStateDelayed {
+					summary.State = MeterStateRecorded
+					summary.ReasonCode = ""
+				}
+			}
+			usageByAccount[usageRow.AccountID] = summary
+		}
+		for accountID, summary := range usageByAccount {
+			if summary.State == MeterStateRecorded && summary.InputTokens == 0 && summary.OutputTokens == 0 {
+				summary.State = MeterStateZero
+				usageByAccount[accountID] = summary
+			}
+		}
+	}
 
 	rows := make([]accountRow, 0, len(accounts))
 	for _, a := range accounts {
-		row := accountRow{Account: a}
+		row := accountRow{Account: a, Usage: usageByAccount[a.ID]}
 		if s.ext().Detection != nil {
 			row.RiskScore = s.ext().Detection.GetRiskScore(a.ID)
 			row.SignalCount = len(s.ext().Detection.GetSignals(a.ID))

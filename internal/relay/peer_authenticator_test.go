@@ -275,6 +275,7 @@ func TestIdentityRevocationRecordsSerialAndTerminatesSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := database.Create(&models.Session{
+		AuditBase: models.AuditBase{OrganizationID: "org-revoke"},
 		SessionID: "ses-revoke",
 		HarnessID: "hrn-revoke",
 		Status:    "active",

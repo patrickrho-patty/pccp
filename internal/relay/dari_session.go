@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/policy"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
@@ -69,16 +70,37 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 		pl.sendJSONError(conn, connID, "authenticated peer has no organization")
 		return
 	}
+	if so.UserID == "" {
+		pl.sendJSONError(conn, connID, "session_open missing user_id")
+		return
+	}
+	harnessID := pl.harnessForConn(connID)
+	if harnessID == "" {
+		pl.sendJSONError(conn, connID, "authenticated peer has no harness identity")
+		return
+	}
+	if err := pl.svc.db.Transaction(func(tx *gorm.DB) error {
+		if err := identity.ValidateActiveHarnessUserBinding(tx, orgID, harnessID, so.UserID); err != nil {
+			return err
+		}
+		restriction, err := models.HarnessAdmissionRestriction(tx, orgID, harnessID)
+		if err != nil {
+			return err
+		}
+		if restriction != nil {
+			return fmt.Errorf("harness admission blocked by %s", restriction.Action)
+		}
+		return nil
+	}); err != nil {
+		pl.sendJSONError(conn, connID, "session user binding rejected: "+err.Error())
+		return
+	}
 	// D5: the org's forced harness version refuses sub-minimum
 	// connectors at session setup (the audit trail carries the floor).
 	if minV := pl.svc.ForcedHarnessVersion(orgID); minV != "" && harnessVersion != "" && versionBelow(harnessVersion, minV) {
 		pl.sendJSONError(conn, connID, "harness version "+harnessVersion+" is below the organization minimum "+minV)
 		return
 	}
-	if so.UserID == "" {
-		so.UserID = "user-" + connID
-	}
-
 	// Model serving (Task 15/audit finding): a peer-supplied so.Model name
 	// NEVER self-authorizes. Outside explicit dev bootstrap
 	// (PCCP_DEV_BOOTSTRAP=1) the package, endpoint, endpoint-lease, and
@@ -204,7 +226,7 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 	// Production governance wiring (C3/C4/D1/D3-D6/E4): push the
 	// org's governance-state snapshot so the connector's governed
 	// gates fire on real tool calls.
-	govView := pl.svc.GatherGovernanceState(orgID, so.RepositoryID, so.Model)
+	govView := pl.svc.GatherGovernanceState(orgID, so.RepositoryID, so.Model, harnessID)
 	govSnap := BuildGovernanceState(govView)
 	if govBody, gerr := encodeWire(govSnap); gerr == nil {
 		if err := conn.SendMessage(dari.MsgGovernanceState, nil, govBody, 0, 2); err != nil {

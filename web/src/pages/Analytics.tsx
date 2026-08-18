@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { StatCard } from '../components/StatCard'
-import { formatUsageAmount, formatUsageQuantity, UsageReport, UsageReportData } from '../components/UsageReport'
+import { compareInteger, formatUsageStateInteger, formatUsageAmount, formatUsageQuantity, UsageReport, UsageReportData } from '../components/UsageReport'
+import { useAuth } from '../hooks/useAuth'
+import { usageDimensionHref } from '../usageView'
 
 const RANGES = [
   { value: '7d', label: '7일' },
@@ -11,55 +13,42 @@ const RANGES = [
   { value: '365d', label: '1년' },
 ]
 export default function Analytics() {
+  const { profile } = useAuth()
   const [range, setRange] = useState('30d')
   const [data, setData] = useState<UsageReportData | null>(null)
+  const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
-  const [users, setUsers] = useState<any[]>([])
-  const [models, setModels] = useState<any[]>([])
+  const [exportError, setExportError] = useState(false)
 
   useEffect(() => {
-	const controller = new AbortController()
+    let active = true
+    const controller = new AbortController()
+    setLoading(true)
     setLoadError(false)
-	api.usageExtended(range, '', controller.signal).then(setData).catch((error) => {
-	  if (error?.name !== 'AbortError') { setData(null); setLoadError(true) }
-	})
-	return () => controller.abort()
+    setData(null)
+    api.usageExtended(range, '', controller.signal).then(result => {
+      if (active) setData(result)
+    }).catch((error) => {
+      if (active && error?.name !== 'AbortError') { setData(null); setLoadError(true) }
+    }).finally(() => {
+      if (active) setLoading(false)
+    })
+    return () => { active = false; controller.abort() }
   }, [range])
-  useEffect(() => {
-    api.listUsers().then((d: any[]) => setUsers(Array.isArray(d) ? d : [])).catch(() => {})
-    api.catalogModels().then((d: any[]) => setModels(Array.isArray(d) ? d : [])).catch(() => {})
-  }, [])
-
-	const usersByID = useMemo(() => new Map(users.map(user => [user.id, user])), [users])
-	const modelsByID = useMemo(() => {
-	  const result = new Map<string, any>()
-	  for (const model of models) {
-	    if (model.id) result.set(model.id, model)
-	    if (model.package_id) result.set(model.package_id, model)
-	  }
-	  return result
-	}, [models])
-  const userName = (id: string) => usersByID.get(id)?.name_ko || usersByID.get(id)?.name || id?.slice(0, 8)
-  const modelName = (id: string) => modelsByID.get(id)?.name || id?.slice(0, 8)
   const periodLabel = RANGES.find(item => item.value === range)?.label || range
   const hasLedger = Boolean(data?.record_count)
   const delayedMeters = (data?.meters || []).filter(meter => meter.state === 'delayed').length
 
   const exportCSV2 = async () => {
-    const token = localStorage.getItem('pccp_token')
+    if (!data) return
+    setExportError(false)
     try {
-      const resp = await fetch(`/api/analytics/usage-extended?range=${range}&format=csv`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      })
-      if (!resp.ok) throw new Error('export failed')
-      const blob = await resp.blob()
-      const url = URL.createObjectURL(blob)
+      const ticket = await api.usageExportTicket(range, data?.window_start, data?.window_end, data?.snapshot_at)
       const a = document.createElement('a')
-      a.href = url
+      a.href = ticket.download_url
       a.download = `usage-${range}.csv`
       a.click()
-      URL.revokeObjectURL(url)
-    } catch { /* noop */ }
+    } catch { setExportError(true) }
   }
 
   return (
@@ -73,39 +62,38 @@ export default function Analytics() {
           <select className="input text-xs" value={range} onChange={e => setRange(e.target.value)}>
             {RANGES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
           </select>
-          <button className="btn-sm btn-secondary" onClick={exportCSV2}>CSV 내보내기</button>
+          <button className="btn-sm btn-secondary" disabled={loading || !data || loadError} onClick={exportCSV2}>CSV 내보내기</button>
         </div>
       </div>
 
       {loadError && <div className="rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700">사용량 원장을 불러오지 못했습니다. 0으로 표시하지 않았습니다.</div>}
+      {exportError && <div className="rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700">CSV 내보내기를 시작하지 못했습니다. 권한과 연결 상태를 확인해 주십시오.</div>}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <a href="#usage-ledger"><StatCard label="총 토큰" value={hasLedger ? data!.total_tokens.toLocaleString() : '미수집'} accent="blue" sub={`${periodLabel} · 원장 ${data?.record_count ?? '—'}건`} /></a>
-        <a href="#usage-ledger"><StatCard label="입력 토큰" value={hasLedger ? data!.input_tokens.toLocaleString() : '미수집'} accent="green" sub={periodLabel} /></a>
-        <a href="#usage-ledger"><StatCard label="출력 토큰" value={hasLedger ? data!.output_tokens.toLocaleString() : '미수집'} accent="purple" sub={periodLabel} /></a>
-        <a href="#usage-ledger"><StatCard label={`비용 (${data?.display_currency || '통화 미확인'})`} value={data?.display_total?.state === 'recorded' || data?.display_total?.state === 'zero' ? formatUsageAmount(data.display_total.amount_micros, data.display_total.currency) : data?.display_total?.state === 'error' ? '집계 오류' : '미수집'} accent="orange" sub={!hasLedger ? '원장 기록 없음' : data?.display_total?.state === 'unavailable' ? '단가 또는 환율 미설정' : data?.display_total?.state === 'error' ? '원장 확인 필요' : `${periodLabel} · 대사 ${data?.reconciled ? '완료' : '필요'}${delayedMeters ? ` · 지연 ${delayedMeters}` : ''}`} /></a>
+        <a href="#usage-ledger"><StatCard label="총 토큰" value={loading ? '불러오는 중' : formatUsageStateInteger(data?.total_tokens, data?.total_tokens_state)} accent="blue" sub={`${periodLabel} · 원장 ${data?.record_count ?? '—'}건`} /></a>
+        <a href="#usage-ledger"><StatCard label="입력 토큰" value={loading ? '불러오는 중' : formatUsageStateInteger(data?.input_tokens, data?.input_tokens_state)} accent="green" sub={periodLabel} /></a>
+        <a href="#usage-ledger"><StatCard label="출력 토큰" value={loading ? '불러오는 중' : formatUsageStateInteger(data?.output_tokens, data?.output_tokens_state)} accent="purple" sub={periodLabel} /></a>
+        <a href="#usage-ledger"><StatCard label={`비용 (${data?.display_currency || '통화 미확인'})`} value={loading ? '불러오는 중' : data?.display_total?.state === 'recorded' || data?.display_total?.state === 'zero' ? formatUsageAmount(data.display_total.amount_micros, data.display_total.currency) : data?.display_total?.state === 'error' ? '집계 오류' : '미수집'} accent="orange" sub={loading ? periodLabel : !hasLedger ? '원장 기록 없음' : data?.display_total?.state === 'unavailable' ? '단가 또는 환율 미설정' : data?.display_total?.state === 'error' ? '원장 확인 필요' : `${periodLabel} · 대사 ${data?.reconciled ? '완료' : '필요'}${delayedMeters ? ` · 지연 ${delayedMeters}` : ''}`} /></a>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="card p-4">
           <h3 className="text-xs font-bold mb-2">모델별 토큰</h3>
           {Object.keys(data?.by_model || {}).length === 0 && <p className="text-[11px] text-gray-400">기록 없음</p>}
-          {Object.entries(data?.by_model || {}).sort((a: any, b: any) => b[1].quantity - a[1].quantity).map(([model, usage]: any) => (
-            <Link key={model} to={`/models/${model}`} className="flex items-center justify-between text-[11px] border-b border-gray-50 py-1 hover:bg-gray-50 px-1 rounded">
-              <span className="text-gray-700">{modelName(model)}</span>
-              <span className="text-gray-500">{formatUsageQuantity(usage)}</span>
-            </Link>
-          ))}
+          {Object.entries(data?.by_model || {}).sort((a: any, b: any) => compareInteger(b[1].quantity, a[1].quantity)).map(([model, usage]: any) => {
+            const content = <><span className="text-gray-700">{usage.label || model.slice(0, 8)}</span><span className="text-gray-500">{formatUsageQuantity(usage)}</span></>
+            const href = usageDimensionHref(profile, 'model', model, Boolean(usage.label))
+            return href ? <Link key={model} to={href} className="flex items-center justify-between text-[11px] border-b border-gray-50 py-1 hover:bg-gray-50 px-1 rounded">{content}</Link> : <div key={model} className="flex items-center justify-between text-[11px] border-b border-gray-50 py-1 px-1">{content}</div>
+          })}
         </div>
         <div className="card p-4">
           <h3 className="text-xs font-bold mb-2">사용자별 토큰</h3>
           {Object.keys(data?.by_user || {}).length === 0 && <p className="text-[11px] text-gray-400">기록 없음</p>}
-          {Object.entries(data?.by_user || {}).sort((a: any, b: any) => b[1].quantity - a[1].quantity).map(([user, usage]: any) => (
-            <Link key={user} to={`/users/${user}?tab=usage`} className="flex items-center justify-between text-[11px] border-b border-gray-50 py-1 hover:bg-gray-50 px-1 rounded">
-              <span className="text-gray-700">{userName(user)}</span>
-              <span className="text-gray-500">{formatUsageQuantity(usage)}</span>
-            </Link>
-          ))}
+          {Object.entries(data?.by_user || {}).sort((a: any, b: any) => compareInteger(b[1].quantity, a[1].quantity)).map(([user, usage]: any) => {
+            const content = <><span className="text-gray-700">{usage.label || user.slice(0, 8)}</span><span className="text-gray-500">{formatUsageQuantity(usage)}</span></>
+            const href = usageDimensionHref(profile, 'user', user, Boolean(usage.label))
+            return href ? <Link key={user} to={href} className="flex items-center justify-between text-[11px] border-b border-gray-50 py-1 hover:bg-gray-50 px-1 rounded">{content}</Link> : <div key={user} className="flex items-center justify-between text-[11px] border-b border-gray-50 py-1 px-1">{content}</div>
+          })}
         </div>
       </div>
 
@@ -127,7 +115,9 @@ export default function Analytics() {
         )}
       </div>
 
-      <UsageReport report={data} loadMore={(cursor) => api.usageExtended(range, cursor)} />
+      {loading
+        ? <div className="card p-4 text-[11px] text-gray-400">사용량 정보를 불러오는 중입니다.</div>
+        : <UsageReport report={data} loadMore={(cursor, signal) => api.usageExtended(range, cursor, signal)} />}
     </div>
   )
 }

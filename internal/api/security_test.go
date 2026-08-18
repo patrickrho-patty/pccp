@@ -2,9 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 
+	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/driver/sqlite"
@@ -21,8 +23,11 @@ func securityTestServer(t *testing.T) (*Server, *gorm.DB) {
 	for _, m := range []interface{}{
 		&models.Organization{}, &models.User{}, &models.Session{}, &models.Harness{}, &models.Project{},
 		&models.SecurityFinding{}, &models.SecurityRule{}, &models.AlertEndpoint{},
+		&models.AlertDeliveryJob{}, &identity.AdminCredentials{},
 		&models.PIILexicon{}, &models.AuditEvent{}, &models.ServiceSigningKey{},
-		&models.PromptExchange{}, &models.UsageRecord{}, &models.ModelPackage{}, &models.OrgSetting{},
+		&models.PromptExchange{}, &models.UsageRecord{}, &models.ModelPackage{}, &models.InferenceEndpoint{},
+		&models.OrgSetting{}, &models.BillingFXRate{}, &models.SandboxRecord{},
+		&models.SecurityLockdown{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
 			t.Fatal(err)
@@ -106,7 +111,7 @@ func TestLockdownProjectScope(t *testing.T) {
 	db.Create(&models.Session{AuditBase: models.AuditBase{OrganizationID: org.ID}, ProjectID: proj1.ID, SessionID: "s1", Status: "active", HarnessID: "h1", UserID: "u1"})
 	db.Create(&models.Session{AuditBase: models.AuditBase{OrganizationID: org.ID}, ProjectID: proj2.ID, SessionID: "s2", Status: "active", HarnessID: "h2", UserID: "u2"})
 
-	rec := doJSON(t, srv, "POST", "/api/security/lockdown", `{"scope":"project","project_id":"`+proj1.ID+`","reason":"incident"}`, org.ID)
+	rec := doSessionJSONWithPermissions(t, srv, "POST", "/api/security/lockdown", `{"scope":"project","project_id":"`+proj1.ID+`","reason":"incident"}`, org.ID, "admin")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("lockdown failed: %d %s", rec.Code, rec.Body.String())
 	}
@@ -118,6 +123,50 @@ func TestLockdownProjectScope(t *testing.T) {
 	}
 	if s2.Status != "active" {
 		t.Fatalf("out-of-scope session should stay active: %s", s2.Status)
+	}
+}
+
+func TestLockdownRejectsUnknownScopeWithoutMutation(t *testing.T) {
+	srv, db := securityTestServer(t)
+	org := models.Organization{Name: "o", Slug: "lockdown-invalid", Status: "active"}
+	db.Create(&org)
+	sess := models.Session{AuditBase: models.AuditBase{OrganizationID: org.ID}, SessionID: "invalid-scope", Status: "active", HarnessID: "h1", UserID: "u1"}
+	db.Create(&sess)
+
+	rec := doSessionJSONWithPermissions(t, srv, "POST", "/api/security/lockdown", `{"scope":"typo","reason":"incident"}`, org.ID, "admin")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown scope status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	db.First(&sess, "id = ?", sess.ID)
+	if sess.Status != "active" {
+		t.Fatalf("unknown scope triggered org lockdown: %s", sess.Status)
+	}
+}
+
+func TestLockdownImpactMatchesProjectLifecycleScope(t *testing.T) {
+	srv, db := securityTestServer(t)
+	org := models.Organization{Name: "o", Slug: "lockdown-impact", Status: "active"}
+	db.Create(&org)
+	project := models.Project{AuditBase: models.AuditBase{OrganizationID: org.ID}, Name: "p", Slug: "impact", Status: "active"}
+	db.Create(&project)
+	for i := 0; i < 2; i++ {
+		db.Create(&models.Harness{OrganizationID: org.ID, HarnessID: fmt.Sprintf("h%d", i), Name: "harness", PublicKey: fmt.Sprintf("key-%d", i), Status: "active"})
+	}
+	for i, status := range []string{"pending", "active", "idle", "paused"} {
+		db.Create(&models.Session{AuditBase: models.AuditBase{OrganizationID: org.ID}, ProjectID: project.ID, SessionID: "impact-" + status, Status: status, HarnessID: fmt.Sprintf("h%d", i%2), UserID: "u1"})
+	}
+	db.Create(&models.Session{AuditBase: models.AuditBase{OrganizationID: org.ID}, ProjectID: project.ID, SessionID: "impact-closed", Status: "closed", HarnessID: "h3", UserID: "u1"})
+
+	rec := doSessionJSONWithPermissions(t, srv, "GET", "/api/security/lockdown-impact?scope=project&project_id="+project.ID, "", org.ID, "admin")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("impact status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["in_progress_sessions"] != float64(4) || body["affected_harnesses"] != float64(2) {
+		t.Fatalf("impact = %#v", body)
 	}
 }
 

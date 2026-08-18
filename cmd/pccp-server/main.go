@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -13,6 +14,9 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/api"
 	"github.com/patrickrho-patty/pccp/internal/config"
 	"github.com/patrickrho-patty/pccp/internal/db"
+	"github.com/patrickrho-patty/pccp/internal/keymgmt"
+	"github.com/patrickrho-patty/pccp/internal/security"
+	"github.com/patrickrho-patty/pccp/internal/sso"
 )
 
 func main() {
@@ -23,6 +27,13 @@ func main() {
 	cfg := config.LoadFromEnv()
 	if *addr != "" {
 		cfg.HTTPAddr = *addr
+	}
+	developmentMode := strings.EqualFold(strings.TrimSpace(os.Getenv("PCCP_DEV_MODE")), "true")
+	if developmentMode && strings.TrimSpace(cfg.JWTSecret) == "" {
+		cfg.JWTSecret = config.InsecureDevelopmentJWTSecret
+	}
+	if err := config.ValidateJWTSecret(cfg.JWTSecret, developmentMode); err != nil {
+		log.Fatalf("JWT signing readiness failed: %v", err)
 	}
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -46,6 +57,23 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create API server: %v", err)
 	}
+	alertProvider, configured, err := keymgmt.LoadProviderFromEnvironment(os.Getenv)
+	if err != nil {
+		log.Fatalf("failed to configure alert credential provider: %v", err)
+	}
+	if configured {
+		server.SetKeyProvider(alertProvider)
+		log.Printf("alert credential provider configured: kek_id=%s", alertProvider.KEKID())
+	} else {
+		log.Printf("alert credential provider is not configured; alert create, rotate, test, and encrypted delivery remain unavailable")
+	}
+	if err := security.ValidateAlertProviderReadiness(database, alertProvider); err != nil {
+		log.Fatalf("alert credential provider readiness failed: %v", err)
+	}
+	if err := sso.ValidateProviderReadiness(database, alertProvider); err != nil {
+		log.Fatalf("SSO credential provider readiness failed: %v", err)
+	}
+	server.StartAlertDeliveryWorker(context.Background())
 
 	// Catalog push on publish (web/18 B): deliver the delta to live
 	// sessions through the relay admin channel when configured.

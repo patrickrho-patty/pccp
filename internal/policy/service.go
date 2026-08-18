@@ -5,7 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
+
+	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/keys"
 	"time"
 
@@ -143,10 +147,30 @@ type IssueLeaseRequest struct {
 	ToolClasses        []string            `json:"tool_classes,omitempty"`
 	TokenBudget        int64               `json:"token_budget,omitempty"`
 	Validity           time.Duration       `json:"validity"`
+	// ServicePrincipal is set only by in-process non-human transports such as
+	// the verified browser binding. It is deliberately excluded from JSON so
+	// the public lease endpoint cannot opt out of managed-user validation.
+	ServicePrincipal bool `json:"-"`
 }
 
 // IssueCapabilityLease creates a signed capability lease.
 func (s *Service) IssueCapabilityLease(req IssueLeaseRequest) (*models.CapabilityLease, error) {
+	var lease *models.CapabilityLease
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		created, err := s.IssueCapabilityLeaseWithDB(tx, req)
+		lease = created
+		return err
+	})
+	return lease, err
+}
+
+// IssueCapabilityLeaseWithDB validates and persists a lease under the
+// caller's transaction, serializing human capability issuance with lifecycle
+// transitions through the managed user's row lock.
+func (s *Service) IssueCapabilityLeaseWithDB(db *gorm.DB, req IssueLeaseRequest) (*models.CapabilityLease, error) {
+	if err := validateLeaseBinding(db, req); err != nil {
+		return nil, err
+	}
 	allowedModels, _ := json.Marshal(req.AllowedModels)
 	repoScope, _ := json.Marshal(req.RepositoryScope)
 	readScope, _ := json.Marshal(req.FilePathReadScope)
@@ -218,10 +242,57 @@ func (s *Service) IssueCapabilityLease(req IssueLeaseRequest) (*models.Capabilit
 	_ = readScope
 	_ = writeScope
 
-	if err := s.db.Create(lease).Error; err != nil {
+	if err := db.Create(lease).Error; err != nil {
 		return nil, fmt.Errorf("policy: create capability lease: %w", err)
 	}
 	return lease, nil
+}
+
+func validateLeaseBinding(db *gorm.DB, req IssueLeaseRequest) error {
+	if strings.TrimSpace(req.OrganizationID) == "" || strings.TrimSpace(req.SubjectPeerID) == "" || strings.TrimSpace(req.PolicyEpochID) == "" {
+		return fmt.Errorf("policy: organization_id, subject_peer_id, and policy_epoch_id are required")
+	}
+	if req.Validity <= 0 {
+		return fmt.Errorf("policy: positive validity is required")
+	}
+	var epoch models.PolicyEpoch
+	if err := db.Where("organization_id = ? AND epoch_id = ? AND status = ?", req.OrganizationID, req.PolicyEpochID, "active").First(&epoch).Error; err != nil {
+		return fmt.Errorf("policy: active epoch not found in organization")
+	}
+	if !req.ServicePrincipal {
+		if strings.TrimSpace(req.UserID) == "" {
+			return fmt.Errorf("policy: managed user_id is required")
+		}
+		if _, err := identity.LockActiveUser(db, req.OrganizationID, req.UserID); err != nil {
+			return fmt.Errorf("policy: user binding rejected: %w", err)
+		}
+	}
+
+	var session models.Session
+	sessionErr := db.Where("organization_id = ? AND session_id = ?", req.OrganizationID, req.SessionID).First(&session).Error
+	if sessionErr == nil {
+		if !models.SessionIsLive(session.Status) || session.UserID != req.UserID || session.HarnessID != req.SubjectPeerID {
+			return fmt.Errorf("policy: session identity binding mismatch")
+		}
+		return nil
+	}
+	if sessionErr != nil && !errors.Is(sessionErr, gorm.ErrRecordNotFound) {
+		return sessionErr
+	}
+
+	// Native DARI and browser transports mint before a console Session row is
+	// available, so the authenticated harness binding is the authority there.
+	if req.ServicePrincipal {
+		var harness models.Harness
+		if err := db.Where("organization_id = ? AND harness_id = ? AND status IN ?", req.OrganizationID, req.SubjectPeerID, []string{"enrolled", "active"}).First(&harness).Error; err != nil {
+			return fmt.Errorf("policy: enrolled subject peer not found in organization")
+		}
+		return nil
+	}
+	if err := identity.ValidateActiveHarnessUserBinding(db, req.OrganizationID, req.SubjectPeerID, req.UserID); err != nil {
+		return fmt.Errorf("policy: subject peer binding rejected: %w", err)
+	}
+	return nil
 }
 
 // ValidateCapabilityLease checks whether a capability lease is valid.

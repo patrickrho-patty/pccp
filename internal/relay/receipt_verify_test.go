@@ -39,6 +39,7 @@ func TestReceiptCloseExchangeVerifiesConnectorSide(t *testing.T) {
 	future := timeNowRFCPlus(time.Hour)
 	past := timeNowRFCPlus(-time.Hour)
 	db.Create(&models.Harness{OrganizationID: orgID, HarnessID: harness, Status: "enrolled"})
+	seedGovernedSession(t, db, orgID, "u", harness, sess)
 	db.Create(&models.CapabilityLease{OrganizationID: orgID, LeaseID: leaseID, SubjectPeerID: harness,
 		UserID: "u", SessionID: sess, PolicyEpochID: epochID,
 		AllowedModelPackages: `["` + modelPkg + `"]`, NotBefore: past, NotAfter: future, Status: "active"})

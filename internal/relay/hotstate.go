@@ -1,16 +1,18 @@
 package relay
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/patrickrho-patty/pccp/internal/dari"
-	"github.com/patrickrho-patty/pccp/internal/scheduler"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"github.com/patrickrho-patty/pccp/internal/scheduler"
 )
 
 // hotstate.go implements the governed-pipeline hot-state cache and
@@ -26,6 +28,7 @@ import (
 // GovernanceSnapshot is one harness's resolved governance context.
 type GovernanceSnapshot struct {
 	Harness       models.Harness
+	Session       models.Session
 	Lease         models.CapabilityLease
 	Epoch         models.PolicyEpoch
 	Package       models.ModelPackage
@@ -55,9 +58,12 @@ func NewHotStateCache(ttl time.Duration) *HotStateCache {
 // ErrRevokedSnapshot marks a cached entry captured before a revocation.
 var ErrRevokedSnapshot = errors.New("relay: cached governance state predates a revocation")
 
-// GovCacheKey is the hot-state cache key: governance resolution is
-// per (harness, model).
-func GovCacheKey(harnessID, model string) string { return harnessID + "|" + model }
+// GovCacheKey identifies the complete authority context. A harness can serve
+// several users and sessions concurrently, and each policy epoch can authorize
+// a different model set; none of those contexts may share a cached lease.
+func GovCacheKey(orgID, harnessID, userID, sessionID, model, epochID string) string {
+	return strings.Join([]string{orgID, harnessID, userID, sessionID, model, epochID}, "\x00")
+}
 
 // Get returns a cached snapshot only when fresh by BOTH TTL and the
 // current revocation epoch.
@@ -207,33 +213,93 @@ func (g *ConcurrencyGate) Stats() (inFlight, limit int, shed uint64, maxObserved
 // Pipeline wiring: snapshot resolution + cache use in GovernInference.
 // ---------------------------------------------------------------------------
 
-// ResolveGovernanceSnapshot performs the fail-closed DB resolution
-// (harness → lease → package → endpoint → endpoint lease) for a model.
-func (s *Service) ResolveGovernanceSnapshot(harnessID, model string) (*GovernanceSnapshot, error) {
+// ResolveGovernanceSnapshot performs the fail-closed DB resolution for one
+// exact session authority context. The selected lease must bind the same
+// organization, harness, user, session, current epoch, and requested model.
+func (s *Service) ResolveGovernanceSnapshot(harnessID, sessionID, model string) (*GovernanceSnapshot, error) {
 	var snap GovernanceSnapshot
 	if err := s.db.Where("harness_id = ?", harnessID).First(&snap.Harness).Error; err != nil {
 		return nil, fmt.Errorf("relay: harness %s not enrolled: %w", harnessID, err)
 	}
-	if err := s.db.Where("subject_peer_id = ? AND status = 'active'", harnessID).
-		Order("not_after DESC").First(&snap.Lease).Error; err != nil {
-		return nil, fmt.Errorf("relay: no active capability lease for harness %s: %w", harnessID, err)
+	if !models.HarnessStatusPermitted(snap.Harness.Status) {
+		return nil, fmt.Errorf("relay: harness %s is %s", harnessID, snap.Harness.Status)
+	}
+	if restriction, err := models.HarnessAdmissionRestriction(s.db, snap.Harness.OrganizationID, harnessID); err != nil {
+		return nil, fmt.Errorf("relay: fleet desired state unavailable: %w", err)
+	} else if restriction != nil {
+		return nil, fmt.Errorf("relay: harness admission blocked by %s", restriction.Action)
+	}
+	if sessionID == "" {
+		return nil, fmt.Errorf("relay: authenticated session is required")
+	}
+	if err := s.db.Where("organization_id = ? AND session_id = ? AND harness_id = ?",
+		snap.Harness.OrganizationID, sessionID, harnessID).First(&snap.Session).Error; err != nil {
+		return nil, fmt.Errorf("relay: session %s is not bound to harness %s: %w", sessionID, harnessID, err)
+	}
+	if locked, err := models.ActiveSecurityLockdown(s.db, snap.Harness.OrganizationID, snap.Session.ProjectID); err != nil {
+		return nil, fmt.Errorf("relay: security lockdown state unavailable: %w", err)
+	} else if locked {
+		return nil, fmt.Errorf("relay: security lockdown is active")
 	}
 	if err := s.db.Where("model_id = ?", model).First(&snap.Package).Error; err != nil {
 		return nil, fmt.Errorf("relay: model %s not in registry: %w", model, err)
 	}
-	if err := s.db.Where("epoch_id = ?", snap.Lease.PolicyEpochID).First(&snap.Epoch).Error; err != nil {
-		return nil, fmt.Errorf("relay: policy epoch not found: %w", err)
+	if err := s.db.Where("organization_id = ? AND status = 'active'", snap.Harness.OrganizationID).
+		Order("epoch_number DESC").First(&snap.Epoch).Error; err != nil {
+		return nil, fmt.Errorf("relay: active policy epoch not found: %w", err)
+	}
+	if !epochAllowsPackage(&snap.Epoch, snap.Package.PackageID) {
+		return nil, fmt.Errorf("relay: model %s is not allowed by active policy epoch", model)
+	}
+
+	now := time.Now()
+	nowText := now.Format(time.RFC3339)
+	var candidates []models.CapabilityLease
+	if err := s.db.Where(
+		"organization_id = ? AND subject_peer_id = ? AND user_id = ? AND session_id = ? AND policy_epoch_id = ? AND status = 'active' AND not_before <= ? AND not_after > ?",
+		snap.Harness.OrganizationID, harnessID, snap.Session.UserID, sessionID, snap.Epoch.EpochID, nowText, nowText,
+	).Order("not_after DESC").Find(&candidates).Error; err != nil {
+		return nil, fmt.Errorf("relay: resolve capability leases: %w", err)
+	}
+	for i := range candidates {
+		if capabilityLeaseAllowsModel(&candidates[i], model, snap.Package.PackageID) {
+			snap.Lease = candidates[i]
+		}
+		if snap.Lease.LeaseID != "" {
+			break
+		}
+	}
+	if snap.Lease.LeaseID == "" {
+		return nil, fmt.Errorf("relay: no active capability lease for harness %s session %s and model %s", harnessID, sessionID, model)
 	}
 	if err := s.db.Where("organization_id = ? AND model_package_id = ? AND status = 'active'",
 		snap.Harness.OrganizationID, snap.Package.PackageID).First(&snap.Endpoint).Error; err != nil {
 		return nil, fmt.Errorf("relay: no active endpoint for model %s: %w", snap.Package.PackageID, err)
 	}
-	if err := s.db.Where("endpoint_id = ? AND status = 'active' AND not_after > ?",
-		snap.Endpoint.EndpointID, time.Now().Format(time.RFC3339)).
+	if err := s.db.Where("organization_id = ? AND endpoint_id = ? AND model_package_id = ? AND status = 'active' AND not_before <= ? AND not_after > ?",
+		snap.Harness.OrganizationID, snap.Endpoint.EndpointID, snap.Package.PackageID, nowText, nowText).
 		Order("issued_at DESC").First(&snap.EndpointLease).Error; err != nil {
 		return nil, fmt.Errorf("relay: no valid endpoint lease for endpoint %s: %w", snap.Endpoint.EndpointID, err)
 	}
 	return &snap, nil
+}
+
+func capabilityLeaseAllowsModel(lease *models.CapabilityLease, modelIDs ...string) bool {
+	if lease == nil {
+		return false
+	}
+	var allowed []string
+	if err := json.Unmarshal([]byte(lease.AllowedModelPackages), &allowed); err != nil {
+		return false
+	}
+	for _, candidate := range allowed {
+		for _, modelID := range modelIDs {
+			if modelID != "" && candidate == modelID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // heartbeatThrottle bounds harness heartbeat writes to one per minute.

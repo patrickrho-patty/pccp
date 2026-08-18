@@ -2,10 +2,12 @@ package identity
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"gorm.io/gorm"
 )
 
 // entitlement.go: developer entitlement (web/01 B5). Roles/UserRoles are
@@ -75,27 +77,58 @@ func (s *Service) UserEntitlements(orgID, userID string) ([]models.UserRole, []m
 		Find(&assignments).Error; err != nil {
 		return nil, nil, err
 	}
+	roleIDs := make([]string, 0, len(assignments))
+	for _, assignment := range assignments {
+		roleIDs = append(roleIDs, assignment.RoleID)
+	}
 	var roles []models.Role
-	for _, a := range assignments {
-		var role models.Role
-		if s.db.Where("organization_id = ? AND id = ?", orgID, a.RoleID).First(&role).Error == nil {
-			roles = append(roles, role)
+	if len(roleIDs) > 0 {
+		if err := s.db.Where("organization_id = ? AND id IN ?", orgID, roleIDs).Find(&roles).Error; err != nil {
+			return nil, nil, err
 		}
 	}
 	return assignments, roles, nil
 }
 
+// RoleAssignment is one requested developer entitlement in a complete
+// replacement operation.
+type RoleAssignment struct {
+	RoleID  string `json:"role_id"`
+	Scope   string `json:"scope"`
+	ScopeID string `json:"scope_id"`
+}
+
 // AssignUserRole grants a scoped entitlement to a developer.
 func (s *Service) AssignUserRole(orgID, userID, roleID, scope, scopeID string) (*models.UserRole, error) {
+	var assignment *models.UserRole
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := LockMutableUser(tx, orgID, userID); err != nil {
+			return err
+		}
+		created, err := s.assignUserRoleWithDB(tx, orgID, userID, roleID, scope, scopeID)
+		if err != nil {
+			return err
+		}
+		assignment = created
+		return s.recordAuditWithDB(tx, orgID, "cp.user.entitlement.granted", "admin", "", "user", userID,
+			fmt.Sprintf(`{"role_id":"%s","scope":"%s","scope_id":"%s"}`, roleID, scope, scopeID))
+	})
+	return assignment, err
+}
+
+func (s *Service) assignUserRoleWithDB(db *gorm.DB, orgID, userID, roleID, scope, scopeID string) (*models.UserRole, error) {
 	var role models.Role
-	if err := s.db.Where("organization_id = ? AND id = ?", orgID, roleID).First(&role).Error; err != nil {
+	if err := db.Where("organization_id = ? AND id = ?", orgID, roleID).First(&role).Error; err != nil {
 		return nil, fmt.Errorf("identity: role %s not found in org", roleID)
 	}
 	var existing models.UserRole
-	err := s.db.Where("organization_id = ? AND user_id = ? AND role_id = ? AND scope_id = ?",
+	err := db.Where("organization_id = ? AND user_id = ? AND role_id = ? AND scope_id = ?",
 		orgID, userID, roleID, scopeID).First(&existing).Error
 	if err == nil {
 		return &existing, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
 	}
 	assignment := models.UserRole{
 		Base:           models.Base{ID: models.GenerateID("ur")},
@@ -105,24 +138,60 @@ func (s *Service) AssignUserRole(orgID, userID, roleID, scope, scopeID string) (
 		Scope:          scope,
 		ScopeID:        scopeID,
 	}
-	if err := s.db.Create(&assignment).Error; err != nil {
+	if err := db.Create(&assignment).Error; err != nil {
 		return nil, err
 	}
-	s.recordAudit(orgID, "cp.user.entitlement.granted", "admin", "user", userID,
-		fmt.Sprintf(`{"role_id":"%s","scope":"%s","scope_id":"%s"}`, roleID, scope, scopeID))
 	return &assignment, nil
+}
+
+// ReplaceUserRoles validates the complete requested set before deleting any
+// current assignment, and persists the replacement plus audit atomically.
+func (s *Service) ReplaceUserRoles(orgID, userID string, requested []RoleAssignment, actorID string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := LockMutableUser(tx, orgID, userID); err != nil {
+			return err
+		}
+		for i := range requested {
+			if requested[i].RoleID == "" {
+				return fmt.Errorf("identity: role_id is required")
+			}
+			if requested[i].Scope == "" {
+				requested[i].Scope = "org"
+			}
+			var count int64
+			if err := tx.Model(&models.Role{}).Where("organization_id = ? AND id = ?", orgID, requested[i].RoleID).Count(&count).Error; err != nil {
+				return err
+			}
+			if count != 1 {
+				return fmt.Errorf("identity: role %s not found in org", requested[i].RoleID)
+			}
+		}
+		if err := tx.Where("organization_id = ? AND user_id = ?", orgID, userID).Delete(&models.UserRole{}).Error; err != nil {
+			return err
+		}
+		for _, role := range requested {
+			if _, err := s.assignUserRoleWithDB(tx, orgID, userID, role.RoleID, role.Scope, role.ScopeID); err != nil {
+				return err
+			}
+		}
+		details, _ := json.Marshal(map[string]interface{}{"role_count": len(requested)})
+		return s.recordAuditWithDB(tx, orgID, "cp.user.entitlements.replaced", "admin", actorID, "user", userID, string(details))
+	})
 }
 
 // RemoveUserRole revokes an entitlement assignment.
 func (s *Service) RemoveUserRole(orgID, userID, roleID, scopeID string) error {
-	err := s.db.Where("organization_id = ? AND user_id = ? AND role_id = ? AND scope_id = ?",
-		orgID, userID, roleID, scopeID).Delete(&models.UserRole{}).Error
-	if err != nil {
-		return err
-	}
-	s.recordAudit(orgID, "cp.user.entitlement.revoked", "admin", "user", userID,
-		fmt.Sprintf(`{"role_id":"%s","scope_id":"%s"}`, roleID, scopeID))
-	return nil
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := LockMutableUser(tx, orgID, userID); err != nil {
+			return err
+		}
+		if err := tx.Where("organization_id = ? AND user_id = ? AND role_id = ? AND scope_id = ?",
+			orgID, userID, roleID, scopeID).Delete(&models.UserRole{}).Error; err != nil {
+			return err
+		}
+		return s.recordAuditWithDB(tx, orgID, "cp.user.entitlement.revoked", "admin", "", "user", userID,
+			fmt.Sprintf(`{"role_id":"%s","scope_id":"%s"}`, roleID, scopeID))
+	})
 }
 
 // DeveloperPermissions flattens a developer's entitlements into a
@@ -133,9 +202,17 @@ func (s *Service) DeveloperPermissions(orgID, userID string) (map[string]bool, e
 		return nil, err
 	}
 	perms := map[string]bool{}
+	rolesByID := make(map[string]models.Role, len(roles))
+	for _, role := range roles {
+		rolesByID[role.ID] = role
+	}
 	for i := range assignments {
+		role, ok := rolesByID[assignments[i].RoleID]
+		if !ok {
+			continue
+		}
 		var list []string
-		if err := json.Unmarshal([]byte(roles[i].Permissions), &list); err != nil {
+		if err := json.Unmarshal([]byte(role.Permissions), &list); err != nil {
 			continue
 		}
 		for _, p := range list {
@@ -152,6 +229,58 @@ func (s *Service) EvaluateEntitlement(orgID, userID, permission string) (bool, e
 		return false, err
 	}
 	return perms[permission], nil
+}
+
+// EvaluateScopedEntitlementWithDB checks one permission against assignments
+// whose scope contains the requested project/repository. It intentionally
+// runs on the caller's transaction so roster, entitlement, and session
+// issuance decisions share one consistent boundary.
+func (s *Service) EvaluateScopedEntitlementWithDB(db *gorm.DB, orgID, userID, permission, projectID, repositoryID string) (bool, error) {
+	var assignments []models.UserRole
+	if err := db.Where("organization_id = ? AND user_id = ?", orgID, userID).Find(&assignments).Error; err != nil {
+		return false, err
+	}
+	if len(assignments) == 0 {
+		return false, nil
+	}
+	roleIDs := make([]string, 0, len(assignments))
+	for i := range assignments {
+		roleIDs = append(roleIDs, assignments[i].RoleID)
+	}
+	var roles []models.Role
+	if err := db.Where("organization_id = ? AND id IN ?", orgID, roleIDs).Find(&roles).Error; err != nil {
+		return false, err
+	}
+	permissions := make(map[string]bool, len(roles))
+	for i := range roles {
+		var list []string
+		if err := json.Unmarshal([]byte(roles[i].Permissions), &list); err != nil {
+			continue
+		}
+		for _, candidate := range list {
+			if candidate == permission {
+				permissions[roles[i].ID] = true
+			}
+		}
+	}
+	for i := range assignments {
+		if !permissions[assignments[i].RoleID] {
+			continue
+		}
+		switch assignments[i].Scope {
+		case "", "org", "organization":
+			return true, nil
+		case "project":
+			if projectID != "" && assignments[i].ScopeID == projectID {
+				return true, nil
+			}
+		case "repository", "repo":
+			if repositoryID != "" && assignments[i].ScopeID == repositoryID {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // SweepExpiredContractors auto-disables users whose contract window has
@@ -173,10 +302,19 @@ func (s *Service) SweepExpiredContractors() int {
 			continue
 		}
 		if profile.ContractEnd != "" && profile.ContractEnd < today {
-			s.db.Model(&u).Update("status", "suspended")
-			s.recordAudit(u.OrganizationID, "cp.user.contract_expired", "system", "user", u.ID,
-				fmt.Sprintf(`{"contract_end":"%s"}`, profile.ContractEnd))
-			n++
+			if _, err := TransitionUserLifecycle(s.db, UserLifecycleMutation{
+				OrganizationID:   u.OrganizationID,
+				UserID:           u.ID,
+				To:               models.UserStatusSuspended,
+				Reason:           fmt.Sprintf("contract expired on %s", profile.ContractEnd),
+				ActorID:          "contractor-expiry-sweep",
+				ActorType:        "system",
+				EventType:        "cp.user.contract_expired",
+				Action:           "suspend_expired_contractor",
+				SessionLifecycle: s.lifecycle,
+			}); err == nil {
+				n++
+			}
 		}
 	}
 	return n

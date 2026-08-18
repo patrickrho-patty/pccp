@@ -180,7 +180,7 @@ func (s *Service) EnforceStages(ctx context.Context, ex *Exchange, greq GovernRe
 
 	// Stage: lease + epoch + model + catalog (the snapshot chain).
 	trace.Record(StageAuthenticate, true, "peer authenticated")
-	snap, err := s.ResolveGovernanceSnapshot(greq.HarnessID, greq.Model)
+	snap, err := s.ResolveGovernanceSnapshot(greq.HarnessID, greq.SessionID, greq.Model)
 	if err != nil {
 		trace.Record(StageLeaseValidate, false, err.Error())
 		return trace, err

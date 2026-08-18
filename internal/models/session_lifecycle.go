@@ -7,12 +7,49 @@ package models
 // States: pending, active, idle, paused, closed, terminated.
 // closed/terminated are terminal.
 var sessionLifecycleTransitions = map[string][]string{
-	"pending":    {"active", "closed", "terminated"},
+	"pending":    {"active", "paused", "closed", "terminated"},
 	"active":     {"idle", "paused", "closed", "terminated"},
 	"idle":       {"active", "paused", "closed", "terminated"},
 	"paused":     {"active", "closed", "terminated"},
 	"closed":     {},
 	"terminated": {},
+}
+
+var sessionNonTerminalStatuses = []string{"pending", "active", "idle", "paused"}
+var sessionTerminalStatuses = []string{"closed", "terminated"}
+
+// SessionNonTerminalStatuses returns a copy of the canonical set used by
+// lifecycle sweeps, scoped containment, and live-session projections.
+func SessionNonTerminalStatuses() []string {
+	return append([]string(nil), sessionNonTerminalStatuses...)
+}
+
+// SessionTerminalStatuses returns a copy of the canonical terminal set.
+func SessionTerminalStatuses() []string {
+	return append([]string(nil), sessionTerminalStatuses...)
+}
+
+// SessionTransitionSources returns the known source states that may move to
+// target. Scoped transitions use this positive set so an ineligible row cannot
+// make an otherwise successful bulk action partially fail after mutating its
+// eligible neighbors.
+func SessionTransitionSources(target string) []string {
+	sources := make([]string, 0, len(sessionNonTerminalStatuses))
+	for _, source := range sessionNonTerminalStatuses {
+		if SessionTransitionAllowed(source, target) {
+			sources = append(sources, source)
+		}
+	}
+	return sources
+}
+
+func SessionIsTerminal(status string) bool {
+	for _, terminal := range sessionTerminalStatuses {
+		if status == terminal {
+			return true
+		}
+	}
+	return false
 }
 
 // SessionTransitionAllowed reports whether from → to is a legal session

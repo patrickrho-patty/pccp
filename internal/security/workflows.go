@@ -2,17 +2,18 @@ package security
 
 import (
 	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
-	"encoding/base64"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"regexp"
 	"time"
 
+	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"gorm.io/gorm"
 )
 
 // --- Suppress / accept-risk (security C1) ---
@@ -55,70 +56,13 @@ func (s *Service) SweepSuppressions() int {
 
 // --- Alert routing (security C2/C3, §10C.14/§32.4) ---
 
-var alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
-
-// KeyProvider is the envelope-encryption provider used by alert
-// dispatch. nil means the dispatch path falls back to the legacy
-// plaintext column (dual-read window during the backfill). PAT-1502 PR 2.
-var alertKeyProvider interface {
-	KEKID() string
-	UnwrapKey(wrapped []byte) ([]byte, error)
-}
-
-// SetAlertKeyProvider configures the provider used to decrypt
-// alert-endpoint envelopes at dispatch time. PAT-1502 PR 2.
-func SetAlertKeyProvider(p interface {
-	KEKID() string
-	UnwrapKey(wrapped []byte) ([]byte, error)
-}) {
-	alertKeyProvider = p
-}
-
 // resolveAlertTarget decrypts an envelope if present, otherwise
 // falls back to the plaintext column. PAT-1502 PR 2.
-func resolveAlertTarget(ep models.AlertEndpoint) (string, error) {
-	if ep.TargetEnc == "" {
-		return ep.Target, nil
-	}
-	if alertKeyProvider == nil {
-		return "", fmt.Errorf("security: alert target is encrypted but no key provider is configured")
-	}
-	envJSON, err := base64.StdEncoding.DecodeString(ep.TargetEnc)
-	if err != nil {
-		return "", fmt.Errorf("security: decode envelope: %w", err)
-	}
-	var env struct {
-		KEKID      string `json:"kek_id"`
-		WrappedDEK []byte `json:"wrapped_dek"`
-		Nonce      []byte `json:"nonce"`
-		Ciphertext []byte `json:"ciphertext"`
-	}
-	if err := json.Unmarshal(envJSON, &env); err != nil {
-		return "", fmt.Errorf("security: parse envelope: %w", err)
-	}
-	if env.KEKID != alertKeyProvider.KEKID() {
-		return "", fmt.Errorf("security: KEK mismatch (envelope %q vs provider %q)", env.KEKID, alertKeyProvider.KEKID())
-	}
-	dek, err := alertKeyProvider.UnwrapKey(env.WrappedDEK)
-	if err != nil {
-		return "", fmt.Errorf("security: unwrap DEK: %w", err)
-	}
-	block, err := aes.NewCipher(dek)
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	if len(env.Nonce) < gcm.NonceSize() {
-		return "", fmt.Errorf("security: envelope nonce too short")
-	}
-	pt, err := gcm.Open(nil, env.Nonce, env.Ciphertext, nil)
-	if err != nil {
-		return "", fmt.Errorf("security: decrypt: %w", err)
-	}
-	return string(pt), nil
+func (s *Service) resolveAlertTarget(ep models.AlertEndpoint) (string, error) {
+	return keymgmt.OpenAlertSecret(s.alertKeyProvider, ep.TargetEnc, ep.TargetKEKID, ep.Target,
+		ep.TargetBindingVersion, ep.CredentialID, keymgmt.AlertSecretContext{
+			OrganizationID: ep.OrganizationID, EndpointID: ep.ID, ProviderType: ep.Type,
+		})
 }
 
 // DispatchAlerts routes a recorded finding to the org's enabled alert
@@ -128,7 +72,7 @@ func resolveAlertTarget(ep models.AlertEndpoint) (string, error) {
 // the count actually delivered.
 func (s *Service) DispatchAlerts(orgID string, finding models.SecurityFinding) int {
 	var endpoints []models.AlertEndpoint
-	s.db.Where("organization_id = ? AND enabled = ?", orgID, true).Find(&endpoints)
+	s.db.Where("organization_id = ? AND enabled = ? AND rotation_required = ?", orgID, true, false).Find(&endpoints)
 	delivered := 0
 	for _, ep := range endpoints {
 		if !severityRouted(ep.SeveritiesJSON, finding.Severity) {
@@ -146,7 +90,12 @@ func severityRouted(severitiesJSON, severity string) bool {
 	if len(severitiesJSON) == 0 {
 		return true // no filter → all severities
 	}
-	json.Unmarshal([]byte(severitiesJSON), &list)
+	if err := json.Unmarshal([]byte(severitiesJSON), &list); err != nil {
+		return false
+	}
+	if len(list) == 0 {
+		return true
+	}
 	for _, sev := range list {
 		if sev == severity || sev == "all" {
 			return true
@@ -156,6 +105,9 @@ func severityRouted(severitiesJSON, severity string) bool {
 }
 
 func (s *Service) deliverAlert(ep models.AlertEndpoint, finding models.SecurityFinding) bool {
+	if !ep.Enabled || ep.RotationRequired {
+		return false
+	}
 	var payload []byte
 	var contentType string
 	switch ep.Type {
@@ -180,25 +132,116 @@ func (s *Service) deliverAlert(ep models.AlertEndpoint, finding models.SecurityF
 		payload, _ = json.Marshal(finding)
 		contentType = "application/json"
 	}
-	target, err := resolveAlertTarget(ep)
+	target, err := s.resolveAlertTarget(ep)
 	if err != nil {
-		log.Printf("security: alert %s target unresolved: %v", ep.Name, err)
+		log.Printf("security: alert endpoint=%s credential=%s resolution_failed", ep.ID, ep.CredentialID)
 		return false
 	}
 	if target == "" {
 		return false
 	}
-	resp, err := alertHTTPClient.Post(target, contentType, bytes.NewReader(payload))
+	if err := ValidateAlertTarget(ep.Type, target); err != nil {
+		log.Printf("security: alert endpoint=%s credential=%s invalid_target", ep.ID, ep.CredentialID)
+		return false
+	}
+	req, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(payload))
 	if err != nil {
-		log.Printf("security: alert delivery to %s failed: %v", ep.Name, err)
+		log.Printf("security: alert endpoint=%s credential=%s request_build_failed", ep.ID, ep.CredentialID)
+		return false
+	}
+	req.Header.Set("Content-Type", contentType)
+	resp, err := s.alertHTTPClient.Do(req)
+	if err != nil {
+		log.Printf("security: alert endpoint=%s credential=%s delivery_failed reason=%s", ep.ID, ep.CredentialID, AlertDeliveryErrorClass(err))
 		return false
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		log.Printf("security: alert delivery to %s rejected: %s", ep.Name, resp.Status)
+	_, _ = io.CopyN(io.Discard, resp.Body, 64<<10)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Printf("security: alert endpoint=%s credential=%s rejected status_class=non_2xx http_status=%d", ep.ID, ep.CredentialID, resp.StatusCode)
 		return false
 	}
 	return true
+}
+
+// StartAlertDeliveryWorker starts one durable-outbox consumer per service.
+func (s *Service) StartAlertDeliveryWorker(ctx context.Context) {
+	s.alertWorkerOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				if _, err := s.ProcessAlertDeliveries(ctx, 50); err != nil && ctx.Err() == nil {
+					log.Printf("security: alert delivery worker cycle failed")
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	})
+}
+
+// ProcessAlertDeliveries atomically claims pending jobs before performing
+// network I/O, making concurrent workers safe across replicas.
+func (s *Service) ProcessAlertDeliveries(ctx context.Context, limit int) (int, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	now := time.Now().UTC()
+	if err := s.db.Model(&models.AlertDeliveryJob{}).
+		Where("status = ? AND updated_at < ?", "processing", now.Add(-5*time.Minute)).
+		Updates(map[string]interface{}{"status": "pending", "available_at": now}).Error; err != nil {
+		return 0, err
+	}
+	var candidates []models.AlertDeliveryJob
+	if err := s.db.Where("status = ? AND available_at <= ?", "pending", now).
+		Order("available_at ASC, id ASC").Limit(limit).Find(&candidates).Error; err != nil {
+		return 0, err
+	}
+	delivered := 0
+	for _, job := range candidates {
+		if ctx.Err() != nil {
+			return delivered, ctx.Err()
+		}
+		claim := s.db.Model(&models.AlertDeliveryJob{}).
+			Where("id = ? AND status = ?", job.ID, "pending").
+			Updates(map[string]interface{}{"status": "processing", "attempts": gorm.Expr("attempts + 1")})
+		if claim.Error != nil {
+			return delivered, claim.Error
+		}
+		if claim.RowsAffected != 1 {
+			continue
+		}
+		var endpoint models.AlertEndpoint
+		var finding models.SecurityFinding
+		errEndpoint := s.db.Where("id = ? AND organization_id = ?", job.EndpointID, job.OrganizationID).First(&endpoint).Error
+		errFinding := s.db.Where("id = ? AND organization_id = ?", job.FindingID, job.OrganizationID).First(&finding).Error
+		ok := errEndpoint == nil && errFinding == nil && s.deliverAlert(endpoint, finding)
+		if ok {
+			if err := s.db.Model(&models.AlertDeliveryJob{}).Where("id = ?", job.ID).
+				Updates(map[string]interface{}{"status": "delivered", "last_reason": ""}).Error; err != nil {
+				return delivered, err
+			}
+			delivered++
+			continue
+		}
+		attempts := job.Attempts + 1
+		status := "pending"
+		if attempts >= 5 || errEndpoint != nil || errFinding != nil || endpoint.RotationRequired || !endpoint.Enabled {
+			status = "failed"
+		}
+		delay := time.Duration(1<<min(attempts, 6)) * time.Second
+		retryAt := time.Now().UTC().Add(delay)
+		if err := s.db.Model(&models.AlertDeliveryJob{}).Where("id = ?", job.ID).Updates(map[string]interface{}{
+			"status": status, "available_at": retryAt, "last_reason": "delivery_failed",
+		}).Error; err != nil {
+			return delivered, err
+		}
+	}
+	return delivered, nil
 }
 
 // --- PII lexicon versioning (security C5, §16.3) ---
@@ -279,13 +322,9 @@ func (s *Service) ScanSession(orgID, sessionID string) (map[string]interface{}, 
 			scan := s.CheckContext(orgID, text)
 			for _, f := range scan.Findings {
 				f.Direction = side
-				recorded := models.SecurityFinding{
-					OrganizationID: orgID, SessionID: sessionID, ExchangeID: ex.ExchangeID,
-					FindingType: f.Type, Severity: f.Severity, Title: f.Title, TitleKo: f.TitleKo,
-					Description: f.Description, RuleID: f.RuleID, Direction: side,
-					Status: "open", OccurredAt: time.Now().Format(time.RFC3339),
+				if _, err := s.RecordFinding(orgID, sessionID, ex.ExchangeID, f); err != nil {
+					return nil, err
 				}
-				s.db.Create(&recorded)
 				totalFindings++
 				if f.Severity == "critical" || f.Severity == "high" {
 					blocked = true

@@ -3,8 +3,8 @@ import { useParams, Link } from 'react-router-dom'
 import { api } from '../api'
 import { StatCard } from '../components/StatCard'
 import { FavoriteStar } from '../hooks/useFavorites'
-import { formatUsageAmount, UsageReport, UsageReportData } from '../components/UsageReport'
-import { SESSION_STATUS_META } from '../sessionState'
+import { formatUsageStateInteger, formatUsageAmount, UsageReport, UsageReportData } from '../components/UsageReport'
+import { allowedSessionActions, formatSessionTime, SESSION_STATUS_META } from '../sessionState'
 
 // Canonical session state vocabulary (PAT-1496) — badge-only view of the
 // shared table used by Sessions and Live.
@@ -23,32 +23,44 @@ export default function SessionDetail() {
   const [replay, setReplay] = useState<any>(null)
   const [visibility, setVisibility] = useState<any>(null)
   const [usageReport, setUsageReport] = useState<UsageReportData | null>(null)
+  const [usageLoading, setUsageLoading] = useState(true)
+  const [usageError, setUsageError] = useState(false)
   const [tab, setTab] = useState('timeline')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (!id) return
 	let active = true
+    const controller = new AbortController()
     setLoading(true)
-    Promise.all([
-      api.getSessionDetail(id),
-      api.getSessionDecisions(id),
-      api.getSessionReplay(id),
-      api.getSessionVisibility(id),
-	]).then(([d, dec, rep, vis]) => {
+    setUsageReport(null)
+    setUsageLoading(true)
+		Promise.all([
+			api.getSessionDetail(id),
+			api.getSessionVisibility(id),
+		]).then(([d, vis]) => {
 	  if (!active) return
       setDetail(d)
-      setDecisions(dec)
-      setReplay(rep)
       setVisibility(vis)
 	}).catch(() => {
 	  if (active) setDetail(null)
 	}).finally(() => { if (active) setLoading(false) })
-	api.getSessionUsage(id).then(usage => {
+	setUsageError(false)
+	api.getSessionUsage(id, '30d', '', controller.signal).then(usage => {
 	  if (active) setUsageReport(usage)
-	}).catch(() => { if (active) setUsageReport(null) })
-	return () => { active = false }
+	}).catch((error: any) => { if (active && error?.name !== 'AbortError') { setUsageReport(null); setUsageError(true) } }).finally(() => { if (active) setUsageLoading(false) })
+	return () => { active = false; controller.abort() }
   }, [id])
+
+	useEffect(() => {
+		if (!id || tab !== 'decisions' || decisions) return
+		api.getSessionDecisions(id).then(setDecisions).catch(() => setDecisions({ decisions: [] }))
+	}, [id, tab, decisions])
+
+	useEffect(() => {
+		if (!id || tab !== 'replay' || replay) return
+		api.getSessionReplay(id).then(setReplay).catch(() => setReplay({ events: [] }))
+	}, [id, tab, replay])
 
   if (loading) return <div className="text-gray-400 p-8 text-center">로딩 중...</div>
   if (!detail?.session) return (
@@ -59,6 +71,7 @@ export default function SessionDetail() {
   )
 
   const sess = detail.session
+	const timezone = detail.timezone || 'Asia/Seoul'
   const meta = STATUS_META[sess.status] || STATUS_META.pending
   const totalTokens = usageReport?.total_tokens
   const totalCost = usageReport?.display_total
@@ -95,20 +108,20 @@ export default function SessionDetail() {
                 열람 {visibility.level}
               </span>
             )}
-            {sess.status === 'active' && <button className="btn-sm btn-secondary" onClick={() => act('pause')}>일시정지</button>}
-            {(sess.status === 'paused' || sess.status === 'idle') && <button className="btn-sm btn-secondary" onClick={() => act('resume')}>재개</button>}
-            {sess.status !== 'closed' && sess.status !== 'terminated' && <button className="btn-sm btn-danger" onClick={() => act('close')}>종료</button>}
+            {allowedSessionActions(sess.status).includes('pause') && <button className="btn-sm btn-secondary" onClick={() => act('pause')}>일시정지</button>}
+            {allowedSessionActions(sess.status).includes('resume') && <button className="btn-sm btn-secondary" onClick={() => act('resume')}>재개</button>}
+            {allowedSessionActions(sess.status).includes('close') && <button className="btn-sm btn-danger" onClick={() => act('close')}>종료</button>}
           </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
-          <StatCard label="최근 30일 토큰" value={hasUsageLedger && totalTokens != null ? totalTokens.toLocaleString() : '미수집'} accent="blue" to={`/sessions/${sess.session_id || sess.id}`} query="#session-usage-ledger" sub={`원장 ${usageReport?.record_count ?? '—'}건`} />
-          <StatCard label={`최근 30일 비용 (${usageReport?.display_currency || '통화 미확인'})`} value={totalCost?.state === 'recorded' || totalCost?.state === 'zero' ? formatUsageAmount(totalCost.amount_micros, totalCost.currency) : totalCost?.state === 'error' ? '집계 오류' : '미수집'} accent="green" to={`/sessions/${sess.session_id || sess.id}`} query="#session-usage-ledger" sub={!hasUsageLedger ? '원장 기록 없음' : `${usageReport?.reconciled ? '원장 대사 완료' : '대사 확인 필요'}${delayedUsageMeters ? ` · 지연 ${delayedUsageMeters}` : ''}`} />
+          <StatCard label="최근 30일 토큰" value={usageLoading ? '불러오는 중' : usageError ? '조회 오류' : formatUsageStateInteger(totalTokens, usageReport?.total_tokens_state)} accent="blue" to={`/sessions/${sess.session_id || sess.id}`} query="#session-usage-ledger" sub={usageLoading ? '원장 조회 중' : usageError ? '권한 또는 조회 오류' : `원장 ${usageReport?.record_count ?? '—'}건`} />
+          <StatCard label={`최근 30일 비용 (${usageReport?.display_currency || '통화 미확인'})`} value={usageLoading ? '불러오는 중' : totalCost?.state === 'recorded' || totalCost?.state === 'zero' ? formatUsageAmount(totalCost.amount_micros, totalCost.currency) : totalCost?.state === 'error' ? '집계 오류' : '미수집'} accent="green" to={`/sessions/${sess.session_id || sess.id}`} query="#session-usage-ledger" sub={usageLoading ? '원장 조회 중' : !hasUsageLedger ? '원장 기록 없음' : `${usageReport?.reconciled ? '원장 대사 완료' : '대사 확인 필요'}${delayedUsageMeters ? ` · 지연 ${delayedUsageMeters}` : ''}`} />
           <StatCard label="익스체인지" value={(detail.exchanges || []).length} accent="purple" />
           <StatCard label="변경셋" value={(detail.change_sets || []).length} accent="orange" />
         </div>
       </div>
 
-      <UsageReport report={usageReport} id="session-usage-ledger" title="세션 사용량 및 비용 원장" loadMore={(cursor) => api.getSessionUsage(id!, '30d', cursor)} />
+      {usageLoading ? <div className="card p-4 text-[11px] text-gray-400">사용량 원장을 불러오는 중입니다.</div> : usageError ? <div className="card p-4 text-[11px] text-red-600">사용량 원장을 조회할 권한이 없거나 조회 중 오류가 발생했습니다.</div> : <UsageReport report={usageReport} id="session-usage-ledger" title="세션 사용량 및 비용 원장" loadMore={(cursor, signal) => api.getSessionUsage(id!, '30d', cursor, signal)} />}
 
       <div className="flex gap-1 border-b border-gray-200">
         {[
@@ -131,7 +144,7 @@ export default function SessionDetail() {
           {(detail.actions || []).slice(0, 100).map((a: any, i: number) => (
             <div key={i} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
               <span className="text-gray-700">{a.action_type || a.type || a.kind} — {(a.description || a.summary || '').slice(0, 80)}</span>
-              <span className="text-gray-400">{(a.occurred_at || '').slice(0, 16)}</span>
+              <span className="text-gray-400">{formatSessionTime(a.occurred_at, timezone)}</span>
             </div>
           ))}
         </div>
@@ -147,7 +160,7 @@ export default function SessionDetail() {
               <span className={d.verdict === 'allowed' ? 'text-green-600' : d.verdict === 'denied' ? 'text-red-600' : 'text-gray-400'}>
                 {d.verdict}
               </span>
-              <span className="text-gray-400">{d.input_tokens}/{d.output_tokens} tok · {d.at?.slice(0, 16)}</span>
+              <span className="text-gray-400">{d.input_tokens}/{d.output_tokens} tok · {formatSessionTime(d.at, timezone)}</span>
             </div>
           ))}
         </div>
@@ -186,7 +199,7 @@ export default function SessionDetail() {
           {(replay?.events || []).map((ev: any, i: number) => (
             <div key={i} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
               <span className="text-gray-700">
-                <span className="text-gray-400 font-mono">{ev.at?.slice(11, 19)}</span> {ev.kind}
+                <span className="text-gray-400">{formatSessionTime(ev.at, timezone)}</span> {ev.kind}
               </span>
               <span className="text-gray-400">{ev.payload?.id?.slice(0, 10) || ''}</span>
             </div>

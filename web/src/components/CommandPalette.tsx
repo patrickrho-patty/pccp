@@ -55,7 +55,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     if (query.trim().length < 2) { setEntityResults([]); return }
     let cancelled = false
     fetch(`/api/search?q=${encodeURIComponent(query)}`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('pccp_token') || ''}` },
+      headers: { Authorization: `Bearer ${sessionStorage.getItem('pccp_token') || ''}` },
     })
       .then(r => (r.ok ? r.json() : []))
       .then((results: any[]) => {

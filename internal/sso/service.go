@@ -1,75 +1,103 @@
 package sso
 
 import (
-	"context"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/xml"
+	"errors"
 	"fmt"
-	"io"
 	"math/big"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/patrickrho-patty/pccp/internal/identity"
+	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"github.com/patrickrho-patty/pccp/internal/sessionlifecycle"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Service implements SAML 2.0 and OIDC SSO integration (PRD 8.2, 32.1).
 type Service struct {
-	mu           sync.RWMutex
-	oidcJWKS     map[string][]crypto.PublicKey
-	db           *gorm.DB
-	jwtSecret    []byte
-	samlIDPID    string
-	samlIDPURL   string
-	samlSPURL    string
-	oidcIssuer   string
-	oidcClientID string
-	oidcSecret   string
-	scimToken    string
+	mu          sync.RWMutex
+	db          *gorm.DB
+	httpClient  *http.Client
+	scimTokens  map[[32]byte]string // bearer digest -> immutable organization
+	lifecycle   *sessionlifecycle.Service
+	publicSSO   map[string]ssoAttemptWindow
+	publicGate  chan struct{}
+	keyProvider keymgmt.KeyProvider
 }
 
-func New(db *gorm.DB, jwtSecret string) *Service {
-	return &Service{db: db, jwtSecret: []byte(jwtSecret)}
+func (s *Service) SetKeyProvider(provider keymgmt.KeyProvider) {
+	s.mu.Lock()
+	s.keyProvider = provider
+	s.mu.Unlock()
 }
 
-func (s *Service) ConfigureSAML(idpEntityID, idpSSOURL, spURL string) {
-	s.samlIDPID = idpEntityID
-	s.samlIDPURL = idpSSOURL
-	s.samlSPURL = spURL
+type ssoAttemptWindow struct {
+	Started time.Time
+	Count   int
 }
 
-func (s *Service) ConfigureOIDC(issuer, clientID, clientSecret string) {
-	s.oidcIssuer = issuer
-	s.oidcClientID = clientID
-	s.oidcSecret = clientSecret
+func (s *Service) SetSessionLifecycle(lifecycle *sessionlifecycle.Service) {
+	s.lifecycle = lifecycle
 }
 
-func (s *Service) GenerateSAMLRedirect(relayState string) (string, error) {
-	if s.samlIDPURL == "" {
-		return "", fmt.Errorf("sso: SAML not configured")
+func New(db *gorm.DB, _ string) *Service {
+	return &Service{
+		db: db,
+		httpClient: &http.Client{
+			Timeout: 15 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+		scimTokens: make(map[[32]byte]string),
+		publicSSO:  make(map[string]ssoAttemptWindow),
+		publicGate: make(chan struct{}, 16),
 	}
-	authReq := fmt.Sprintf(`<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="%s" Version="2.0" IssueInstant="%s" Destination="%s"><saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">%s</saml:Issuer></samlp:AuthnRequest>`,
-		generateID(), time.Now().UTC().Format(time.RFC3339), s.samlIDPURL, s.samlSPURL)
-	encoded := base64.StdEncoding.EncodeToString([]byte(authReq))
-	params := url.Values{}
-	params.Set("SAMLRequest", encoded)
-	if relayState != "" {
-		params.Set("RelayState", relayState)
+}
+
+// BeginPublicRequest applies both a concurrency ceiling and a fixed-window
+// request budget to unauthenticated SSO endpoints. The returned function must
+// be deferred when allowed is true.
+func (s *Service) BeginPublicRequest(key string) (release func(), allowed bool) {
+	select {
+	case s.publicGate <- struct{}{}:
+	default:
+		return nil, false
 	}
-	return s.samlIDPURL + "?" + params.Encode(), nil
+	release = func() { <-s.publicGate }
+	now := time.Now().UTC()
+	s.mu.Lock()
+	window := s.publicSSO[key]
+	if window.Started.IsZero() || now.Sub(window.Started) >= time.Minute {
+		window = ssoAttemptWindow{Started: now}
+	}
+	if window.Count >= 30 {
+		s.mu.Unlock()
+		release()
+		return nil, false
+	}
+	window.Count++
+	s.publicSSO[key] = window
+	for candidate, record := range s.publicSSO {
+		if now.Sub(record.Started) >= 2*time.Minute {
+			delete(s.publicSSO, candidate)
+		}
+	}
+	s.mu.Unlock()
+	return release, true
 }
 
 type SAMLResponse struct {
@@ -82,103 +110,11 @@ type SAMLResponse struct {
 	NotOnOrAfter time.Time         `json:"not_on_or_after"`
 }
 
-func (s *Service) HandleSAMLCallback(samlResponse string, relayState string) (*SAMLResponse, error) {
-	data, err := base64.StdEncoding.DecodeString(samlResponse)
-	if err != nil {
-		return nil, fmt.Errorf("sso: decode SAML response: %w", err)
-	}
-
-	var resp struct {
-		XMLName    xml.Name `xml:"Response"`
-		Assertions []struct {
-			Subject struct {
-				NameID string `xml:"NameID"`
-			} `xml:"Subject"`
-			Attributes []struct {
-				Name  string `xml:"Name,attr"`
-				Value string `xml:"AttributeValue"`
-			} `xml:"AttributeStatement>Attribute"`
-		} `xml:"Assertion"`
-	}
-
-	if err := xml.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("sso: malformed SAML response: %w", err)
-	}
-
-	if len(resp.Assertions) == 0 || resp.Assertions[0].Subject.NameID == "" {
-		return nil, fmt.Errorf("sso: SAML response carries no authenticated subject")
-	}
-
-	result := &SAMLResponse{Attributes: make(map[string]string)}
-	result.UserID = resp.Assertions[0].Subject.NameID
-	for _, attr := range resp.Assertions[0].Attributes {
-		result.Attributes[attr.Name] = attr.Value
-		switch attr.Name {
-		case "email", "EmailAddress", "mail":
-			result.Email = attr.Value
-		case "name", "DisplayName", "cn":
-			result.Name = attr.Value
-		case "nameKo", "koreanName":
-			result.NameKo = attr.Value
-		}
-	}
-	return result, nil
-}
-
-func (s *Service) OIDCAuthURL(redirectURI, state string) (string, error) {
-	if s.oidcIssuer == "" {
-		return "", fmt.Errorf("sso: OIDC not configured")
-	}
-	params := url.Values{}
-	params.Set("response_type", "code")
-	params.Set("client_id", s.oidcClientID)
-	params.Set("redirect_uri", redirectURI)
-	params.Set("scope", "openid profile email")
-	params.Set("state", state)
-	return s.oidcIssuer + "/authorize?" + params.Encode(), nil
-}
-
 type OIDCTokenResponse struct {
 	AccessToken string `json:"access_token"`
 	IDToken     string `json:"id_token"`
 	ExpiresIn   int    `json:"expires_in"`
 	TokenType   string `json:"token_type"`
-}
-
-func (s *Service) HandleOIDCCallback(code, redirectURI string) (*OIDCTokenResponse, error) {
-	if s.oidcIssuer == "" {
-		return nil, fmt.Errorf("sso: OIDC not configured")
-	}
-	// Real code exchange against the configured IdP token endpoint.
-	form := url.Values{}
-	form.Set("grant_type", "authorization_code")
-	form.Set("code", code)
-	form.Set("redirect_uri", redirectURI)
-	form.Set("client_id", s.oidcClientID)
-	form.Set("client_secret", s.oidcSecret)
-	req, err := http.NewRequest(http.MethodPost, strings.TrimSuffix(s.oidcIssuer, "/")+"/token",
-		strings.NewReader(form.Encode()))
-	if err != nil {
-		return nil, fmt.Errorf("sso: token request build: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("sso: token endpoint unreachable: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("sso: token endpoint rejected the code (HTTP %d): %s", resp.StatusCode, string(body))
-	}
-	var out OIDCTokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("sso: decode token response: %w", err)
-	}
-	if out.IDToken == "" {
-		return nil, fmt.Errorf("sso: token response carries no id_token")
-	}
-	return &out, nil
 }
 
 type OIDCUserInfo struct {
@@ -188,28 +124,35 @@ type OIDCUserInfo struct {
 	Locale string `json:"locale,omitempty"`
 }
 
-// SetOIDCJWKS installs the IdP's JWKS (discovered from the issuer's
-// well-known endpoint or provisioned offline for sovereign deploys).
-func (s *Service) SetOIDCJWKS(jwksJSON []byte) error {
+func parseOIDCJWKS(jwksJSON []byte) (map[string][]crypto.PublicKey, error) {
 	var jwks struct {
 		Keys []struct {
-			Kid string `json:"kid"`
-			Kty string `json:"kty"`
-			Crv string `json:"crv"`
-			X   string `json:"x"`
-			Y   string `json:"y"`
-			N   string `json:"n"`
-			E   string `json:"e"`
+			Kid    string   `json:"kid"`
+			Kty    string   `json:"kty"`
+			Crv    string   `json:"crv"`
+			X      string   `json:"x"`
+			Y      string   `json:"y"`
+			N      string   `json:"n"`
+			E      string   `json:"e"`
+			Use    string   `json:"use"`
+			Alg    string   `json:"alg"`
+			KeyOps []string `json:"key_ops"`
 		} `json:"keys"`
 	}
 	if err := json.Unmarshal(jwksJSON, &jwks); err != nil {
-		return fmt.Errorf("sso: decode JWKS: %w", err)
+		return nil, fmt.Errorf("sso: decode JWKS: %w", err)
 	}
 	parsed := map[string][]crypto.PublicKey{}
 	for _, k := range jwks.Keys {
+		if k.Use != "" && k.Use != "sig" {
+			continue
+		}
+		if len(k.KeyOps) > 0 && !containsString(k.KeyOps, "verify") {
+			continue
+		}
 		switch k.Kty {
 		case "EC":
-			if k.Crv == "P-256" {
+			if k.Crv == "P-256" && (k.Alg == "" || k.Alg == "ES256") {
 				x, xerr := base64.RawURLEncoding.DecodeString(k.X)
 				if xerr != nil || len(x) != 32 {
 					continue
@@ -243,6 +186,9 @@ func (s *Service) SetOIDCJWKS(jwksJSON []byte) error {
 				}
 			}
 		case "RSA":
+			if k.Alg != "" && k.Alg != "RS256" {
+				continue
+			}
 			n, errN := base64.RawURLEncoding.DecodeString(k.N)
 			e, errE := base64.RawURLEncoding.DecodeString(k.E)
 			if errN != nil || errE != nil || len(e) < 1 || len(e) > 4 {
@@ -261,46 +207,18 @@ func (s *Service) SetOIDCJWKS(jwksJSON []byte) error {
 		}
 	}
 	if len(parsed) == 0 {
-		return fmt.Errorf("sso: JWKS carries no usable keys")
+		return nil, fmt.Errorf("sso: JWKS carries no usable keys")
 	}
-	s.mu.Lock()
-	s.oidcJWKS = parsed
-	s.mu.Unlock()
-	return nil
+	return parsed, nil
 }
 
-// DiscoverOIDCJWKS fetches the issuer's JWKS from the well-known
-// endpoint (sovereign deployments provision it offline instead).
-func (s *Service) DiscoverOIDCJWKS(ctx context.Context) error {
-	if s.oidcIssuer == "" {
-		return fmt.Errorf("sso: OIDC not configured")
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
 	}
-	wellKnown := strings.TrimSuffix(s.oidcIssuer, "/") + "/.well-known/openid-configuration"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, wellKnown, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("sso: discover issuer: %w", err)
-	}
-	defer resp.Body.Close()
-	var cfg struct {
-		JWKSURI string `json:"jwks_uri"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil || cfg.JWKSURI == "" {
-		return fmt.Errorf("sso: issuer discovery missing jwks_uri")
-	}
-	jwksResp, err := http.Get(cfg.JWKSURI)
-	if err != nil {
-		return fmt.Errorf("sso: fetch JWKS: %w", err)
-	}
-	defer jwksResp.Body.Close()
-	jwksBytes, err := io.ReadAll(io.LimitReader(jwksResp.Body, 1<<20))
-	if err != nil {
-		return err
-	}
-	return s.SetOIDCJWKS(jwksBytes)
+	return false
 }
 
 // decompressP256 recovers the even-parity y for x on P-256.
@@ -325,24 +243,21 @@ func decompressP256(x *big.Int) (*big.Int, bool) {
 	return y, true
 }
 
-// ParseOIDCIDToken verifies the ID token signature against the
-// provisioned JWKS, the issuer, and the expiry — ParseUnverified is
-// never used for authentication.
-func (s *Service) ParseOIDCIDToken(idToken string) (*OIDCUserInfo, error) {
-	s.mu.RLock()
-	jwks := s.oidcJWKS
-	s.mu.RUnlock()
+func parseOIDCIDToken(idToken, issuer, clientID, expectedNonce string, jwks map[string][]crypto.PublicKey) (*OIDCUserInfo, error) {
 	if len(jwks) == 0 {
 		return nil, fmt.Errorf("sso: no OIDC JWKS provisioned (refusing to trust an unverified ID token)")
 	}
 	// Verify by trying each JWKS candidate (x-only EC keys carry both
 	// y roots; the signature discriminates them).
-	popts := []jwt.ParserOption{jwt.WithValidMethods([]string{"ES256", "RS256"})}
-	if s.oidcIssuer != "" {
-		popts = append(popts, jwt.WithIssuer(s.oidcIssuer))
+	popts := []jwt.ParserOption{
+		jwt.WithValidMethods([]string{"ES256", "RS256"}),
+		jwt.WithExpirationRequired(),
 	}
-	if s.oidcClientID != "" {
-		popts = append(popts, jwt.WithAudience(s.oidcClientID))
+	if issuer != "" {
+		popts = append(popts, jwt.WithIssuer(issuer))
+	}
+	if clientID != "" {
+		popts = append(popts, jwt.WithAudience(clientID))
 	}
 	kidHint := ""
 	if parts := strings.Split(idToken, "."); len(parts) == 3 {
@@ -385,6 +300,23 @@ func (s *Service) ParseOIDCIDToken(idToken string) (*OIDCUserInfo, error) {
 	if !ok {
 		return nil, fmt.Errorf("sso: ID token claims malformed")
 	}
+	if expectedNonce != "" && getStringClaim(claims, "nonce") != expectedNonce {
+		return nil, fmt.Errorf("sso: ID token nonce mismatch")
+	}
+	if clientID != "" {
+		audiences, audienceErr := claims.GetAudience()
+		if audienceErr != nil || len(audiences) == 0 {
+			return nil, fmt.Errorf("sso: ID token audience is invalid")
+		}
+		authorizedParty := getStringClaim(claims, "azp")
+		if (len(audiences) > 1 && authorizedParty != clientID) || (authorizedParty != "" && authorizedParty != clientID) {
+			return nil, fmt.Errorf("sso: ID token authorized party mismatch")
+		}
+	}
+	issuedAt, issuedAtErr := claims.GetIssuedAt()
+	if issuedAtErr != nil || issuedAt == nil || issuedAt.Time.After(time.Now().UTC().Add(2*time.Minute)) {
+		return nil, fmt.Errorf("sso: ID token issued-at time is invalid")
+	}
 	info := &OIDCUserInfo{
 		Sub:    getStringClaim(claims, "sub"),
 		Email:  getStringClaim(claims, "email"),
@@ -394,31 +326,45 @@ func (s *Service) ParseOIDCIDToken(idToken string) (*OIDCUserInfo, error) {
 	if info.Sub == "" {
 		return nil, fmt.Errorf("sso: ID token carries no subject")
 	}
+	if expectedNonce != "" {
+		verified, ok := claims["email_verified"].(bool)
+		if info.Email == "" || !ok || !verified {
+			return nil, fmt.Errorf("sso: ID token carries no verified email")
+		}
+	}
 	if info.Locale == "" {
 		info.Locale = "ko-KR"
 	}
 	return info, nil
 }
 
-func (s *Service) ProvisionUserFromSSO(orgID string, saml *SAMLResponse) (*models.User, error) {
-	var user models.User
-	err := s.db.Where("organization_id = ? AND external_id = ?", orgID, saml.UserID).First(&user).Error
+func (s *Service) ProvisionUserFromSSO(orgID, issuer string, saml *SAMLResponse) (*models.User, error) {
+	user, err := s.findExternalUser(orgID, "saml", issuer, saml.UserID)
 	if err == gorm.ErrRecordNotFound {
-		user = models.User{
-			AuditBase:  models.AuditBase{OrganizationID: orgID},
-			Email:      saml.Email,
-			Name:       saml.Name,
-			NameKo:     saml.NameKo,
-			Status:     "active",
-			AuthMethod: "saml",
-			ExternalID: saml.UserID,
-			Locale:     "ko-KR",
-			Timezone:   "Asia/Seoul",
+		created := models.User{
+			AuditBase:              models.AuditBase{OrganizationID: orgID},
+			Email:                  saml.Email,
+			Name:                   saml.Name,
+			NameKo:                 saml.NameKo,
+			Status:                 "active",
+			AuthMethod:             "saml",
+			ExternalID:             saml.UserID,
+			ExternalIssuer:         issuer,
+			ExternalIssuerVerified: true,
+			Locale:                 "ko-KR",
+			Timezone:               "Asia/Seoul",
 		}
-		if err := s.db.Create(&user).Error; err != nil {
-			return nil, fmt.Errorf("sso: create user: %w", err)
+		create := s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&created)
+		if create.Error != nil {
+			return nil, fmt.Errorf("sso: create user: %w", create.Error)
 		}
-		return &user, nil
+		if create.RowsAffected == 1 {
+			return &created, nil
+		}
+		user, err = s.findExternalUser(orgID, "saml", issuer, saml.UserID)
+		if err != nil {
+			return nil, fmt.Errorf("sso: external identity conflicts with an existing account")
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("sso: lookup user: %w", err)
@@ -428,29 +374,74 @@ func (s *Service) ProvisionUserFromSSO(orgID string, saml *SAMLResponse) (*model
 	if user.Status != "active" {
 		return nil, fmt.Errorf("sso: account is %s", user.Status)
 	}
+	updates := map[string]interface{}{}
 	if saml.Name != "" {
-		user.Name = saml.Name
+		updates["name"] = saml.Name
 	}
 	if saml.NameKo != "" {
-		user.NameKo = saml.NameKo
+		updates["name_ko"] = saml.NameKo
 	}
 	if saml.Email != "" {
-		user.Email = saml.Email
+		updates["email"] = saml.Email
 	}
 	now := time.Now().Format(time.RFC3339)
-	user.LastLoginAt = &now
-	s.db.Save(&user)
-	return &user, nil
+	updates["last_login_at"] = now
+	if err := s.updateActiveSSOProfile(user, updates); err != nil {
+		return nil, err
+	}
+	return user, nil
 }
 
-func (s *Service) GenerateSessionToken(userID, orgID, role string) (string, error) {
-	claims := jwt.MapClaims{
-		"user_id": userID, "org_id": orgID, "role": role,
-		"exp": time.Now().Add(24 * time.Hour).Unix(),
-		"iat": time.Now().Unix(), "iss": "pccp-sso",
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(s.jwtSecret)
+// updateActiveSSOProfile updates only IdP-owned profile columns and keeps the
+// active-state predicate in the write itself. A lifecycle transition that wins
+// after the initial lookup therefore cannot be overwritten by stale user data.
+func (s *Service) updateActiveSSOProfile(user *models.User, updates map[string]interface{}) error {
+	return s.updateLifecycleBoundProfile(user, updates, true)
+}
+
+// updateLifecycleBoundProfile keeps an IdP-owned email change and the console
+// credential keyed by that email in one lifecycle-locked transaction. Without
+// this, an old credential could become detached from the managed user and
+// survive suspension/offboarding as an apparently standalone operator.
+func (s *Service) updateLifecycleBoundProfile(user *models.User, updates map[string]interface{}, activeOnly bool) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var locked *models.User
+		var err error
+		if activeOnly {
+			locked, err = identity.LockActiveUser(tx, user.OrganizationID, user.ID)
+		} else {
+			locked, err = identity.LockMutableUser(tx, user.OrganizationID, user.ID)
+		}
+		if err != nil {
+			return fmt.Errorf("sso: account state changed during profile update: %w", err)
+		}
+		if nextEmail, ok := updates["email"].(string); ok && nextEmail != "" &&
+			!strings.EqualFold(strings.TrimSpace(locked.Email), strings.TrimSpace(nextEmail)) {
+			nextEmail = identity.NormalizeEmail(nextEmail)
+			updates["email"] = nextEmail
+			if err := tx.Model(&identity.AdminCredentials{}).
+				Where("organization_id = ? AND user_id = ?", user.OrganizationID, user.ID).
+				Update("email", nextEmail).Error; err != nil {
+				return fmt.Errorf("sso: update linked console identity: %w", err)
+			}
+		}
+		res := tx.Model(&models.User{}).
+			Where("id = ? AND organization_id = ? AND status = ?", user.ID, user.OrganizationID, locked.Status).
+			Updates(updates)
+		if res.Error != nil {
+			return fmt.Errorf("sso: update lifecycle-bound profile: %w", res.Error)
+		}
+		if res.RowsAffected != 1 {
+			return fmt.Errorf("sso: account state changed during profile update")
+		}
+		if err := tx.Where("id = ? AND organization_id = ?", user.ID, user.OrganizationID).First(user).Error; err != nil {
+			return fmt.Errorf("sso: reload updated user: %w", err)
+		}
+		if activeOnly && user.Status != models.UserStatusActive {
+			return fmt.Errorf("sso: account is %s", user.Status)
+		}
+		return nil
+	})
 }
 
 type SCIMUser struct {
@@ -459,48 +450,89 @@ type SCIMUser struct {
 	UserName    string   `json:"userName"`
 	ExternalID  string   `json:"externalId"`
 	Email       string   `json:"email"`
-	Active      bool     `json:"active"`
+	Active      *bool    `json:"active,omitempty"`
 	DisplayName string   `json:"displayName"`
 }
 
 func (s *Service) HandleSCIMRequest(w http.ResponseWriter, r *http.Request) {
 	// SCIM is an ADMIN surface: a configured bearer token is REQUIRED
 	// (fail closed when unset — the handler is never open).
-	if s.scimToken == "" {
+	s.mu.RLock()
+	hasTokens := len(s.scimTokens) > 0
+	s.mu.RUnlock()
+	if !hasTokens {
 		http.Error(w, "SCIM not configured", http.StatusServiceUnavailable)
 		return
 	}
-	auth := r.Header.Get("Authorization")
-	if auth != "Bearer "+s.scimToken {
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if !strings.HasPrefix(auth, "Bearer ") {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	// Org scope is mandatory — unscoped provisioning is refused.
-	orgID := r.URL.Query().Get("org")
-	if orgID == "" {
-		http.Error(w, "org scope required", http.StatusBadRequest)
+	tokenDigest := sha256.Sum256([]byte(strings.TrimPrefix(auth, "Bearer ")))
+	s.mu.RLock()
+	orgID, configured := s.scimTokens[tokenDigest]
+	s.mu.RUnlock()
+	if !configured {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// The credential determines the tenant. A caller-supplied org can only
+	// narrow/assert that binding; it can never select another tenant.
+	if requestedOrg := strings.TrimSpace(r.URL.Query().Get("org")); requestedOrg != "" && requestedOrg != orgID {
+		http.Error(w, "SCIM credential is not authorized for requested organization", http.StatusForbidden)
 		return
 	}
 
 	switch r.Method {
 	case http.MethodPost:
-		var user SCIMUser
-		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+		var requestUser SCIMUser
+		if err := json.NewDecoder(r.Body).Decode(&requestUser); err != nil {
 			http.Error(w, "invalid body", http.StatusBadRequest)
 			return
 		}
-		created, err := s.ProvisionUserFromSSO(orgID, &SAMLResponse{
-			UserID: user.UserName,
-			Email:  user.Email,
-			Name:   user.DisplayName,
-		})
+		provisioned, err := s.provisionSCIMUser(orgID, &requestUser)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), scimLifecycleHTTPStatus(err))
 			return
+		}
+		if requestUser.Active != nil {
+			to := models.UserStatusActive
+			reason := "SCIM activation"
+			if !*requestUser.Active {
+				to = models.UserStatusOffboarded
+				reason = "SCIM deprovisioning"
+			}
+			if provisioned.Status != to {
+				result, transitionErr := identity.TransitionUserLifecycle(s.db, identity.UserLifecycleMutation{
+					OrganizationID:   orgID,
+					UserID:           provisioned.ID,
+					To:               to,
+					Reason:           reason,
+					ActorID:          "scim",
+					ActorType:        "system",
+					Idempotent:       true,
+					SessionLifecycle: s.lifecycle,
+				})
+				if transitionErr != nil {
+					if result != nil && errors.Is(transitionErr, identity.ErrLifecycleCleanup) {
+						provisioned = &result.User
+					} else {
+						status := http.StatusConflict
+						if errors.Is(transitionErr, identity.ErrLifecycleUserNotFound) {
+							status = http.StatusNotFound
+						}
+						http.Error(w, transitionErr.Error(), status)
+						return
+					}
+				} else {
+					provisioned = &result.User
+				}
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": created.ID, "email": created.Email})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": provisioned.ID, "email": provisioned.Email, "active": provisioned.Status == models.UserStatusActive})
 	case http.MethodDelete:
 		userID := chi.URLParam(r, "userID")
 		if userID == "" {
@@ -517,33 +549,145 @@ func (s *Service) HandleSCIMRequest(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "userID required", http.StatusBadRequest)
 			return
 		}
-		// Deletes are scoped to the caller's org. The canonical user
-		// lifecycle treats offboarded as terminal (PAT-1489) — a SCIM
-		// delete on an already-offboarded account is a no-op, not a
-		// second transition.
-		var user models.User
-		if err := s.db.Where("id = ? AND organization_id = ?", userID, orgID).First(&user).Error; err != nil {
-			http.Error(w, "user not found in org", http.StatusNotFound)
-			return
-		}
-		if user.Status == "offboarded" {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "offboarded"})
-			return
-		}
-		if err := s.db.Model(&user).Update("status", "offboarded").Error; err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		result, err := identity.TransitionUserLifecycle(s.db, identity.UserLifecycleMutation{
+			OrganizationID:   orgID,
+			UserID:           userID,
+			To:               models.UserStatusOffboarded,
+			Reason:           "SCIM deprovisioning",
+			ActorID:          "scim",
+			ActorType:        "system",
+			Idempotent:       true,
+			SessionLifecycle: s.lifecycle,
+		})
+		if err != nil {
+			if result == nil || !errors.Is(err, identity.ErrLifecycleCleanup) {
+				http.Error(w, err.Error(), scimLifecycleHTTPStatus(err))
+				return
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "offboarded"})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": result.User.Status, "remaining_access": result.RemainingAccess,
+			"cleanup_failures": result.SessionCleanupFailures,
+		})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-// ConfigureSCIMToken sets the SCIM admin bearer token.
-func (s *Service) ConfigureSCIMToken(token string) { s.scimToken = token }
+func (s *Service) provisionSCIMUser(orgID string, scimUser *SCIMUser) (*models.User, error) {
+	externalID := scimUser.ExternalID
+	if externalID == "" {
+		externalID = scimUser.UserName
+	}
+	if externalID == "" {
+		return nil, fmt.Errorf("sso: SCIM userName or externalId is required")
+	}
+	user, err := s.findExternalUser(orgID, "scim", "scim", externalID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		initialStatus := models.UserStatusActive
+		if scimUser.Active != nil && !*scimUser.Active {
+			initialStatus = models.UserStatusOffboarded
+		}
+		created := models.User{
+			AuditBase:              models.AuditBase{OrganizationID: orgID},
+			Email:                  identity.NormalizeEmail(scimUser.Email),
+			Name:                   scimUser.DisplayName,
+			Status:                 initialStatus,
+			AuthMethod:             "scim",
+			ExternalID:             externalID,
+			ExternalIssuer:         "scim",
+			ExternalIssuerVerified: true,
+			Locale:                 "ko-KR",
+			Timezone:               "Asia/Seoul",
+		}
+		err := s.db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&created).Error; err != nil {
+				return err
+			}
+			if initialStatus != models.UserStatusOffboarded {
+				return nil
+			}
+			today := time.Now().UTC().Format("2006-01-02")
+			created.OffboardingDate = &today
+			if err := tx.Model(&models.User{}).Where("id = ? AND organization_id = ?", created.ID, orgID).
+				Update("offboarding_date", today).Error; err != nil {
+				return err
+			}
+			details, _ := json.Marshal(map[string]interface{}{"from": "provisioning", "to": models.UserStatusOffboarded, "reason": "SCIM deprovisioning"})
+			return tx.Create(&models.AuditEvent{
+				OrganizationID: orgID, EventType: "cp.user.offboarded", ActorID: "scim", ActorType: "system",
+				Action: "offboard_user", ResourceType: "user", ResourceID: created.ID,
+				Details: string(details), Result: "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
+			}).Error
+		})
+		if err != nil {
+			return nil, fmt.Errorf("sso: create SCIM user: %w", err)
+		}
+		return &created, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("sso: lookup SCIM user: %w", err)
+	}
+	if user.Status == models.UserStatusOffboarded {
+		if scimUser.Active != nil && !*scimUser.Active {
+			return user, nil
+		}
+		return nil, fmt.Errorf("sso: offboarded SCIM account is terminal")
+	}
+	updates := map[string]interface{}{"auth_method": "scim", "external_issuer_verified": true}
+	if scimUser.Email != "" {
+		updates["email"] = identity.NormalizeEmail(scimUser.Email)
+	}
+	if scimUser.DisplayName != "" {
+		updates["name"] = scimUser.DisplayName
+	}
+	if err := s.updateLifecycleBoundProfile(user, updates, false); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+// ConfigureSCIMTokenForOrganization installs one tenant-bound provisioning
+// credential. Only its digest is retained in memory.
+func (s *Service) ConfigureSCIMTokenForOrganization(orgID, token string) {
+	orgID, token = strings.TrimSpace(orgID), strings.TrimSpace(token)
+	if orgID == "" || token == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.scimTokens[sha256.Sum256([]byte(token))] = orgID
+}
+
+// ConfigureSCIMTokensJSON accepts a JSON object of organization IDs to bearer
+// tokens. It is intended for production secret injection at process startup.
+func (s *Service) ConfigureSCIMTokensJSON(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var configured map[string]string
+	if err := json.Unmarshal([]byte(raw), &configured); err != nil {
+		return fmt.Errorf("sso: invalid tenant-bound SCIM token configuration: %w", err)
+	}
+	for orgID, token := range configured {
+		s.ConfigureSCIMTokenForOrganization(orgID, token)
+	}
+	return nil
+}
+
+func scimLifecycleHTTPStatus(err error) int {
+	switch {
+	case errors.Is(err, identity.ErrLifecycleUserNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, identity.ErrLifecycleInvalid), errors.Is(err, identity.ErrLifecycleStateChanged),
+		errors.Is(err, identity.ErrLifecycleLastAdmin), errors.Is(err, identity.ErrLifecycleAccessRemain),
+		errors.Is(err, identity.ErrUserReadOnly):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
+}
 
 func getStringClaim(claims jwt.MapClaims, key string) string {
 	if v, ok := claims[key]; ok {
@@ -552,45 +696,42 @@ func getStringClaim(claims jwt.MapClaims, key string) string {
 	return ""
 }
 
-func generateID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return base64.StdEncoding.EncodeToString(b)
-}
-
-var _ = ed25519.PublicKeySize
-
 // candidateKeySets flattens the JWKS into per-key candidate sets: one
 // set per (kid-slot) with each individual key, so x-only EC keys with
 // two y roots are each tried.
 
 // ProvisionOIDCUser finds or creates the console user for a verified
 // OIDC identity (mirrors ProvisionUserFromSSO for the OIDC flow).
-func (s *Service) ProvisionOIDCUser(orgID string, info *OIDCUserInfo) (*models.User, error) {
-	externalID := info.Sub
+func (s *Service) ProvisionOIDCUser(orgID, issuer string, info *OIDCUserInfo) (*models.User, error) {
+	externalID := strings.TrimSpace(info.Sub)
 	if externalID == "" {
-		externalID = info.Email
+		return nil, fmt.Errorf("sso: oidc identity carries no immutable subject")
 	}
-	if externalID == "" {
-		return nil, fmt.Errorf("sso: oidc identity carries no sub or email")
-	}
-	var user models.User
-	err := s.db.Where("organization_id = ? AND external_id = ?", orgID, externalID).First(&user).Error
+	user, err := s.findExternalUser(orgID, "oidc", issuer, externalID)
 	if err == gorm.ErrRecordNotFound {
-		user = models.User{
-			AuditBase:  models.AuditBase{OrganizationID: orgID},
-			Email:      info.Email,
-			Name:       info.Name,
-			Status:     "active",
-			AuthMethod: "oidc",
-			ExternalID: externalID,
-			Locale:     "ko-KR",
-			Timezone:   "Asia/Seoul",
+		created := models.User{
+			AuditBase:              models.AuditBase{OrganizationID: orgID},
+			Email:                  info.Email,
+			Name:                   info.Name,
+			Status:                 "active",
+			AuthMethod:             "oidc",
+			ExternalID:             externalID,
+			ExternalIssuer:         issuer,
+			ExternalIssuerVerified: true,
+			Locale:                 "ko-KR",
+			Timezone:               "Asia/Seoul",
 		}
-		if cerr := s.db.Create(&user).Error; cerr != nil {
-			return nil, fmt.Errorf("sso: create user: %w", cerr)
+		create := s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&created)
+		if create.Error != nil {
+			return nil, fmt.Errorf("sso: create user: %w", create.Error)
 		}
-		return &user, nil
+		if create.RowsAffected == 1 {
+			return &created, nil
+		}
+		user, err = s.findExternalUser(orgID, "oidc", issuer, externalID)
+		if err != nil {
+			return nil, fmt.Errorf("sso: external identity conflicts with an existing account")
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("sso: lookup user: %w", err)
@@ -600,12 +741,30 @@ func (s *Service) ProvisionOIDCUser(orgID string, info *OIDCUserInfo) (*models.U
 	if user.Status != "active" {
 		return nil, fmt.Errorf("sso: account is %s", user.Status)
 	}
+	updates := map[string]interface{}{}
 	if info.Name != "" {
-		user.Name = info.Name
+		updates["name"] = info.Name
 	}
 	if info.Email != "" {
-		user.Email = info.Email
+		updates["email"] = info.Email
 	}
-	s.db.Save(&user)
-	return &user, nil
+	updates["last_login_at"] = time.Now().UTC().Format(time.RFC3339)
+	if err := s.updateActiveSSOProfile(user, updates); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+// findExternalUser resolves a subject only in its verified provider namespace.
+// Issuer-less legacy rows are migrated from the organization's authoritative
+// configuration; a runtime login may never claim them using a new issuer.
+func (s *Service) findExternalUser(orgID, authMethod, issuer, externalID string) (*models.User, error) {
+	issuer = strings.TrimSpace(issuer)
+	if issuer == "" || strings.TrimSpace(externalID) == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var user models.User
+	err := s.db.Where("organization_id = ? AND auth_method = ? AND external_issuer = ? AND external_id = ?",
+		orgID, authMethod, issuer, externalID).First(&user).Error
+	return &user, err
 }

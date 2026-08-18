@@ -54,3 +54,31 @@ func TestEnvelopeRoundTripAndTamper(t *testing.T) {
 		t.Fatal("short KEK accepted")
 	}
 }
+
+func TestAlertSecretCiphertextIsBoundToTenantAndEndpoint(t *testing.T) {
+	provider, _ := NewLocalProvider(bytes.Repeat([]byte{5}, 32), "alert-v1")
+	ctx := AlertSecretContext{OrganizationID: "org-a", EndpointID: "endpoint-a", ProviderType: "webhook"}
+	encoded, kekID, credentialID, bindingVersion, err := SealAlertSecret(provider, "https://example.com/hook", ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenAlertSecret(provider, encoded, kekID, "", bindingVersion, credentialID, ctx); err != nil {
+		t.Fatalf("bound round trip failed: %v", err)
+	}
+	moved := AlertSecretContext{OrganizationID: "org-b", EndpointID: "endpoint-a", ProviderType: "webhook"}
+	if _, err := OpenAlertSecret(provider, encoded, kekID, "", bindingVersion, credentialID, moved); err == nil {
+		t.Fatal("ciphertext moved across tenants decrypted")
+	}
+}
+
+func TestOpenRejectsMalformedPayloadNonceWithoutPanic(t *testing.T) {
+	provider, _ := NewLocalProvider(bytes.Repeat([]byte{3}, 32), "kek")
+	envelope, err := Seal(provider, []byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope.Nonce = []byte{1}
+	if _, err := Open(provider, envelope); err == nil {
+		t.Fatal("malformed nonce accepted")
+	}
+}

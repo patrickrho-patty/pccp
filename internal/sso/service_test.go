@@ -1,11 +1,12 @@
 package sso
 
 import (
-	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/patrickrho-patty/pccp/internal/identity"
@@ -24,71 +25,6 @@ func setupDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func TestSAMLRedirect(t *testing.T) {
-	db := setupDB(t)
-	svc := New(db, "test-secret")
-	svc.ConfigureSAML("http://idp.example.com", "http://idp.example.com/sso", "http://pccp.example.com/saml/callback")
-
-	redirectURL, err := svc.GenerateSAMLRedirect("relay-state-123")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if redirectURL == "" {
-		t.Fatal("expected redirect URL")
-	}
-	if !contains(redirectURL, "SAMLRequest") {
-		t.Fatal("expected SAMLRequest in URL")
-	}
-}
-
-func TestSAMLCallback(t *testing.T) {
-	db := setupDB(t)
-	svc := New(db, "test-secret")
-
-	// A REAL SAML response shape with an authenticated subject and
-	// attributes (base64 of the XML).
-	real := `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">
-		<saml:Assertion>
-			<saml:Subject><saml:NameID>dev-kim@partner.example</saml:NameID></saml:Subject>
-			<saml:AttributeStatement>
-				<saml:Attribute Name="email"><saml:AttributeValue>dev-kim@partner.example</saml:AttributeValue></saml:Attribute>
-				<saml:Attribute Name="nameKo"><saml:AttributeValue>김개발</saml:AttributeValue></saml:Attribute>
-			</saml:AttributeStatement>
-		</saml:Assertion>
-	</samlp:Response>`
-	resp, err := svc.HandleSAMLCallback(base64.StdEncoding.EncodeToString([]byte(real)), "relay")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.UserID != "dev-kim@partner.example" || resp.NameKo != "김개발" {
-		t.Fatalf("parsed = %+v", resp)
-	}
-
-	// An EMPTY assertion response fails closed (no mock fallback).
-	empty := base64.StdEncoding.EncodeToString([]byte(`<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"></samlp:Response>`))
-	if _, err := svc.HandleSAMLCallback(empty, "relay"); err == nil {
-		t.Fatal("subject-less SAML response must fail closed")
-	}
-	// Garbage base64/XML fails closed.
-	if _, err := svc.HandleSAMLCallback("!!!not-base64!!!", "relay"); err == nil {
-		t.Fatal("garbage SAML response must fail closed")
-	}
-}
-
-func TestOIDCAuthURL(t *testing.T) {
-	db := setupDB(t)
-	svc := New(db, "test-secret")
-	svc.ConfigureOIDC("http://oidc.example.com", "client-id", "secret")
-
-	authURL, err := svc.OIDCAuthURL("http://pccp.example.com/callback", "state-123")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !contains(authURL, "client_id=client-id") {
-		t.Fatal("expected client_id in auth URL")
-	}
-}
-
 func TestProvisionUserFromSSO(t *testing.T) {
 	db := setupDB(t)
 	svc := New(db, "test-secret")
@@ -98,7 +34,7 @@ func TestProvisionUserFromSSO(t *testing.T) {
 	db.Create(&org)
 
 	// Provision new user
-	user, err := svc.ProvisionUserFromSSO(org.ID, &SAMLResponse{
+	user, err := svc.ProvisionUserFromSSO(org.ID, "https://idp.example", &SAMLResponse{
 		UserID: "sso-user-001",
 		Email:  "kim@patty.dev",
 		Name:   "Kim Gaebal",
@@ -118,7 +54,7 @@ func TestProvisionUserFromSSO(t *testing.T) {
 	}
 
 	// Provisioning same user again should update, not create
-	user2, err := svc.ProvisionUserFromSSO(org.ID, &SAMLResponse{
+	user2, err := svc.ProvisionUserFromSSO(org.ID, "https://idp.example", &SAMLResponse{
 		UserID: "sso-user-001",
 		Email:  "kim@patty.dev",
 		Name:   "Kim Updated",
@@ -146,7 +82,7 @@ func TestSCIMProvisioning(t *testing.T) {
 		t.Fatalf("unconfigured SCIM must 503, got %d", rec.Code)
 	}
 
-	svc.ConfigureSCIMToken("scim-admin-token")
+	svc.ConfigureSCIMTokenForOrganization(org.ID, "scim-admin-token")
 
 	// No/incorrect bearer token refused.
 	noAuth := httptest.NewRequest("POST", "/scim?org="+org.ID, strings.NewReader(`{"userName":"scim-1"}`))
@@ -156,13 +92,13 @@ func TestSCIMProvisioning(t *testing.T) {
 		t.Fatalf("token-less SCIM must 401, got %d", rec.Code)
 	}
 
-	// Missing org scope refused.
-	withAuth := httptest.NewRequest("POST", "/scim", strings.NewReader(`{"userName":"scim-1"}`))
+	// The credential itself supplies immutable org scope.
+	withAuth := httptest.NewRequest("POST", "/scim", strings.NewReader(`{"userName":"scim-unscoped","email":"unscoped@example.com"}`))
 	withAuth.Header.Set("Authorization", "Bearer scim-admin-token")
 	rec = httptest.NewRecorder()
 	svc.HandleSCIMRequest(rec, withAuth)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("unscoped SCIM must 400, got %d", rec.Code)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("tenant-bound SCIM without org query must 201, got %d", rec.Code)
 	}
 
 	// Authorized + scoped creation succeeds.
@@ -181,31 +117,170 @@ func TestSCIMProvisioning(t *testing.T) {
 	del.Header.Set("Authorization", "Bearer scim-admin-token")
 	rec = httptest.NewRecorder()
 	svc.HandleSCIMRequest(rec, del)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("cross-org SCIM delete must 404, got %d", rec.Code)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-org SCIM delete must 403, got %d", rec.Code)
 	}
 }
 
-func TestGenerateSessionToken(t *testing.T) {
-	svc := New(setupDB(t), "test-secret")
-	token, err := svc.GenerateSessionToken("user-1", "org-1", "admin")
+func TestSSOProfileRefreshCannotResurrectSuspendedUser(t *testing.T) {
+	db := setupDB(t)
+	svc := New(db, "test-secret")
+	org := models.Organization{Name: "SSO Race", Slug: "sso-race", Status: "active"}
+	db.Create(&org)
+	user := models.User{AuditBase: models.AuditBase{OrganizationID: org.ID}, Email: "race@corp.kr", Name: "Before", Status: "active", AuthMethod: "saml", ExternalID: "race-sub", ExternalIssuer: "https://idp.example"}
+	db.Create(&user)
+
+	var once sync.Once
+	callbackName := "pat1489_suspend_before_sso_profile_update"
+	if err := db.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table == "users" {
+			once.Do(func() {
+				// The initial SSO lookup has already materialized its active row.
+				// Commit the competing lifecycle change before the profile helper
+				// obtains its own lifecycle lock.
+				if err := db.Exec("UPDATE users SET status = ? WHERE id = ?", "suspended", user.ID).Error; err != nil {
+					tx.AddError(err)
+				}
+			})
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Callback().Query().Remove(callbackName) })
+
+	if _, err := svc.ProvisionUserFromSSO(org.ID, "https://idp.example", &SAMLResponse{UserID: "race-sub", Email: "race@corp.kr", Name: "After"}); err == nil {
+		t.Fatal("stale SSO refresh succeeded after lifecycle state changed")
+	}
+	var reloaded models.User
+	db.First(&reloaded, "id = ?", user.ID)
+	if reloaded.Status != "suspended" {
+		t.Fatalf("SSO refresh resurrected status to %q", reloaded.Status)
+	}
+}
+
+func TestSSOAndSCIMEmailRefreshKeepConsoleCredentialLifecycleBound(t *testing.T) {
+	db := setupDB(t)
+	svc := New(db, "test-secret")
+	org := models.Organization{Name: "Identity Link", Slug: "identity-link", Status: "active"}
+	db.Create(&org)
+
+	samlUser := models.User{AuditBase: models.AuditBase{OrganizationID: org.ID}, Email: "saml-old@corp.kr", Name: "SAML", Status: models.UserStatusActive, AuthMethod: "saml", ExternalID: "saml-link", ExternalIssuer: "https://idp.example"}
+	db.Create(&samlUser)
+	db.Create(&identity.AdminCredentials{Email: samlUser.Email, Password: "unused", OrganizationID: org.ID, UserID: samlUser.ID, Role: "member"})
+	if _, err := svc.ProvisionUserFromSSO(org.ID, "https://idp.example", &SAMLResponse{UserID: samlUser.ExternalID, Email: "saml-new@corp.kr", Name: "SAML"}); err != nil {
+		t.Fatal(err)
+	}
+	assertCredentialMoved := func(oldEmail, newEmail string) {
+		t.Helper()
+		var oldCount, newCount int64
+		db.Model(&identity.AdminCredentials{}).Where("organization_id = ? AND LOWER(email) = LOWER(?)", org.ID, oldEmail).Count(&oldCount)
+		db.Model(&identity.AdminCredentials{}).Where("organization_id = ? AND LOWER(email) = LOWER(?)", org.ID, newEmail).Count(&newCount)
+		if oldCount != 0 || newCount != 1 {
+			t.Fatalf("console identity link did not move %q -> %q: old=%d new=%d", oldEmail, newEmail, oldCount, newCount)
+		}
+	}
+	assertCredentialMoved("saml-old@corp.kr", "saml-new@corp.kr")
+
+	scimUser := models.User{AuditBase: models.AuditBase{OrganizationID: org.ID}, Email: "scim-old@corp.kr", Name: "SCIM", Status: models.UserStatusActive, AuthMethod: "scim", ExternalID: "scim-link", ExternalIssuer: "scim"}
+	db.Create(&scimUser)
+	db.Create(&identity.AdminCredentials{Email: scimUser.Email, Password: "unused", OrganizationID: org.ID, UserID: scimUser.ID, Role: "member"})
+	active := true
+	if _, err := svc.provisionSCIMUser(org.ID, &SCIMUser{ExternalID: scimUser.ExternalID, Email: "scim-new@corp.kr", DisplayName: "SCIM", Active: &active}); err != nil {
+		t.Fatal(err)
+	}
+	assertCredentialMoved("scim-old@corp.kr", "scim-new@corp.kr")
+
+	result, err := identity.TransitionUserLifecycle(db, identity.UserLifecycleMutation{
+		OrganizationID: org.ID, UserID: scimUser.ID, To: models.UserStatusOffboarded,
+		Reason: "SCIM removal", ActorID: "scim", ActorType: "system",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if token == "" {
-		t.Fatal("expected token")
+	if result.RevokedConsoleAccess != 1 {
+		t.Fatalf("offboarding revoked %d linked console credentials", result.RevokedConsoleAccess)
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || (len(s) > 0 && containsStr(s, substr)))
+func TestSCIMExplicitInactiveAndDeleteUseCanonicalOffboarding(t *testing.T) {
+	db := setupDB(t)
+	svc := New(db, "test-secret")
+	org := models.Organization{Name: "SCIM Lifecycle", Slug: "scim-life", Status: "active"}
+	db.Create(&org)
+	svc.ConfigureSCIMTokenForOrganization(org.ID, "scim-admin-token")
+
+	req := httptest.NewRequest("POST", "/scim?org="+org.ID, strings.NewReader(`{"userName":"inactive-sub","email":"inactive@corp.kr","displayName":"Inactive","active":false}`))
+	req.Header.Set("Authorization", "Bearer scim-admin-token")
+	rec := httptest.NewRecorder()
+	svc.HandleSCIMRequest(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("inactive SCIM create got %d: %s", rec.Code, rec.Body.String())
+	}
+	var inactive models.User
+	if err := db.Where("organization_id = ? AND external_id = ?", org.ID, "inactive-sub").First(&inactive).Error; err != nil {
+		t.Fatal(err)
+	}
+	if inactive.AuthMethod != "scim" || inactive.Status != "offboarded" {
+		t.Fatalf("explicit inactive SCIM user = auth %q status %q", inactive.AuthMethod, inactive.Status)
+	}
+
+	activeUser := models.User{AuditBase: models.AuditBase{OrganizationID: org.ID}, Email: "delete@corp.kr", Name: "Delete", Status: "active", AuthMethod: "scim", ExternalID: "delete-sub", ExternalIssuer: "scim"}
+	db.Create(&activeUser)
+	session := models.Session{AuditBase: models.AuditBase{OrganizationID: org.ID}, UserID: activeUser.ID, HarnessID: "peer-scim", SessionID: "scim-session", Status: "active"}
+	db.Create(&session)
+	lease := models.CapabilityLease{OrganizationID: org.ID, LeaseID: "scim-lease", SubjectPeerID: "peer-scim", UserID: activeUser.ID, SessionID: session.SessionID, PolicyEpochID: "epoch", NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2027-01-01T00:00:00Z", Status: "active"}
+	db.Create(&lease)
+
+	del := httptest.NewRequest("DELETE", "/scim/Users/"+activeUser.ID+"?org="+org.ID, nil)
+	del.Header.Set("Authorization", "Bearer scim-admin-token")
+	rec = httptest.NewRecorder()
+	svc.HandleSCIMRequest(rec, del)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SCIM delete got %d: %s", rec.Code, rec.Body.String())
+	}
+	db.First(&session, "id = ?", session.ID)
+	db.First(&lease, "id = ?", lease.ID)
+	if session.Status != "terminated" || lease.Status != "revoked" {
+		t.Fatalf("SCIM delete left access: session=%s lease=%s", session.Status, lease.Status)
+	}
+	var audit models.AuditEvent
+	if err := db.Where("resource_id = ? AND event_type = ?", activeUser.ID, "cp.user.offboarded").First(&audit).Error; err != nil {
+		t.Fatalf("SCIM offboard audit missing: %v", err)
+	}
+	if audit.ActorID != "scim" || !strings.Contains(audit.Details, "SCIM deprovisioning") {
+		t.Fatalf("SCIM audit missing actor/reason: %+v", audit)
+	}
 }
 
-func containsStr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
+func TestSCIMInactiveUserIsNeverPersistedActive(t *testing.T) {
+	db := setupDB(t)
+	svc := New(db, "test-secret")
+	org := models.Organization{Name: "SCIM Atomic", Slug: "scim-atomic", Status: "active"}
+	db.Create(&org)
+	svc.ConfigureSCIMTokenForOrganization(org.ID, "scim-admin-token")
+
+	callbackName := "pat1489_reject_transient_active_scim_create"
+	if err := db.Callback().Create().Before("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+		if user, ok := tx.Statement.Dest.(*models.User); ok && user.ExternalID == "inactive-atomic" && user.Status == models.UserStatusActive {
+			tx.AddError(errors.New("SCIM inactive account was transiently active"))
 		}
+	}); err != nil {
+		t.Fatal(err)
 	}
-	return false
+	t.Cleanup(func() { _ = db.Callback().Create().Remove(callbackName) })
+
+	req := httptest.NewRequest("POST", "/scim?org="+org.ID, strings.NewReader(`{"userName":"inactive-atomic","email":"inactive-atomic@corp.kr","active":false}`))
+	req.Header.Set("Authorization", "Bearer scim-admin-token")
+	rec := httptest.NewRecorder()
+	svc.HandleSCIMRequest(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("atomic inactive SCIM create got %d: %s", rec.Code, rec.Body.String())
+	}
+	var user models.User
+	if err := db.Where("organization_id = ? AND external_id = ?", org.ID, "inactive-atomic").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if user.Status != models.UserStatusOffboarded {
+		t.Fatalf("inactive SCIM status = %q", user.Status)
+	}
 }

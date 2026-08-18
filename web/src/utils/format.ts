@@ -1,8 +1,10 @@
 export function formatRelative(ts?: string, now: number = Date.now()): string {
-  if (!ts) return '-'
-  const d = new Date(ts)
-  const diff = now - d.getTime()
-  const mins = Math.floor(diff / 60000)
+	if (!ts) return '-'
+	const d = new Date(ts)
+	if (isNaN(d.getTime())) return '-'
+	const diff = now - d.getTime()
+	if (diff < -60_000) return `서버 시간보다 ${Math.ceil(Math.abs(diff) / 60000)}분 이후`
+	const mins = Math.floor(diff / 60000)
   if (mins < 1) return '방금 전'
   if (mins < 60) return mins + '분 전'
   const hours = Math.floor(mins / 60)
@@ -12,12 +14,15 @@ export function formatRelative(ts?: string, now: number = Date.now()): string {
   return d.toLocaleDateString('ko-KR')
 }
 
-// formatTenantTime renders an ISO instant in the tenant timezone with an
-// explicit KST marker — the single labeled timestamp surfaces show
-// (PAT-1496: never render a raw UTC slice beside a local time).
-export function formatTenantTime(iso?: string): string {
+// formatTenantTime renders an ISO instant with the tenant's explicit IANA
+// timezone label (PAT-1496: never show an unlabeled local timestamp).
+export function formatTenantTime(iso?: string, timeZone: string = 'Asia/Seoul'): string {
   if (!iso) return '-'
   const d = new Date(iso)
   if (isNaN(d.getTime())) return '-'
-  return d.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+	try {
+		return `${d.toLocaleString('ko-KR', { timeZone, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })} (${timeZone})`
+	} catch {
+		return `${d.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })} (Asia/Seoul)`
+	}
 }

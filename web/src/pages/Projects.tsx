@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
-import { AllowedModelChips, resolveAllowedModels, parseAllowedModelClasses, classLabel } from '../allowedModels'
+import { ALLOWED_MODEL_STATE_LABEL_KO, AllowedModelChips, DEFAULT_ALLOWED_MODELS, allowedModelPolicySummary, normalizeAllowedModelItems, type AllowedModelItem } from '../allowedModels'
 import { useServerTable } from '../hooks/useServerTable'
 import { useFavorites, FavoriteStar } from '../hooks/useFavorites'
 import { StatCard } from '../components/StatCard'
@@ -35,14 +35,15 @@ export default function Projects() {
   const [catalogModels, setCatalogModels] = useState<any[]>([])
   const [packTarget, setPackTarget] = useState<any | null>(null)
   const [packs, setPacks] = useState<any[]>([])
-  const [modelPackages, setModelPackages] = useState<any[]>([])
+  const [allowedModelsTouched, setAllowedModelsTouched] = useState(true)
+  const [editingAllowedItems, setEditingAllowedItems] = useState<AllowedModelItem[]>([])
   const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set())
   const { favorites, sortPinnedFirst } = useFavorites('projects')
   const [tab, setTab] = useState('active')
   const [repos, setRepos] = useState<any[]>([])
 
   const [form, setForm] = useState({
-    name: '', name_ko: '', slug: '', allowed_models: ['patty-code-standard'],
+    name: '', name_ko: '', slug: '', allowed_models: [...DEFAULT_ALLOWED_MODELS] as string[],
     description: '', project_code: '', group_affiliate: '', policy_pack_id: '',
   })
 
@@ -58,18 +59,36 @@ export default function Projects() {
     api.catalogModels().then(data => setCatalogModels(Array.isArray(data) ? data : [])).catch(() => {})
     api.listPolicyPacks().then(data => setPacks(Array.isArray(data) ? data : [])).catch(() => {})
     api.listRepositories().then(data => setRepos(Array.isArray(data) ? data : [])).catch(() => {})
-    api.listModels().then(data => setModelPackages(Array.isArray(data) ? data : [])).catch(() => setModelPackages([]))
   }
   useEffect(() => { load() }, [])
   useEffect(() => { table.reload() }, [tab])
 
   const rows = useMemo(() => sortPinnedFirst(table.rows, p => p.id), [table.rows, favorites])
+  const modelOptions = useMemo(() => {
+    const options = catalogModels.map(model => ({
+      id: model.catalog_model_id,
+      label: model.display_name_ko || model.display_name || model.catalog_model_id,
+      state: 'single',
+    }))
+    const seen = new Set(options.map(option => option.id))
+    if (editingId) {
+      for (const item of editingAllowedItems) {
+        if (!seen.has(item.id)) {
+          seen.add(item.id)
+          options.push({ id: item.id, label: item.label, state: item.state })
+        }
+      }
+    }
+    return options
+  }, [catalogModels, editingAllowedItems, editingId])
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
       await api.createProject({ ...form })
-      setForm({ name: '', name_ko: '', slug: '', allowed_models: ['patty-code-standard'], description: '', project_code: '', group_affiliate: '', policy_pack_id: '' })
+      setForm({ name: '', name_ko: '', slug: '', allowed_models: [...DEFAULT_ALLOWED_MODELS], description: '', project_code: '', group_affiliate: '', policy_pack_id: '' })
+      setAllowedModelsTouched(true)
+      setEditingAllowedItems([])
       setShowForm(false)
       showToast('프로젝트 생성됨', 'success')
       table.reload(); load()
@@ -80,10 +99,12 @@ export default function Projects() {
     setEditingId(proj.id)
     setForm({
       name: proj.name || '', name_ko: proj.name_ko || '', slug: proj.slug || '',
-      allowed_models: parseAllowedModelClasses(proj.allowed_model_classes),
+      allowed_models: Array.isArray(proj.allowed_model_classes) ? proj.allowed_model_classes : [],
       description: proj.description || '', project_code: proj.project_code || '',
       group_affiliate: proj.group_affiliate || '', policy_pack_id: proj.policy_pack_id || '',
     })
+    setEditingAllowedItems(normalizeAllowedModelItems(proj.allowed_model_items))
+    setAllowedModelsTouched(false)
     setShowForm(true)
   }
 
@@ -93,10 +114,10 @@ export default function Projects() {
     try {
       await api.updateProject(editingId, {
         name: form.name, name_ko: form.name_ko, description: form.description,
-        allowed_models: form.allowed_models, project_code: form.project_code,
+        ...(allowedModelsTouched ? { allowed_models: form.allowed_models } : {}), project_code: form.project_code,
         group_affiliate: form.group_affiliate, policy_pack_id: form.policy_pack_id,
       })
-      setEditingId(null); setShowForm(false)
+      setEditingId(null); setEditingAllowedItems([]); setShowForm(false)
       showToast('수정 완료', 'success')
       table.reload()
     } catch (err: any) { showToast('수정 실패: ' + err.message, 'error') }
@@ -146,7 +167,7 @@ export default function Projects() {
           <p className="text-xs text-gray-400 mt-1">프로젝트별 저장소, 세션, 멤버, 정책 관리 · 카드 클릭 → 상세</p>
         </div>
         <div className="flex gap-2 shrink-0 flex-wrap">
-          <button onClick={() => { if (editingId) { setEditingId(null); setForm({ name: '', name_ko: '', slug: '', allowed_models: ['patty-code-standard'], description: '', project_code: '', group_affiliate: '', policy_pack_id: '' }) } setShowForm(!showForm) }} className="btn-primary">
+          <button onClick={() => { if (editingId) { setEditingId(null); setEditingAllowedItems([]); setForm({ name: '', name_ko: '', slug: '', allowed_models: [...DEFAULT_ALLOWED_MODELS], description: '', project_code: '', group_affiliate: '', policy_pack_id: '' }) } setAllowedModelsTouched(true); setShowForm(!showForm) }} className="btn-primary">
             {showForm ? '취소' : '+ 프로젝트 생성'}
           </button>
           <button onClick={() => exportCSV(`projects_${new Date().toISOString().slice(0,10)}.csv`, ['프로젝트명', '한글명', '슬러그', '코드', '그룹', '상태', '생성일'], table.rows.map(p => [p.name, p.name_ko, p.slug, p.project_code, p.group_affiliate, p.status, p.created_at?.slice(0,10)]))} className="btn-sm btn-secondary">📥 CSV</button>
@@ -165,23 +186,28 @@ export default function Projects() {
             <div><label className="label">정책 팩 · Policy Pack</label><EntitySelect entity="policy_pack" value={form.policy_pack_id} onChange={v => setForm({ ...form, policy_pack_id: v })} /></div>
             <div className="col-span-2 md:col-span-3">
               <label className="label">허용 모델 · Allowed Models (카탈로그)</label>
-              {catalogModels.length > 0 ? (
+              {modelOptions.length > 0 ? (
                 <div className="flex flex-wrap gap-2 border border-gray-200 rounded-md p-3">
-                  {catalogModels.map(m => (
-                    <label key={m.catalog_model_id} className="flex items-center gap-1 text-sm cursor-pointer">
-                      <input type="checkbox" checked={form.allowed_models.includes(m.catalog_model_id)} onChange={e => {
+                  {modelOptions.map(option => (
+                    <label key={option.id} className="flex items-center gap-1 text-sm cursor-pointer">
+                      <input type="checkbox" checked={form.allowed_models.includes(option.id)} onChange={e => {
                         const current = [...form.allowed_models].filter(Boolean)
-                        if (e.target.checked) current.push(m.catalog_model_id)
-                        else { const i = current.indexOf(m.catalog_model_id); if (i >= 0) current.splice(i, 1) }
+                        if (e.target.checked) current.push(option.id)
+                        else { const i = current.indexOf(option.id); if (i >= 0) current.splice(i, 1) }
                         setForm({ ...form, allowed_models: current })
+                        setAllowedModelsTouched(true)
                       }} />
-                      <span>{m.display_name_ko || m.display_name || m.catalog_model_id}</span>
+                      <span>{option.label}</span>
+                      {option.state !== 'single' && <span className="text-[10px] text-amber-600">({ALLOWED_MODEL_STATE_LABEL_KO[option.state as AllowedModelItem['state']]})</span>}
                     </label>
                   ))}
                 </div>
               ) : (
-                <input className="input" value={form.allowed_models.join(',')} onChange={e => setForm({ ...form, allowed_models: e.target.value.split(',') })} placeholder="patty-code-standard, patty-code-fast" />
+                <input className="input" value={form.allowed_models.join(',')} onChange={e => { setForm({ ...form, allowed_models: e.target.value.split(',').map(v => v.trim()).filter(Boolean) }); setAllowedModelsTouched(true) }} placeholder="patty-code-standard, patty-code-fast" />
               )}
+              <p className={`text-[11px] mt-2 ${form.allowed_models.length === 0 ? 'text-amber-700' : 'text-gray-400'}`}>
+                {form.allowed_models.length === 0 ? '선택된 모델이 없으면 제한 없음으로 저장되어 모든 모델이 허용됩니다.' : `${form.allowed_models.length}개 모델 또는 모델 클래스만 허용됩니다.`}
+              </p>
             </div>
             <div className="col-span-2 md:col-span-3"><label className="label">설명 · Description</label><input className="input" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="프로젝트 설명" /></div>
           </div>
@@ -275,7 +301,7 @@ export default function Projects() {
               <div className="mb-3">
                 <div className="text-xs font-medium text-gray-500 mb-1">허용 모델</div>
                 <div className="flex flex-wrap gap-1">
-                  <AllowedModelChips items={resolveAllowedModels(p.allowed_model_classes, modelPackages)} />
+                  <AllowedModelChips items={normalizeAllowedModelItems(p.allowed_model_items)} policyState={p.allowed_model_policy_state} />
                 </div>
               </div>
 
@@ -293,7 +319,7 @@ export default function Projects() {
                 <div className="mt-3 pt-3 border-t border-gray-100 space-y-2 expand-enter">
                   <div className="text-xs text-gray-500"><span className="font-medium">프로젝트 ID:</span> <span className="font-mono">{p.id}</span></div>
                   <div className="text-xs text-gray-500"><span className="font-medium">생성일:</span> {formatRelative(p.created_at)}</div>
-                  <div className="text-xs text-gray-500"><span className="font-medium">허용 모델:</span> {parseAllowedModelClasses(p.allowed_model_classes).map(c => classLabel(c)).join(', ') || '제한 없음'}</div>
+                  <div className={`text-xs ${p.allowed_model_policy_state === 'invalid' ? 'text-red-600' : 'text-gray-500'}`}><span className="font-medium">허용 모델:</span> {allowedModelPolicySummary(normalizeAllowedModelItems(p.allowed_model_items), p.allowed_model_policy_state)}</div>
                   <div className="text-xs text-gray-500"><span className="font-medium">정책 팩:</span> {packs.find(pk => pk.id === p.policy_pack_id)?.name || p.policy_pack_id || '-'}</div>
                   <Link to={`/projects/${p.id}`} className="text-xs text-blue-600 hover:underline block">멤버/사용량/변경승인 큐 → 상세 페이지</Link>
                 </div>

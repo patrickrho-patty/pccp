@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/patrickrho-patty/pccp/internal/identity"
+	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/models"
 )
 
@@ -34,9 +35,9 @@ func doJSONAsRole(t *testing.T, srv *Server, method, path, body, orgID, role str
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(contextWithClaims(req.Context(), &identity.Claims{
-		Email:         "tester@pccp.test",
+		Email:          "tester@pccp.test",
 		OrganizationID: orgID,
-		Role:          role,
+		Role:           role,
 	}))
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -252,16 +253,17 @@ func TestAlertEndpointRedactIsStable(t *testing.T) {
 	ep1 := models.AlertEndpoint{Target: "https://example.test/a"}
 	ep2 := models.AlertEndpoint{Target: "https://example.test/a"}
 	ep3 := models.AlertEndpoint{Target: "https://example.test/b"}
-	if got := credentialIDForTarget(ep1.Target); got == "" {
+	provider, _ := keymgmt.NewLocalProvider([]byte("0123456789abcdef0123456789abcdef"), "test")
+	if got := credentialIDForTarget(provider, ep1.Target); got == "" {
 		t.Fatalf("credential_id must not be empty for non-empty target")
 	}
-	if got := credentialIDForTarget(ep1.Target); got != credentialIDForTarget(ep2.Target) {
-		t.Fatalf("same URL must hash to the same id: %q vs %q", got, credentialIDForTarget(ep2.Target))
+	if got := credentialIDForTarget(provider, ep1.Target); got != credentialIDForTarget(provider, ep2.Target) {
+		t.Fatalf("same URL must hash to the same id: %q vs %q", got, credentialIDForTarget(provider, ep2.Target))
 	}
-	if got := credentialIDForTarget(ep1.Target); got == credentialIDForTarget(ep3.Target) {
-		t.Fatalf("different URLs must hash to different ids: %q == %q", got, credentialIDForTarget(ep3.Target))
+	if got := credentialIDForTarget(provider, ep1.Target); got == credentialIDForTarget(provider, ep3.Target) {
+		t.Fatalf("different URLs must hash to different ids: %q == %q", got, credentialIDForTarget(provider, ep3.Target))
 	}
-	if got := credentialIDForTarget(""); got != "" {
+	if got := credentialIDForTarget(provider, ""); got != "" {
 		t.Fatalf("empty target must yield empty credential_id, got %q", got)
 	}
 }

@@ -2,10 +2,13 @@ package relay
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -20,7 +23,8 @@ import (
 // can call. This is NOT the final DARI wire protocol (which uses QUIC/TCP with
 // CBOR framing), but provides the same governance semantics for initial integration.
 type Server struct {
-	svc *Service
+	svc        *Service
+	adminToken string
 	// webBinding mounts the dari.web/1 carrier when configured.
 	webBinding *webbinding.Server
 }
@@ -30,25 +34,31 @@ func (s *Server) SetWebBinding(w *webbinding.Server) { s.webBinding = w }
 
 // NewServer creates a new Relay HTTP server.
 func NewServer(svc *Service) *Server {
-	return &Server{svc: svc}
+	return &Server{svc: svc, adminToken: strings.TrimSpace(os.Getenv("PCCP_CP_TOKEN"))}
 }
+
+// SetAdminToken replaces the control-plane bearer used by the legacy HTTP
+// administration surface. DARI/web carriers authenticate independently.
+func (s *Server) SetAdminToken(token string) { s.adminToken = strings.TrimSpace(token) }
 
 // Handler returns the HTTP handler.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/v1/enroll", s.handleEnrollHarness)
-	mux.HandleFunc("/v1/exchanges", s.handleOpenExchange)
-	mux.HandleFunc("/v1/exchanges/", s.handleExchangeAction)
-	mux.HandleFunc("/v1/inference", s.handleInference)
-	mux.HandleFunc("/v1/provenance/changesets", s.handleListChangeSets)
-	mux.HandleFunc("/v1/harnesses/revoke", s.handleRevokeHarness)
-	mux.HandleFunc("/v1/broadcasts", s.handleBroadcast)
-	mux.HandleFunc("/v1/catalog/broadcast", s.handleCatalogBroadcast)
-	mux.HandleFunc("/v1/admin/directives", s.handleAdminDirective)
-	mux.HandleFunc("/v1/sovereign/advisories", s.handleSovereignAdvisory)
-	mux.HandleFunc("/v1/harnesses/key", s.handleHarnessKey)
+	admin := http.NewServeMux()
+	admin.HandleFunc("/v1/enroll", s.handleEnrollHarness)
+	admin.HandleFunc("/v1/exchanges", s.handleOpenExchange)
+	admin.HandleFunc("/v1/exchanges/", s.handleExchangeAction)
+	admin.HandleFunc("/v1/inference", s.handleInference)
+	admin.HandleFunc("/v1/provenance/changesets", s.handleListChangeSets)
+	admin.HandleFunc("/v1/harnesses/revoke", s.handleRevokeHarness)
+	admin.HandleFunc("/v1/broadcasts", s.handleBroadcast)
+	admin.HandleFunc("/v1/catalog/broadcast", s.handleCatalogBroadcast)
+	admin.HandleFunc("/v1/admin/directives", s.handleAdminDirective)
+	admin.HandleFunc("/v1/sovereign/advisories", s.handleSovereignAdvisory)
+	admin.HandleFunc("/v1/harnesses/key", s.handleHarnessKey)
+	mux.Handle("/v1/", s.requireControlPlaneAuth(admin))
 	// dari.web/1 constrained WebSocket fallback carrier (Task 13). The
 	// governance handler routes AI_OPEN envelopes through the SAME
 	// GovernInference path as the native transport.
@@ -62,6 +72,22 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	return mux
+}
+
+func (s *Server) requireControlPlaneAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.adminToken == "" {
+			writeError(w, http.StatusServiceUnavailable, "relay admin API is not configured")
+			return
+		}
+		presented := strings.TrimSpace(r.Header.Get("Authorization"))
+		if !strings.HasPrefix(presented, "Bearer ") ||
+			subtle.ConstantTimeCompare([]byte(strings.TrimSpace(strings.TrimPrefix(presented, "Bearer "))), []byte(s.adminToken)) != 1 {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // handleRevokeHarness revokes a harness and propagates the revocation
@@ -92,7 +118,13 @@ func (s *Server) handleRevokeHarness(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "revoke failed: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked", "harness_id": req.HarnessID})
+	event, err := s.svc.QueueRevocationEvent(req.OrganizationID, req.HarnessID, req.Reason)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "revocation applied locally but durable relay fanout failed")
+		return
+	}
+	s.svc.AckControlEvent(event.ID, 1)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "revoked", "harness_id": req.HarnessID, "queued": true, "event_id": event.ID})
 }
 
 // handleListChangeSets surfaces the connector-ingested changesets for
@@ -133,12 +165,9 @@ func (s *Server) handleEnrollHarness(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.OrganizationID == "" || req.HarnessID == "" || req.PublicKeyHex == "" {
-		writeError(w, http.StatusBadRequest, "organization_id, harness_id, and public_key_hex are required")
+	if req.OrganizationID == "" || req.HarnessID == "" || req.PublicKeyHex == "" || req.UserID == "" {
+		writeError(w, http.StatusBadRequest, "organization_id, harness_id, public_key_hex, and user_id are required")
 		return
-	}
-	if req.UserID == "" {
-		req.UserID = "user-" + req.HarnessID
 	}
 	harness, cred, err := s.svc.Identity().EnrollHarness(req)
 	if err != nil {
@@ -344,8 +373,16 @@ func (s *Server) handleAdminDirective(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "signing failed")
 		return
 	}
+	event, err := s.svc.QueueDirectiveEvent(req.OrgID, req.Target, req.CommandType, req.Reason, body)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "durable relay queue failed")
+		return
+	}
 	sent := s.svc.DeliverDirectiveToHarness(req.Target, body)
-	writeJSON(w, http.StatusOK, map[string]any{"delivered": sent})
+	if sent > 0 {
+		s.svc.AckControlEvent(event.ID, sent)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"delivered": sent, "queued": true, "event_id": event.ID})
 }
 
 // handleSovereignAdvisory pushes an offline advisory to every

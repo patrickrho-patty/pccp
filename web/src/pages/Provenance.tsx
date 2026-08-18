@@ -23,7 +23,7 @@ export default function Provenance() {
     try { setSearchResults(await api.provenanceSearch(search)) } catch { setSearchResults(null) }
   }
   const downloadBundle = async () => {
-    const token = localStorage.getItem('pccp_token')
+    const token = sessionStorage.getItem('pccp_token')
     try {
       const resp = await fetch(`/api/sessions/${id}/provenance/export`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       if (!resp.ok) throw new Error('export failed')

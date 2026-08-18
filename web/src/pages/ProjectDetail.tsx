@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../api'
 import { StatCard } from '../components/StatCard'
@@ -7,8 +7,8 @@ import { Modal, ModalFooter } from '../components/Modal'
 import { formatRelative } from '../utils/format'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
-import { formatUsageAmount, UsageReport } from '../components/UsageReport'
-import { AllowedModelChips, resolveAllowedModels } from '../allowedModels'
+import { formatUsageStateInteger, formatUsageAmount, UsageReport } from '../components/UsageReport'
+import { AllowedModelChips, normalizeAllowedModelItems } from '../allowedModels'
 
 const ROLES = [
   { value: 'owner', label: '소유자 · Owner' },
@@ -25,23 +25,50 @@ export default function ProjectDetail() {
   const confirm = useConfirm()
   const [detail, setDetail] = useState<any>(null)
   const [usage, setUsage] = useState<any>(null)
+  const [usageLoading, setUsageLoading] = useState(true)
+  const [usageError, setUsageError] = useState(false)
+  const usageRequest = useRef<AbortController | null>(null)
+  const loadGeneration = useRef(0)
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<'overview' | 'members' | 'sessions' | 'governance' | 'audit'>('overview')
   const [addMember, setAddMember] = useState(false)
   const [memberForm, setMemberForm] = useState({ user_id: '', role: 'member' })
   const [packTarget, setPackTarget] = useState(false)
   const [packs, setPacks] = useState<any[]>([])
-  const [modelPackages, setModelPackages] = useState<any[]>([])
   const [packPick, setPackPick] = useState('')
 
   const load = () => {
     if (!id) return
-    api.getProjectDetail(id).then(setDetail).catch(() => setDetail(null)).finally(() => setLoading(false))
-    api.projectUsage(id).then(setUsage).catch(() => setUsage(null))
+    const generation = ++loadGeneration.current
+    usageRequest.current?.abort()
+    const controller = new AbortController()
+    usageRequest.current = controller
+    api.getProjectDetail(id)
+      .then(data => { if (loadGeneration.current === generation) setDetail(data) })
+      .catch(() => { if (loadGeneration.current === generation) setDetail(null) })
+      .finally(() => { if (loadGeneration.current === generation) setLoading(false) })
+    setUsageLoading(true)
+    setUsageError(false)
+    api.projectUsage(id, '30d', '', controller.signal).then(data => {
+      if (loadGeneration.current === generation) setUsage(data)
+    }).catch((error) => {
+      if (loadGeneration.current === generation && error?.name !== 'AbortError') { setUsage(null); setUsageError(true) }
+    }).finally(() => {
+      if (loadGeneration.current === generation) setUsageLoading(false)
+    })
     api.listPolicyPacks().then(d => setPacks(Array.isArray(d) ? d : [])).catch(() => {})
-    api.listModels().then(d => setModelPackages(Array.isArray(d) ? d : [])).catch(() => setModelPackages([]))
   }
-  useEffect(() => { load() }, [id])
+  useEffect(() => {
+    setLoading(true)
+    setDetail(null)
+    setUsage(null)
+    setUsageLoading(true)
+    load()
+    return () => {
+      loadGeneration.current += 1
+      usageRequest.current?.abort()
+    }
+  }, [id])
 
   if (loading) return <div className="p-8 space-y-3 animate-pulse"><div className="h-4 bg-gray-100 rounded w-1/2" /><div className="h-4 bg-gray-100 rounded w-2/3" /></div>
   if (!detail?.project) return <div className="text-gray-400 p-8 text-center">프로젝트를 찾을 수 없습니다</div>
@@ -117,8 +144,8 @@ export default function ProjectDetail() {
         <StatCard label="저장소" value={repos.length} accent="blue" />
         <StatCard label="멤버" value={members.length} accent="green" />
         <StatCard label="활성 세션" value={activeSessions.length} accent="purple" to="/sessions" query={`?project_id=${proj.id}`} />
-        <StatCard label="최근 30일 토큰" value={hasUsageLedger ? (usage.total_tokens || 0).toLocaleString() : '미수집'} accent="orange" to={`/projects/${proj.id}`} query="#project-usage-ledger" sub={`원장 ${usage?.record_count ?? '—'}건`} />
-        <StatCard label={`최근 30일 비용 (${usage?.display_currency || '통화 미확인'})`} value={displayCost} accent="red" to={`/projects/${proj.id}`} query="#project-usage-ledger" sub={!hasUsageLedger ? '원장 기록 없음' : `${usage?.reconciled ? '원장 대사 완료' : '대사 확인 필요'}${delayedUsageMeters ? ` · 지연 ${delayedUsageMeters}` : ''}`} />
+        <StatCard label="최근 30일 토큰" value={usageLoading ? '불러오는 중' : usageError ? '조회 오류' : formatUsageStateInteger(usage?.total_tokens, usage?.total_tokens_state)} accent="orange" to={`/projects/${proj.id}`} query="#project-usage-ledger" sub={usageLoading ? '원장 조회 중' : usageError ? '권한 또는 조회 오류' : `원장 ${usage?.record_count ?? '—'}건`} />
+        <StatCard label={`최근 30일 비용 (${usage?.display_currency || '통화 미확인'})`} value={usageLoading ? '불러오는 중' : displayCost} accent="red" to={`/projects/${proj.id}`} query="#project-usage-ledger" sub={usageLoading ? '원장 조회 중' : !hasUsageLedger ? '원장 기록 없음' : `${usage?.reconciled ? '원장 대사 완료' : '대사 확인 필요'}${delayedUsageMeters ? ` · 지연 ${delayedUsageMeters}` : ''}`} />
       </div>
 
       {pendingChanges.length > 0 && (
@@ -164,11 +191,11 @@ export default function ProjectDetail() {
           <div className="card">
             <h3 className="text-sm font-semibold mb-3">허용 모델 · Allowed Models</h3>
             <div className="flex flex-wrap gap-1">
-              <AllowedModelChips items={resolveAllowedModels(proj.allowed_model_classes, modelPackages)} />
+              <AllowedModelChips items={normalizeAllowedModelItems(proj.allowed_model_items)} policyState={proj.allowed_model_policy_state} />
             </div>
           </div>
 
-          <UsageReport report={usage} id="project-usage-ledger" title="프로젝트 사용량 및 비용 원장" loadMore={(cursor) => api.projectUsage(id!, '30d', cursor)} />
+          {usageLoading ? <div className="card p-4 text-[11px] text-gray-400">사용량 원장을 불러오는 중입니다.</div> : usageError ? <div className="card p-4 text-[11px] text-red-600">사용량 원장을 조회할 권한이 없거나 조회 중 오류가 발생했습니다.</div> : <UsageReport report={usage} id="project-usage-ledger" title="프로젝트 사용량 및 비용 원장" loadMore={(cursor, signal) => api.projectUsage(id!, '30d', cursor, signal)} />}
         </>
       )}
 

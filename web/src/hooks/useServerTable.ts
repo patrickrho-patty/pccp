@@ -36,6 +36,7 @@ export function useServerTable<T>(
   const [error, setError] = useState<string | null>(null)
   const [reloadTick, setReloadTick] = useState(0)
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const reloadWaiters = useRef<Array<() => void>>([])
   const [debouncedSearch, setDebouncedSearch] = useState(search)
 
   // Debounce the search input so typing doesn't fire a request per key.
@@ -61,12 +62,16 @@ export function useServerTable<T>(
           setRows(result.data ?? [])
           setTotal(result.total ?? (result.data?.length ?? 0))
         }
-        setLoading(false)
       })
       .catch(err => {
         if (cancelled) return
         setError(err?.message || '로드 실패 · Load failed')
+      })
+      .finally(() => {
+        if (cancelled) return
         setLoading(false)
+        const waiters = reloadWaiters.current.splice(0)
+        waiters.forEach(resolve => resolve())
       })
     return () => { cancelled = true }
   }, [page, size, debouncedSearch, filters, sort, reloadTick])
@@ -80,7 +85,10 @@ export function useServerTable<T>(
     })
   }, [])
 
-  const reload = useCallback(() => setReloadTick(t => t + 1), [])
+  const reload = useCallback(() => new Promise<void>(resolve => {
+    reloadWaiters.current.push(resolve)
+    setReloadTick(t => t + 1)
+  }), [])
 
   return {
     rows, total, page, setPage, size,

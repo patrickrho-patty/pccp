@@ -7,14 +7,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/patrickrho-patty/pccp/internal/config"
-	"github.com/patrickrho-patty/pccp/internal/keys"
 	"strings"
 	"time"
 
+	"github.com/patrickrho-patty/pccp/internal/config"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/keys"
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"github.com/patrickrho-patty/pccp/internal/sessionlifecycle"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Service handles identity, enrollment, and authentication operations.
@@ -22,7 +24,13 @@ type Service struct {
 	db          *gorm.DB
 	ca          *dari.PeerCredentialIssuer
 	revocations *CredentialRevocations
+	lifecycle   *sessionlifecycle.Service
 }
+
+var (
+	ErrUserNotFound  = errors.New("identity: user not found in organization")
+	ErrUserNotActive = errors.New("identity: operation requires an active user")
+)
 
 // New creates a new identity service. It initializes or loads the control
 // plane's CA key pair for issuing PPCs.
@@ -35,7 +43,13 @@ func New(db *gorm.DB) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("identity: init CA: %w", err)
 	}
-	return &Service{db: db, ca: ca, revocations: newCredentialRevocations(db)}, nil
+	return &Service{db: db, ca: ca, revocations: newCredentialRevocations(db), lifecycle: sessionlifecycle.New(db)}, nil
+}
+
+func (s *Service) SetSessionLifecycle(lifecycle *sessionlifecycle.Service) {
+	if lifecycle != nil {
+		s.lifecycle = lifecycle
+	}
 }
 
 // CACAPublicKey returns the CA's public key (hex-encoded).
@@ -70,13 +84,20 @@ func (s *Service) CreateOrganization(name, nameKo, slug, profile string) (*model
 
 // CreateUser creates a new user in an organization.
 func (s *Service) CreateUser(orgID, email, name, nameKo, authMethod, externalID string) (*models.User, error) {
+	return s.CreateUserWithDB(s.db, orgID, email, name, nameKo, authMethod, externalID)
+}
+
+// CreateUserWithDB creates a user using the caller's transaction. Callers that
+// also persist profile fields, access grants, or audit evidence must use this
+// form so no partially-created active identity can escape.
+func (s *Service) CreateUserWithDB(db *gorm.DB, orgID, email, name, nameKo, authMethod, externalID string) (*models.User, error) {
 	user := &models.User{
 		AuditBase: models.AuditBase{
 			Base:           models.Base{},
 			OrganizationID: orgID,
 			Classification: "internal",
 		},
-		Email:      email,
+		Email:      NormalizeEmail(email),
 		Name:       name,
 		NameKo:     nameKo,
 		Status:     "active",
@@ -85,10 +106,22 @@ func (s *Service) CreateUser(orgID, email, name, nameKo, authMethod, externalID 
 		Locale:     "ko-KR",
 		Timezone:   "Asia/Seoul",
 	}
-	if err := s.db.Create(user).Error; err != nil {
+	if err := db.Create(user).Error; err != nil {
 		return nil, fmt.Errorf("identity: create user: %w", err)
 	}
 	return user, nil
+}
+
+// NormalizeEmail is the canonical persisted and lookup form for human
+// identities. Email local-part case distinctions are not supported because
+// they make tenant identity and lifecycle enforcement ambiguous.
+func NormalizeEmail(email string) string { return strings.ToLower(strings.TrimSpace(email)) }
+
+func (s *Service) requireActiveUser(orgID, userID string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		_, err := LockActiveUser(tx, orgID, userID)
+		return err
+	})
 }
 
 // EnrollHarnessRequest contains the information needed to enroll a harness.
@@ -113,77 +146,65 @@ type EnrollHarnessRequest struct {
 
 // EnrollHarness enrolls a new harness instance and issues a PPC.
 func (s *Service) EnrollHarness(req EnrollHarnessRequest) (*models.Harness, *dari.PeerCredential, error) {
+	var harness *models.Harness
+	var cred *dari.PeerCredential
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		harness, cred, err = s.EnrollHarnessWithDB(tx, req)
+		return err
+	})
+	return harness, cred, err
+}
+
+// EnrollHarnessWithDB persists the complete device/harness/credential/audit
+// graph under the caller's enrollment-code and seat-limit transaction.
+func (s *Service) EnrollHarnessWithDB(tx *gorm.DB, req EnrollHarnessRequest) (*models.Harness, *dari.PeerCredential, error) {
+	if strings.TrimSpace(req.UserID) == "" {
+		return nil, nil, fmt.Errorf("%w: user_id is required", ErrUserNotFound)
+	}
 	// Parse the public key
 	pubBytes, err := hex.DecodeString(req.PublicKeyHex)
 	if err != nil || len(pubBytes) != ed25519.PublicKeySize {
 		return nil, nil, fmt.Errorf("identity: invalid public key: %w", err)
 	}
 
-	// Create device record
-	device := &models.Device{
-		OrganizationID: req.OrganizationID,
-		Hostname:       req.DeviceHostname,
-		OS:             req.DeviceOS,
-		OSVersion:      req.DeviceOSVersion,
-		Arch:           req.DeviceArch,
-		PublicKey:      req.PublicKeyHex,
-		Status:         "active",
-		FirstSeen:      time.Now().Format(time.RFC3339),
-		LastSeen:       time.Now().Format(time.RFC3339),
+	if _, err := LockActiveUser(tx, req.OrganizationID, req.UserID); err != nil {
+		return nil, nil, err
 	}
-	if err := s.db.Create(device).Error; err != nil {
+	now := time.Now().Format(time.RFC3339)
+	device := &models.Device{
+		OrganizationID: req.OrganizationID, UserID: req.UserID,
+		Hostname: req.DeviceHostname, OS: req.DeviceOS, OSVersion: req.DeviceOSVersion,
+		Arch: req.DeviceArch, PublicKey: req.PublicKeyHex, Status: "active", FirstSeen: now, LastSeen: now,
+	}
+	if err := tx.Create(device).Error; err != nil {
 		return nil, nil, fmt.Errorf("identity: create device: %w", err)
 	}
-
-	// Issue PPC
-	pubKey := ed25519.PublicKey(pubBytes)
-	cred, err := s.ca.Issue(dari.IssueRequest{
-		SubjectPeerID:           req.HarnessID,
-		Organization:            req.OrganizationID,
-		Profile:                 dari.ProfileHarness,
-		PublicKey:               pubKey,
-		Validity:                90 * 24 * time.Hour, // 90-day validity
-		RevocationAuthority:     s.ca.IssuerID,
-		AllowedProtocolVersions: []uint8{1},
-		BuildChannel:            "stable",
+	issued, err := s.ca.Issue(dari.IssueRequest{
+		SubjectPeerID: req.HarnessID, Organization: req.OrganizationID, Profile: dari.ProfileHarness,
+		PublicKey: ed25519.PublicKey(pubBytes), Validity: 90 * 24 * time.Hour,
+		RevocationAuthority: s.ca.IssuerID, AllowedProtocolVersions: []uint8{1}, BuildChannel: "stable",
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("identity: issue PPC: %w", err)
 	}
-
-	credentialHex := hex.EncodeToString(cred.SignedCredential)
+	cred := issued
 	credentialDigest := dari.ComputeObjectDigest(dari.ObjTypePeerCredential, cred.SignedCredential)
-
-	// Create harness record
 	harness := &models.Harness{
-		OrganizationID:   req.OrganizationID,
-		DeviceID:         device.ID,
-		HarnessID:        req.HarnessID,
-		BinaryVersion:    req.BinaryVersion,
-		BinaryHash:       req.BinaryHash,
-		ExtensionVersion: req.ExtensionVersion,
-		CLIVersion:       req.CLIVersion,
-		PublicKey:        req.PublicKeyHex,
-		CredentialJSON:   credentialHex,
-		CredentialDigest: credentialDigest.String(),
-		BuildChannel:     "stable",
-		PolicyProfile:    "enterprise",
-		LicenseState:     "active",
-		Status:           "enrolled",
-		EnrollmentMode:   req.EnrollmentMode,
-		EnrolledAt:       time.Now().Format(time.RFC3339),
-		LastHeartbeat:    time.Now().Format(time.RFC3339),
+		OrganizationID: req.OrganizationID, DeviceID: device.ID, HarnessID: req.HarnessID,
+		BinaryVersion: req.BinaryVersion, BinaryHash: req.BinaryHash, ExtensionVersion: req.ExtensionVersion,
+		CLIVersion: req.CLIVersion, PublicKey: req.PublicKeyHex, CredentialJSON: hex.EncodeToString(cred.SignedCredential),
+		CredentialDigest: credentialDigest.String(), BuildChannel: "stable", PolicyProfile: "enterprise",
+		LicenseState: "active", Status: "enrolled", EnrollmentMode: req.EnrollmentMode,
+		EnrolledAt: now, LastHeartbeat: now, AllowedUsers: fmt.Sprintf(`["%s"]`, req.UserID),
 	}
-	harness.AllowedUsers = fmt.Sprintf(`["%s"]`, req.UserID)
-
-	if err := s.db.Create(harness).Error; err != nil {
+	if err := tx.Create(harness).Error; err != nil {
 		return nil, nil, fmt.Errorf("identity: create harness: %w", err)
 	}
-
-	// Record audit event
-	s.recordAudit(req.OrganizationID, "harness.enrolled", "system", "harness", harness.ID,
-		fmt.Sprintf("Harness %s enrolled by user %s", req.HarnessID, req.UserID))
-
+	if err := s.recordAuditWithDB(tx, req.OrganizationID, "harness.enrolled", "system", req.UserID, "harness", harness.ID,
+		fmt.Sprintf("Harness %s enrolled by user %s", req.HarnessID, req.UserID)); err != nil {
+		return nil, nil, err
+	}
 	return harness, cred, nil
 }
 
@@ -193,7 +214,7 @@ func (s *Service) VerifyHarnessAuth(harnessID string, signature, message []byte)
 	if err := s.db.Where("harness_id = ?", harnessID).First(&harness).Error; err != nil {
 		return nil, fmt.Errorf("identity: harness not found: %w", err)
 	}
-	if harness.Status != "enrolled" && harness.Status != "active" {
+	if !models.HarnessStatusPermitted(harness.Status) {
 		return nil, fmt.Errorf("identity: harness status is %s, not enrolled/active", harness.Status)
 	}
 
@@ -211,35 +232,56 @@ func (s *Service) VerifyHarnessAuth(harnessID string, signature, message []byte)
 }
 
 // RevokeHarness revokes a harness enrollment.
-func (s *Service) RevokeHarness(orgID, harnessID, reason string) error {
-	var harness models.Harness
-	if err := s.db.Where("harness_id = ? AND organization_id = ?", harnessID, orgID).First(&harness).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("identity: harness %s not found in org %s", harnessID, orgID)
-		}
-		return fmt.Errorf("identity: load harness for revocation: %w", err)
-	}
+type RevocationAppliedError struct{ Cause error }
 
-	serial := credentialSerial(harness.CredentialJSON)
+func (e *RevocationAppliedError) Error() string { return e.Cause.Error() }
+func (e *RevocationAppliedError) Unwrap() error { return e.Cause }
+
+func (s *Service) RevokeHarness(orgID, harnessID, reason string) error {
+	return s.RevokeHarnessByActor(orgID, harnessID, reason, "")
+}
+
+func (s *Service) RevokeHarnessByActor(orgID, harnessID, reason, actorID string) error {
+	var harness models.Harness
+	var outcomes []sessionlifecycle.Outcome
+	var serial string
+	var epoch uint64
 	err := s.db.Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&models.Harness{}).
-			Where("harness_id = ? AND organization_id = ?", harnessID, orgID).
-			Updates(map[string]interface{}{
-				"status":            "revoked",
-				"revocation_reason": reason,
-			})
-		if result.Error != nil {
-			return result.Error
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("harness_id = ? AND organization_id = ?", harnessID, orgID).First(&harness).Error; err != nil {
+			return err
 		}
-		if result.RowsAffected == 0 {
-			return gorm.ErrRecordNotFound
+		if harness.Status == "revoked" {
+			serial = credentialSerial(harness.CredentialJSON)
+			if serial != "" {
+				var record models.CredentialRevocationRecord
+				if err := tx.Where("serial = ?", serial).First(&record).Error; err != nil {
+					return fmt.Errorf("identity: revoked harness is missing its credential ledger entry: %w", err)
+				}
+				epoch = record.RevokedEpoch
+			}
+			return nil
 		}
-		return tx.Model(&models.Session{}).
-			Where("harness_id = ? AND status IN ?", harnessID, []string{"pending", "active", "idle"}).
-			Updates(map[string]interface{}{
-				"status":    "terminated",
-				"closed_at": time.Now().Format(time.RFC3339),
-			}).Error
+		serial = credentialSerial(harness.CredentialJSON)
+		updated := tx.Model(&models.Harness{}).Where("id = ? AND organization_id = ? AND status = ?", harness.ID, orgID, harness.Status).
+			Updates(map[string]interface{}{"status": "revoked", "revocation_reason": reason})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return gorm.ErrInvalidData
+		}
+		var err error
+		outcomes, err = s.lifecycle.TransitionScopeInTransaction(tx, sessionlifecycle.Scope{OrganizationID: orgID, HarnessID: harnessID, ForceTerminal: true, ActorType: "admin"}, "terminated", "harness_revoked", reason, "")
+		if err != nil {
+			return fmt.Errorf("identity: terminate harness sessions: %w", err)
+		}
+		epoch = s.revocations.reserveEpoch()
+		if serial != "" {
+			if err := tx.Create(&models.CredentialRevocationRecord{Serial: serial, RevokedEpoch: epoch, Reason: reason, RevokedAtRFC: time.Now().UTC().Format(time.RFC3339Nano)}).Error; err != nil {
+				return fmt.Errorf("identity: persist credential revocation: %w", err)
+			}
+		}
+		return s.recordAuditWithDB(tx, orgID, "harness.revoked", "admin", actorID, "harness", harnessID, reason)
 	})
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return fmt.Errorf("identity: harness %s not found in org %s", harnessID, orgID)
@@ -247,8 +289,20 @@ func (s *Service) RevokeHarness(orgID, harnessID, reason string) error {
 	if err != nil {
 		return fmt.Errorf("identity: revoke harness: %w", err)
 	}
-	s.revocations.revoke(serial, reason)
-	s.recordAudit(orgID, "harness.revoked", "admin", "harness", harnessID, reason)
+	if harness.Status == "revoked" {
+		s.revocations.applyCommitted(serial, epoch)
+		return nil
+	}
+	s.revocations.applyCommitted(serial, epoch)
+	finalized, finalizeErr := s.lifecycle.FinalizeTransitions(orgID, outcomes, "terminated", "harness_revoked", reason, "", "admin")
+	if finalizeErr != nil {
+		return &RevocationAppliedError{Cause: fmt.Errorf("identity: revocation committed but cleanup failed: %w", finalizeErr)}
+	}
+	for _, outcome := range finalized {
+		if outcome.Result != sessionlifecycle.ResultUpdated || len(outcome.CleanupFailures) > 0 {
+			return &RevocationAppliedError{Cause: fmt.Errorf("identity: revocation committed but session %s cleanup was incomplete (%s): %s", outcome.RequestedID, outcome.Result, outcome.Error)}
+		}
+	}
 	return nil
 }
 
@@ -369,9 +423,35 @@ func protectionProfileFor(repoID string) string {
 
 // OpenSession creates a working session.
 func (s *Service) OpenSession(orgID, harnessID, userID, projectID, repoID, branch, baselineID, title, purpose, modelClass string) (*models.Session, error) {
+	var sess *models.Session
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		created, err := s.OpenSessionWithDB(tx, orgID, harnessID, userID, projectID, repoID, branch, baselineID, title, purpose, modelClass)
+		sess = created
+		return err
+	})
+	return sess, err
+}
+
+// OpenSessionWithDB creates a session under the caller's transaction. The
+// lifecycle row lock must be held through any subsequent lease and audit writes.
+func (s *Service) OpenSessionWithDB(db *gorm.DB, orgID, harnessID, userID, projectID, repoID, branch, baselineID, title, purpose, modelClass string) (*models.Session, error) {
+	if strings.TrimSpace(userID) == "" {
+		return nil, fmt.Errorf("%w: user_id is required", ErrUserNotFound)
+	}
+	if _, err := LockActiveUser(db, orgID, userID); err != nil {
+		return nil, err
+	}
+	sess := newSession(orgID, harnessID, userID, projectID, repoID, branch, baselineID, title, purpose, modelClass)
+	if err := db.Create(sess).Error; err != nil {
+		return nil, fmt.Errorf("identity: open session: %w", err)
+	}
+	return sess, nil
+}
+
+func newSession(orgID, harnessID, userID, projectID, repoID, branch, baselineID, title, purpose, modelClass string) *models.Session {
 	sessionID := dari.GenerateID("ses")
 	sessionTTL, idleTTL := sessionTTLOverrides()
-	sess := &models.Session{
+	return &models.Session{
 		AuditBase: models.AuditBase{
 			OrganizationID: orgID,
 			ProjectID:      projectID,
@@ -392,40 +472,40 @@ func (s *Service) OpenSession(orgID, harnessID, userID, projectID, repoID, branc
 		OpenedAt:          time.Now().Format(time.RFC3339),
 		LastActivityAt:    time.Now().Format(time.RFC3339),
 	}
-	if err := s.db.Create(sess).Error; err != nil {
-		return nil, fmt.Errorf("identity: open session: %w", err)
-	}
-	return sess, nil
-}
-
-// CloseSession marks a session as closed.
-func (s *Service) CloseSession(sessionID string) error {
-	result := s.db.Model(&models.Session{}).
-		Where("session_id = ?", sessionID).
-		Updates(map[string]interface{}{
-			"status":    "closed",
-			"closed_at": time.Now().Format(time.RFC3339),
-		})
-	return result.Error
 }
 
 func (s *Service) recordAudit(orgID, action, actorType, resourceType, resourceID, details string) {
+	_ = s.recordAuditWithDB(s.db, orgID, action, actorType, "", resourceType, resourceID, details)
+}
+
+func (s *Service) recordAuditWithDB(db *gorm.DB, orgID, eventType, actorType, actorID, resourceType, resourceID, details string) error {
 	event := &models.AuditEvent{
 		OrganizationID: orgID,
-		EventType:      action,
+		EventType:      eventType,
+		ActorID:        actorID,
 		ActorType:      actorType,
-		Action:         action,
+		Action:         eventType,
 		ResourceType:   resourceType,
 		ResourceID:     resourceID,
 		Details:        details,
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	}
-	s.db.Create(event) // best-effort audit
+	return db.Create(event).Error
 }
 
 // GenerateEnrollmentCode creates a one-time enrollment code.
 func (s *Service) GenerateEnrollmentCode(orgID, userID string, validity time.Duration) (string, error) {
+	var code string
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		code, err = s.GenerateEnrollmentCodeWithDB(tx, orgID, userID, validity)
+		return err
+	})
+	return code, err
+}
+
+func (s *Service) GenerateEnrollmentCodeWithDB(tx *gorm.DB, orgID, userID string, validity time.Duration) (string, error) {
 	codeBytes := make([]byte, 32)
 	if _, err := rand.Read(codeBytes); err != nil {
 		return "", fmt.Errorf("identity: generate code: %w", err)
@@ -439,7 +519,10 @@ func (s *Service) GenerateEnrollmentCode(orgID, userID string, validity time.Dur
 		ExpiresAt:      time.Now().Add(validity).Format(time.RFC3339),
 		Used:           false,
 	}
-	if err := s.db.Create(ec).Error; err != nil {
+	if _, err := LockActiveUser(tx, orgID, userID); err != nil {
+		return "", err
+	}
+	if err := tx.Create(ec).Error; err != nil {
 		return "", fmt.Errorf("identity: save enrollment code: %w", err)
 	}
 	return code, nil

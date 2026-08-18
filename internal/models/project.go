@@ -66,27 +66,27 @@ type Session struct {
 	AuditBase
 	HarnessID    string `gorm:"type:varchar(64);index;not null" json:"harness_id"`
 	UserID       string `gorm:"type:varchar(64);index;not null" json:"user_id"`
-	ProjectID    string `gorm:"type:varchar(64);index;index:idx_session_project_session,priority:1" json:"project_id"`
+	ProjectID    string `gorm:"type:varchar(64);index" json:"project_id,omitempty"`
 	RepositoryID string `gorm:"type:varchar(64);index" json:"repository_id,omitempty"`
 	Branch       string `gorm:"type:varchar(255)" json:"branch,omitempty"`
 	BaselineID   string `gorm:"type:varchar(64);index" json:"baseline_id,omitempty"`
 	// Protocol state
-	SessionID     string `gorm:"type:varchar(64);uniqueIndex;index:idx_session_project_session,priority:2" json:"session_id"` // DARI working session ID
+	SessionID     string `gorm:"type:varchar(64);uniqueIndex" json:"session_id"` // DARI working session ID
 	PolicyEpochID string `gorm:"type:varchar(64)" json:"policy_epoch_id"`
 	LeaseID       string `gorm:"type:varchar(64);index" json:"lease_id,omitempty"`
 	// Session metadata
 	TaskPurpose       string `gorm:"type:text" json:"task_purpose,omitempty"`
 	Title             string `gorm:"type:varchar(255)" json:"title,omitempty"`
-	Status            string `gorm:"type:varchar(32);default:'pending'" json:"status"` // pending, active, idle, closed, terminated
+	Status            string `gorm:"type:varchar(32);default:'pending';index:idx_session_lifecycle_sweep,priority:1" json:"status"` // pending, active, idle, closed, terminated
 	ModelClass        string `gorm:"type:varchar(64)" json:"model_class,omitempty"`
 	ProtectionProfile string `gorm:"type:varchar(16);default:'P0'" json:"protection_profile"`
 	SessionTTL        int    `json:"session_ttl,omitempty"` // seconds
 	IdleTTL           int    `json:"idle_ttl,omitempty"`    // seconds
-	OpenedAt          string `gorm:"type:timestamp" json:"opened_at,omitempty"`
+	OpenedAt          string `gorm:"type:timestamp;index" json:"opened_at,omitempty"`
 	ClosedAt          string `gorm:"type:timestamp" json:"closed_at,omitempty"`
 	// LastActivityAt is the last governed-exchange touch (web/02 A4
 	// idle detection); empty falls back to OpenedAt.
-	LastActivityAt string `gorm:"type:timestamp" json:"last_activity_at,omitempty"`
+	LastActivityAt string `gorm:"type:timestamp;index:idx_session_lifecycle_sweep,priority:2" json:"last_activity_at,omitempty"`
 }
 
 // PromptExchange records a prompt-response cycle within a session.

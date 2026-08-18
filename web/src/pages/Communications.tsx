@@ -70,10 +70,10 @@ export default function Communications() {
 
   // SSE (A1): live fan-out for messages/broadcasts/transfers/presence.
   useEffect(() => {
-    const token = localStorage.getItem('pccp_token')
-    if (!token) return
-    const sse = new EventSource(`/api/realtime/sse?token=${encodeURIComponent(token)}`)
-    sse.onmessage = (ev) => {
+		let sse: EventSource | null = null
+		let reconnectTimer = 0
+		let stopped = false
+		const onMessage = (ev: MessageEvent) => {
       try {
         const event = JSON.parse(ev.data)
         switch (event.type) {
@@ -96,7 +96,26 @@ export default function Communications() {
         }
       } catch { /* ignore malformed */ }
     }
-    return () => sse.close()
+		const connect = async () => {
+			try {
+				const ticket = await api.liveStreamTicket()
+				if (stopped) return
+				sse = new EventSource(ticket.stream_url)
+				sse.onmessage = onMessage
+				sse.onerror = () => {
+					sse?.close()
+					if (!stopped) reconnectTimer = window.setTimeout(connect, 1500)
+				}
+			} catch {
+				if (!stopped) reconnectTimer = window.setTimeout(connect, 1500)
+			}
+		}
+		connect()
+		return () => {
+			stopped = true
+			window.clearTimeout(reconnectTimer)
+			sse?.close()
+		}
   }, [activeConv?.id])
 
   const send = async () => {
@@ -228,7 +247,7 @@ export default function Communications() {
   }
 
   const downloadTransfer = async (tr: any) => {
-    const token = localStorage.getItem('pccp_token')
+    const token = sessionStorage.getItem('pccp_token')
     try {
       const resp = await fetch(`/api/communications/file-transfers/${tr.id}/download`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -274,7 +293,7 @@ export default function Communications() {
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
           <h2 className="text-sm font-bold">커뮤니케이션 허브 · Communications</h2>
-          <p className="text-[11px] text-gray-400">SSE 실시간 · 개발자 1:1 · 방송 확인 · 파일 전송 (검사 포함)</p>
+          <p className="text-[11px] text-gray-400">SSE 실시간 · 사용자 1:1 · 방송 확인 · 파일 전송 (검사 포함)</p>
         </div>
         <div className="flex gap-2 shrink-0 flex-wrap">
           <button className="btn-sm btn-primary" onClick={() => setNewConvOpen(true)}>+ 새 대화</button>
@@ -438,7 +457,7 @@ export default function Communications() {
         </div>}>
         <div className="space-y-2">
           <div>
-            <label className="text-[10px] text-gray-500">개발자 선택 (1:1 채팅)</label>
+            <label className="text-[10px] text-gray-500">사용자 선택 (1:1 채팅)</label>
             <EntitySelect entity="user" value={dmUser} onChange={setDmUser} />
           </div>
           <div>
@@ -487,7 +506,7 @@ export default function Communications() {
         footer={<ModalFooter onCancel={() => setTransferOpen(false)} onConfirm={createTransfer} confirmLabel="생성" />}>
         <div className="space-y-2">
           <div>
-            <label className="text-[10px] text-gray-500">받는 개발자</label>
+            <label className="text-[10px] text-gray-500">받는 사용자</label>
             <EntitySelect entity="user" value={transferForm.recipient_id} onChange={v => setTransferForm({ ...transferForm, recipient_id: v })} />
           </div>
           <input className="input text-xs w-full" placeholder="파일명" value={transferForm.file_name} onChange={e => setTransferForm({ ...transferForm, file_name: e.target.value })} />

@@ -13,6 +13,7 @@ import { exportCSV } from '../utils/csv'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
 import { useRowNav } from '../hooks/useRowNav'
+import { useAuth } from '../hooks/useAuth'
 import { userActions, userActionSpec, applyUserLifecycle, canIssueEnrollment, STATUS_KO, STATUS_BADGE, UserLifecycleAction } from '../userLifecycle'
 
 // Users page (web/01 plan): managed user population — governed
@@ -43,6 +44,7 @@ function initials(name: string) {
 export default function Users() {
   const confirm = useConfirm()
   const { favorites, sortPinnedFirst } = useFavorites('users')
+  const { email: operatorEmail } = useAuth()
 
   const fetchUsers = (q: ServerQuery) =>
     api.listUsersPaged(buildQuery(q)).then(res => {
@@ -69,8 +71,9 @@ export default function Users() {
     email: '', name: '', name_ko: '', title: '', auth_method: 'local', business_unit_id: '', employee_id: '',
   })
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [reasonTarget, setReasonTarget] = useState<{ id: string; name: string; email: string; action: UserLifecycleAction } | null>(null)
+  const [reasonTarget, setReasonTarget] = useState<{ id: string; name: string; email: string; action: UserLifecycleAction; ids?: string[] } | null>(null)
   const [reasonText, setReasonText] = useState('')
+  const [lifecycleBusy, setLifecycleBusy] = useState(false)
   const [enrollTarget, setEnrollTarget] = useState<any>(null)
   const [enrollCode, setEnrollCode] = useState<{ code: string; expires_at: string } | null>(null)
   const [bulkUnitOpen, setBulkUnitOpen] = useState(false)
@@ -89,6 +92,10 @@ export default function Users() {
   useEffect(() => { loadMeta() }, [])
 
   const rows = sortPinnedFirst(table.rows, u => u.id)
+  const selectedRows = rows.filter(u => selectedIds.has(u.id))
+  const selectionIsCurrent = selectedRows.length === selectedIds.size
+  const canBulkManage = selectionIsCurrent && selectedRows.length > 0 && selectedRows.every(u => u.can_manage === true)
+  const canBulkSuspend = canBulkManage && selectedRows.every(u => Array.isArray(u.allowed_actions) && u.allowed_actions.includes('suspend'))
   const { selectedIndex } = useRowNav(rows.length, (i) => setExpandedId(expandedId === rows[i].id ? null : rows[i].id))
 
   const toggleSelect = (id: string) => {
@@ -117,14 +124,15 @@ export default function Users() {
   const saveForm = async () => {
     try {
       if (editingId) {
-        await api.updateUser(editingId, form)
+        const { auth_method: _immutableAuthMethod, ...profile } = form
+        await api.updateUser(editingId, profile)
         showToast('저장 완료 · Saved', 'success')
       } else {
         await api.createUser(form)
         showToast('사용자 생성 완료 · Created', 'success')
       }
       setShowForm(false)
-      table.reload()
+      await table.reload()
       loadMeta()
     } catch (e: any) {
       showToast(e?.message || '저장 실패', 'error')
@@ -132,29 +140,34 @@ export default function Users() {
   }
 
   const runReasonAction = async () => {
-    if (!reasonTarget) return
+    if (!reasonTarget || lifecycleBusy) return
     if (!reasonText.trim()) {
       showToast('사유를 입력해주세요 (감사 로그에 기록됩니다)', 'error')
       return
     }
+    setLifecycleBusy(true)
     try {
       if (reasonTarget.id === '__bulk__') {
-        let done = 0, failed = 0
-        for (const uid of selectedIds) {
-          try { await applyUserLifecycle(reasonTarget.action, uid, reasonText); done++ } catch { failed++ }
+        let done = 0
+        const failures: { id: string; message: string }[] = []
+        for (const uid of reasonTarget.ids || []) {
+          try { await applyUserLifecycle(reasonTarget.action, uid, reasonText); done++ } catch (e: any) { failures.push({ id: uid, message: e?.message || '실패' }) }
         }
-        showToast(`일괄 처리 완료 — 성공 ${done}${failed ? `, 실패 ${failed}` : ''}`, failed ? 'error' : 'success')
-        setSelectedIds(new Set())
+        const detail = failures.length ? ` · 첫 오류: ${failures[0].message}` : ''
+        showToast(`일괄 처리 완료 — 성공 ${done}${failures.length ? `, 실패 ${failures.length}${detail}` : ''}`, failures.length ? 'error' : 'success')
+        setSelectedIds(new Set(failures.map(f => f.id)))
       } else {
         await applyUserLifecycle(reasonTarget.action, reasonTarget.id, reasonText)
         showToast('완료 · Done', 'success')
       }
       setReasonTarget(null)
       setReasonText('')
-      table.reload()
+      await table.reload()
     } catch (e: any) {
       showToast(e?.message || '실패', 'error')
-      table.reload() // a 409 usually means stale row state — refresh it
+      await table.reload() // a 409 usually means stale row state — refresh it
+    } finally {
+      setLifecycleBusy(false)
     }
   }
 
@@ -176,7 +189,7 @@ export default function Users() {
       showToast(`부서 일괄 배정 완료 (${selectedIds.size})`, 'success')
       setBulkUnitOpen(false)
       setSelectedIds(new Set())
-      table.reload()
+      await table.reload()
     } catch (e: any) {
       showToast(e?.message || '실패', 'error')
     }
@@ -194,7 +207,7 @@ export default function Users() {
       setImportResult(res)
       if (apply) {
         showToast(`가져오기 완료 (${res.imported}명)`, 'success')
-        table.reload()
+        await table.reload()
       }
     } catch (e: any) {
       showToast(e?.message || '가져오기 실패', 'error')
@@ -219,6 +232,8 @@ export default function Users() {
       key: 'name', header: '사용자',
       render: (u) => (
         <div className="flex items-center gap-2">
+          <input type="checkbox" aria-label={`${u.name_ko || u.name} 선택`} checked={selectedIds.has(u.id)} disabled={!u.can_manage || lifecycleBusy}
+            onClick={e => e.stopPropagation()} onChange={() => toggleSelect(u.id)} />
           <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold ${u.status === 'offboarded' ? 'bg-gray-200 text-gray-500' : 'bg-blue-100 text-blue-700'}`}>
             {initials(u.name_ko || u.name)}
           </div>
@@ -283,20 +298,21 @@ export default function Users() {
       render: (u) => (
         <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
           <FavoriteStar entity="users" id={u.id} />
-          {canIssueEnrollment(u.status) && (
+          {canIssueEnrollment(u.status, u.can_manage) && (
             <button className="btn-xs-secondary" title="초대 코드 발급"
-              onClick={() => issueEnrollment(u)}>초대 코드</button>
+              disabled={lifecycleBusy} onClick={() => issueEnrollment(u)}>초대 코드</button>
           )}
-          {userActions(u.status).map(a => (
+          {userActions(u.allowed_actions).map(a => (
             <button key={a.action}
+              disabled={lifecycleBusy}
               className={a.action === 'offboard' ? 'btn-xs-danger'
                 : a.action === 'resume' ? 'text-[10px] px-2 py-1 rounded hover:bg-green-50 text-green-700'
                 : 'text-[10px] px-2 py-1 rounded hover:bg-amber-50 text-amber-600'}
               onClick={() => { setReasonTarget({ id: u.id, name: u.name_ko || u.name, email: u.email, action: a.action }); setReasonText('') }}>{a.label}</button>
           ))}
-          {u.status !== 'offboarded' && (
+          {u.can_manage && u.status !== 'offboarded' && (
             <button className="btn-xs-secondary"
-              onClick={() => openEdit(u)}>수정</button>
+              disabled={lifecycleBusy} onClick={() => openEdit(u)}>수정</button>
           )}
         </div>
       ),
@@ -329,11 +345,15 @@ export default function Users() {
           <button className="btn-sm btn-secondary" onClick={exportSelected}>내보내기</button>
           {selectedIds.size > 0 && (
             <>
-              <button className="btn-sm btn-secondary" onClick={() => setBulkUnitOpen(true)}>
+              <button className="btn-sm btn-secondary" disabled={!canBulkManage || lifecycleBusy}
+                title={canBulkManage ? '선택한 사용자의 부서를 변경합니다' : '선택한 모든 사용자를 관리할 권한이 필요합니다'}
+                onClick={() => setBulkUnitOpen(true)}>
                 부서 일괄 배정 ({selectedIds.size})
               </button>
               <button className="btn-sm btn-danger"
-                onClick={() => { setReasonTarget({ id: '__bulk__', name: `선택 ${selectedIds.size}명`, email: '', action: 'suspend' }); setReasonText('') }}>
+                disabled={!canBulkSuspend || lifecycleBusy}
+                title={canBulkSuspend ? '선택한 사용자를 정지합니다' : '선택한 모든 사용자가 현재 정지 가능한 상태여야 합니다'}
+                onClick={() => { setReasonTarget({ id: '__bulk__', ids: selectedRows.map(u => u.id), name: `선택 ${selectedRows.length}명`, email: '', action: 'suspend' }); setReasonText('') }}>
                 일괄 정지 ({selectedIds.size})
               </button>
             </>
@@ -445,9 +465,15 @@ export default function Users() {
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="text-[10px] text-gray-500">인증 방식</label>
-              <select className="input text-xs w-full" value={form.auth_method} onChange={e => setForm({ ...form, auth_method: e.target.value })}>
-                {AUTH_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-              </select>
+              {editingId ? (
+                <div className="input text-xs w-full bg-gray-50 text-gray-600" aria-label="인증 방식은 사용자 편집에서 변경할 수 없습니다">
+                  {(AUTH_METHODS.find(m => m.value === form.auth_method) || {} as any).label || form.auth_method}
+                </div>
+              ) : (
+                <select className="input text-xs w-full" value={form.auth_method} onChange={e => setForm({ ...form, auth_method: e.target.value })}>
+                  {AUTH_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
+              )}
             </div>
             <div>
               <label className="text-[10px] text-gray-500">부서</label>
@@ -460,10 +486,11 @@ export default function Users() {
 
       {/* Reason modal (B1) — driven by the shared lifecycle mapping (PAT-1489) */}
       <Modal open={!!reasonTarget} title={reasonTarget ? userActionSpec(reasonTarget.action).title : ''}
-        onClose={() => setReasonTarget(null)}
-        footer={<ModalFooter onCancel={() => setReasonTarget(null)} onConfirm={runReasonAction}
-          confirmLabel={reasonTarget ? userActionSpec(reasonTarget.action).label : ''}
-          danger={reasonTarget ? userActionSpec(reasonTarget.action).danger : false} />}>
+        onClose={() => { if (!lifecycleBusy) setReasonTarget(null) }}
+        footer={<ModalFooter onCancel={() => { if (!lifecycleBusy) setReasonTarget(null) }} onConfirm={runReasonAction}
+          confirmLabel={lifecycleBusy ? '처리 중...' : reasonTarget ? userActionSpec(reasonTarget.action).label : ''}
+          danger={reasonTarget ? userActionSpec(reasonTarget.action).danger : false}
+          disabled={lifecycleBusy || !reasonText.trim()} />}>
         <div className="space-y-2">
           {reasonTarget && (
             <p className="text-xs text-gray-700">
@@ -474,8 +501,9 @@ export default function Users() {
           <p className="text-xs text-gray-500">
             {reasonTarget ? `${userActionSpec(reasonTarget.action).effect} 사유를 남겨주세요.` : ''}
           </p>
+          <p className="text-[11px] text-gray-500">실행자: <span className="font-medium text-gray-700">{operatorEmail || '현재 콘솔 운영자'}</span></p>
           <textarea className="input text-xs w-full" rows={3} placeholder="사유 (감사 로그에 기록됩니다)"
-            value={reasonText} onChange={e => setReasonText(e.target.value)} />
+            disabled={lifecycleBusy} value={reasonText} onChange={e => setReasonText(e.target.value)} />
         </div>
       </Modal>
 

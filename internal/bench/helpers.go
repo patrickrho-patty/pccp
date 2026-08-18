@@ -27,9 +27,10 @@ func openBenchDB(path string) (*gorm.DB, error) {
 }
 
 // identityEnrollRequest builds the enroll payload.
-func identityEnrollRequest(orgID, harnessID, pubHex string) identity.EnrollHarnessRequest {
+func identityEnrollRequest(orgID, userID, harnessID, pubHex string) identity.EnrollHarnessRequest {
 	return identity.EnrollHarnessRequest{
 		OrganizationID: orgID,
+		UserID:         userID,
 		HarnessID:      harnessID,
 		PublicKeyHex:   pubHex,
 		BinaryVersion:  "bench",

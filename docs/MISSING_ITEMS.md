@@ -78,9 +78,9 @@ Concrete proof of the pattern — these functions all exist and are documented a
 
 | # | Requirement | Status | Evidence |
 |---|---|---|---|
-| 3.1 | SSO/SAML signature verification | 🔴 MISSING / INSECURE | `sso.HandleSAMLCallback` parses XML but **never verifies the signature**, and falls back to `mockSAMLResponse()` on any parse gap → accepts anything (`internal/sso/service.go:73`). |
-| 3.2 | OIDC login | 🟡 PARTIAL | `OIDCAuthURL`/`HandleOIDCCallback` build real URLs; not wired to HTTP routes for actual login flow. |
-| 3.3 | SCIM provisioning | 🟡 STUB | `HandleSCIMRequest` exists; not routed. |
+| 3.1 | SSO/SAML signature verification | ✅ IMPLEMENTED | Organization-bound login transactions validate signed responses, issuer, request ID, audience, destination, and assertion timing through `crewjam/saml`; RelayState is one-time and expiring (`internal/sso/flows.go`). |
+| 3.2 | OIDC login | ✅ IMPLEMENTED | Public start/callback routes use organization-owned endpoints and redirect URIs, server-generated one-time state, nonce, PKCE S256, configured JWKS, and exact issuer/audience/expiry validation (`internal/sso/flows.go`, `internal/api/services.go`). |
+| 3.3 | SCIM provisioning | ✅ IMPLEMENTED | `/scim/v2/*` is mounted outside console JWT middleware with tenant-bound bearer credentials and canonical lifecycle enforcement (`internal/api/server.go`, `internal/sso/service.go`). |
 | 3.4 | Independent Harness enrollment + cert issuance (§8.4) | ⚠️ PARTIAL | Enrollment records exist; cert issuance not verified to produce enforceable peer credentials. |
 | 3.5 | Korean org hierarchy: Group→Affiliate→Division (§12.1, §33.1) | 🔴 MISSING | No group/affiliate model. Flat org only. |
 | 3.6 | Delegated administration (§12.3) | 🔴 MISSING | — |

@@ -73,3 +73,31 @@ func TestGovernInferenceRefusesClosedSession(t *testing.T) {
 		t.Fatalf("paused session must refuse inference naming its status, got %v", err)
 	}
 }
+
+func TestGovernInferenceRequiresCanonicalActiveSessionBinding(t *testing.T) {
+	db := setupGovernedTestDB(t)
+	db.Create(&models.Harness{OrganizationID: "org-a", HarnessID: "hrn-a", Status: "enrolled"})
+	db.Create(&models.Harness{OrganizationID: "org-a", HarnessID: "hrn-b", Status: "enrolled"})
+	db.Create(&models.Session{AuditBase: models.AuditBase{OrganizationID: "org-a"}, HarnessID: "hrn-b", UserID: "user", SessionID: "wrong-harness", Status: "active"})
+	db.Create(&models.Session{AuditBase: models.AuditBase{OrganizationID: "org-b"}, HarnessID: "hrn-a", UserID: "user", SessionID: "foreign-org", Status: "active"})
+	db.Create(&models.Session{AuditBase: models.AuditBase{OrganizationID: "org-a"}, HarnessID: "hrn-a", UserID: "user", SessionID: "pending", Status: "pending"})
+
+	svc, err := New(db, "", "relay-session-binding-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		session string
+		want    string
+	}{
+		{"missing", "not registered for organization"},
+		{"foreign-org", "not registered for organization"},
+		{"wrong-harness", "not bound to harness"},
+		{"pending", "pending"},
+	} {
+		_, _, err := svc.GovernInference(context.Background(), GovernRequest{HarnessID: "hrn-a", SessionID: tc.session, Model: "model"})
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("session %q error = %v, want %q", tc.session, err, tc.want)
+		}
+	}
+}

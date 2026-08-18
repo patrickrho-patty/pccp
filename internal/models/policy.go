@@ -45,9 +45,9 @@ func (PolicyTemplate) TableName() string { return "policy_templates" }
 // from unacked users are gated until they ack.
 type PolicyAcknowledgement struct {
 	Base
-	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
-	EpochID        string `gorm:"type:varchar(64);index;not null" json:"epoch_id"`
-	UserID         string `gorm:"type:varchar(64);index;not null" json:"user_id"`
+	OrganizationID string `gorm:"type:varchar(64);index;not null;uniqueIndex:idx_policy_ack_org_epoch_user,priority:1" json:"organization_id"`
+	EpochID        string `gorm:"type:varchar(64);index;not null;uniqueIndex:idx_policy_ack_org_epoch_user,priority:2" json:"epoch_id"`
+	UserID         string `gorm:"type:varchar(64);index;not null;uniqueIndex:idx_policy_ack_org_epoch_user,priority:3" json:"user_id"`
 	AckedAt        string `gorm:"type:timestamp" json:"acked_at"`
 }
 

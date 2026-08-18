@@ -1,7 +1,7 @@
 const API_BASE = '';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = localStorage.getItem('pccp_token');
+  const token = sessionStorage.getItem('pccp_token');
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options?.headers as Record<string, string>),
@@ -11,10 +11,30 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   const resp = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (!resp.ok) {
+    if (resp.status === 401 && token) {
+      sessionStorage.removeItem('pccp_token')
+      window.dispatchEvent(new Event('pccp-auth-expired'))
+    }
     const err = await resp.json().catch(() => ({ error: resp.statusText }));
     throw new Error(err.error || 'API error');
   }
   return resp.json();
+}
+
+async function requestCursorPage<T>(path: string): Promise<{ data: T; nextCursor: string }> {
+  const token = sessionStorage.getItem('pccp_token')
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers.Authorization = `Bearer ${token}`
+  const resp = await fetch(`${API_BASE}${path}`, { headers })
+  if (!resp.ok) {
+    if (resp.status === 401 && token) {
+      sessionStorage.removeItem('pccp_token')
+      window.dispatchEvent(new Event('pccp-auth-expired'))
+    }
+    const err = await resp.json().catch(() => ({ error: resp.statusText }))
+    throw new Error(err.error || 'API error')
+  }
+  return { data: await resp.json(), nextCursor: resp.headers.get('X-Next-Cursor') || '' }
 }
 
 export const api = {
@@ -33,27 +53,17 @@ export const api = {
       body: JSON.stringify({ email, password, org_name: orgName, profile, policy_pack: policyPack, demo_data: demoData }),
     }),
 
-  // SSO (§8.2) — real routed endpoints. NOTE: these sit behind the admin auth
-  // middleware; unauthenticated callers get 401 until the backend opens them.
-  ssoOIDCAuthUrl: (redirectUri: string, state: string, issuer: string, clientId: string) =>
-    request<{ auth_url: string }>(
-      `/api/sso/oidc/auth-url?redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}&issuer=${encodeURIComponent(issuer)}&client_id=${encodeURIComponent(clientId)}`
-    ),
-  ssoOIDCCallback: (code: string, redirectUri: string) =>
-    request<any>('/api/sso/oidc/callback', {
-      method: 'POST',
-      body: JSON.stringify({ code, redirect_uri: redirectUri }),
-    }),
-  ssoSAMLRedirect: (idpEntityId: string, idpSsoUrl: string, relayState: string) =>
+  // SSO (§8.2). The browser selects only its organization; all IdP endpoints,
+  // client identifiers, redirect URIs, and transaction state are server-owned.
+  ssoOIDCAuthUrl: (organization: string) =>
+    request<{ auth_url: string }>(`/api/sso/oidc/auth-url?organization=${encodeURIComponent(organization)}`),
+  ssoSAMLRedirect: (organization: string) =>
     request<{ redirect_url: string }>('/api/sso/saml/redirect', {
       method: 'POST',
-      body: JSON.stringify({ idp_entity_id: idpEntityId, idp_sso_url: idpSsoUrl, relay_state: relayState }),
+      body: JSON.stringify({ organization }),
     }),
-  ssoSAMLCallback: (samlResponse: string, relayState: string) =>
-    request<any>('/api/sso/saml/callback', {
-      method: 'POST',
-      body: JSON.stringify({ saml_response: samlResponse, relay_state: relayState }),
-    }),
+  ssoSessionExchange: (code: string, provider: 'oidc' | 'saml') =>
+	request<any>('/api/sso/session', { method: 'POST', body: JSON.stringify({ code, provider }) }),
 
   // Dashboard
   dashboard: () => request<any>('/api/dashboard'),
@@ -90,16 +100,20 @@ export const api = {
     request<any>(`/api/users/${id}/harnesses`, { method: 'POST', body: JSON.stringify({ harness_id: harnessId }) }),
   revokeUserHarness: (id: string, harnessId: string) =>
     request<any>(`/api/users/${id}/harnesses/${harnessId}`, { method: 'DELETE' }),
-  getUserUsage: (id: string, rangeParam = '30d', cursor = '', signal?: AbortSignal) =>
-	request<any>(`/api/users/${id}/usage?range=${rangeParam}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { signal }),
+  getUserUsage: (id: string, rangeParam = '30d', cursor = '', signal?: AbortSignal, summaryOnly = false) =>
+    request<any>(`/api/users/${id}/usage?range=${rangeParam}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${summaryOnly ? '&summary_only=1' : ''}`, { signal }),
   importUsersCSV: (file: File, apply: boolean) => {
     const form = new FormData()
     form.append('file', file)
-    const token = localStorage.getItem('pccp_token')
+    const token = sessionStorage.getItem('pccp_token')
     const headers: Record<string, string> = {}
     if (token) headers['Authorization'] = `Bearer ${token}`
     return fetch(`/api/users/import${apply ? '?apply=true' : ''}`, { method: 'POST', headers, body: form })
-      .then(r => r.json())
+      .then(async r => {
+        const body = await r.json().catch(() => ({ error: r.statusText }))
+        if (!r.ok) throw new Error(body?.error || `CSV import failed (${r.status})`)
+        return body
+      })
   },
   getUserEntitlements: (id: string) =>
     request<any>(`/api/users/${id}/entitlements`),
@@ -197,12 +211,18 @@ export const api = {
   listSessions: () => request<any[]>('/api/sessions'),
   listSessionsPaged: (query: string) =>
     request<{ data: any[]; total: number; page: number; size: number }>(`/api/sessions?${query}`),
+  liveSessions: (limit = 50, filters?: Record<string, string>) => {
+	const params = new URLSearchParams({ limit: String(limit) })
+	Object.entries(filters || {}).forEach(([key, value]) => { if (value) params.set(key, value) })
+	return request<any>(`/api/sessions/live?${params.toString()}`)
+  },
+  liveStreamTicket: () => request<{ stream_url: string; expires_at: string; transcript_visible: boolean }>('/api/realtime/ticket', { method: 'POST' }),
   openSession: (data: any) =>
     request<any>('/api/sessions', { method: 'POST', body: JSON.stringify(data) }),
   sessionAction: (id: string, action: string) =>
     request<any>(`/api/sessions/${id}/${action}`, { method: 'POST' }),
-  bulkSessions: (ids: string[], action: string) =>
-    request<any>('/api/sessions/bulk', { method: 'POST', body: JSON.stringify({ ids, action }) }),
+  bulkSessions: (ids: string[], action: string, reason: string) =>
+	request<any>('/api/sessions/bulk', { method: 'POST', body: JSON.stringify({ ids, action, reason }) }),
   getSessionDetail: (id: string) => request<any>(`/api/sessions/${id}/detail`),
   getSessionUsage: (id: string, rangeParam = '30d', cursor = '', signal?: AbortSignal) => request<any>(`/api/sessions/${id}/usage?range=${rangeParam}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { signal }),
   getSessionDecisions: (id: string) => request<any>(`/api/sessions/${id}/decisions`),
@@ -226,6 +246,8 @@ export const api = {
 
   // Models
   listModels: () => request<any[]>('/api/models'),
+	getModel: (id: string) => request<any>(`/api/models/${encodeURIComponent(id)}`),
+	modelRecallImpact: (id: string) => request<any>(`/api/models/${encodeURIComponent(id)}/recall-impact`),
   registerModel: (data: any) =>
     request<any>('/api/models', { method: 'POST', body: JSON.stringify(data) }),
   publishModel: (id: string) =>
@@ -302,8 +324,21 @@ export const api = {
     request<any>('/api/audit/siem', { method: 'PUT', body: JSON.stringify({ webhook, secret }) }),
 
   // Analytics (web/16)
-  usageExtended: (rangeParam: string, cursor = '', signal?: AbortSignal) =>
-	request<any>(`/api/analytics/usage-extended?range=${rangeParam}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { signal }),
+  usageExtended: (rangeParam: string, cursor = '', signal?: AbortSignal, summaryOnly = false) => {
+    const query = new URLSearchParams({ range: rangeParam })
+    if (cursor) query.set('cursor', cursor)
+    if (summaryOnly) query.set('summary_only', '1')
+    return request<any>(`/api/analytics/usage-extended?${query.toString()}`, { signal })
+  },
+  usageExportTicket: (rangeParam: string, windowStart?: string, windowEnd?: string, snapshotAt?: string) => {
+    const query = new URLSearchParams({ range: rangeParam })
+    if (windowStart && windowEnd && snapshotAt) {
+      query.set('window_start', windowStart)
+      query.set('window_end', windowEnd)
+      query.set('snapshot_at', snapshotAt)
+    }
+    return request<{ download_url: string; expires_at: string }>(`/api/analytics/usage-export-ticket?${query.toString()}`, { method: 'POST' })
+  },
   usageBreakdown: (rangeParam: string) =>
     request<any>(`/api/analytics/usage-breakdown?range=${rangeParam}`),
 
@@ -349,15 +384,18 @@ export const api = {
     request<any>(`/api/security/lockdown-impact?scope=${scope || 'org'}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ''}`),
   securityLockdown: (data: any) =>
     request<any>('/api/security/lockdown', { method: 'POST', body: JSON.stringify(data) }),
-  securityAlerts: () => request<any[]>('/api/security/alerts'),
+  securityAlerts: (cursor = '') =>
+	requestCursorPage<any[]>(`/api/security/alerts?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
   createSecurityAlert: (data: any) =>
     request<any>('/api/security/alerts', { method: 'POST', body: JSON.stringify(data) }),
   deleteSecurityAlert: (id: string) =>
     request<any>(`/api/security/alerts/${id}`, { method: 'DELETE' }),
   testSecurityAlert: (id: string) =>
     request<any>(`/api/security/alerts/${id}/test`, { method: 'POST' }),
-  rotateSecurityAlert: (id: string, target: string) =>
-    request<any>(`/api/security/alerts/${id}/rotate`, { method: 'POST', body: JSON.stringify({ target }) }),
+  rotateSecurityAlert: (id: string, target: string, enable?: boolean) =>
+    request<any>(`/api/security/alerts/${id}/rotate`, { method: 'POST', body: JSON.stringify({ target, ...(enable == null ? {} : { enable }) }) }),
+  disableSecurityAlert: (id: string) =>
+    request<any>(`/api/security/alerts/${id}/disable`, { method: 'POST' }),
   securityLexicon: () => request<any>('/api/security/lexicon'),
   updateSecurityLexicon: (data: any) =>
     request<any>('/api/security/lexicon', { method: 'PUT', body: JSON.stringify(data) }),
@@ -368,8 +406,8 @@ export const api = {
     request<any>(`/api/fleet/inventory${query ? '?' + query : ''}`),
   fleetAction: (data: any) =>
     request<any>('/api/fleet/actions', { method: 'POST', body: JSON.stringify(data) }),
-  fleetBulkAction: (harnessIds: string[], action: string, reason: string) =>
-    request<any>('/api/fleet/actions/bulk', { method: 'POST', body: JSON.stringify({ harness_ids: harnessIds, action, reason }) }),
+  fleetBulkAction: (harnessIds: string[], action: string, reason: string, idempotencyKey: string) =>
+	request<any>('/api/fleet/actions/bulk', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify({ harness_ids: harnessIds, action, reason }) }),
   fleetActionHistory: (harnessId?: string) =>
     request<any[]>(`/api/fleet/actions${harnessId ? '?harness_id=' + encodeURIComponent(harnessId) : ''}`),
   fleetFreeze: (reason: string, reasonKo: string, affectedRepos: string[]) =>
@@ -377,8 +415,8 @@ export const api = {
   fleetForceVersion: (minVersion: string, releaseRing: string, deadline: string, reason: string) =>
     request<any>('/api/fleet/force-version', { method: 'POST', body: JSON.stringify({ min_version: minVersion, release_ring: releaseRing, deadline, reason }) }),
   fleetApprovals: () => request<any[]>('/api/fleet/approvals'),
-  fleetImpact: (action: string, scope: string) =>
-    request<any>(`/api/fleet/impact?action=${action}&scope=${scope}`),
+  fleetImpact: (action: string, scope: string, projectId?: string) =>
+    request<any>(`/api/fleet/impact?action=${encodeURIComponent(action)}&scope=${encodeURIComponent(scope)}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ''}`),
   fleetStatus: () => request<any>('/api/fleet/status'),
 
   // Communications (web/13)
@@ -413,7 +451,7 @@ export const api = {
   uploadFileTransfer: (id: string, file: File) => {
     const form = new FormData()
     form.append('file', file)
-    const token = localStorage.getItem('pccp_token')
+    const token = sessionStorage.getItem('pccp_token')
     const headers: Record<string, string> = {}
     if (token) headers['Authorization'] = `Bearer ${token}`
     return fetch(`/api/communications/file-transfers/${id}/content`, { method: 'POST', headers, body: form })

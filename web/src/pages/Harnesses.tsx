@@ -330,7 +330,7 @@ export default function Harnesses() {
           <EmptyState
             icon="⬡"
             title="첫 하네스를 등록하세요"
-            message="등록 코드를 발급하면 개발자 기기가 거버넌스 피어로 합류합니다"
+            message="등록 코드를 발급하면 사용자 기기가 거버넌스 피어로 합류합니다"
             action={{ label: '🔑 등록 코드 발급', onClick: () => setCodeTarget({ id: users[0]?.id }) }}
           />
         ) : (

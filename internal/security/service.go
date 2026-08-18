@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"unicode"
 	"unicode/utf8"
 
@@ -16,12 +19,78 @@ import (
 // Service implements security checks for governed exchanges.
 // Phase 2: DLP, Korean PII detection, secret scanning, prompt injection defense.
 type Service struct {
-	db *gorm.DB
+	db               *gorm.DB
+	alertKeyProvider keymgmt.KeyProvider
+	alertHTTPClient  HTTPDoer
+	alertWorkerOnce  sync.Once
 }
 
 // New creates a new security service.
 func New(db *gorm.DB) *Service {
-	return &Service{db: db}
+	return &Service{db: db, alertHTTPClient: NewAlertHTTPClient(10 * time.Second)}
+}
+
+// SetAlertKeyProvider wires the same provider used by the API write paths into
+// background delivery. Keeping it on the Service avoids process-global state.
+func (s *Service) SetAlertKeyProvider(provider keymgmt.KeyProvider) {
+	s.alertKeyProvider = provider
+}
+
+// SetAlertHTTPClient is an explicit test/integration seam. Production uses the
+// dial-time validated client installed by New.
+func (s *Service) SetAlertHTTPClient(client HTTPDoer) {
+	if client == nil {
+		s.alertHTTPClient = NewAlertHTTPClient(10 * time.Second)
+		return
+	}
+	s.alertHTTPClient = client
+}
+
+// AlertHTTPClient exposes the single transport instance shared by API tests
+// and background delivery, including its connection pool and SSRF policy.
+func (s *Service) AlertHTTPClient() HTTPDoer { return s.alertHTTPClient }
+
+// ValidateAlertProviderReadiness prevents a process from reporting healthy
+// while encrypted destinations exist but no provider can decrypt them.
+func ValidateAlertProviderReadiness(db *gorm.DB, provider keymgmt.KeyProvider) error {
+	var plaintextCount int64
+	if err := db.Model(&models.AlertEndpoint{}).Where("target <> ''").Count(&plaintextCount).Error; err != nil {
+		return fmt.Errorf("security: inspect plaintext alert endpoints: %w", err)
+	}
+	if plaintextCount > 0 {
+		return fmt.Errorf("security: %d legacy plaintext alert endpoints require migration", plaintextCount)
+	}
+	cursor := ""
+	for {
+		var endpoints []models.AlertEndpoint
+		query := db.Where("target_enc <> ''").Order("id ASC").Limit(200)
+		if cursor != "" {
+			query = query.Where("id > ?", cursor)
+		}
+		if err := query.Find(&endpoints).Error; err != nil {
+			return fmt.Errorf("security: inspect encrypted alert endpoints: %w", err)
+		}
+		if len(endpoints) == 0 {
+			return nil
+		}
+		if provider == nil {
+			return fmt.Errorf("security: encrypted alert endpoints require a configured key provider")
+		}
+		for _, endpoint := range endpoints {
+			if endpoint.TargetBindingVersion < keymgmt.AlertBindingVersion {
+				return fmt.Errorf("security: alert endpoint %s requires authenticated binding migration", endpoint.ID)
+			}
+			if !strings.HasPrefix(endpoint.CredentialID, "hm:") {
+				return fmt.Errorf("security: alert endpoint %s requires keyed fingerprint migration", endpoint.ID)
+			}
+			plaintext, err := keymgmt.OpenAlertSecret(provider, endpoint.TargetEnc, endpoint.TargetKEKID, "", endpoint.TargetBindingVersion,
+				endpoint.CredentialID, keymgmt.AlertSecretContext{OrganizationID: endpoint.OrganizationID, EndpointID: endpoint.ID, ProviderType: endpoint.Type})
+			if err != nil || plaintext == "" {
+				return fmt.Errorf("security: alert endpoint %s cannot be authenticated by the configured provider", endpoint.ID)
+			}
+		}
+		cursor = endpoints[len(endpoints)-1].ID
+	}
 }
 
 // CheckResult is the result of a security scan.
@@ -572,9 +641,9 @@ func (s *Service) detectSensitivePaths(text string) []SecurityFinding {
 	return findings
 }
 
-// RecordFinding persists a security finding to the database and
-// dispatches it to the org's alert endpoints (security C2).
-func (s *Service) RecordFinding(orgID, sessionID, exchangeID string, finding SecurityFinding) error {
+// RecordFinding persists a security finding and its delivery jobs in one
+// transaction. Network I/O is handled by the durable outbox worker.
+func (s *Service) RecordFinding(orgID, sessionID, exchangeID string, finding SecurityFinding) (*models.SecurityFinding, error) {
 	f := &models.SecurityFinding{
 		OrganizationID: orgID,
 		SessionID:      sessionID,
@@ -589,11 +658,35 @@ func (s *Service) RecordFinding(orgID, sessionID, exchangeID string, finding Sec
 		Status:         "open",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	}
-	if err := s.db.Create(f).Error; err != nil {
-		return err
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(f).Error; err != nil {
+			return err
+		}
+		var endpoints []models.AlertEndpoint
+		if err := tx.Select("id", "severities_json").Where(
+			"organization_id = ? AND enabled = ? AND rotation_required = ?", orgID, true, false,
+		).Find(&endpoints).Error; err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		jobs := make([]models.AlertDeliveryJob, 0, len(endpoints))
+		for _, endpoint := range endpoints {
+			if severityRouted(endpoint.SeveritiesJSON, f.Severity) {
+				jobs = append(jobs, models.AlertDeliveryJob{
+					OrganizationID: orgID, EndpointID: endpoint.ID, FindingID: f.ID,
+					Status: "pending", AvailableAt: now,
+				})
+			}
+		}
+		if len(jobs) > 0 {
+			return tx.Create(&jobs).Error
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	s.DispatchAlerts(orgID, *f)
-	return nil
+	return f, nil
 }
 
 // HasKoreanText checks if text contains Korean characters.

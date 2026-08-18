@@ -16,7 +16,7 @@ export function SeatWidget({ compact = false }: { compact?: boolean }) {
     let interval: ReturnType<typeof setInterval> | null = null
 
     const load = async () => {
-      const token = localStorage.getItem('pccp_token')
+      const token = sessionStorage.getItem('pccp_token')
       if (!token) return // Don't fetch without a token
 
       try {

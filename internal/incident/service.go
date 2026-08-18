@@ -2,24 +2,35 @@ package incident
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/fleet"
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"github.com/patrickrho-patty/pccp/internal/sessionlifecycle"
 	"gorm.io/gorm"
 )
 
 // Service implements Incident Management and Containment (PRD §15.2-15.4).
 type Service struct {
-	db *gorm.DB
-	mu sync.RWMutex
+	db        *gorm.DB
+	mu        sync.RWMutex
+	lifecycle *sessionlifecycle.Service
+	fleet     *fleet.Service
 }
 
+func (s *Service) SetFleetService(service *fleet.Service) { s.fleet = service }
+
 // New creates a new incident service.
-func New(db *gorm.DB) *Service {
-	return &Service{db: db}
+func New(db *gorm.DB, lifecycles ...*sessionlifecycle.Service) *Service {
+	lifecycle := sessionlifecycle.New(db)
+	if len(lifecycles) > 0 && lifecycles[0] != nil {
+		lifecycle = lifecycles[0]
+	}
+	return &Service{db: db, lifecycle: lifecycle}
 }
 
 // Incident represents a security incident (PRD §15.2).
@@ -81,9 +92,11 @@ func (s *Service) CreateIncident(inc Incident) (*Incident, error) {
 	if err := s.db.Create(finding).Error; err != nil {
 		return nil, fmt.Errorf("incident: create: %w", err)
 	}
-
-	s.recordAudit(inc.OrganizationID, "cp.incident.created", "incident", inc.ID,
-		fmt.Sprintf("Incident %s created: %s", inc.ID, inc.Title))
+	if err := s.recordAudit(inc.OrganizationID, "cp.incident.created", inc.CreatedBy, "incident", inc.ID,
+		map[string]string{"title": inc.Title}); err != nil {
+		_ = s.db.Delete(finding).Error
+		return nil, fmt.Errorf("incident: create audit: %w", err)
+	}
 
 	return &inc, nil
 }
@@ -122,6 +135,10 @@ type ContainResult struct {
 
 // Contain applies containment measures (PRD §15.4).
 func (s *Service) Contain(req ContainRequest) (*ContainResult, error) {
+	var incidentFinding models.SecurityFinding
+	if err := s.db.Where("organization_id = ? AND id = ? AND finding_type LIKE ?", req.OrganizationID, req.IncidentID, "incident_%").First(&incidentFinding).Error; err != nil {
+		return nil, errors.New("incident: incident not found in organization")
+	}
 	result := &ContainResult{
 		IncidentID: req.IncidentID,
 		Mode:       string(req.Mode),
@@ -132,95 +149,103 @@ func (s *Service) Contain(req ContainRequest) (*ContainResult, error) {
 	case ContainSession:
 		// Session containment (PRD §15.4)
 		if req.SessionID != "" {
-			s.db.Model(&models.Session{}).
-				Where("session_id = ?", req.SessionID).
-				Update("status", "contained")
-			result.AffectedSessions = append(result.AffectedSessions, req.SessionID)
+			out := s.lifecycle.Transition(sessionlifecycle.Request{OrganizationID: req.OrganizationID, SessionRef: req.SessionID, Target: "paused", Action: "incident_containment", Reason: req.Reason, ActorID: req.PerformedBy})
+			if out.Result != sessionlifecycle.ResultUpdated {
+				return nil, fmt.Errorf("incident: session containment incomplete (%s): %s", out.Result, out.Error)
+			}
+			result.AffectedSessions = append(result.AffectedSessions, out.SessionID)
+		} else {
+			return nil, errors.New("incident: session_id is required")
 		}
-		result.Actions = []string{
-			"세션 일시정지 (session paused)",
-			"모델 요청 중지 (model requests stopped)",
-			"도구 실행 중지 (tool execution stopped)",
-			"샌드박스 상태 보존 (sandbox state preserved)",
-			"세션 권한 회수 (session capabilities revoked)",
-		}
+		result.Actions = []string{"세션 일시정지 (session paused)"}
 
 	case ContainHarness:
-		// Harness containment
-		if req.HarnessID != "" {
-			s.db.Model(&models.Harness{}).
-				Where("harness_id = ?", req.HarnessID).
-				Update("status", "quarantined")
-			result.AffectedHarnesses = append(result.AffectedHarnesses, req.HarnessID)
-
-			// Revoke all sessions for this harness
-			s.db.Model(&models.Session{}).
-				Where("harness_id = ? AND status = 'active'", req.HarnessID).
-				Update("status", "contained")
+		if req.HarnessID == "" && incidentFinding.SessionID != "" {
+			var session models.Session
+			if err := s.db.Where("organization_id = ? AND session_id = ?", req.OrganizationID, incidentFinding.SessionID).First(&session).Error; err == nil {
+				req.HarnessID = session.HarnessID
+			}
 		}
-		result.Actions = []string{
-			"하네스 리스/인증서 회수 (harness lease/cert revoked)",
-			"재등록 필요 (re-enrollment required)",
-			"로컬 캐시 권한 회수 (cached capabilities revoked)",
-			"통신/파일 전송 비활성화 (comms/file transfer disabled)",
+		if req.HarnessID == "" {
+			return nil, errors.New("incident: harness_id is required")
 		}
+		if s.fleet == nil {
+			return nil, errors.New("incident: canonical fleet containment is not configured")
+		}
+		var sessions []string
+		if err := s.db.Model(&models.Session{}).Where("organization_id = ? AND harness_id = ? AND status IN ?", req.OrganizationID, req.HarnessID, models.SessionNonTerminalStatuses()).Pluck("session_id", &sessions).Error; err != nil {
+			return nil, err
+		}
+		if err := s.fleet.PerformAction(fleet.ActionRequest{OrganizationID: req.OrganizationID, HarnessID: req.HarnessID, Action: fleet.ActionQuarantine, Reason: req.Reason, PerformedBy: req.PerformedBy}); err != nil {
+			return nil, err
+		}
+		result.AffectedHarnesses = append(result.AffectedHarnesses, req.HarnessID)
+		result.AffectedSessions = sessions
+		result.Actions = []string{"하네스 격리 및 진행 중 세션 종료 (harness quarantined and in-progress sessions terminated)"}
 
 	case ContainProject:
-		// Project containment
 		if req.ProjectID != "" {
-			s.db.Model(&models.Session{}).
-				Where("project_id = ? AND status = 'active'", req.ProjectID).
-				Update("status", "contained")
+			var project models.Project
+			if err := s.db.Where("organization_id = ? AND id = ?", req.OrganizationID, req.ProjectID).First(&project).Error; err != nil {
+				return nil, errors.New("incident: project not found in organization")
+			}
+			outcomes, err := s.lifecycle.TransitionScope(sessionlifecycle.Scope{OrganizationID: req.OrganizationID, ProjectID: req.ProjectID}, "paused", "incident_containment", req.Reason, req.PerformedBy)
+			if err != nil {
+				return nil, err
+			}
+			for _, outcome := range outcomes {
+				if outcome.Result != sessionlifecycle.ResultUpdated {
+					return nil, fmt.Errorf("incident: project session containment incomplete (%s): %s", outcome.Result, outcome.Error)
+				}
+				result.AffectedSessions = append(result.AffectedSessions, outcome.SessionID)
+			}
+		} else {
+			return nil, errors.New("incident: project_id is required")
 		}
-		result.Actions = []string{
-			"읽기 전용 강제 (forced read-only)",
-			"내보내기/커밋 비활성화 (exports/commits disabled)",
-			"선택된 모델/도구 비활성화 (selected models/tools disabled)",
-			"모든 작업 승인 필요 (all actions require approval)",
-		}
+		result.Actions = []string{"프로젝트 진행 중 세션 일시정지 (in-progress project sessions paused)"}
 
 	case ContainOrgLockdown:
-		// Organization lockdown (PRD §15.4)
-		s.db.Model(&models.Session{}).
-			Where("organization_id = ? AND status = 'active'", req.OrganizationID).
-			Update("status", "terminated")
-		s.db.Model(&models.Harness{}).
-			Where("organization_id = ? AND status IN ('active','enrolled')", req.OrganizationID).
-			Update("risk_state", "high")
-		result.Actions = []string{
-			"모든 새 에이전트 실행 중지 (all new agent executions stopped)",
-			"클라우드 모델 송신 일시정지 (cloud model egress suspended)",
-			"새 하네스 등록 거부 (new harness enrollment rejected)",
-			"긴급 방송 표시 (emergency broadcast displayed)",
-		}
+		return nil, errors.New("incident: organization lockdown must use the canonical /api/security/lockdown workflow")
+	default:
+		return nil, fmt.Errorf("incident: unsupported containment mode %q", req.Mode)
 	}
 
 	// Update incident status
-	s.db.Model(&models.SecurityFinding{}).
-		Where("id = ?", req.IncidentID).
+	updated := s.db.Model(&models.SecurityFinding{}).
+		Where("organization_id = ? AND id = ?", req.OrganizationID, req.IncidentID).
 		Updates(map[string]interface{}{
 			"status":          "contained",
 			"contains_action": string(req.Mode),
 		})
+	if updated.Error != nil || updated.RowsAffected != 1 {
+		return nil, errors.New("incident: containment applied but incident status could not be persisted")
+	}
 
-	s.recordAudit(req.OrganizationID, "cp.incident.contained", "incident", req.IncidentID,
-		fmt.Sprintf(`{"mode":"%s","reason":"%s","actions":%v}`, req.Mode, req.Reason, result.Actions))
+	if err := s.recordAudit(req.OrganizationID, "cp.incident.contained", req.PerformedBy, "incident", req.IncidentID,
+		map[string]interface{}{"mode": req.Mode, "reason": req.Reason, "actions": result.Actions, "performed_by": req.PerformedBy}); err != nil {
+		return nil, fmt.Errorf("incident: containment applied but audit failed: %w", err)
+	}
 
 	return result, nil
 }
 
 // Resolve marks an incident as resolved.
-func (s *Service) Resolve(orgID, incidentID, resolution string) error {
+func (s *Service) Resolve(orgID, incidentID, resolution, actorID string) error {
 	now := time.Now().Format(time.RFC3339)
-	s.db.Model(&models.SecurityFinding{}).
-		Where("id = ?", incidentID).
+	updated := s.db.Model(&models.SecurityFinding{}).
+		Where("organization_id = ? AND id = ? AND finding_type LIKE ?", orgID, incidentID, "incident_%").
 		Updates(map[string]interface{}{
 			"status": "resolved",
 		})
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return gorm.ErrRecordNotFound
+	}
 
-	s.recordAudit(orgID, "cp.incident.resolved", "incident", incidentID,
-		fmt.Sprintf(`{"resolution":"%s","resolved_at":"%s"}`, resolution, now))
-	return nil
+	return s.recordAudit(orgID, "cp.incident.resolved", actorID, "incident", incidentID,
+		map[string]string{"resolution": resolution, "resolved_at": now})
 }
 
 // ListIncidents returns incidents for an organization.
@@ -354,11 +379,15 @@ func (s *Service) SimulatePolicy(orgID string, ruleIDs []string) (*PolicySimulat
 	return result, nil
 }
 
-func (s *Service) recordAudit(orgID, action, resourceType, resourceID, details string) {
-	detailsJSON, _ := json.Marshal(details)
+func (s *Service) recordAudit(orgID, action, actorID, resourceType, resourceID string, details interface{}) error {
+	detailsJSON, err := json.Marshal(details)
+	if err != nil {
+		return err
+	}
 	event := &models.AuditEvent{
 		OrganizationID: orgID,
 		EventType:      action,
+		ActorID:        actorID,
 		ActorType:      "admin",
 		Action:         action,
 		ResourceType:   resourceType,
@@ -367,5 +396,5 @@ func (s *Service) recordAudit(orgID, action, resourceType, resourceID, details s
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	}
-	s.db.Create(event)
+	return models.CreateAuditEvent(s.db, event)
 }

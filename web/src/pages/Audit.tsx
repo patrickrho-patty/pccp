@@ -52,7 +52,7 @@ export default function Audit() {
   const downloadBundle = async () => {
     if (selectedIds.size === 0) return
     try {
-      const token = localStorage.getItem('pccp_token')
+      const token = sessionStorage.getItem('pccp_token')
       const resp = await fetch('/api/audit/evidence-bundle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },

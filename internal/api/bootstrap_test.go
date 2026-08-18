@@ -25,9 +25,8 @@ func apiDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-// P0-6: bootstrap is idempotent per org name (repeat bootstraps must
-// not mint new orgs) and honors the deployment profile.
-func TestBootstrapIdempotentOrgAndProfile(t *testing.T) {
+func TestBootstrapIsOneTimeAuthorizedAndCannotResetPassword(t *testing.T) {
+	t.Setenv("PCCP_BOOTSTRAP_TOKEN", "one-time-deployment-secret")
 	db := apiDB(t)
 	srv, err := New(db, "test-secret")
 	if err != nil {
@@ -40,6 +39,7 @@ func TestBootstrapIdempotentOrgAndProfile(t *testing.T) {
 	call := func(body map[string]string) (int, map[string]any) {
 		raw, _ := json.Marshal(body)
 		req := httptest.NewRequest("POST", "/api/bootstrap", bytes.NewReader(raw))
+		req.Header.Set("X-PCCP-Bootstrap-Token", "one-time-deployment-secret")
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		var out map[string]any
@@ -53,9 +53,9 @@ func TestBootstrapIdempotentOrgAndProfile(t *testing.T) {
 	}
 	orgID, _ := first["organization_id"].(string)
 
-	// Second bootstrap with the SAME org name: no new org, same ID.
-	code2, second := call(map[string]string{"email": "a@patty.io", "password": "pw123456", "org_name": "Patty", "profile": "sovereign"})
-	if code2 != http.StatusCreated {
+	// A public replay can neither create another org nor reset the password.
+	code2, second := call(map[string]string{"email": "a@patty.io", "password": "attacker-password", "org_name": "Patty", "profile": "enterprise"})
+	if code2 != http.StatusConflict {
 		t.Fatalf("second bootstrap: %d %v", code2, second)
 	}
 	var orgs int64
@@ -63,8 +63,11 @@ func TestBootstrapIdempotentOrgAndProfile(t *testing.T) {
 	if orgs != 1 {
 		t.Fatalf("org spam: %d orgs after repeat bootstrap", orgs)
 	}
-	if second["organization_id"] != orgID {
-		t.Fatalf("org id drifted: %v vs %v", second["organization_id"], orgID)
+	if _, err := srv.auth.Login("a@patty.io", "pw123456"); err != nil {
+		t.Fatalf("original password stopped working after bootstrap replay: %v", err)
+	}
+	if _, err := srv.auth.Login("a@patty.io", "attacker-password"); err == nil {
+		t.Fatal("bootstrap replay reset the existing administrator password")
 	}
 
 	// Profile honored on the fresh org.
@@ -72,5 +75,8 @@ func TestBootstrapIdempotentOrgAndProfile(t *testing.T) {
 	db.Where("name = ?", "Patty").First(&org)
 	if org.Profile != "sovereign" {
 		t.Fatalf("profile = %q, want sovereign", org.Profile)
+	}
+	if org.ID != orgID {
+		t.Fatalf("organization id drifted: %s vs %s", org.ID, orgID)
 	}
 }

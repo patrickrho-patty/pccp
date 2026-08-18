@@ -2,13 +2,14 @@ package api
 
 import (
 	"bytes"
+	stdctx "context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/patrickrho-patty/pccp/internal/config"
 	"io"
@@ -20,6 +21,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -36,42 +39,54 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/impact"
 	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/korean"
+	"github.com/patrickrho-patty/pccp/internal/metering"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/policy"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
 	"github.com/patrickrho-patty/pccp/internal/registry"
 	"github.com/patrickrho-patty/pccp/internal/sandbox"
 	"github.com/patrickrho-patty/pccp/internal/security"
+	"github.com/patrickrho-patty/pccp/internal/sessionlifecycle"
 	"github.com/patrickrho-patty/pccp/internal/workintel"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+var (
+	errUserEmailExists      = errors.New("user email already exists")
+	errUserSeatLimit        = errors.New("user seat limit reached")
+	errHarnessSeatLimit     = errors.New("harness seat limit reached")
+	errBootstrapNotPristine = errors.New("bootstrap is available only before any organization or identity exists")
 )
 
 // Server is the Control Plane HTTP API server.
 type Server struct {
-	db         *gorm.DB
-	identity   *identity.Service
-	auth       *identity.AuthService
-	registry   *registry.Service
-	policy     *policy.Service
-	provenance *provenance.Service
-	security   *security.Service
-	comms      *communications.Service
-	workintel  *workintel.Service
-	events     *events.Service
-	gitscm     *gitscm.Service
-	impact     *impact.Service
-	fleet      *fleet.Service
-	context    *context.Service
-	sandbox    *sandbox.Service
-	korean     *korean.Service
-	jwtSecret  string
-	router     *chi.Mux
+	db               *gorm.DB
+	identity         *identity.Service
+	auth             *identity.AuthService
+	registry         *registry.Service
+	policy           *policy.Service
+	provenance       *provenance.Service
+	security         *security.Service
+	comms            *communications.Service
+	workintel        *workintel.Service
+	events           *events.Service
+	gitscm           *gitscm.Service
+	impact           *impact.Service
+	fleet            *fleet.Service
+	context          *context.Service
+	sandbox          *sandbox.Service
+	sessionLifecycle *sessionlifecycle.Service
+	korean           *korean.Service
+	jwtSecret        string
+	router           *chi.Mux
 	// keyProvider seals/opens alert-endpoint secret references. nil
 	// by default so test fixtures without an HSM/KMS still build.
 	// Production callers must inject via SetKeyProvider; write paths
 	// fail closed when it is nil. PAT-1502 PR 2.
-	keyProvider keymgmt.KeyProvider
-	testAlert   *testAlertState
+	keyProvider     keymgmt.KeyProvider
+	alertHTTPClient security.HTTPDoer
+	alertNow        func() time.Time
 	// modelPublishedHook is invoked after a successful model publish
 	// (Task 15 catalog push). Deployments link it to the relay's
 	// OnModelPublished so connected sessions receive the delta.
@@ -105,33 +120,63 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 	evtSvc, _ := events.New(db)
 	gitSvc := gitscm.New(db)
 	impactSvc := impact.New(db)
-	fleetSvc := fleet.New(db)
 	ctxSvc := context.New(db, secSvc)
 	sandboxSvc := sandbox.New(db)
+	lifecycleSvc := sessionlifecycle.New(db)
+	fleetSvc := fleet.New(db, lifecycleSvc)
 	koreanSvc := korean.New(db)
 	if err != nil {
 		return nil, fmt.Errorf("api: init provenance: %w", err)
 	}
 
 	s := &Server{
-		db:         db,
-		identity:   idSvc,
-		auth:       authSvc,
-		registry:   regSvc,
-		policy:     polSvc,
-		provenance: provSvc,
-		security:   secSvc,
-		comms:      commsSvc,
-		workintel:  wiSvc,
-		events:     evtSvc,
-		gitscm:     gitSvc,
-		impact:     impactSvc,
-		fleet:      fleetSvc,
-		context:    ctxSvc,
-		sandbox:    sandboxSvc,
-		korean:     koreanSvc,
-		jwtSecret:  jwtSecret,
+		db:               db,
+		identity:         idSvc,
+		auth:             authSvc,
+		registry:         regSvc,
+		policy:           polSvc,
+		provenance:       provSvc,
+		security:         secSvc,
+		comms:            commsSvc,
+		workintel:        wiSvc,
+		events:           evtSvc,
+		gitscm:           gitSvc,
+		impact:           impactSvc,
+		fleet:            fleetSvc,
+		context:          ctxSvc,
+		sandbox:          sandboxSvc,
+		sessionLifecycle: lifecycleSvc,
+		korean:           koreanSvc,
+		jwtSecret:        jwtSecret,
+		alertHTTPClient:  secSvc.AlertHTTPClient(),
+		alertNow:         time.Now,
 	}
+	idSvc.SetSessionLifecycle(lifecycleSvc)
+	fleetSvc.SetHarnessRevoker(idSvc.RevokeHarnessByActor)
+	if err := s.ext().Realtime.SetSharedBusSecret(os.Getenv("PCCP_CP_TOKEN")); err != nil {
+		return nil, fmt.Errorf("api: configure realtime bus: %w", err)
+	}
+	s.ext().SSO.SetSessionLifecycle(lifecycleSvc)
+	lifecycleSvc.SetCleanup(func(orgID, sessionID string) []string {
+		failed := make([]string, 0)
+		if err := s.ext().Secret.ExpireAllForSession(orgID, sessionID); err != nil {
+			failed = append(failed, "scoped_credentials")
+		}
+		var records []models.SandboxRecord
+		if err := db.Where("organization_id = ? AND session_id = ?", orgID, sessionID).Find(&records).Error; err != nil {
+			return append(failed, "sandbox_lookup_failed")
+		}
+		for _, record := range records {
+			if record.Status != "destroyed" {
+				if _, err := sandboxSvc.DestroySandbox(record.ID); err != nil {
+					failed = append(failed, record.ID)
+				}
+			}
+		}
+		return failed
+	})
+	lifecycleSvc.SetNotifier(s.ext().Realtime.NotifySessionUpdate)
+	lifecycleSvc.SetScopeNotifier(s.ext().Realtime.NotifySessionScopeUpdate)
 	s.setupRouter()
 	return s, nil
 }
@@ -144,6 +189,22 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 // secret material.
 func (s *Server) SetKeyProvider(provider keymgmt.KeyProvider) {
 	s.keyProvider = provider
+	s.security.SetAlertKeyProvider(provider)
+	s.ext().SSO.SetKeyProvider(provider)
+}
+
+// SetAlertHTTPClient installs the same request seam for interactive tests and
+// background delivery. Production uses the SSRF-safe client created by New.
+func (s *Server) SetAlertHTTPClient(client security.HTTPDoer) {
+	if client == nil {
+		client = security.NewAlertHTTPClient(5 * time.Second)
+	}
+	s.alertHTTPClient = client
+	s.security.SetAlertHTTPClient(client)
+}
+
+func (s *Server) StartAlertDeliveryWorker(ctx stdctx.Context) {
+	s.security.StartAlertDeliveryWorker(ctx)
 }
 
 // KeyProvider returns the currently configured provider (nil-safe).
@@ -160,7 +221,7 @@ func (s *Server) setupRouter() {
 		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"*"},
-		ExposedHeaders:   []string{"Link"},
+		ExposedHeaders:   []string{"Link", "X-Next-Cursor"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -184,6 +245,9 @@ func (s *Server) setupRouter() {
 
 	// Realtime SSE (no middleware — HandleSSE does its own JWT check via query param)
 	r.Get("/api/realtime/sse", s.ext().Realtime.HandleSSE(s.jwtSecret))
+	// Short-lived, usage-export-scoped tickets let the browser download
+	// directly without buffering the entire CSV or exposing a console JWT.
+	r.Get("/api/exports/usage", s.handleUsageCSVTicketDownload)
 
 	// SCM webhook ingestion (repositories C1) — unauthenticated like
 	// real SCM webhooks; each delivery is verified against the repo's
@@ -197,14 +261,19 @@ func (s *Server) setupRouter() {
 		r.Route("/api/sso", func(r chi.Router) {
 			r.Post("/saml/redirect", s.wrapSSOSAMLRedirect(ext))
 			r.Post("/saml/callback", s.wrapSSOSAMLCallback(ext))
+			r.Post("/session", s.wrapSSOSessionExchange(ext))
 			r.Get("/oidc/auth-url", s.wrapSSOOIDCAuthURL(ext))
-			r.Post("/oidc/callback", s.wrapSSOOIDCCallback(ext))
+			r.Get("/oidc/callback", s.wrapSSOOIDCCallback(ext))
 		})
+		// SCIM has its own tenant-bound bearer authentication and must remain
+		// outside console-JWT middleware so standards-compliant IdPs can call it.
+		r.Handle("/scim/v2/*", s.wrapSSOSCIM(ext))
 	}
 
 	// Authenticated API routes
 	r.Route("/api", func(r chi.Router) {
 		r.Use(s.authMiddleware)
+		r.Post("/realtime/ticket", s.handleRealtimeTicket)
 
 		// Organizations
 		r.Route("/organizations", func(r chi.Router) {
@@ -305,6 +374,7 @@ func (s *Server) setupRouter() {
 		r.Route("/sessions", func(r chi.Router) {
 			r.Get("/", s.handleListSessions)
 			r.Post("/", s.handleOpenSession)
+			r.Get("/live", s.handleLiveSessions)
 			r.Get("/{id}", s.handleGetSession)
 			r.Post("/{id}/close", s.handleCloseSession)
 			r.Post("/{id}/pause", s.handlePauseSession)
@@ -412,6 +482,7 @@ func (s *Server) setupRouter() {
 		r.Route("/analytics", func(r chi.Router) {
 			r.Get("/usage", s.handleGetUsageSummary)
 			r.Get("/usage-extended", s.handleUsageSummaryExtended)
+			r.Post("/usage-export-ticket", s.handleUsageCSVTicket)
 			r.Get("/usage-breakdown", s.handleGetUsageBreakdown)
 			r.Get("/engineering", s.handleGetEngineeringMetrics)
 			r.Get("/security", s.handleGetSecurityMetrics)
@@ -435,6 +506,7 @@ func (s *Server) setupRouter() {
 		r.Put("/security/rules/overrides", s.handlePutRuleOverride)
 		r.Delete("/security/rules/overrides", s.handleDeleteRuleOverride)
 		r.Post("/security/lockdown", s.handleSecurityLockdown)
+		r.Post("/security/lockdown/release", s.handleSecurityLockdownRelease)
 		r.Get("/security/lockdown-impact", s.handleSecurityLockdownImpact)
 		r.Post("/security/scan-session", s.handleScanSession)
 		r.Get("/security/alerts", s.handleListAlertEndpoints)
@@ -442,6 +514,8 @@ func (s *Server) setupRouter() {
 		r.Delete("/security/alerts/{id}", s.handleDeleteAlertEndpoint)
 		r.Post("/security/alerts/{id}/test", s.handleTestAlertEndpoint)
 		r.Post("/security/alerts/{id}/rotate", s.handleRotateAlertEndpoint)
+		r.Post("/security/alerts/{id}/disable", s.handleDisableAlertEndpoint)
+		r.Put("/security/alert-operators/permissions", s.handlePutAlertOperatorPermissions)
 		r.Get("/security/lexicon", s.handleGetLexicon)
 		r.Put("/security/lexicon", s.handleUpdateLexicon)
 
@@ -593,6 +667,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // sessionSweepInterval is the web/02 A4 idle/TTL sweep cadence.
 const sessionSweepInterval = time.Minute
 
+var sessionSweepRunning atomic.Bool
+
 // sweepSessions transitions sessions past their idle window to idle
 // and auto-closes sessions past their TTL (web/02 A4 — the status
 // machine's idle state was previously unreachable).
@@ -600,26 +676,57 @@ const sessionSweepInterval = time.Minute
 // exchange + security events and forwards them to the realtime hub.
 // 2s cadence: live enough for an activity feed, bounded DB load.
 func (s *Server) bridgeSpineToRealtime() {
-	last := time.Now().Add(-time.Minute)
+	cursors := make(map[string]int64)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		var events []models.AuditEvent
-		if err := s.db.Where(
-			"(event_type LIKE ? OR event_type LIKE ?) AND occurred_at > ?",
-			"cp.exchange.%", "cp.security%", last.Format(time.RFC3339Nano),
-		).Order("occurred_at ASC").Limit(200).Find(&events).Error; err != nil {
+		orgIDs := s.ext().Realtime.ActiveSSEOrganizations()
+		if len(orgIDs) == 0 {
 			continue
 		}
-		for _, e := range events {
-			switch {
-			case strings.HasPrefix(e.EventType, "cp.exchange."):
-				s.ext().Realtime.NotifyExchangeEvent(e.OrganizationID, e.ResourceType, e.ResourceID, strings.TrimPrefix(e.EventType, "cp.exchange."), 0)
-			default:
-				s.ext().Realtime.NotifySecurityFinding(e.OrganizationID, "info", e.EventType)
+		active := make(map[string]struct{}, len(orgIDs))
+		for _, orgID := range orgIDs {
+			active[orgID] = struct{}{}
+			if _, initialized := cursors[orgID]; initialized {
+				continue
 			}
-			if t, err := time.Parse(time.RFC3339Nano, e.OccurredAt); err == nil {
-				last = t
+			// Start with a short committed overlap so an event between the
+			// page snapshot and SSE registration cannot disappear. After this
+			// initialization, monotonic per-tenant chain_seq is the cursor.
+			var earliest models.AuditEvent
+			if err := s.db.Where("organization_id = ? AND event_type LIKE ? AND created_at >= ?", orgID, "cp.exchange.%", time.Now().Add(-time.Minute)).
+				Order("chain_seq ASC").First(&earliest).Error; err == nil {
+				cursors[orgID] = earliest.ChainSeq - 1
+				continue
+			}
+			var latest int64
+			if err := s.db.Model(&models.AuditEvent{}).Where("organization_id = ?", orgID).Select("COALESCE(MAX(chain_seq), 0)").Scan(&latest).Error; err != nil {
+				continue
+			}
+			cursors[orgID] = latest
+		}
+		for orgID := range cursors {
+			if _, connected := active[orgID]; !connected {
+				delete(cursors, orgID)
+			}
+		}
+		for _, orgID := range orgIDs {
+			// A per-tenant cap prevents one hot organization from consuming a
+			// global page and starving every organization ordered after it.
+			var events []models.AuditEvent
+			if err := s.db.Where("organization_id = ? AND event_type LIKE ? AND chain_seq > ?", orgID, "cp.exchange.%", cursors[orgID]).
+				Order("chain_seq ASC").Limit(250).Find(&events).Error; err != nil {
+				continue
+			}
+			for _, e := range events {
+				var details map[string]interface{}
+				_ = json.Unmarshal([]byte(e.Details), &details)
+				exchangeID, _ := details["exchange_id"].(string)
+				s.ext().Realtime.FanoutLocal(e.OrganizationID, "exchange.update", map[string]interface{}{
+					"session_id": e.ResourceID, "exchange_id": exchangeID,
+					"state": strings.TrimPrefix(e.EventType, "cp.exchange."), "evidence_events": details["evidence_events"],
+				})
+				cursors[orgID] = e.ChainSeq
 			}
 		}
 	}
@@ -627,28 +734,89 @@ func (s *Server) bridgeSpineToRealtime() {
 
 func (s *Server) sweepSessions() {
 	now := time.Now()
-	// active → idle: last activity older than IdleTTL.
-	s.db.Exec(`UPDATE sessions SET status = 'idle' WHERE status = 'active' AND idle_ttl > 0 AND last_activity_at != '' AND last_activity_at != ?`,
-		now.Format(time.RFC3339))
-	var idleCandidates []models.Session
-	s.db.Where("status IN ('active','idle')").Find(&idleCandidates)
-	for _, sess := range idleCandidates {
-		opened, err := time.Parse(time.RFC3339, sess.OpenedAt)
-		if err != nil {
-			continue
+	if s.db.Dialector.Name() == "postgres" {
+		_ = s.db.Connection(func(conn *gorm.DB) error {
+			var acquired bool
+			if err := conn.Raw("SELECT pg_try_advisory_lock(?)", int64(0x5043435053574545)).Scan(&acquired).Error; err != nil || !acquired {
+				return err
+			}
+			defer conn.Exec("SELECT pg_advisory_unlock(?)", int64(0x5043435053574545))
+			s.sweepSessionsAtDB(conn, now)
+			return nil
+		})
+		return
+	}
+	if !sessionSweepRunning.CompareAndSwap(false, true) {
+		return
+	}
+	defer sessionSweepRunning.Store(false)
+	s.sweepSessionsAtDB(s.db, now)
+}
+
+func (s *Server) sweepSessionsAt(now time.Time) {
+	s.sweepSessionsAtDB(s.db, now)
+}
+
+func (s *Server) sweepSessionsAtDB(db *gorm.DB, now time.Time) {
+	deadline := time.Now().Add(5 * time.Second)
+	for processed := 0; processed < 10000 && time.Now().Before(deadline); {
+		var candidates []models.Session
+		query := db.Where("status IN ?", models.SessionNonTerminalStatuses())
+		switch db.Dialector.Name() {
+		case "postgres":
+			query = query.Where(`
+				(session_ttl > 0 AND opened_at + make_interval(secs => session_ttl) <= ?)
+				OR (status = 'active' AND idle_ttl > 0 AND COALESCE(last_activity_at, opened_at) + make_interval(secs => idle_ttl) <= ?)`, now, now)
+			query = query.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"})
+		case "sqlite":
+			query = query.Where(`
+				(session_ttl > 0 AND datetime(opened_at, '+' || session_ttl || ' seconds') <= datetime(?))
+				OR (status = 'active' AND idle_ttl > 0 AND datetime(CASE WHEN last_activity_at IS NULL OR last_activity_at = '' THEN opened_at ELSE last_activity_at END, '+' || idle_ttl || ' seconds') <= datetime(?))`, now, now)
+		default:
+			query = query.Where("session_ttl > 0 OR (status = ? AND idle_ttl > 0)", "active")
 		}
-		if sess.SessionTTL > 0 && now.Sub(opened) > time.Duration(sess.SessionTTL)*time.Second {
-			s.db.Model(&sess).Update("status", "closed")
-		} else if sess.Status == "active" {
-			last := opened
-			if sess.LastActivityAt != "" {
-				if t, err := time.Parse(time.RFC3339, sess.LastActivityAt); err == nil {
-					last = t
+		if err := query.Order("id ASC").Limit(500).Find(&candidates).Error; err != nil || len(candidates) == 0 {
+			return
+		}
+		for _, sess := range candidates {
+			if time.Now().After(deadline) {
+				return
+			}
+			opened, err := time.Parse(time.RFC3339, sess.OpenedAt)
+			if err != nil {
+				continue
+			}
+			target := ""
+			if sess.SessionTTL > 0 && now.Sub(opened) > time.Duration(sess.SessionTTL)*time.Second {
+				target = "closed"
+			} else if sess.Status == "active" {
+				last := opened
+				if sess.LastActivityAt != "" {
+					if t, err := time.Parse(time.RFC3339, sess.LastActivityAt); err == nil {
+						last = t
+					}
+				}
+				if sess.IdleTTL > 0 && now.Sub(last) > time.Duration(sess.IdleTTL)*time.Second {
+					target = "idle"
 				}
 			}
-			if sess.IdleTTL > 0 && now.Sub(last) > time.Duration(sess.IdleTTL)*time.Second {
-				s.db.Model(&sess).Update("status", "idle")
+			if target == "" {
+				continue
 			}
+			action := "idle_timeout"
+			if target == "closed" {
+				action = "session_ttl_expired"
+			}
+			req := sessionlifecycle.Request{OrganizationID: sess.OrganizationID, SessionRef: sess.ID, Target: target, Action: action, Reason: "automatic lifecycle enforcement", ActorType: "system"}
+			if target == "idle" {
+				req.ExpectedLastActivityAt = &sess.LastActivityAt
+				req.ExpectedIdleTTL = &sess.IdleTTL
+			}
+			s.sessionLifecycle.Transition(req)
+		}
+		processed += len(candidates)
+		if len(candidates) < 500 {
+			return
 		}
 	}
 }
@@ -716,28 +884,23 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Internal callers and test fixtures may attach claims using the
+		// package-private context key after authenticating through their own
+		// boundary. Network clients cannot manufacture this value. JWT requests
+		// still take the path below and are always introspected against current
+		// lifecycle state.
+		if _, ok := claimsFromCtx(r.Context()); ok {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		authHeader := r.Header.Get("Authorization")
 		claims, err := s.auth.AuthMiddleware(authHeader)
 		if err != nil {
-			// Dev convenience ONLY when the bootstrap-empty state is
-			// CONFIRMED. The check ensures the table exists (fresh
-			// test/dev DBs) and then reads the count with error
-			// propagation — a failed query fails CLOSED: a DB error
-			// must never wave unauthenticated requests through.
-			var count int64
-			dbErr := s.db.Exec("CREATE TABLE IF NOT EXISTS admin_credentials (id varchar(64) PRIMARY KEY)").Error
-			if dbErr == nil {
-				dbErr = s.db.Raw("SELECT count(*) FROM admin_credentials").Scan(&count).Error
-			}
-			if dbErr != nil {
-				writeError(w, http.StatusUnauthorized, "auth: cannot verify bootstrap state")
-				return
-			}
-			if count == 0 {
-				next.ServeHTTP(w, r)
-				return
-			}
+			writeError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		if err := s.auth.ValidateClaimsLifecycle(claims); err != nil {
 			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
@@ -779,16 +942,6 @@ func getRole(r *http.Request) string {
 	return ""
 }
 
-func requireUsageRead(w http.ResponseWriter, r *http.Request) bool {
-	switch getRole(r) {
-	case "owner", "admin", "super_admin", "billing_admin", "auditor", "security_admin":
-		return true
-	default:
-		writeError(w, http.StatusForbidden, "사용량 및 비용 조회 권한이 없습니다")
-		return false
-	}
-}
-
 // --- Handlers ---
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -811,6 +964,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	req.Email = identity.NormalizeEmail(req.Email)
 	if !throttleCheck(req.Email) {
 		writeError(w, http.StatusTooManyRequests, "로그인 시도가 잠겼습니다 · too many attempts — try again in 15 minutes")
 		return
@@ -848,6 +1002,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
+	configuredToken := strings.TrimSpace(os.Getenv("PCCP_BOOTSTRAP_TOKEN"))
+	presentedToken := strings.TrimSpace(r.Header.Get("X-PCCP-Bootstrap-Token"))
+	if configuredToken == "" {
+		writeError(w, http.StatusServiceUnavailable, "bootstrap is not enabled")
+		return
+	}
+	if presentedToken == "" || !hmac.Equal([]byte(presentedToken), []byte(configuredToken)) {
+		writeError(w, http.StatusForbidden, "invalid bootstrap authorization")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 	var req struct {
 		Email      string `json:"email"`
 		Password   string `json:"password"`
@@ -870,49 +1035,58 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Idempotent org: reuse an existing org by exact name instead of
-	// minting a new one on every re-bootstrap (the audit's data-integrity
-	// finding — repeat bootstraps used to spam orgs).
 	var org models.Organization
-	if err := s.db.Where("name = ?", req.OrgName).First(&org).Error; err == nil {
-		// Existing org: honor a profile change only when the org has no
-		// sessions yet (an in-use org's profile is an operator decision,
-		// not a bootstrap re-run).
-		var sessions int64
-		s.db.Model(&models.Session{}).Where("organization_id = ?", org.ID).Count(&sessions)
-		if org.Profile != req.Profile && sessions == 0 {
-			s.db.Model(&org).Update("profile", req.Profile)
-			org.Profile = req.Profile
+	bootstrapErr := s.db.Transaction(func(tx *gorm.DB) error {
+		if tx.Dialector.Name() == "postgres" {
+			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "pccp-initial-bootstrap").Error; err != nil {
+				return err
+			}
 		}
-	} else {
-		created, cerr := s.identity.CreateOrganization(req.OrgName, req.OrgName, "default", req.Profile)
-		if cerr != nil {
-			writeError(w, http.StatusInternalServerError, cerr.Error())
+		for _, model := range []interface{}{&models.Organization{}, &models.User{}, &identity.AdminCredentials{}} {
+			var count int64
+			if err := tx.Model(model).Count(&count).Error; err != nil {
+				return err
+			}
+			if count != 0 {
+				return errBootstrapNotPristine
+			}
+		}
+		org = models.Organization{
+			Name: req.OrgName, NameKo: req.OrgName, Slug: "default", Profile: req.Profile,
+			Type: req.Profile, Status: "active",
+		}
+		if err := tx.Create(&org).Error; err != nil {
+			return err
+		}
+		if err := s.auth.BootstrapAdminWithDB(tx, req.Email, req.Password, org.ID); err != nil {
+			return err
+		}
+		settings := []models.OrgSetting{{
+			Base: models.Base{ID: models.GenerateID("os")}, OrganizationID: org.ID,
+			Key: "bootstrap.profile", Value: org.Profile,
+		}}
+		if req.PolicyPack != "" {
+			settings = append(settings, models.OrgSetting{
+				Base: models.Base{ID: models.GenerateID("os")}, OrganizationID: org.ID,
+				Key: "bootstrap.policy_pack", Value: req.PolicyPack,
+			})
+		}
+		if err := tx.Create(&settings).Error; err != nil {
+			return err
+		}
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: org.ID, EventType: "cp.auth.bootstrap", ActorType: "system",
+			Action: "bootstrap", ResourceType: "organization", ResourceID: org.ID,
+			Details: "initial deployment bootstrap", Result: "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
+		}).Error
+	})
+	if bootstrapErr != nil {
+		if errors.Is(bootstrapErr, errBootstrapNotPristine) || errors.Is(bootstrapErr, identity.ErrAlreadyBootstrapped) {
+			writeError(w, http.StatusConflict, "system is already bootstrapped")
 			return
 		}
-		org = *created
-	}
-
-	// Bootstrap admin (idempotent per identity.BootstrapAdmin)
-	if err := s.auth.BootstrapAdmin(req.Email, req.Password, org.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, bootstrapErr.Error())
 		return
-	}
-
-	// Profile/pack choice is recorded honestly (web/26 A/B).
-	s.db.Where("organization_id = ? AND key = ?", org.ID, "bootstrap.profile").
-		Delete(&models.OrgSetting{})
-	s.db.Create(&models.OrgSetting{
-		Base:           models.Base{ID: models.GenerateID("os")},
-		OrganizationID: org.ID, Key: "bootstrap.profile", Value: org.Profile,
-	})
-	if req.PolicyPack != "" {
-		s.db.Where("organization_id = ? AND key = ?", org.ID, "bootstrap.policy_pack").
-			Delete(&models.OrgSetting{})
-		s.db.Create(&models.OrgSetting{
-			Base:           models.Base{ID: models.GenerateID("os")},
-			OrganizationID: org.ID, Key: "bootstrap.policy_pack", Value: req.PolicyPack,
-		})
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
@@ -965,7 +1139,7 @@ func (s *Server) handleGetSeatUsage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListOrganizations(w http.ResponseWriter, r *http.Request) {
 	var orgs []models.Organization
-	result := s.db.Find(&orgs)
+	result := s.db.Where("id = ?", getOrgID(r)).Find(&orgs)
 	if result.Error != nil {
 		writeError(w, http.StatusInternalServerError, result.Error.Error())
 		return
@@ -998,7 +1172,7 @@ func (s *Server) handleCreateOrganization(w http.ResponseWriter, r *http.Request
 func (s *Server) handleGetOrganization(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var org models.Organization
-	if err := s.db.First(&org, "id = ?", id).Error; err != nil {
+	if err := s.db.First(&org, "id = ? AND id = ?", id, getOrgID(r)).Error; err != nil {
 		writeError(w, http.StatusNotFound, "조직을 찾을 수 없습니다")
 		return
 	}
@@ -1020,6 +1194,9 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		if size == 0 {
 			size = 25
 		}
+		if size < 1 || size > 100 {
+			size = 100
+		}
 		if page == 0 {
 			page = 1
 		}
@@ -1036,6 +1213,9 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		if v := r.URL.Query().Get("role"); v != "" {
 			q = q.Where("id IN (SELECT user_id FROM user_roles WHERE role_id = ?)", v)
 		}
+		if v := r.URL.Query().Get("auth_method"); v != "" {
+			q = q.Where("auth_method = ?", v)
+		}
 		switch r.URL.Query().Get("sort") {
 		case "name":
 			q = q.Order("name ASC")
@@ -1049,55 +1229,128 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 			q = q.Order("created_at DESC")
 		}
 		var total int64
-		q.Count(&total)
+		if err := q.Count(&total).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "could not count users")
+			return
+		}
 		var users []models.User
-		q.Offset((page - 1) * size).Limit(size).Find(&users)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"data": s.decorateUsers(users), "total": total, "page": page, "size": size})
+		if err := q.Offset((page - 1) * size).Limit(size).Find(&users).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "could not list users")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"data": s.decorateUsers(r, users), "total": total, "page": page, "size": size})
 		return
 	}
 
 	// Full list (backward compatible — used by cross-page lookups)
 	var users []models.User
-	q.Find(&users)
-	writeJSON(w, http.StatusOK, s.decorateUsers(users))
+	if err := q.Limit(1000).Find(&users).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list users")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.decorateUsers(r, users))
 }
 
 // decorateUsers keeps list-level relationship summaries consistent with the
 // user detail view. Harness membership is stored as a JSON array, so matching
 // is done after decoding rather than with an unsafe substring query.
-func (s *Server) decorateUsers(users []models.User) []map[string]interface{} {
-	harnessesByOrg := map[string][]models.Harness{}
+func (s *Server) decorateUsers(r *http.Request, users []models.User) []map[string]interface{} {
+	if len(users) == 0 {
+		return []map[string]interface{}{}
+	}
+	organizationSet := map[string]struct{}{}
+	userSet := map[string]models.User{}
 	for _, user := range users {
-		if _, loaded := harnessesByOrg[user.OrganizationID]; loaded {
-			continue
+		organizationSet[user.OrganizationID] = struct{}{}
+		userSet[user.ID] = user
+	}
+	organizationIDs := make([]string, 0, len(organizationSet))
+	userIDs := make([]string, 0, len(userSet))
+	for id := range organizationSet {
+		organizationIDs = append(organizationIDs, id)
+	}
+	for id := range userSet {
+		userIDs = append(userIDs, id)
+	}
+
+	roleIDsByUser := map[string][]string{}
+	var assignments []models.UserRole
+	if err := s.db.Where("organization_id IN ? AND user_id IN ?", organizationIDs, userIDs).Find(&assignments).Error; err == nil {
+		for _, assignment := range assignments {
+			roleIDsByUser[assignment.UserID] = append(roleIDsByUser[assignment.UserID], assignment.RoleID)
 		}
-		var harnesses []models.Harness
-		s.db.Where("organization_id = ? AND status != ?", user.OrganizationID, "revoked").Find(&harnesses)
-		harnessesByOrg[user.OrganizationID] = harnesses
+	}
+
+	deviceOwner := map[string]string{}
+	deviceIDs := make([]string, 0)
+	var devices []models.Device
+	if err := s.db.Where("organization_id IN ? AND user_id IN ? AND status != ?", organizationIDs, userIDs, "revoked").Find(&devices).Error; err == nil {
+		for _, device := range devices {
+			deviceOwner[device.ID] = device.UserID
+			deviceIDs = append(deviceIDs, device.ID)
+		}
+	}
+	harnessesByUser := map[string]map[string]struct{}{}
+	var harnesses []models.Harness
+	bindings := make([]string, 0, len(userIDs)+1)
+	bindingArgs := make([]interface{}, 0, len(userIDs)+1)
+	if len(deviceIDs) > 0 {
+		bindings = append(bindings, "device_id IN ?")
+		bindingArgs = append(bindingArgs, deviceIDs)
+	}
+	for _, userID := range userIDs {
+		bindings = append(bindings, "allowed_users LIKE ?")
+		bindingArgs = append(bindingArgs, "%\""+userID+"\"%")
+	}
+	harnessQuery := s.db.Where("organization_id IN ? AND status != ?", organizationIDs, "revoked")
+	if len(bindings) > 0 {
+		harnessQuery = harnessQuery.Where("("+strings.Join(bindings, " OR ")+")", bindingArgs...)
+	}
+	if err := harnessQuery.Find(&harnesses).Error; err == nil {
+		for _, harness := range harnesses {
+			bound := parseAllowedUsers(harness.AllowedUsers)
+			if owner := deviceOwner[harness.DeviceID]; owner != "" {
+				bound = append(bound, owner)
+			}
+			for _, userID := range bound {
+				user, present := userSet[userID]
+				if !present || user.OrganizationID != harness.OrganizationID {
+					continue
+				}
+				if harnessesByUser[userID] == nil {
+					harnessesByUser[userID] = map[string]struct{}{}
+				}
+				harnessesByUser[userID][harness.ID] = struct{}{}
+			}
+		}
+	}
+	lastAdministrators, lastAdministratorErr := identity.LastOrganizationAdministratorIDs(s.db, organizationIDs)
+	if lastAdministratorErr != nil {
+		lastAdministrators = make(map[string]bool, len(userIDs))
+		for _, userID := range userIDs {
+			lastAdministrators[userID] = true
+		}
 	}
 
 	out := make([]map[string]interface{}, 0, len(users))
 	for _, user := range users {
-		row := map[string]interface{}{}
-		b, _ := json.Marshal(user)
-		_ = json.Unmarshal(b, &row)
-		var roleIDs []string
-		s.db.Model(&models.UserRole{}).Where("organization_id = ? AND user_id = ?", user.OrganizationID, user.ID).Pluck("role_id", &roleIDs)
-		var harnessCount int64
-		for _, harness := range harnessesByOrg[user.OrganizationID] {
-			var allowedUsers []string
-			if json.Unmarshal([]byte(harness.AllowedUsers), &allowedUsers) == nil && containsStr(allowedUsers, user.ID) {
-				harnessCount++
-			}
+		row := decorateUserForRequest(r, user, lastAdministrators[user.ID])
+		roleIDs := roleIDsByUser[user.ID]
+		if roleIDs == nil {
+			roleIDs = []string{}
 		}
 		row["role_ids"] = roleIDs
-		row["harness_count"] = harnessCount
+		row["harness_count"] = len(harnessesByUser[user.ID])
 		out = append(out, row)
 	}
 	return out
 }
 
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	if !canAdministerUsers(getRole(r)) {
+		writeError(w, http.StatusForbidden, "organization administrator role required")
+		return
+	}
 	var req struct {
 		OrganizationID string `json:"organization_id"`
 		Email          string `json:"email"`
@@ -1114,58 +1367,91 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if req.AuthMethod == "" {
 		req.AuthMethod = "local"
 	}
-	orgID := req.OrganizationID
-	if orgID == "" {
-		orgID = getOrgID(r)
+	req.Email = identity.NormalizeEmail(req.Email)
+	if req.Email == "" {
+		writeError(w, http.StatusBadRequest, "email is required")
+		return
 	}
-	// Dedup: check if email already exists in this org
-	var existing models.User
-	if err := s.db.Where("email = ? AND organization_id = ?", req.Email, orgID).First(&existing).Error; err == nil {
+	orgID := getOrgID(r)
+	if req.OrganizationID != "" && req.OrganizationID != orgID {
+		writeError(w, http.StatusForbidden, "cannot create a user in another organization")
+		return
+	}
+	var user *models.User
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var duplicate int64
+		if err := tx.Model(&models.User{}).
+			Where("organization_id = ? AND LOWER(email) = ?", orgID, req.Email).
+			Count(&duplicate).Error; err != nil {
+			return err
+		}
+		if duplicate > 0 {
+			return errUserEmailExists
+		}
+		// Enforce user seat limit in the same transaction as creation.
+		var org models.Organization
+		if err := tx.First(&org, "id = ?", orgID).Error; err != nil {
+			return err
+		}
+		if org.MaxUserSeats > 0 {
+			var userCount int64
+			if err := tx.Model(&models.User{}).Where("organization_id = ? AND status != 'offboarded'", orgID).Count(&userCount).Error; err != nil {
+				return err
+			}
+			if userCount >= int64(org.MaxUserSeats) {
+				return fmt.Errorf("%w:%d:%d", errUserSeatLimit, userCount, org.MaxUserSeats)
+			}
+		}
+		created, err := s.identity.CreateUserWithDB(tx, orgID, req.Email, req.Name, req.NameKo, req.AuthMethod, "")
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(created).Updates(map[string]interface{}{
+			"title": req.Title, "business_unit_id": req.BusinessUnitID,
+		}).Error; err != nil {
+			return err
+		}
+		created.Title = req.Title
+		created.BusinessUnitID = req.BusinessUnitID
+		if err := tx.Model(&identity.AdminCredentials{}).
+			Where("organization_id = ? AND email = ? AND (user_id = '' OR user_id IS NULL)", orgID, req.Email).
+			Update("user_id", created.ID).Error; err != nil {
+			return err
+		}
+		details, _ := json.Marshal(map[string]string{"email": req.Email, "name": req.Name})
+		if err := tx.Create(&models.AuditEvent{
+			OrganizationID: orgID, EventType: "cp.user.created", ActorType: "admin", Action: "create_user",
+			ResourceType: "user", ResourceID: created.ID, Details: string(details), Result: "success",
+			OccurredAt: time.Now().Format(time.RFC3339),
+		}).Error; err != nil {
+			return err
+		}
+		user = created
+		return nil
+	})
+	if errors.Is(err, errUserEmailExists) {
 		writeError(w, http.StatusConflict, "이미 등록된 이메일입니다 · Email already exists: "+req.Email)
 		return
 	}
-	// Enforce user seat limit (enterprise licensing, PRD §29.10).
-	var org models.Organization
-	if s.db.First(&org, "id = ?", orgID).Error == nil && org.MaxUserSeats > 0 {
-		var userCount int64
-		s.db.Model(&models.User{}).Where("organization_id = ? AND status != 'offboarded'", orgID).Count(&userCount)
-		if userCount >= int64(org.MaxUserSeats) {
-			writeError(w, http.StatusPaymentRequired, fmt.Sprintf("사용자 좌석 한도 초과 · User seat limit reached (%d/%d)", userCount, org.MaxUserSeats))
-			return
-		}
+	if errors.Is(err, errUserSeatLimit) {
+		writeError(w, http.StatusPaymentRequired, "사용자 좌석 한도 초과 · User seat limit reached")
+		return
 	}
-	user, err := s.identity.CreateUser(orgID, req.Email, req.Name, req.NameKo, req.AuthMethod, "")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if req.Title != "" || req.BusinessUnitID != "" {
-		user.Title = req.Title
-		user.BusinessUnitID = req.BusinessUnitID
-		s.db.Save(user)
-	}
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID,
-		EventType:      "cp.user.created",
-		ActorType:      "admin",
-		Action:         "create_user",
-		ResourceType:   "user",
-		ResourceID:     user.ID,
-		Details:        fmt.Sprintf(`{"email":"%s","name":"%s"}`, req.Email, req.Name),
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
-	})
 	writeJSON(w, http.StatusCreated, user)
 }
 
 func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var user models.User
-	if err := s.db.First(&user, "id = ?", id).Error; err != nil {
+	if err := s.db.First(&user, "id = ? AND organization_id = ?", id, getOrgID(r)).Error; err != nil {
 		writeError(w, http.StatusNotFound, "사용자를 찾을 수 없습니다")
 		return
 	}
-	writeJSON(w, http.StatusOK, user)
+	writeJSON(w, http.StatusOK, s.decorateSingleUser(r, user))
 }
 
 func (s *Server) handleListHarnesses(w http.ResponseWriter, r *http.Request) {
@@ -1257,9 +1543,12 @@ func (s *Server) handleEnrollHarness(w http.ResponseWriter, r *http.Request) {
 	if req.EnrollmentMode == "" {
 		req.EnrollmentMode = "sso"
 	}
-	if req.OrganizationID == "" {
-		req.OrganizationID = getOrgID(r)
+	callerOrgID := getOrgID(r)
+	if req.OrganizationID != "" && req.OrganizationID != callerOrgID {
+		writeError(w, http.StatusForbidden, "cannot enroll a harness in another organization")
+		return
 	}
+	req.OrganizationID = callerOrgID
 	if req.OrganizationID == "" {
 		writeError(w, http.StatusBadRequest, "organization_id is required — enroll from an organization-scoped operator session")
 		return
@@ -1267,11 +1556,7 @@ func (s *Server) handleEnrollHarness(w http.ResponseWriter, r *http.Request) {
 	// One-time enrollment code flow (harnesses B3): when the harness
 	// self-enrolls with a code, validate + burn it instead of trusting
 	// a raw admin paste.
-	if code := strings.TrimSpace(req.EnrollmentCode); code != "" {
-		if err := s.consumeEnrollmentCode(req.OrganizationID, code, req.UserID, req.HarnessID); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
+	if strings.TrimSpace(req.EnrollmentCode) != "" {
 		req.EnrollmentMode = "code"
 	}
 	// Forced-version floor (harnesses C2): vulnerable builds below the
@@ -1284,32 +1569,51 @@ func (s *Server) handleEnrollHarness(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Enforce harness seat limit (enterprise licensing, PRD §29.10).
-	var hOrg models.Organization
-	if s.db.First(&hOrg, "id = ?", req.OrganizationID).Error == nil && hOrg.MaxHarnessSeats > 0 {
-		var harnessCount int64
-		s.db.Model(&models.Harness{}).Where("organization_id = ? AND status NOT IN ('revoked')", req.OrganizationID).Count(&harnessCount)
-		if harnessCount >= int64(hOrg.MaxHarnessSeats) {
-			writeError(w, http.StatusPaymentRequired, fmt.Sprintf("하네스 좌석 한도 초과 · Harness seat limit reached (%d/%d)", harnessCount, hOrg.MaxHarnessSeats))
+	var harness *models.Harness
+	var cred *dari.PeerCredential
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var hOrg models.Organization
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&hOrg, "id = ?", req.OrganizationID).Error; err != nil {
+			return err
+		}
+		if hOrg.MaxHarnessSeats > 0 {
+			var harnessCount int64
+			if err := tx.Model(&models.Harness{}).Where("organization_id = ? AND status != 'revoked'", req.OrganizationID).Count(&harnessCount).Error; err != nil {
+				return err
+			}
+			if harnessCount >= int64(hOrg.MaxHarnessSeats) {
+				return fmt.Errorf("%w:%d:%d", errHarnessSeatLimit, harnessCount, hOrg.MaxHarnessSeats)
+			}
+		}
+		if code := strings.TrimSpace(req.EnrollmentCode); code != "" {
+			if err := s.consumeEnrollmentCodeWithDB(tx, req.OrganizationID, code, req.UserID, req.HarnessID); err != nil {
+				return err
+			}
+		}
+		var enrollErr error
+		harness, cred, enrollErr = s.identity.EnrollHarnessWithDB(tx, req)
+		if enrollErr != nil {
+			return enrollErr
+		}
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: req.OrganizationID, EventType: "cp.harness.enrolled", ActorID: getActorID(r), ActorType: "admin",
+			Action: "enroll_harness", ResourceType: "harness", ResourceID: harness.ID,
+			Details: fmt.Sprintf("harness_id: %s, user_id: %s", req.HarnessID, req.UserID),
+			Result:  "success", OccurredAt: time.Now().Format(time.RFC3339),
+		}).Error
+	})
+	if err != nil {
+		if errors.Is(err, errHarnessSeatLimit) {
+			writeError(w, http.StatusPaymentRequired, "하네스 좌석 한도 초과 · Harness seat limit reached")
 			return
 		}
-	}
-	harness, cred, err := s.identity.EnrollHarness(req)
-	if err != nil {
+		if errors.Is(err, identity.ErrUserNotActive) || errors.Is(err, identity.ErrUserNotFound) {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: req.OrganizationID,
-		EventType:      "cp.harness.enrolled",
-		ActorType:      "admin",
-		Action:         "enroll_harness",
-		ResourceType:   "harness",
-		ResourceID:     harness.ID,
-		Details:        fmt.Sprintf("harness_id: %s, user_id: %s", req.HarnessID, req.UserID),
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
-	})
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"harness":    harness,
 		"credential": cred,
@@ -1319,7 +1623,7 @@ func (s *Server) handleEnrollHarness(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetHarness(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var harness models.Harness
-	if err := s.db.Where("id = ? OR harness_id = ?", id, id).First(&harness).Error; err != nil {
+	if err := s.db.Where("organization_id = ? AND (id = ? OR harness_id = ?)", getOrgID(r), id, id).First(&harness).Error; err != nil {
 		writeError(w, http.StatusNotFound, "하네스를 찾을 수 없습니다")
 		return
 	}
@@ -1327,9 +1631,12 @@ func (s *Server) handleGetHarness(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRevokeHarness(w http.ResponseWriter, r *http.Request) {
+	if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+		return
+	}
 	id := chi.URLParam(r, "id")
 	var harness models.Harness
-	if err := s.db.Where("id = ? OR harness_id = ?", id, id).First(&harness).Error; err != nil {
+	if err := s.db.Where("organization_id = ? AND (id = ? OR harness_id = ?)", getOrgID(r), id, id).First(&harness).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
@@ -1337,21 +1644,29 @@ func (s *Server) handleRevokeHarness(w http.ResponseWriter, r *http.Request) {
 		Reason string `json:"reason"`
 	}
 	if r.Body != http.NoBody {
-		decodeJSON(r, &req)
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
 	}
-	if err := s.identity.RevokeHarness(harness.OrganizationID, harness.HarnessID, req.Reason); err != nil {
+	if strings.TrimSpace(req.Reason) == "" {
+		writeError(w, http.StatusBadRequest, "reason is required")
+		return
+	}
+	err := s.fleet.PerformAction(fleet.ActionRequest{
+		Context: r.Context(), OrganizationID: harness.OrganizationID, HarnessID: harness.HarnessID,
+		Action: fleet.ActionRevokeCert, Reason: req.Reason, PerformedBy: getActorID(r),
+	})
+	if err != nil {
+		var executionErr *fleet.ActionExecutionError
+		if errors.As(err, &executionErr) && executionErr.LocalApplied {
+			writeJSON(w, http.StatusConflict, map[string]interface{}{"status": "revoked", "relay_propagated": executionErr.RelayDelivered, "error": err.Error()})
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Live propagation (harnesses C3): the credential is in the CA
-	// revocation list (relay rebuilds at boot) AND we push the
-	// revocation to the live relay channel when configured.
-	relayPropagated := true
-	if err := s.pushRelayDirective("revoke_harness_certificate", harness.OrganizationID, harness.HarnessID, req.Reason, nil); err != nil {
-		relayPropagated = false
-		log.Printf("api: revoke %s: relay propagation skipped: %v", harness.HarnessID, err)
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "revoked", "relay_propagated": relayPropagated})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "revoked", "relay_propagated": true})
 }
 
 // harnessStaleAfter is the heartbeat window after which an
@@ -1361,7 +1676,7 @@ const harnessStaleAfter = 10 * time.Minute
 // consumeEnrollmentCode validates and burns a one-time enrollment code
 // (harnesses B3). Unused + unexpired codes are consumed by the
 // enrolling harness ID; anything else fails closed.
-func (s *Server) consumeEnrollmentCode(orgID, code, userID, harnessID string) error {
+func (s *Server) consumeEnrollmentCodeWithDB(tx *gorm.DB, orgID, code, userID, harnessID string) error {
 	if userID == "" {
 		return fmt.Errorf("enrollment code flow requires user_id")
 	}
@@ -1369,7 +1684,7 @@ func (s *Server) consumeEnrollmentCode(orgID, code, userID, harnessID string) er
 		return fmt.Errorf("enrollment code flow requires harness_id")
 	}
 	var ec models.EnrollmentCode
-	if err := s.db.Where("code = ? AND organization_id = ?", code, orgID).First(&ec).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("code = ? AND organization_id = ?", code, orgID).First(&ec).Error; err != nil {
 		return fmt.Errorf("등록 코드가 유효하지 않습니다 · Invalid enrollment code")
 	}
 	if exp, err := time.Parse(time.RFC3339, ec.ExpiresAt); err == nil && time.Now().After(exp) {
@@ -1380,7 +1695,7 @@ func (s *Server) consumeEnrollmentCode(orgID, code, userID, harnessID string) er
 	}
 	// Atomic single-use consume: the UPDATE itself is the gate, so two
 	// concurrent redeems cannot both win the read-then-write window.
-	res := s.db.Model(&models.EnrollmentCode{}).
+	res := tx.Model(&models.EnrollmentCode{}).
 		Where("id = ? AND used = ?", ec.ID, false).
 		Updates(map[string]interface{}{"used": true, "used_by": harnessID})
 	if res.Error != nil {
@@ -1462,8 +1777,9 @@ func (s *Server) handleHarnessHeartbeat(w http.ResponseWriter, r *http.Request) 
 // attestation + audit.
 func (s *Server) handleGetHarnessDetail(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
 	var harness models.Harness
-	if err := s.db.Where("id = ? OR harness_id = ?", id, id).First(&harness).Error; err != nil {
+	if err := s.db.Where("organization_id = ? AND (id = ? OR harness_id = ?)", orgID, id, id).First(&harness).Error; err != nil {
 		writeError(w, http.StatusNotFound, "하네스를 찾을 수 없습니다")
 		return
 	}
@@ -1471,7 +1787,7 @@ func (s *Server) handleGetHarnessDetail(w http.ResponseWriter, r *http.Request) 
 
 	if harness.DeviceID != "" {
 		var device models.Device
-		if s.db.First(&device, "id = ?", harness.DeviceID).Error == nil {
+		if s.db.Where("organization_id = ? AND id = ?", orgID, harness.DeviceID).First(&device).Error == nil {
 			result["device"] = device
 		}
 	}
@@ -1511,23 +1827,23 @@ func (s *Server) handleGetHarnessDetail(w http.ResponseWriter, r *http.Request) 
 	json.Unmarshal([]byte(harness.AllowedUsers), &allowedUserIDs)
 	if len(allowedUserIDs) > 0 {
 		var users []models.User
-		s.db.Where("id IN ?", allowedUserIDs).Find(&users)
+		s.db.Where("organization_id = ? AND id IN ?", orgID, allowedUserIDs).Find(&users)
 		result["allowed_users"] = users
 	}
 
 	var sessions []models.Session
-	s.db.Where("harness_id = ?", harness.HarnessID).Order("created_at DESC").Find(&sessions)
+	s.db.Where("organization_id = ? AND harness_id = ?", orgID, harness.HarnessID).Order("created_at DESC").Find(&sessions)
 	result["sessions"] = sessions
 
 	// Attestation history: device posture + attestation audit events.
 	var attEvents []models.AuditEvent
-	s.db.Where("resource_type = ? AND (resource_id = ? OR resource_id = ?)", "harness", harness.ID, harness.HarnessID).
+	s.db.Where("organization_id = ? AND resource_type = ? AND (resource_id = ? OR resource_id = ?)", orgID, "harness", harness.ID, harness.HarnessID).
 		Where("action LIKE ?", "%attestation%").
 		Order("occurred_at DESC").Limit(20).Find(&attEvents)
 	result["attestation_events"] = attEvents
 
 	var auditEvents []models.AuditEvent
-	s.db.Where("resource_id IN ?", []string{harness.ID, harness.HarnessID}).
+	s.db.Where("organization_id = ? AND resource_id IN ?", orgID, []string{harness.ID, harness.HarnessID}).
 		Order("occurred_at DESC").Limit(50).Find(&auditEvents)
 	result["audit_events"] = auditEvents
 
@@ -1554,35 +1870,28 @@ func (s *Server) handleGetHarnessDetail(w http.ResponseWriter, r *http.Request) 
 // PCCP_RELAY_ADMIN_URL configured the call reports honestly; DB-level
 // enforcement (status gates) still applies on the next exchange.
 func (s *Server) pushRelayDirective(commandType, orgID, harnessID, reason string, payload map[string]interface{}) error {
-	base := strings.TrimSuffix(os.Getenv("PCCP_RELAY_ADMIN_URL"), "/")
-	if base == "" {
-		return fmt.Errorf("PCCP_RELAY_ADMIN_URL not configured")
-	}
-	body, _ := json.Marshal(map[string]interface{}{
-		"org_id":       orgID,
-		"target":       harnessID,
-		"command_type": commandType,
-		"reason":       reason,
-		"issued_by":    "control-plane",
-		"payload_b64":  base64.StdEncoding.EncodeToString(func() []byte { b, _ := json.Marshal(payload); return b }()),
+	return s.pushRelayDirectiveContext(stdctx.Background(), commandType, orgID, harnessID, reason, payload)
+}
+
+func (s *Server) pushRelayDirectiveContext(ctx stdctx.Context, commandType, orgID, harnessID, reason string, payload map[string]interface{}) error {
+	return fleet.DeliverRelayDirective(fleet.RelayDirective{
+		Context:        ctx,
+		OrganizationID: orgID,
+		HarnessID:      harnessID,
+		CommandType:    commandType,
+		Reason:         reason,
+		IssuedBy:       "control-plane",
+		Parameters:     payload,
 	})
-	resp, err := http.Post(base+"/v1/admin/directives", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("relay rejected directive: %s", resp.Status)
-	}
-	return nil
 }
 
 func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	q := s.db.Model(&models.Project{})
-	if orgID != "" {
-		q = q.Where("organization_id = ?", orgID)
+	if orgID == "" {
+		writeError(w, http.StatusForbidden, "organization context required")
+		return
 	}
+	q := s.db.Model(&models.Project{}).Where("organization_id = ?", orgID)
 	// Server-side filters (projects B5): status + group affiliate.
 	for _, key := range []string{"status", "group_affiliate"} {
 		if v := r.URL.Query().Get(key); v != "" {
@@ -1617,58 +1926,146 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 		q.Count(&total)
 		var projects []models.Project
 		q.Offset((page - 1) * size).Limit(size).Find(&projects)
+		rows, err := s.decorateProjects(projects, orgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"data": s.decorateProjects(projects), "total": total, "page": page, "size": size,
+			"data": rows, "total": total, "page": page, "size": size,
 		})
 		return
 	}
 	var projects []models.Project
 	q.Find(&projects)
-	writeJSON(w, http.StatusOK, s.decorateProjects(projects))
+	rows, err := s.decorateProjects(projects, orgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rows)
 }
 
 // decorateProjects attaches per-project aggregates (repos, sessions,
 // real membership count) so list cards render true numbers without
 // client-side cross-page joins (projects B1/UX4).
-func (s *Server) decorateProjects(projects []models.Project) []map[string]interface{} {
-	out := make([]map[string]interface{}, 0, len(projects))
-	for _, proj := range projects {
-		row := projectViewRow(proj)
-		var memberCount, repoCount, sessionCount, activeCount int64
-		s.db.Model(&models.ProjectMember{}).Where("project_id = ?", proj.ID).Count(&memberCount)
-		s.db.Model(&models.Repository{}).Where("project_id = ?", proj.ID).Count(&repoCount)
-		s.db.Model(&models.Session{}).Where("project_id = ?", proj.ID).Count(&sessionCount)
-		s.db.Model(&models.Session{}).Where("project_id = ? AND status = 'active'", proj.ID).Count(&activeCount)
-		row["member_count"] = memberCount
-		row["repository_count"] = repoCount
-		row["session_count"] = sessionCount
-		row["active_session_count"] = activeCount
-		out = append(out, row)
+func (s *Server) decorateProjects(projects []models.Project, orgID string) ([]projectListView, error) {
+	out := make([]projectListView, 0, len(projects))
+	if len(projects) == 0 {
+		return out, nil
 	}
-	return out
+	projectIDs := make([]string, 0, len(projects))
+	identifiers := make([]string, 0)
+	for _, proj := range projects {
+		projectIDs = append(projectIDs, proj.ID)
+		classes, _ := parseModelClasses(proj.AllowedModelClasses)
+		identifiers = append(identifiers, classes...)
+	}
+	resolver, err := s.newAllowedModelResolver(orgID, identifiers)
+	if err != nil {
+		return nil, err
+	}
+	type countRow struct {
+		ProjectID string
+		Count     int64
+	}
+	memberCounts := map[string]int64{}
+	repositoryCounts := map[string]int64{}
+	type sessionCountRow struct {
+		ProjectID   string
+		Count       int64
+		ActiveCount int64
+	}
+	sessionCounts := map[string]sessionCountRow{}
+	var counts []countRow
+	if err := s.db.Model(&models.ProjectMember{}).
+		Select("project_id, COUNT(*) AS count").
+		Where("organization_id = ? AND project_id IN ?", orgID, projectIDs).
+		Group("project_id").Scan(&counts).Error; err != nil {
+		return nil, err
+	}
+	for _, count := range counts {
+		memberCounts[count.ProjectID] = count.Count
+	}
+	counts = nil
+	if err := s.db.Model(&models.Repository{}).
+		Select("project_id, COUNT(*) AS count").
+		Where("organization_id = ? AND project_id IN ?", orgID, projectIDs).
+		Group("project_id").Scan(&counts).Error; err != nil {
+		return nil, err
+	}
+	for _, count := range counts {
+		repositoryCounts[count.ProjectID] = count.Count
+	}
+	var sessions []sessionCountRow
+	if err := s.db.Model(&models.Session{}).
+		Select("project_id, COUNT(*) AS count, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_count").
+		Where("organization_id = ? AND project_id IN ?", orgID, projectIDs).
+		Group("project_id").Scan(&sessions).Error; err != nil {
+		return nil, err
+	}
+	for _, count := range sessions {
+		sessionCounts[count.ProjectID] = count
+	}
+	for _, proj := range projects {
+		out = append(out, projectListView{
+			projectView:        projectViewRow(proj, resolver),
+			MemberCount:        memberCounts[proj.ID],
+			RepositoryCount:    repositoryCounts[proj.ID],
+			SessionCount:       sessionCounts[proj.ID].Count,
+			ActiveSessionCount: sessionCounts[proj.ID].ActiveCount,
+		})
+	}
+	return out, nil
 }
 
 func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		OrganizationID string   `json:"organization_id"`
-		Name           string   `json:"name"`
-		NameKo         string   `json:"name_ko"`
-		Slug           string   `json:"slug"`
-		AllowedModels  []string `json:"allowed_models"`
-		Description    string   `json:"description"`
-		ProjectCode    string   `json:"project_code"`
-		GroupAffiliate string   `json:"group_affiliate"`
-		PolicyPackID   string   `json:"policy_pack_id"`
+		OrganizationID string          `json:"organization_id"`
+		Name           string          `json:"name"`
+		NameKo         string          `json:"name_ko"`
+		Slug           string          `json:"slug"`
+		AllowedModels  json.RawMessage `json:"allowed_models"`
+		Description    string          `json:"description"`
+		ProjectCode    string          `json:"project_code"`
+		GroupAffiliate string          `json:"group_affiliate"`
+		PolicyPackID   string          `json:"policy_pack_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	orgID := req.OrganizationID
+	orgID := getOrgID(r)
 	if orgID == "" {
-		orgID = getOrgID(r)
+		writeError(w, http.StatusForbidden, "organization context required")
+		return
 	}
-	proj, err := s.identity.CreateProject(orgID, req.Name, req.NameKo, req.Slug, req.AllowedModels)
+	allowed := []string{defaultAllowedModelID}
+	if len(req.AllowedModels) > 0 {
+		var policyState string
+		allowed, policyState = parseModelClasses(string(req.AllowedModels))
+		if policyState == modelPolicyInvalid {
+			writeError(w, http.StatusBadRequest, "allowed_models must be an array of non-empty model identifiers")
+			return
+		}
+	}
+	resolver, err := s.newAllowedModelResolver(orgID, allowed)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if resolver.resolvesRestricted(allowed) {
+		writeError(w, http.StatusForbidden, "allowed model is not available to this organization")
+		return
+	}
+	if req.PolicyPackID != "" {
+		var pack models.PolicyPack
+		if err := s.db.First(&pack, "id = ? AND organization_id = ?", req.PolicyPackID, orgID).Error; err != nil {
+			writeError(w, http.StatusNotFound, "policy pack not found")
+			return
+		}
+	}
+	proj, err := s.identity.CreateProject(orgID, req.Name, req.NameKo, req.Slug, allowed)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1691,17 +2088,32 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	if len(updates) > 0 {
 		s.db.Model(proj).Updates(updates)
 	}
-	writeJSON(w, http.StatusCreated, projectViewRow(*proj))
+	row, err := s.projectViewRow(*proj)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, row)
 }
 
 func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	if orgID == "" {
+		writeError(w, http.StatusForbidden, "organization context required")
+		return
+	}
 	var proj models.Project
-	if err := s.db.First(&proj, "id = ?", id).Error; err != nil {
+	if err := s.db.First(&proj, "id = ? AND organization_id = ?", id, orgID).Error; err != nil {
 		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
 		return
 	}
-	writeJSON(w, http.StatusOK, projectViewRow(proj))
+	row, err := s.projectViewRow(proj)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, row)
 }
 
 func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) {
@@ -2065,6 +2477,9 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		if v := r.URL.Query().Get("user"); v != "" {
 			q = q.Where("user_id = ?", v)
 		}
+		if v := r.URL.Query().Get("harness_id"); v != "" {
+			q = q.Where("harness_id = ?", v)
+		}
 		if v := r.URL.Query().Get("project"); v != "" {
 			q = q.Where("project_id = ?", v)
 		}
@@ -2087,14 +2502,23 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			q = q.Order("created_at DESC")
 		}
 		var total int64
-		q.Count(&total)
+		if err := q.Count(&total).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		var sessions []models.Session
-		q.Offset((page - 1) * size).Limit(size).Find(&sessions)
+		if err := q.Offset((page - 1) * size).Limit(size).Find(&sessions).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"data": sessions, "total": total, "page": page, "size": size})
 		return
 	}
 	var sessions []models.Session
-	q.Order("created_at DESC").Find(&sessions)
+	if err := q.Order("created_at DESC").Limit(100).Find(&sessions).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, sessions)
 }
 
@@ -2115,9 +2539,29 @@ func (s *Server) handleOpenSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	orgID := req.OrganizationID
-	if orgID == "" {
-		orgID = getOrgID(r)
+	orgID := getOrgID(r)
+	if req.OrganizationID != "" && req.OrganizationID != orgID {
+		writeError(w, http.StatusForbidden, "cannot open a session in another organization")
+		return
+	}
+	if strings.TrimSpace(req.UserID) == "" {
+		writeError(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+	claims, ok := claimsFromCtx(r.Context())
+	if !ok {
+		writeError(w, http.StatusForbidden, "authenticated user binding is required")
+		return
+	}
+	if !canAdministerUsers(claims.Role) && (claims.Subject == "" || claims.Subject != req.UserID) {
+		writeError(w, http.StatusForbidden, "session user must match the authenticated subject")
+		return
+	}
+	if req.HarnessID == "" {
+		req.HarnessID = "console:" + req.UserID
+	} else if strings.HasPrefix(req.HarnessID, "console:") && req.HarnessID != "console:"+req.UserID {
+		writeError(w, http.StatusForbidden, "console harness identity must match the session user")
+		return
 	}
 	// Change-freeze enforcement (PRD §33.13) — block AI sessions on frozen repos.
 	if req.RepositoryID != "" {
@@ -2134,81 +2578,143 @@ func (s *Server) handleOpenSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.BaselineID != "" && req.RepositoryID != "" {
 		var baseline models.RepoBaseline
-		if err := s.db.Where("id = ? AND repository_id = ?", req.BaselineID, req.RepositoryID).First(&baseline).Error; err != nil {
+		if err := s.db.Where("id = ? AND repository_id = ? AND org_id = ?", req.BaselineID, req.RepositoryID, orgID).First(&baseline).Error; err != nil {
 			writeError(w, http.StatusBadRequest, "베이스라인을 찾을 수 없습니다 · baseline not found for repository")
 			return
 		}
 	}
-	// Archive freeze (projects B4, §33.13-style): an archived project
-	// rejects new sessions until restored.
-	if req.ProjectID != "" {
-		var proj models.Project
-		if s.db.First(&proj, "id = ?", req.ProjectID).Error == nil && proj.Status == "archived" {
-			writeError(w, http.StatusForbidden, "보관된 프로젝트입니다 · Project is archived — restore it to open new sessions")
-			return
+	var sess *models.Session
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var organization models.Organization
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", orgID).First(&organization).Error; err != nil {
+			return errors.New("organization not found")
 		}
-	}
-	sess, err := s.identity.OpenSession(orgID, req.HarnessID, req.UserID, req.ProjectID,
-		req.RepositoryID, req.Branch, req.BaselineID, req.Title, req.TaskPurpose, req.ModelClass)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	// Bind the active policy epoch so the session carries governance context (PRD §13.1).
-	if epoch, eerr := s.policy.GetActiveEpoch(orgID); eerr == nil && epoch != nil {
-		// Acknowledgement campaign gate (policy C2, §33.6): when the
-		// active epoch requires ack, unacked users cannot open new
-		// sessions.
-		if epoch.RequiresAck && req.UserID != "" && !s.policy.HasAcked(orgID, epoch.EpochID, req.UserID) {
-			writeError(w, http.StatusForbidden, "정책 확인 필요 · Policy epoch requires acknowledgement before new sessions")
-			return
+		// Lock the lifecycle subject before validating grants. Project roster
+		// mutations take the same lock, so membership cannot disappear between
+		// this check and the session/lease/audit commit.
+		if _, err := identity.LockActiveUser(tx, orgID, req.UserID); err != nil {
+			return err
 		}
-		sess.PolicyEpochID = epoch.EpochID
-		s.db.Save(sess)
-		// A1: bind a capability lease — the session is "governed" only
-		// when a live lease over the active epoch exists (refuse open
-		// when none can be issued).
+		if !strings.HasPrefix(req.HarnessID, "console:") {
+			if err := identity.ValidateActiveHarnessUserBinding(tx, orgID, req.HarnessID, req.UserID); err != nil {
+				return err
+			}
+			if restriction, err := models.HarnessAdmissionRestriction(tx, orgID, req.HarnessID); err != nil {
+				return fmt.Errorf("fleet desired state unavailable: %w", err)
+			} else if restriction != nil {
+				return fmt.Errorf("harness admission blocked by %s", restriction.Action)
+			}
+		}
+		if req.RepositoryID != "" && req.ProjectID == "" {
+			return errors.New("repository-scoped sessions require a project")
+		}
+		if req.ProjectID != "" {
+			var project models.Project
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("id = ? AND organization_id = ?", req.ProjectID, orgID).First(&project).Error; err != nil {
+				return errors.New("project not found in organization")
+			}
+			if project.Status == "archived" {
+				return errors.New("project is archived")
+			}
+			lockdownActive, err := models.ActiveSecurityLockdown(tx, orgID, req.ProjectID)
+			if err != nil {
+				return err
+			}
+			if lockdownActive {
+				return errors.New("security lockdown is active for the requested project")
+			}
+			var membershipCount int64
+			if err := tx.Model(&models.ProjectMember{}).
+				Where("organization_id = ? AND project_id = ? AND user_id = ?", orgID, req.ProjectID, req.UserID).
+				Count(&membershipCount).Error; err != nil {
+				return err
+			}
+			if membershipCount != 1 {
+				return errors.New("user is not a member of the project")
+			}
+			if req.RepositoryID != "" {
+				var repository models.Repository
+				if err := tx.Where("id = ? AND organization_id = ? AND project_id = ?", req.RepositoryID, orgID, req.ProjectID).
+					First(&repository).Error; err != nil {
+					return errors.New("repository does not belong to the project")
+				}
+			}
+		} else {
+			lockdownActive, err := models.ActiveSecurityLockdown(tx, orgID, "")
+			if err != nil {
+				return err
+			}
+			if lockdownActive {
+				return errors.New("organization security lockdown is active")
+			}
+		}
+		for _, permission := range []string{"session:open", "inference:use"} {
+			allowed, err := s.identity.EvaluateScopedEntitlementWithDB(tx, orgID, req.UserID, permission, req.ProjectID, req.RepositoryID)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return fmt.Errorf("%s entitlement is required for the requested scope", permission)
+			}
+		}
+		var epoch models.PolicyEpoch
+		if err := tx.Where("organization_id = ? AND status = ?", orgID, "active").Order("epoch_number DESC").First(&epoch).Error; err != nil {
+			return fmt.Errorf("no active policy epoch: %w", err)
+		}
+		if epoch.RequiresAck && !s.policy.HasAcked(orgID, epoch.EpochID, req.UserID) {
+			return fmt.Errorf("policy epoch requires acknowledgement")
+		}
+		created, err := s.identity.OpenSessionWithDB(tx, orgID, req.HarnessID, req.UserID, req.ProjectID,
+			req.RepositoryID, req.Branch, req.BaselineID, req.Title, req.TaskPurpose, req.ModelClass)
+		if err != nil {
+			return err
+		}
 		var allowedModels []string
 		_ = json.Unmarshal([]byte(epoch.AllowedModelsJSON), &allowedModels)
-		lease, lerr := s.policy.IssueCapabilityLease(policy.IssueLeaseRequest{
-			OrganizationID: orgID,
-			SubjectPeerID:  req.HarnessID,
-			UserID:         req.UserID,
-			SessionID:      sess.SessionID,
-			PolicyEpochID:  epoch.EpochID,
-			AllowedModels:  allowedModels,
-			Validity:       time.Duration(sess.SessionTTL) * time.Second,
+		lease, err := s.policy.IssueCapabilityLeaseWithDB(tx, policy.IssueLeaseRequest{
+			OrganizationID: orgID, SubjectPeerID: req.HarnessID, UserID: req.UserID,
+			SessionID: created.SessionID, PolicyEpochID: epoch.EpochID,
+			AllowedModels: allowedModels, Validity: time.Duration(created.SessionTTL) * time.Second,
 		})
-		if lerr != nil {
-			writeError(w, http.StatusForbidden, "활성 정책에 대한 임대 발급 실패 · cannot issue capability lease for the active epoch")
+		if err != nil {
+			return err
+		}
+		created.PolicyEpochID = epoch.EpochID
+		created.LeaseID = lease.LeaseID
+		if err := tx.Model(&models.Session{}).Where("id = ? AND organization_id = ?", created.ID, orgID).
+			Updates(map[string]interface{}{"policy_epoch_id": epoch.EpochID, "lease_id": lease.LeaseID}).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&models.AuditEvent{
+			OrganizationID: orgID, EventType: "cp.session.opened", ActorID: getActorID(r), ActorType: "admin",
+			Action: "open_session", ResourceType: "session", ResourceID: created.ID,
+			Details: fmt.Sprintf(`{"title":"%s","harness_id":"%s"}`, req.Title, req.HarnessID),
+			Result:  "success", OccurredAt: time.Now().Format(time.RFC3339),
+		}).Error; err != nil {
+			return err
+		}
+		sess = created
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, identity.ErrUserNotActive) || errors.Is(err, identity.ErrUserNotFound) || errors.Is(err, identity.ErrHarnessUserBinding) ||
+			strings.Contains(err.Error(), "policy") || strings.Contains(err.Error(), "project") || strings.Contains(err.Error(), "repository") ||
+			strings.Contains(err.Error(), "entitlement") {
+			writeError(w, http.StatusForbidden, err.Error())
 			return
 		}
-		sess.LeaseID = lease.LeaseID
-		s.db.Save(sess)
-	} else {
-		// Fail closed: no active epoch = no governed session.
 		writeError(w, http.StatusForbidden, "활성 정책 epoch 없음 · no active policy epoch — session refused")
 		return
 	}
 	s.ext().Realtime.NotifySessionUpdate(orgID, sess.SessionID, "active")
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID,
-		EventType:      "cp.session.opened",
-		ActorType:      "admin",
-		Action:         "open_session",
-		ResourceType:   "session",
-		ResourceID:     sess.ID,
-		Details:        fmt.Sprintf(`{"title":"%s","harness_id":"%s"}`, req.Title, req.HarnessID),
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
-	})
 	writeJSON(w, http.StatusCreated, sess)
 }
 
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var sess models.Session
-	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+	if err := s.db.Where("organization_id = ? AND (id = ? OR session_id = ?)", getOrgID(r), id, id).First(&sess).Error; err != nil {
 		writeError(w, http.StatusNotFound, "세션을 찾을 수 없습니다")
 		return
 	}
@@ -2216,43 +2722,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	orgID := getOrgID(r)
-	var sess models.Session
-	if err := s.db.Where("(id = ? OR session_id = ?) AND organization_id = ?", id, id, orgID).First(&sess).Error; err != nil {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	if !models.SessionTransitionAllowed(sess.Status, "closed") {
-		writeError(w, http.StatusConflict, fmt.Sprintf("invalid session transition: %s → closed", sess.Status))
-		return
-	}
-	if err := s.identity.CloseSession(sess.SessionID); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	// Auto-teardown (web/15 feature 10): sandboxes bound to the session
-	// are destroyed with it (best-effort — statuses recorded honestly).
-	var bound []models.SandboxRecord
-	s.db.Where("organization_id = ? AND session_id = ?", orgID, sess.SessionID).Find(&bound)
-	for _, sb := range bound {
-		if sb.Status != "destroyed" {
-			_, _ = s.sandbox.DestroySandbox(sb.ID)
-		}
-	}
-	s.ext().Realtime.NotifySessionUpdate(orgID, sess.SessionID, "closed")
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID,
-		EventType:      "cp.session.closed",
-		ActorType:      "admin",
-		Action:         "close_session",
-		ResourceType:   "session",
-		ResourceID:     sess.ID,
-		Details:        "session closed",
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
-	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "closed"})
+	s.applySessionTransition(w, r, "closed", "close")
 }
 
 func (s *Server) handleCompatChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -2384,8 +2854,9 @@ func (s *Server) handleCompatChatCompletionsLegacy(w http.ResponseWriter, r *htt
 
 func (s *Server) handleGetSessionExchanges(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
 	var sess models.Session
-	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+	if err := s.db.WithContext(r.Context()).Where("organization_id = ? AND (id = ? OR session_id = ?)", orgID, id, id).First(&sess).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
@@ -2403,57 +2874,53 @@ func (s *Server) handleGetSessionExchanges(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) handleGetSessionTimeline(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	var sess models.Session
-	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-
-	// Load actions (tool calls, commands, model requests)
-	var actions []models.ActionEnvelope
-	s.db.Where("session_id = ?", sess.SessionID).Order("occurred_at DESC").Limit(100).Find(&actions)
-
-	// Load change sets (code changes)
-	var changeSets []models.ChangeSet
-	s.db.Where("session_id = ?", sess.SessionID).Order("created_at DESC").Find(&changeSets)
-
-	// Load security findings
-	var findings []models.SecurityFinding
-	s.db.Where("session_id = ?", sess.SessionID).Order("occurred_at DESC").Find(&findings)
-
-	// Load approvals
-	var approvals []models.Approval
-	s.db.Where("session_id = ?", sess.SessionID).Order("created_at DESC").Find(&approvals)
-
-	// Load usage records
-	var usageRecords []models.UsageRecord
-	s.db.Where("session_id = ?", sess.SessionID).Order("occurred_at DESC").Limit(50).Find(&usageRecords)
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"session":       sess,
-		"actions":       actions,
-		"change_sets":   changeSets,
-		"findings":      findings,
-		"approvals":     approvals,
-		"usage_records": usageRecords,
-	})
-}
-
-func (s *Server) handleGetSessionUsage(w http.ResponseWriter, r *http.Request) {
-	if !requireUsageRead(w, r) {
-		return
-	}
-	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
 	var sess models.Session
 	if err := s.db.Where("organization_id = ? AND (id = ? OR session_id = ?)", orgID, id, id).First(&sess).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
+
+	// Load actions (tool calls, commands, model requests)
+	var actions []models.ActionEnvelope
+	s.db.Where("organization_id = ? AND session_id = ?", orgID, sess.SessionID).Order("occurred_at DESC").Limit(100).Find(&actions)
+
+	// Load change sets (code changes)
+	var changeSets []models.ChangeSet
+	s.db.Where("organization_id = ? AND session_id = ?", orgID, sess.SessionID).Order("created_at DESC").Find(&changeSets)
+
+	// Load security findings
+	var findings []models.SecurityFinding
+	s.db.Where("organization_id = ? AND session_id = ?", orgID, sess.SessionID).Order("occurred_at DESC").Find(&findings)
+
+	// Load approvals
+	var approvals []models.Approval
+	s.db.Where("organization_id = ? AND session_id = ?", orgID, sess.SessionID).Order("created_at DESC").Find(&approvals)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"session":     sess,
+		"actions":     actions,
+		"change_sets": changeSets,
+		"findings":    findings,
+		"approvals":   approvals,
+	})
+}
+
+func (s *Server) handleGetSessionUsage(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	if !requireUsagePermission(w, r, usageReadAction(r), "session", id) {
+		return
+	}
+	var sess models.Session
+	if err := s.db.Where("organization_id = ? AND (id = ? OR session_id = ?)", orgID, id, id).First(&sess).Error; err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
 	days, since, until := usageWindowFromRequest(r, time.Now())
-	report, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{SessionID: sess.SessionID}), fmt.Sprintf("%dd", days), since, until)
+	report, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{SessionID: sess.SessionID, Projection: usageProjectionLedger}), fmt.Sprintf("%dd", days), since, until)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeUsageReportError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, report)
@@ -2461,8 +2928,9 @@ func (s *Server) handleGetSessionUsage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetProvenance(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
 	var sess models.Session
-	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+	if err := s.db.Where("organization_id = ? AND (id = ? OR session_id = ?)", orgID, id, id).First(&sess).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
@@ -2814,6 +3282,10 @@ func (s *Server) handleListLeases(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIssueLease(w http.ResponseWriter, r *http.Request) {
+	if !canAdministerUsers(getRole(r)) {
+		writeError(w, http.StatusForbidden, "organization administrator role required")
+		return
+	}
 	var req policy.IssueLeaseRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -2822,9 +3294,25 @@ func (s *Server) handleIssueLease(w http.ResponseWriter, r *http.Request) {
 	if req.Validity == 0 {
 		req.Validity = 1 * time.Hour
 	}
+	orgID := getOrgID(r)
+	if req.OrganizationID != "" && req.OrganizationID != orgID {
+		writeError(w, http.StatusForbidden, "cannot issue a lease in another organization")
+		return
+	}
+	req.OrganizationID = orgID
+	if req.UserID == "" || req.SessionID == "" || req.SubjectPeerID == "" || req.PolicyEpochID == "" {
+		writeError(w, http.StatusBadRequest, "user_id, session_id, subject_peer_id, and policy_epoch_id are required")
+		return
+	}
+	var session models.Session
+	if err := s.db.Where("organization_id = ? AND session_id = ? AND user_id = ? AND harness_id = ? AND status = ?",
+		orgID, req.SessionID, req.UserID, req.SubjectPeerID, "active").First(&session).Error; err != nil {
+		writeError(w, http.StatusForbidden, "active session identity binding not found")
+		return
+	}
 	lease, err := s.policy.IssueCapabilityLease(req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, lease)
@@ -3059,7 +3547,8 @@ func (s *Server) handleUpdatePresence(w http.ResponseWriter, r *http.Request) {
 // DB-recorded only.
 func deliverBroadcastToRelay(orgID, severity, body string) int {
 	base := strings.TrimSuffix(config.RelayAdminURL(), "/")
-	if base == "" {
+	token := strings.TrimSpace(config.LoadRelayFromEnv().ControlPlaneToken)
+	if base == "" || token == "" {
 		return 0
 	}
 	payload, _ := json.Marshal(map[string]string{
@@ -3067,8 +3556,14 @@ func deliverBroadcastToRelay(orgID, severity, body string) int {
 		"severity": severity,
 		"body":     body,
 	})
+	req, err := http.NewRequest(http.MethodPost, base+"/v1/broadcasts", bytes.NewReader(payload))
+	if err != nil {
+		return 0
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Post(base+"/v1/broadcasts", "application/json", bytes.NewReader(payload))
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0
 	}
@@ -3133,20 +3628,17 @@ func (s *Server) handleSendBroadcast(w http.ResponseWriter, r *http.Request) {
 // --- Work Intelligence Handlers ---
 
 func (s *Server) handleGetUsageSummary(w http.ResponseWriter, r *http.Request) {
-	if !requireUsageRead(w, r) {
+	orgID := getOrgID(r)
+	if !requireUsagePermission(w, r, usageReadAction(r), "organization", orgID) {
 		return
 	}
-	orgID := getOrgID(r)
 	days, since, until := usageWindowFromRequest(r, time.Now())
 	report, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{}), fmt.Sprintf("%dd", days), since, until)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeUsageReportError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, struct {
-		UsageTotal
-		Records []UsageLedgerRow `json:"records"`
-	}{UsageTotal: report, Records: report.Drilldown})
+	writeJSON(w, http.StatusOK, report)
 }
 
 func (s *Server) handleGetEngineeringMetrics(w http.ResponseWriter, r *http.Request) {
@@ -3187,13 +3679,27 @@ func (s *Server) handleGetScorecard(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleExportMetrics(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	data, err := s.workintel.ExportMetricsJSON(orgID, 30)
+	if !requireUsagePermission(w, r, UsageActionExport, "organization", orgID) {
+		return
+	}
+	days, since, until := usageWindowFromRequest(r, time.Now())
+	usage, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{}), fmt.Sprintf("%dd", days), since, until)
+	if err != nil {
+		writeUsageReportError(w, err)
+		return
+	}
+	securityMetrics, err := s.workintel.GetSecurityMetrics(orgID, days)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"organization_id": orgID,
+		"period_days":     days,
+		"generated_at":    usage.SnapshotAt,
+		"usage":           usage,
+		"security":        securityMetrics,
+	})
 }
 
 // modelCostRow is one model's server-computed cost line. PAT-1501:
@@ -3201,15 +3707,15 @@ func (s *Server) handleExportMetrics(w http.ResponseWriter, r *http.Request) {
 type modelCostRow struct {
 	ModelPackageID     string  `json:"model_package_id"`
 	ModelName          string  `json:"model_name,omitempty"`
-	TokensIn           int64   `json:"tokens_in"`
-	TokensOut          int64   `json:"tokens_out"`
+	TokensIn           int64   `json:"tokens_in,string"`
+	TokensOut          int64   `json:"tokens_out,string"`
 	TokensUnit         string  `json:"tokens_unit"` // always "tokens"
 	CostKRW            float64 `json:"cost_krw"`
-	ExpectedCostMicros int64   `json:"expected_cost_micros"`
+	ExpectedCostMicros int64   `json:"expected_cost_micros,string"`
 	CostUnit           string  `json:"cost_unit"` // always "krw"
-	RecordedCostMicros int64   `json:"recorded_cost_micros"`
+	RecordedCostMicros int64   `json:"recorded_cost_micros,string"`
 	RecordedCurrency   string  `json:"recorded_currency,omitempty"`
-	DifferenceMicros   int64   `json:"difference_micros"`
+	DifferenceMicros   int64   `json:"difference_micros,string"`
 	Priced             bool    `json:"priced"` // false when the package has no unit price configured
 	Reconciled         bool    `json:"reconciled"`
 }
@@ -3220,14 +3726,14 @@ type modelCostRow struct {
 // — never a fabricated number. PAT-1501: tokens and KRW are reported
 // as separate unit-typed rows; the UI must not sum them.
 func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
-	if !requireUsageRead(w, r) {
+	orgID := getOrgID(r)
+	if !requireUsagePermission(w, r, UsageActionSummaryRead, "organization", orgID) {
 		return
 	}
-	orgID := getOrgID(r)
 	days, since, until := usageWindowFromRequest(r, time.Now())
-	usageReport, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{}), fmt.Sprintf("%dd", days), since, until)
+	usageReport, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{Projection: usageProjectionModel}), fmt.Sprintf("%dd", days), since, until)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeUsageReportError(w, err)
 		return
 	}
 
@@ -3250,18 +3756,28 @@ func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rowsOut := make([]modelCostRow, 0, len(packageIDs))
-	totalKRW := 0.0
 	anyPriced := false
-	allReconciled := true
 	for _, pid := range packageIDs {
 		total := usageReport.ModelTotals[pid]
 		mc := modelCostRow{ModelPackageID: pid, TokensIn: total.InputTokens, TokensOut: total.OutputTokens, TokensUnit: UnitTokens, CostUnit: UnitKRW}
 		if p, ok := pkgBy[pid]; ok {
 			mc.ModelName = p.Name
-			if p.PriceInputPer1K > 0 || p.PriceOutputPer1K > 0 {
+			inputRate, inputConfigured, inputErr := metering.ResolveKRWPriceMicrosPer1K(p.PriceInputMicrosPer1K, p.PriceInputConfigured, p.PriceInputPer1K)
+			outputRate, outputConfigured, outputErr := metering.ResolveKRWPriceMicrosPer1K(p.PriceOutputMicrosPer1K, p.PriceOutputConfigured, p.PriceOutputPer1K)
+			if inputErr != nil || outputErr != nil {
+				writeError(w, http.StatusInternalServerError, "model price is invalid")
+				return
+			}
+			if inputConfigured && outputConfigured {
+				inputCost, inputErr := metering.TokenCostMicros(mc.TokensIn, inputRate)
+				outputCost, outputErr := metering.TokenCostMicros(mc.TokensOut, outputRate)
+				if inputErr != nil || outputErr != nil || inputCost > math.MaxInt64-outputCost {
+					writeError(w, http.StatusInternalServerError, "model cost overflows supported range")
+					return
+				}
 				mc.Priced = true
-				mc.CostKRW = float64(mc.TokensIn)/1000*p.PriceInputPer1K + float64(mc.TokensOut)/1000*p.PriceOutputPer1K
-				mc.ExpectedCostMicros = int64(math.Round(mc.CostKRW * 1_000_000))
+				mc.ExpectedCostMicros = inputCost + outputCost
+				mc.CostKRW = float64(mc.ExpectedCostMicros) / 1_000_000
 			}
 		}
 		if len(total.CostByCurrency) == 1 {
@@ -3272,29 +3788,28 @@ func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
 		}
 		mc.DifferenceMicros = mc.RecordedCostMicros - mc.ExpectedCostMicros
 		mc.Reconciled = mc.Priced && total.PricingState == MeterStateRecorded && len(total.CostByCurrency) == 1 && strings.EqualFold(mc.RecordedCurrency, "KRW") && mc.DifferenceMicros == 0
-		if !mc.Reconciled {
-			allReconciled = false
-		}
 		if mc.Priced {
 			anyPriced = true
-			totalKRW += mc.CostKRW
 		}
 		rowsOut = append(rowsOut, mc)
 	}
 
-	// PAT-1501: total in KRW is its own typed row, not a number
-	// sitting next to tokens.
-	totalUsage := Usage{Quantity: int64(math.Round(totalKRW)), Unit: UnitKRW, Currency: "KRW", WindowStart: since, WindowEnd: until, Reconciled: anyPriced && allReconciled}
-	totalMicros := int64(math.Round(totalKRW * 1_000_000))
+	// Catalog-derived rows are estimates used only for reconciliation. The
+	// authoritative total is always the recorded canonical ledger total.
+	totalUsage := Usage{Unit: UnitCurrencyMicro, Currency: usageReport.DisplayCurrency, WindowStart: since, WindowEnd: until, Reconciled: usageReport.Reconciled, State: usageReport.DisplayTotal.State, Reason: usageReport.DisplayTotal.Reason, ReasonCode: usageReport.DisplayTotal.ReasonCode}
+	if usageReport.DisplayTotal.State == MeterStateRecorded || usageReport.DisplayTotal.State == MeterStateZero {
+		totalUsage.Quantity = usageReport.DisplayTotal.AmountMicros
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"days":             days,
 		"window_start":     since,
 		"window_end":       until,
 		"models":           rowsOut,
 		"total":            totalUsage,
-		"total_amount":     UsageAmount{AmountMicros: totalMicros, Currency: "KRW", State: usageStateForQuantity(totalMicros)},
+		"total_amount":     usageReport.DisplayTotal,
 		"any_priced":       anyPriced,
-		"display_currency": UnitKRW,
+		"estimate_only":    true,
+		"display_currency": usageReport.DisplayCurrency,
 		"usage_report":     usageReport,
 	})
 }
@@ -3304,14 +3819,14 @@ func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
 // response type level — the UI receives one Usage row per unit.
 // PAT-1501.
 func (s *Server) handleGetUsageBreakdown(w http.ResponseWriter, r *http.Request) {
-	if !requireUsageRead(w, r) {
+	orgID := getOrgID(r)
+	if !requireUsagePermission(w, r, usageReadAction(r), "organization", orgID) {
 		return
 	}
-	orgID := getOrgID(r)
 	days, since, until := usageWindowFromRequest(r, time.Now())
 	report, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{}), fmt.Sprintf("%dd", days), since, until)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeUsageReportError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, report)
@@ -3341,48 +3856,54 @@ func usageWindowFromRequest(r *http.Request, now time.Time) (days int, since, un
 
 // --- Fleet Handlers ---
 
-func (s *Server) handleFleetInventory(w http.ResponseWriter, r *http.Request) {
-	orgID := getOrgID(r)
-	inventory, err := s.fleet.GetFleetInventory(orgID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, inventory)
-}
-
 func (s *Server) handleInspectSession(w http.ResponseWriter, r *http.Request) {
-	sessionID := chi.URLParam(r, "id")
-	orgID := getOrgID(r)
-	inspector, err := s.fleet.InspectSession(orgID, sessionID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, inspector)
+	// Compatibility route: the canonical inspector owns bounds, tenant scope,
+	// transcript redaction, and response semantics.
+	s.handleGetSessionDetail(w, r)
 }
 
 func (s *Server) handleFleetAction(w http.ResponseWriter, r *http.Request) {
+	if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+		return
+	}
 	var req fleet.ActionRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	req.OrganizationID = getOrgID(r)
+	req.PerformedBy = getActorID(r)
+	req.Context = r.Context()
+	if strings.TrimSpace(req.Reason) == "" {
+		writeError(w, http.StatusBadRequest, "reason is required")
+		return
+	}
+	if !fleet.IsHarnessScopedAction(req.Action) {
+		writeError(w, http.StatusBadRequest, "unsupported harness-scoped action; use the security lockdown workflow for organization containment")
+		return
+	}
 	if err := s.fleet.PerformAction(req); err != nil {
+		var executionErr *fleet.ActionExecutionError
+		if errors.As(err, &executionErr) && (executionErr.LocalApplied || executionErr.RelayDelivered) {
+			writeJSON(w, http.StatusConflict, map[string]interface{}{
+				"status": "partially_applied", "error": err.Error(),
+				"local_state_applied": executionErr.LocalApplied,
+				"relay_delivered":     executionErr.RelayDelivered,
+			})
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: req.OrganizationID,
-		EventType:      "cp.fleet.action",
-		ActorType:      "admin",
-		Action:         string(req.Action),
-		ResourceType:   "harness",
-		ResourceID:     req.HarnessID,
-		Details:        req.Reason,
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
-	})
+	if req.Action == fleet.ActionClearDesiredState {
+		target, _ := req.Parameters["action"].(string)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status": "desired_state_released", "action": target,
+			"manual_recovery_required": true,
+			"remaining_effects":        "existing paused sessions, revoked leases, or isolated sandboxes retain their current state and require their explicit recovery workflow",
+		})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "executed"})
 }
 
@@ -3569,9 +4090,17 @@ func (s *Server) handleEmitEvent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if !canAdministerUsers(getRole(r)) {
+		writeError(w, http.StatusForbidden, "organization administrator role required")
+		return
+	}
 	var user models.User
 	if err := s.db.First(&user, "id = ? AND organization_id = ?", id, getOrgID(r)).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if user.Status == models.UserStatusOffboarded {
+		writeError(w, http.StatusConflict, "offboarded users are read-only")
 		return
 	}
 	var updates struct {
@@ -3601,6 +4130,10 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "lifecycle status changes require the dedicated /suspend, /resume, or /offboard endpoints")
 		return
 	}
+	if updates.AuthMethod != nil {
+		writeError(w, http.StatusConflict, "authentication method changes require a dedicated identity relink workflow")
+		return
+	}
 	// Column-scoped update: writing only the requested editable fields (never
 	// Status) prevents a stale full-struct Save from reverting a lifecycle
 	// transition that committed between the First read and this write.
@@ -3612,13 +4145,12 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		cols["name_ko"] = *updates.NameKo
 	}
 	if updates.Email != nil {
-		cols["email"] = *updates.Email
+		normalized := identity.NormalizeEmail(*updates.Email)
+		updates.Email = &normalized
+		cols["email"] = normalized
 	}
 	if updates.Title != nil {
 		cols["title"] = *updates.Title
-	}
-	if updates.AuthMethod != nil {
-		cols["auth_method"] = *updates.AuthMethod
 	}
 	if updates.Locale != nil {
 		cols["locale"] = *updates.Locale
@@ -3652,22 +4184,51 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if updates.Reason != nil {
 		reason = *updates.Reason
 	}
-	if len(cols) > 0 {
-		s.db.Model(&user).Updates(cols)
-	}
 	updateDetails, _ := json.Marshal(map[string]string{"reason": reason})
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: getOrgID(r),
-		EventType:      "cp.user.updated",
-		ActorType:      "admin",
-		Action:         "update_user",
-		ResourceType:   "user",
-		ResourceID:     id,
-		Details:        string(updateDetails),
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := identity.LockMutableUser(tx, getOrgID(r), id); err != nil {
+			return err
+		}
+		if updates.Email != nil && user.Email != *updates.Email {
+			if err := tx.Model(&identity.AdminCredentials{}).
+				Where("organization_id = ? AND (user_id = ? OR (user_id = '' AND email = ?))", getOrgID(r), id, user.Email).
+				Updates(map[string]interface{}{"email": *updates.Email, "user_id": id}).Error; err != nil {
+				return err
+			}
+		}
+		if len(cols) > 0 {
+			if err := tx.Model(&models.User{}).
+				Where("id = ? AND organization_id = ?", id, getOrgID(r)).
+				Updates(cols).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: getOrgID(r),
+			EventType:      "cp.user.updated",
+			ActorID:        getActorID(r),
+			ActorType:      "admin",
+			Action:         "update_user",
+			ResourceType:   "user",
+			ResourceID:     id,
+			Details:        string(updateDetails),
+			Result:         "success",
+			OccurredAt:     time.Now().Format(time.RFC3339),
+		}).Error
 	})
-	writeJSON(w, http.StatusOK, user)
+	if err != nil {
+		if errors.Is(err, identity.ErrUserReadOnly) {
+			writeError(w, http.StatusConflict, "offboarded users are read-only")
+		} else {
+			writeError(w, http.StatusInternalServerError, "user update failed")
+		}
+		return
+	}
+	if err := s.db.First(&user, "id = ? AND organization_id = ?", id, getOrgID(r)).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "user reload failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.decorateSingleUser(r, user))
 }
 
 // handleDeleteUser historically reimplemented offboarding without the
@@ -3783,22 +4344,26 @@ func (s *Server) handleListHarnessAudit(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleIssueEnrollmentCode(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
-	code, err := s.identity.GenerateEnrollmentCode(orgID, userID, 24*time.Hour)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if _, ok := s.requireMutableUser(w, r, userID); !ok {
 		return
 	}
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID,
-		EventType:      "cp.user.enrollment_code",
-		ActorType:      "admin",
-		Action:         "issue_enrollment_code",
-		ResourceType:   "user",
-		ResourceID:     userID,
-		Details:        "enrollment code issued (24h validity)",
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
+	var code string
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var issueErr error
+		code, issueErr = s.identity.GenerateEnrollmentCodeWithDB(tx, orgID, userID, 24*time.Hour)
+		if issueErr != nil {
+			return issueErr
+		}
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: orgID, EventType: "cp.user.enrollment_code", ActorID: getActorID(r), ActorType: "admin",
+			Action: "issue_enrollment_code", ResourceType: "user", ResourceID: userID,
+			Details: "enrollment code issued (24h validity)", Result: "success", OccurredAt: time.Now().Format(time.RFC3339),
+		}).Error
 	})
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"code": code, "enrollment_code": code, "expires_at": time.Now().Add(24 * time.Hour).Format(time.RFC3339)})
 }
 
@@ -3933,22 +4498,34 @@ func (s *Server) handleDeletePolicyRule(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	if orgID == "" {
+		writeError(w, http.StatusForbidden, "organization context required")
+		return
+	}
 	var proj models.Project
-	if err := s.db.First(&proj, "id = ?", id).Error; err != nil {
+	if err := s.db.First(&proj, "id = ? AND organization_id = ?", id, orgID).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 	var updates struct {
-		Name           *string  `json:"name,omitempty"`
-		NameKo         *string  `json:"name_ko,omitempty"`
-		Description    *string  `json:"description,omitempty"`
-		Status         *string  `json:"status,omitempty"`
-		AllowedModels  []string `json:"allowed_models,omitempty"`
-		ProjectCode    *string  `json:"project_code,omitempty"`
-		GroupAffiliate *string  `json:"group_affiliate,omitempty"`
-		PolicyPackID   *string  `json:"policy_pack_id,omitempty"`
+		Name           *string         `json:"name,omitempty"`
+		NameKo         *string         `json:"name_ko,omitempty"`
+		Description    *string         `json:"description,omitempty"`
+		Status         *string         `json:"status,omitempty"`
+		AllowedModels  json.RawMessage `json:"allowed_models,omitempty"`
+		ProjectCode    *string         `json:"project_code,omitempty"`
+		GroupAffiliate *string         `json:"group_affiliate,omitempty"`
+		PolicyPackID   *string         `json:"policy_pack_id,omitempty"`
 	}
-	decodeJSON(r, &updates)
+	if err := decodeJSON(r, &updates); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if updates.Status != nil {
+		writeError(w, http.StatusBadRequest, "project status must be changed through the archive or restore action")
+		return
+	}
 	if updates.Name != nil {
 		proj.Name = *updates.Name
 	}
@@ -3958,13 +4535,24 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	if updates.Description != nil {
 		proj.Description = *updates.Description
 	}
-	if updates.Status != nil {
-		proj.Status = *updates.Status
-	}
 	// Explicit empty array clears the allowance (제한 없음); absent key
 	// leaves it unchanged (PAT-1491).
-	if updates.AllowedModels != nil {
-		b, _ := json.Marshal(updates.AllowedModels)
+	if len(updates.AllowedModels) > 0 {
+		allowed, policyState := parseModelClasses(string(updates.AllowedModels))
+		if policyState == modelPolicyInvalid {
+			writeError(w, http.StatusBadRequest, "allowed_models must be an array of non-empty model identifiers")
+			return
+		}
+		resolver, err := s.newAllowedModelResolver(orgID, allowed)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if resolver.resolvesRestricted(allowed) {
+			writeError(w, http.StatusForbidden, "allowed model is not available to this organization")
+			return
+		}
+		b, _ := json.Marshal(allowed)
 		proj.AllowedModelClasses = string(b)
 	}
 	if updates.ProjectCode != nil {
@@ -3974,9 +4562,19 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		proj.GroupAffiliate = *updates.GroupAffiliate
 	}
 	if updates.PolicyPackID != nil {
+		if *updates.PolicyPackID != "" {
+			var pack models.PolicyPack
+			if err := s.db.First(&pack, "id = ? AND organization_id = ?", *updates.PolicyPackID, orgID).Error; err != nil {
+				writeError(w, http.StatusNotFound, "policy pack not found")
+				return
+			}
+		}
 		proj.PolicyPackID = *updates.PolicyPackID
 	}
-	s.db.Save(&proj)
+	if err := s.db.Save(&proj).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	s.db.Create(&models.AuditEvent{
 		OrganizationID: getOrgID(r),
 		EventType:      "cp.project.updated",
@@ -3988,65 +4586,163 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		Result:         "success",
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	})
-	writeJSON(w, http.StatusOK, projectViewRow(proj))
+	row, err := s.projectViewRow(proj)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, row)
 }
 
 func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
+	if !canAdministerUsers(getRole(r)) {
+		writeError(w, http.StatusForbidden, "organization administrator role required")
+		return
+	}
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
-	s.db.Model(&models.Project{}).Where("id = ?", id).Update("status", "archived")
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID,
-		EventType:      "cp.project.archived",
-		ActorType:      "admin",
-		Action:         "archive_project",
-		ResourceType:   "project",
-		ResourceID:     id,
-		Details:        "project archived",
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
+	var impact map[string]interface{}
+	var sessionOutcomes []sessionlifecycle.Outcome
+	actorID := getActorID(r)
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.Project{}).Where("id = ? AND organization_id = ?", id, orgID).Update("status", "archived")
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		var err error
+		impact, err = projectArchiveImpactDB(tx, orgID, id)
+		if err != nil {
+			return err
+		}
+		sessionOutcomes, err = s.sessionLifecycle.TransitionScopeInTransaction(
+			tx,
+			sessionlifecycle.Scope{OrganizationID: orgID, ProjectID: id, ActorType: "admin"},
+			"paused", "project_archived", "project archived", actorID,
+		)
+		if err != nil {
+			return err
+		}
+		for _, outcome := range sessionOutcomes {
+			if outcome.Result != sessionlifecycle.ResultUpdated {
+				return fmt.Errorf("project archive: session %s transition %s", outcome.RequestedID, outcome.Result)
+			}
+		}
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: orgID,
+			EventType:      "cp.project.archived",
+			ActorID:        actorID,
+			ActorType:      "admin",
+			Action:         "archive_project",
+			ResourceType:   "project",
+			ResourceID:     id,
+			Details:        "project archived",
+			Result:         "success",
+			OccurredAt:     time.Now().Format(time.RFC3339),
+		}).Error
 	})
-	impact := s.projectArchiveImpact(id)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := s.sessionLifecycle.FinalizeTransitions(orgID, sessionOutcomes, "paused", "project_archived", "project archived", actorID, "admin"); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "archived", "impact": impact})
 }
 
 // projectArchiveImpact counts what an archive affects (projects UX14):
 // active sessions that will be frozen, attached repositories, members.
-func (s *Server) projectArchiveImpact(projectID string) map[string]interface{} {
-	var activeSessions, repos, members int64
-	s.db.Model(&models.Session{}).Where("project_id = ? AND status = 'active'", projectID).Count(&activeSessions)
-	s.db.Model(&models.Repository{}).Where("project_id = ? AND status = 'active'", projectID).Count(&repos)
-	s.db.Model(&models.ProjectMember{}).Where("project_id = ?", projectID).Count(&members)
-	return map[string]interface{}{
-		"active_sessions": activeSessions,
-		"repositories":    repos,
-		"members":         members,
+func projectArchiveImpactDB(db *gorm.DB, orgID, projectID string) (map[string]interface{}, error) {
+	var projectCount, activeSessions, inProgressSessions, repos, members int64
+	if err := db.Model(&models.Project{}).Where("id = ? AND organization_id = ?", projectID, orgID).Count(&projectCount).Error; err != nil {
+		return nil, err
 	}
+	if projectCount != 1 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	queries := []struct {
+		value *int64
+		query *gorm.DB
+	}{
+		{&activeSessions, db.Model(&models.Session{}).Where("organization_id = ? AND project_id = ? AND status = ?", orgID, projectID, "active")},
+		{&inProgressSessions, db.Model(&models.Session{}).Where("organization_id = ? AND project_id = ? AND status IN ?", orgID, projectID, models.SessionNonTerminalStatuses())},
+		{&repos, db.Model(&models.Repository{}).Where("organization_id = ? AND project_id = ? AND status = ?", orgID, projectID, "active")},
+		{&members, db.Model(&models.ProjectMember{}).Where("organization_id = ? AND project_id = ?", orgID, projectID)},
+	}
+	for _, item := range queries {
+		if err := item.query.Count(item.value).Error; err != nil {
+			return nil, err
+		}
+	}
+	return map[string]interface{}{
+		"active_sessions":      activeSessions,
+		"in_progress_sessions": inProgressSessions,
+		"repositories":         repos,
+		"members":              members,
+	}, nil
 }
 
 // handleProjectArchiveImpact previews the archive blast radius before
 // the operator confirms (projects UX14).
 func (s *Server) handleProjectArchiveImpact(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	writeJSON(w, http.StatusOK, s.projectArchiveImpact(id))
+	impact, err := projectArchiveImpactDB(s.db, getOrgID(r), id)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, impact)
 }
 
 // handleRestoreProject un-archives a project (projects B4).
 func (s *Server) handleRestoreProject(w http.ResponseWriter, r *http.Request) {
+	if !canAdministerUsers(getRole(r)) {
+		writeError(w, http.StatusForbidden, "organization administrator role required")
+		return
+	}
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
-	s.db.Model(&models.Project{}).Where("id = ?", id).Update("status", "active")
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID,
-		EventType:      "cp.project.restored",
-		ActorType:      "admin",
-		Action:         "restore_project",
-		ResourceType:   "project",
-		ResourceID:     id,
-		Details:        "project restored",
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.Project{}).Where("id = ? AND organization_id = ?", id, orgID).Update("status", "active")
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: orgID,
+			EventType:      "cp.project.restored",
+			ActorID:        getActorID(r),
+			ActorType:      "admin",
+			Action:         "restore_project",
+			ResourceType:   "project",
+			ResourceID:     id,
+			Details:        "project restored",
+			Result:         "success",
+			OccurredAt:     time.Now().Format(time.RFC3339),
+		}).Error
 	})
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "active"})
 }
 
@@ -4054,25 +4750,27 @@ func (s *Server) handleRestoreProject(w http.ResponseWriter, r *http.Request) {
 // §29.12): sessions, token usage, and recorded cost across all of the
 // project's sessions.
 func (s *Server) handleProjectUsage(w http.ResponseWriter, r *http.Request) {
-	if !requireUsageRead(w, r) {
-		return
-	}
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
+	if !requireUsagePermission(w, r, usageReadAction(r), "project", id) {
+		return
+	}
 	var proj models.Project
-	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&proj).Error; err != nil {
+	if err := s.db.WithContext(r.Context()).Where("id = ? AND organization_id = ?", id, orgID).First(&proj).Error; err != nil {
 		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
 		return
 	}
 	var sessionCount int64
-	if err := s.db.Model(&models.Session{}).Where("organization_id = ? AND project_id = ?", orgID, id).Count(&sessionCount).Error; err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+	if r.URL.Query().Get("cursor") == "" {
+		if err := s.db.WithContext(r.Context()).Model(&models.Session{}).Where("organization_id = ? AND project_id = ?", orgID, id).Count(&sessionCount).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	days, since, until := usageWindowFromRequest(r, time.Now())
-	report, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{ProjectID: id}), fmt.Sprintf("%dd", days), since, until)
+	report, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{ProjectID: id, Projection: usageProjectionLedger}), fmt.Sprintf("%dd", days), since, until)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeUsageReportError(w, err)
 		return
 	}
 	report.SessionCount = int(sessionCount)
@@ -4083,19 +4781,33 @@ func (s *Server) handleProjectUsage(w http.ResponseWriter, r *http.Request) {
 // (projects B1) — no more session-derived guessing.
 func (s *Server) handleListProjectMembers(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	var project models.Project
+	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&project).Error; err != nil {
+		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
+		return
+	}
 	var members []models.ProjectMember
-	s.db.Where("project_id = ?", id).Order("created_at DESC").Find(&members)
+	s.db.Where("organization_id = ? AND project_id = ?", orgID, id).Order("created_at DESC").Find(&members)
 	type memberRow struct {
 		models.ProjectMember
 		User *models.User `json:"user,omitempty"`
 	}
+	userIDs := make([]string, 0, len(members))
+	for _, member := range members {
+		userIDs = append(userIDs, member.UserID)
+	}
+	var users []models.User
+	if len(userIDs) > 0 {
+		s.db.Where("organization_id = ? AND id IN ?", orgID, userIDs).Find(&users)
+	}
+	usersByID := make(map[string]*models.User, len(users))
+	for i := range users {
+		usersByID[users[i].ID] = &users[i]
+	}
 	out := make([]memberRow, 0, len(members))
 	for _, m := range members {
-		row := memberRow{ProjectMember: m}
-		var user models.User
-		if s.db.First(&user, "id = ?", m.UserID).Error == nil {
-			row.User = &user
-		}
+		row := memberRow{ProjectMember: m, User: usersByID[m.UserID]}
 		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -4104,6 +4816,10 @@ func (s *Server) handleListProjectMembers(w http.ResponseWriter, r *http.Request
 // handleAddProjectMember assigns a role to a user on the project
 // (projects B1).
 func (s *Server) handleAddProjectMember(w http.ResponseWriter, r *http.Request) {
+	if !canAdministerUsers(getRole(r)) {
+		writeError(w, http.StatusForbidden, "organization administrator role required")
+		return
+	}
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
 	var req struct {
@@ -4117,61 +4833,99 @@ func (s *Server) handleAddProjectMember(w http.ResponseWriter, r *http.Request) 
 	if req.Role == "" {
 		req.Role = "member"
 	}
+	switch req.Role {
+	case "owner", "admin", "maintainer", "member", "viewer":
+	default:
+		writeError(w, http.StatusBadRequest, "invalid project member role")
+		return
+	}
+	if _, ok := s.requireMutableUser(w, r, req.UserID); !ok {
+		return
+	}
 	var proj models.Project
-	if s.db.First(&proj, "id = ?", id).Error != nil {
+	if s.db.First(&proj, "id = ? AND organization_id = ?", id, orgID).Error != nil {
 		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
 		return
 	}
-	member := models.ProjectMember{
-		OrganizationID: orgID,
-		ProjectID:      id,
-		UserID:         req.UserID,
-		Role:           req.Role,
-		GrantedBy:      "console",
-	}
-	if err := s.db.Where("project_id = ? AND user_id = ?", id, req.UserID).
-		Assign(models.ProjectMember{Role: req.Role}).
-		FirstOrCreate(&member).Error; err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	member := models.ProjectMember{OrganizationID: orgID, ProjectID: id, UserID: req.UserID, Role: req.Role, GrantedBy: getActorID(r)}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := identity.LockMutableUser(tx, orgID, req.UserID); err != nil {
+			return err
+		}
+		if err := tx.Where("organization_id = ? AND project_id = ? AND user_id = ?", orgID, id, req.UserID).
+			Assign(models.ProjectMember{Role: req.Role, GrantedBy: getActorID(r)}).FirstOrCreate(&member).Error; err != nil {
+			return err
+		}
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: orgID, EventType: "cp.project.member_added", ActorID: getActorID(r), ActorType: "admin",
+			Action: "add_project_member", ResourceType: "project", ResourceID: id,
+			Details: fmt.Sprintf(`{"user_id":"%s","role":"%s"}`, req.UserID, req.Role),
+			Result:  "success", OccurredAt: time.Now().Format(time.RFC3339),
+		}).Error
+	})
+	if err != nil {
+		if errors.Is(err, identity.ErrUserNotFound) {
+			writeError(w, http.StatusNotFound, "사용자를 찾을 수 없습니다")
+		} else if errors.Is(err, identity.ErrUserReadOnly) {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID,
-		EventType:      "cp.project.member_added",
-		ActorType:      "admin",
-		Action:         "add_project_member",
-		ResourceType:   "project",
-		ResourceID:     id,
-		Details:        fmt.Sprintf(`{"user_id":"%s","role":"%s"}`, req.UserID, req.Role),
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
-	})
 	writeJSON(w, http.StatusCreated, member)
 }
 
 // handleRemoveProjectMember removes a roster entry (projects B1).
 func (s *Server) handleRemoveProjectMember(w http.ResponseWriter, r *http.Request) {
+	if !canAdministerUsers(getRole(r)) {
+		writeError(w, http.StatusForbidden, "organization administrator role required")
+		return
+	}
 	id := chi.URLParam(r, "id")
 	userID := chi.URLParam(r, "userId")
 	orgID := getOrgID(r)
-	s.db.Where("project_id = ? AND user_id = ?", id, userID).Delete(&models.ProjectMember{})
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID,
-		EventType:      "cp.project.member_removed",
-		ActorType:      "admin",
-		Action:         "remove_project_member",
-		ResourceType:   "project",
-		ResourceID:     id,
-		Details:        fmt.Sprintf(`{"user_id":"%s"}`, userID),
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
+	if _, ok := s.requireMutableUser(w, r, userID); !ok {
+		return
+	}
+	var project models.Project
+	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&project).Error; err != nil {
+		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
+		return
+	}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := identity.LockMutableUser(tx, orgID, userID); err != nil {
+			return err
+		}
+		if err := tx.Where("organization_id = ? AND project_id = ? AND user_id = ?", orgID, id, userID).Delete(&models.ProjectMember{}).Error; err != nil {
+			return err
+		}
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: orgID, EventType: "cp.project.member_removed", ActorID: getActorID(r), ActorType: "admin",
+			Action: "remove_project_member", ResourceType: "project", ResourceID: id,
+			Details: fmt.Sprintf(`{"user_id":"%s"}`, userID), Result: "success", OccurredAt: time.Now().Format(time.RFC3339),
+		}).Error
 	})
+	if err != nil {
+		if errors.Is(err, identity.ErrUserNotFound) {
+			writeError(w, http.StatusNotFound, "사용자를 찾을 수 없습니다")
+		} else if errors.Is(err, identity.ErrUserReadOnly) {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
 }
 
 // handleBindProjectPolicyPack binds a versioned policy pack to the
 // project (projects B2) — surfaced as the project's effective policy.
 func (s *Server) handleBindProjectPolicyPack(w http.ResponseWriter, r *http.Request) {
+	if !canAdministerUsers(getRole(r)) {
+		writeError(w, http.StatusForbidden, "organization administrator role required")
+		return
+	}
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
 	var req struct {
@@ -4181,25 +4935,42 @@ func (s *Server) handleBindProjectPolicyPack(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.PolicyPackID != "" {
-		var pack models.PolicyPack
-		if s.db.First(&pack, "id = ?", req.PolicyPackID).Error != nil {
-			writeError(w, http.StatusNotFound, "policy pack not found")
-			return
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if req.PolicyPackID != "" {
+			var count int64
+			if err := tx.Model(&models.PolicyPack{}).Where("id = ? AND organization_id = ?", req.PolicyPackID, orgID).Count(&count).Error; err != nil {
+				return err
+			}
+			if count != 1 {
+				return gorm.ErrRecordNotFound
+			}
 		}
-	}
-	s.db.Model(&models.Project{}).Where("id = ?", id).Update("policy_pack_id", req.PolicyPackID)
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID,
-		EventType:      "cp.project.policy_pack_bound",
-		ActorType:      "admin",
-		Action:         "bind_project_policy_pack",
-		ResourceType:   "project",
-		ResourceID:     id,
-		Details:        fmt.Sprintf(`{"policy_pack_id":"%s"}`, req.PolicyPackID),
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
+		updated := tx.Model(&models.Project{}).Where("id = ? AND organization_id = ?", id, orgID).Update("policy_pack_id", req.PolicyPackID)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		details, err := json.Marshal(map[string]string{"policy_pack_id": req.PolicyPackID})
+		if err != nil {
+			return err
+		}
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: orgID, EventType: "cp.project.policy_pack_bound",
+			ActorID: getActorID(r), ActorType: "admin", Action: "bind_project_policy_pack",
+			ResourceType: "project", ResourceID: id, Details: string(details), Result: "success",
+			OccurredAt: time.Now().Format(time.RFC3339),
+		}).Error
 	})
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		writeError(w, http.StatusNotFound, "project or policy pack not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "bound", "policy_pack_id": req.PolicyPackID})
 }
 
@@ -4208,28 +4979,52 @@ func (s *Server) handleBindProjectPolicyPack(w http.ResponseWriter, r *http.Requ
 // change-control queue, and audit.
 func (s *Server) handleGetProjectDetail(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	if orgID == "" {
+		writeError(w, http.StatusForbidden, "organization context required")
+		return
+	}
 	var proj models.Project
-	if err := s.db.First(&proj, "id = ?", id).Error; err != nil {
+	if err := s.db.First(&proj, "id = ? AND organization_id = ?", id, orgID).Error; err != nil {
 		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
 		return
 	}
-	result := map[string]interface{}{"project": projectViewRow(proj)}
+	projectRow, err := s.projectViewRow(proj)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	result := map[string]interface{}{"project": projectRow}
 
 	var repos []models.Repository
-	s.db.Where("project_id = ?", id).Find(&repos)
+	s.db.Where("organization_id = ? AND project_id = ?", orgID, id).Find(&repos)
 	result["repositories"] = repos
 
 	var members []models.ProjectMember
-	s.db.Where("project_id = ?", id).Find(&members)
+	s.db.Where("organization_id = ? AND project_id = ?", orgID, id).Find(&members)
 	type memberRow struct {
 		models.ProjectMember
 		User *models.User `json:"user,omitempty"`
 	}
 	rows := make([]memberRow, 0, len(members))
+	userIDs := make([]string, 0, len(members))
+	for _, member := range members {
+		userIDs = append(userIDs, member.UserID)
+	}
+	usersByID := make(map[string]models.User, len(userIDs))
+	if len(userIDs) > 0 {
+		var users []models.User
+		if err := s.db.Where("organization_id = ? AND id IN ?", orgID, userIDs).Find(&users).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for _, user := range users {
+			usersByID[user.ID] = user
+		}
+	}
 	for _, m := range members {
 		row := memberRow{ProjectMember: m}
-		var user models.User
-		if s.db.First(&user, "id = ?", m.UserID).Error == nil {
+		if user, ok := usersByID[m.UserID]; ok {
 			row.User = &user
 		}
 		rows = append(rows, row)
@@ -4237,22 +5032,22 @@ func (s *Server) handleGetProjectDetail(w http.ResponseWriter, r *http.Request) 
 	result["members"] = rows
 
 	var sessions []models.Session
-	s.db.Where("project_id = ?", id).Order("created_at DESC").Limit(50).Find(&sessions)
+	s.db.Where("organization_id = ? AND project_id = ?", orgID, id).Order("created_at DESC").Limit(50).Find(&sessions)
 	result["sessions"] = sessions
 
 	if proj.PolicyPackID != "" {
 		var pack models.PolicyPack
-		if s.db.First(&pack, "id = ?", proj.PolicyPackID).Error == nil {
+		if s.db.First(&pack, "id = ? AND organization_id = ?", proj.PolicyPackID, orgID).Error == nil {
 			result["policy_pack"] = pack
 		}
 	}
 
 	var changes []models.ChangeRequest
-	s.db.Where("project_id = ?", id).Order("created_at DESC").Find(&changes)
+	s.db.Where("organization_id = ? AND project_id = ?", orgID, id).Order("created_at DESC").Find(&changes)
 	result["change_requests"] = changes
 
 	var auditEvents []models.AuditEvent
-	s.db.Where("resource_id = ?", id).Order("occurred_at DESC").Limit(50).Find(&auditEvents)
+	s.db.Where("organization_id = ? AND resource_id = ?", orgID, id).Order("occurred_at DESC").Limit(50).Find(&auditEvents)
 	result["audit_events"] = auditEvents
 
 	writeJSON(w, http.StatusOK, result)
@@ -4363,45 +5158,39 @@ func (s *Server) handleDeleteRepository(w http.ResponseWriter, r *http.Request) 
 // applySessionTransition performs one admin session lifecycle move with
 // org-scoped lookup, canonical transition validation (409), and an SSE
 // broadcast so Live surfaces hear it without polling (PAT-1496).
-func (s *Server) applySessionTransition(w http.ResponseWriter, r *http.Request, to, auditEventType, auditAction string) {
+func (s *Server) applySessionTransition(w http.ResponseWriter, r *http.Request, to, auditAction string) {
+	if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+		return
+	}
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
-	var sess models.Session
-	if err := s.db.Where("(id = ? OR session_id = ?) AND organization_id = ?", id, id, orgID).First(&sess).Error; err != nil {
+	actorID := getActorID(r)
+	outcome := s.sessionLifecycle.Transition(sessionlifecycle.Request{OrganizationID: orgID, SessionRef: id, Target: to, Action: auditAction, Reason: "operator requested lifecycle transition", ActorID: actorID})
+	if outcome.Result == sessionlifecycle.ResultNotFound {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	if !models.SessionTransitionAllowed(sess.Status, to) {
-		writeError(w, http.StatusConflict, fmt.Sprintf("invalid session transition: %s → %s", sess.Status, to))
+	if outcome.Result == sessionlifecycle.ResultConflict {
+		writeError(w, http.StatusConflict, "session changed concurrently")
 		return
 	}
-	now := time.Now().Format(time.RFC3339)
-	from := sess.Status
-	s.db.Model(&sess).Updates(map[string]interface{}{
-		"status":           to,
-		"last_activity_at": now,
-	})
-	s.ext().Realtime.NotifySessionUpdate(orgID, sess.SessionID, to)
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID,
-		EventType:      auditEventType,
-		ActorType:      "admin",
-		Action:         auditAction,
-		ResourceType:   "session",
-		ResourceID:     sess.ID,
-		Details:        fmt.Sprintf("session %s → %s", from, to),
-		Result:         "success",
-		OccurredAt:     now,
-	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": to})
+	if outcome.Result == sessionlifecycle.ResultInvalidTransition {
+		writeError(w, http.StatusConflict, fmt.Sprintf("invalid session transition: %s → %s", outcome.From, to))
+		return
+	}
+	if outcome.Result != sessionlifecycle.ResultUpdated {
+		writeError(w, http.StatusInternalServerError, outcome.Error)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": to, "cleanup_failures": outcome.CleanupFailures})
 }
 
 func (s *Server) handlePauseSession(w http.ResponseWriter, r *http.Request) {
-	s.applySessionTransition(w, r, "paused", "cp.session.paused", "pause_session")
+	s.applySessionTransition(w, r, "paused", "pause_session")
 }
 
 func (s *Server) handleResumeSession(w http.ResponseWriter, r *http.Request) {
-	s.applySessionTransition(w, r, "active", "cp.session.resumed", "resume_session")
+	s.applySessionTransition(w, r, "active", "resume_session")
 }
 
 func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
@@ -4412,13 +5201,52 @@ func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var updates struct {
-		Name             *string  `json:"name,omitempty"`
-		NameKo           *string  `json:"name_ko,omitempty"`
-		Description      *string  `json:"description,omitempty"`
-		PriceInputPer1K  *float64 `json:"price_input_per_1k,omitempty"`
-		PriceOutputPer1K *float64 `json:"price_output_per_1k,omitempty"`
+		Name             *string      `json:"name,omitempty"`
+		NameKo           *string      `json:"name_ko,omitempty"`
+		Description      *string      `json:"description,omitempty"`
+		PriceInputPer1K  *json.Number `json:"price_input_per_1k,omitempty"`
+		PriceOutputPer1K *json.Number `json:"price_output_per_1k,omitempty"`
+		PriceVersion     *string      `json:"price_version,omitempty"`
+		PriceSource      *string      `json:"price_source,omitempty"`
 	}
-	decodeJSON(r, &updates)
+	if err := decodeJSON(r, &updates); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if updates.PriceVersion != nil && strings.TrimSpace(*updates.PriceVersion) == "" {
+		writeError(w, http.StatusBadRequest, "price_version must not be empty")
+		return
+	}
+	if updates.PriceSource != nil && strings.TrimSpace(*updates.PriceSource) == "" {
+		writeError(w, http.StatusBadRequest, "price_source must not be empty")
+		return
+	}
+	inputMicros, outputMicros := pkg.PriceInputMicrosPer1K, pkg.PriceOutputMicrosPer1K
+	inputLegacy, outputLegacy := pkg.PriceInputPer1K, pkg.PriceOutputPer1K
+	if updates.PriceInputPer1K != nil {
+		var err error
+		inputMicros, err = metering.ParseKRWPriceMicrosPer1K(updates.PriceInputPer1K.String())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		inputLegacy, _ = strconv.ParseFloat(updates.PriceInputPer1K.String(), 64)
+	}
+	if updates.PriceOutputPer1K != nil {
+		var err error
+		outputMicros, err = metering.ParseKRWPriceMicrosPer1K(updates.PriceOutputPer1K.String())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		outputLegacy, _ = strconv.ParseFloat(updates.PriceOutputPer1K.String(), 64)
+	}
+	priceChanged := (updates.PriceInputPer1K != nil && (!pkg.PriceInputConfigured || inputMicros != pkg.PriceInputMicrosPer1K)) ||
+		(updates.PriceOutputPer1K != nil && (!pkg.PriceOutputConfigured || outputMicros != pkg.PriceOutputMicrosPer1K))
+	if priceChanged && updates.PriceVersion != nil && strings.TrimSpace(*updates.PriceVersion) == strings.TrimSpace(pkg.PriceVersion) {
+		writeError(w, http.StatusBadRequest, "a changed price requires a new price_version")
+		return
+	}
 	if updates.Name != nil {
 		pkg.Name = *updates.Name
 	}
@@ -4426,73 +5254,101 @@ func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		pkg.NameKo = *updates.NameKo
 	}
 	if updates.PriceInputPer1K != nil {
-		pkg.PriceInputPer1K = *updates.PriceInputPer1K
+		pkg.PriceInputPer1K = inputLegacy
+		pkg.PriceInputMicrosPer1K = inputMicros
+		pkg.PriceInputConfigured = true
 	}
 	if updates.PriceOutputPer1K != nil {
-		pkg.PriceOutputPer1K = *updates.PriceOutputPer1K
+		pkg.PriceOutputPer1K = outputLegacy
+		pkg.PriceOutputMicrosPer1K = outputMicros
+		pkg.PriceOutputConfigured = true
 	}
-	s.db.Save(&pkg)
+	if updates.PriceVersion != nil {
+		pkg.PriceVersion = strings.TrimSpace(*updates.PriceVersion)
+	} else if priceChanged {
+		pkg.PriceVersion = "catalog-" + time.Now().UTC().Format("20060102T150405.000000000Z")
+	}
+	if updates.PriceSource != nil {
+		pkg.PriceSource = strings.TrimSpace(*updates.PriceSource)
+	} else if priceChanged && pkg.PriceSource == "" {
+		pkg.PriceSource = "pccp.model_catalog"
+	}
+	if err := s.db.Save(&pkg).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, pkg)
 }
 
 func (s *Server) handleQuarantineHarness(w http.ResponseWriter, r *http.Request) {
+	if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+		return
+	}
 	id := chi.URLParam(r, "id")
 	var harness models.Harness
-	if err := s.db.Where("id = ? OR harness_id = ?", id, id).First(&harness).Error; err != nil {
+	orgID := getOrgID(r)
+	if err := s.db.Where("organization_id = ? AND (id = ? OR harness_id = ?)", orgID, id, id).First(&harness).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	s.db.Model(&harness).Updates(map[string]interface{}{
-		"status":     "quarantined",
-		"risk_state": "high",
-	})
-	// Terminate active sessions
-	s.db.Model(&models.Session{}).Where("harness_id = ? AND status = 'active'", harness.HarnessID).
-		Update("status", "terminated")
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: harness.OrganizationID,
-		EventType:      "cp.harness.quarantined",
-		ActorType:      "admin",
-		Action:         "quarantine_harness",
-		ResourceType:   "harness",
-		ResourceID:     harness.ID,
-		Details:        "harness quarantined; active sessions terminated",
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
-	})
-	// Live propagation (harnesses C3): the connect-time gate reads DB
-	// status on the next connection; the directive additionally tells
-	// the relay to kill the current transport when configured.
-	relayPropagated := true
-	if err := s.pushRelayDirective("quarantine_device", harness.OrganizationID, harness.HarnessID, "quarantined via control plane", map[string]interface{}{"terminate_sessions": true}); err != nil {
-		relayPropagated = false
-		log.Printf("api: quarantine %s: relay propagation skipped: %v", harness.HarnessID, err)
+	if err := s.fleet.PerformAction(fleet.ActionRequest{
+		OrganizationID: orgID,
+		HarnessID:      harness.HarnessID,
+		Action:         fleet.ActionQuarantine,
+		Reason:         "quarantined via control plane",
+		PerformedBy:    getActorID(r),
+	}); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "quarantined", "relay_propagated": relayPropagated})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "quarantined", "relay_propagated": true})
 }
 
 func (s *Server) handleReactivateHarness(w http.ResponseWriter, r *http.Request) {
+	if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+		return
+	}
 	id := chi.URLParam(r, "id")
 	var harness models.Harness
-	if err := s.db.Where("id = ? OR harness_id = ?", id, id).First(&harness).Error; err != nil {
+	orgID := getOrgID(r)
+	if err := s.db.Where("organization_id = ? AND (id = ? OR harness_id = ?)", orgID, id, id).First(&harness).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	s.db.Model(&harness).Updates(map[string]interface{}{
-		"status":     "enrolled",
-		"risk_state": "normal",
-	})
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: harness.OrganizationID,
-		EventType:      "cp.harness.reactivated",
-		ActorType:      "admin",
-		Action:         "reactivate_harness",
-		ResourceType:   "harness",
-		ResourceID:     harness.ID,
-		Details:        "harness reactivated",
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
-	})
+	if harness.Status != "quarantined" {
+		writeError(w, http.StatusConflict, "only a quarantined harness may be reactivated; revoked harnesses must re-enroll with a new credential")
+		return
+	}
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.Harness{}).
+			Where("id = ? AND organization_id = ? AND status = ?", harness.ID, orgID, "quarantined").
+			Updates(map[string]interface{}{"status": "enrolled", "risk_state": "normal"})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrInvalidData
+		}
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: harness.OrganizationID,
+			EventType:      "cp.harness.reactivated",
+			ActorID:        getActorID(r),
+			ActorType:      "admin",
+			Action:         "reactivate_harness",
+			ResourceType:   "harness",
+			ResourceID:     harness.ID,
+			Details:        "harness reactivated",
+			Result:         "success",
+			OccurredAt:     time.Now().Format(time.RFC3339),
+		}).Error
+	}); err != nil {
+		if errors.Is(err, gorm.ErrInvalidData) {
+			writeError(w, http.StatusConflict, "harness standing changed; refresh before retrying")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "enrolled"})
 }
 
@@ -4766,6 +5622,9 @@ func (s *Server) handleUpdateFinding(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSecurityLockdown(w http.ResponseWriter, r *http.Request) {
+	if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+		return
+	}
 	orgID := getOrgID(r)
 	var req struct {
 		Scope     string `json:"scope"` // org | project
@@ -4773,79 +5632,365 @@ func (s *Server) handleSecurityLockdown(w http.ResponseWriter, r *http.Request) 
 		Reason    string `json:"reason"`
 	}
 	if r.Body != http.NoBody {
-		decodeJSON(r, &req)
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
 	}
 	if req.Scope == "" {
 		req.Scope = "org"
+	}
+	if req.Scope != "org" && req.Scope != "project" {
+		writeError(w, http.StatusBadRequest, "scope must be org or project")
+		return
 	}
 	if req.Scope == "project" && req.ProjectID == "" {
 		writeError(w, http.StatusBadRequest, "project scope requires project_id")
 		return
 	}
+	if req.Scope == "project" {
+		var count int64
+		if err := s.db.Model(&models.Project{}).Where("id = ? AND organization_id = ?", req.ProjectID, orgID).Count(&count).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if count != 1 {
+			writeError(w, http.StatusNotFound, "project not found")
+			return
+		}
+	}
+	if strings.TrimSpace(req.Reason) == "" {
+		writeError(w, http.StatusBadRequest, "reason is required")
+		return
+	}
 
-	// Terminate active sessions (org-wide or project-scoped) and raise
-	// harness risk state.
-	sessionQ := s.db.Model(&models.Session{}).Where("organization_id = ? AND status = 'active'", orgID)
-	harnessQ := s.db.Model(&models.Harness{}).Where("organization_id = ?", orgID)
-	if req.Scope == "project" {
-		sessionQ = sessionQ.Where("project_id = ?", req.ProjectID)
-	}
+	// Resolve the affected harness set only after the same org/project locks
+	// used by session creation have been acquired.
 	var affectedHarnesses []models.Harness
-	if req.Scope == "project" {
-		// Harnesses with active sessions in the project.
-		s.db.Model(&models.Harness{}).
-			Where("organization_id = ? AND harness_id IN (?)", orgID,
-				s.db.Model(&models.Session{}).Select("harness_id").
-					Where("organization_id = ? AND status = 'active' AND project_id = ?", orgID, req.ProjectID)).
-			Find(&affectedHarnesses)
-	} else {
-		s.db.Where("organization_id = ?", orgID).Find(&affectedHarnesses)
+	actorID := getActorID(r)
+	scope := sessionlifecycle.Scope{OrganizationID: orgID, ProjectID: req.ProjectID, ForceTerminal: true, ActorType: "admin"}
+	var outcomes []sessionlifecycle.Outcome
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var organization models.Organization
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", orgID).First(&organization).Error; err != nil {
+			return err
+		}
+		if req.Scope == "project" {
+			var project models.Project
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND organization_id = ?", req.ProjectID, orgID).First(&project).Error; err != nil {
+				return err
+			}
+		} else {
+			scope.ProjectID = ""
+		}
+		harnessQuery := tx.Where("organization_id = ?", orgID)
+		if req.Scope == "project" {
+			harnessQuery = harnessQuery.Where("harness_id IN (?)", tx.Model(&models.Session{}).Select("harness_id").
+				Where("organization_id = ? AND status IN ? AND project_id = ?", orgID, models.SessionNonTerminalStatuses(), req.ProjectID))
+		}
+		if err := harnessQuery.Find(&affectedHarnesses).Error; err != nil {
+			return err
+		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		lockdown := models.SecurityLockdown{OrganizationID: orgID, Scope: req.Scope, ProjectID: scope.ProjectID}
+		if err := tx.Where("organization_id = ? AND scope = ? AND project_id = ?", orgID, req.Scope, scope.ProjectID).
+			Assign(map[string]interface{}{"status": "active", "reason": req.Reason, "activated_by": actorID, "activated_at": now, "released_by": "", "released_at": nil}).
+			FirstOrCreate(&lockdown).Error; err != nil {
+			return err
+		}
+		var transitionErr error
+		outcomes, transitionErr = s.sessionLifecycle.TransitionScopeInTransaction(tx, scope, "terminated", "security_lockdown", req.Reason, actorID)
+		if transitionErr != nil {
+			return transitionErr
+		}
+		for _, outcome := range outcomes {
+			if outcome.Result != sessionlifecycle.ResultUpdated {
+				return fmt.Errorf("security lockdown: session %s transition %s", outcome.RequestedID, outcome.Result)
+			}
+		}
+		details, _ := json.Marshal(map[string]string{"scope": req.Scope, "project_id": scope.ProjectID, "reason": req.Reason})
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: orgID, EventType: "cp.security.lockdown_activated", ActorID: actorID, ActorType: "admin",
+			Action: "activate_lockdown", ResourceType: "security_lockdown", ResourceID: scope.ProjectID,
+			Details: string(details), Result: "success", OccurredAt: now,
+		}).Error
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	sessionQ.Update("status", "terminated")
-	harnessQ.Update("risk_state", "high")
+	finalized, finalizeErr := s.sessionLifecycle.FinalizeTransitions(orgID, outcomes, "terminated", "security_lockdown", req.Reason, actorID, "admin")
+	if finalizeErr != nil {
+		outcomes = finalized
+	}
+	affectedSessions := 0
+	transitionFailed := false
+	for _, outcome := range outcomes {
+		if outcome.Result == sessionlifecycle.ResultUpdated && len(outcome.CleanupFailures) == 0 {
+			affectedSessions++
+		} else {
+			transitionFailed = true
+		}
+	}
 
 	// Live propagation (security B1): DB termination is enforced by the
 	// relay's per-request session-status gate; the directive additionally
 	// notifies the relay channel when configured.
-	relayPropagated := true
+	relayCtx, cancelRelay := stdctx.WithTimeout(r.Context(), 30*time.Second)
+	defer cancelRelay()
+	jobs := make(chan models.Harness)
+	var relayDelivered atomic.Int64
+	var relayFailed atomic.Int64
+	workerCount := len(affectedHarnesses)
+	if workerCount > 16 {
+		workerCount = 16
+	}
+	var relayWorkers sync.WaitGroup
+	for worker := 0; worker < workerCount; worker++ {
+		relayWorkers.Add(1)
+		go func() {
+			defer relayWorkers.Done()
+			for h := range jobs {
+				if err := s.pushRelayDirectiveContext(relayCtx, "emergency_lockdown", orgID, h.HarnessID, req.Reason, map[string]interface{}{"scope": req.Scope}); err != nil {
+					relayFailed.Add(1)
+				} else {
+					relayDelivered.Add(1)
+				}
+			}
+		}()
+	}
+	sent := 0
+sendRelayJobs:
 	for _, h := range affectedHarnesses {
-		if err := s.pushRelayDirective("emergency_lockdown", orgID, h.HarnessID, req.Reason, map[string]interface{}{"scope": req.Scope}); err != nil {
-			relayPropagated = false
+		select {
+		case jobs <- h:
+			sent++
+		case <-relayCtx.Done():
+			relayFailed.Add(int64(len(affectedHarnesses) - sent))
+			break sendRelayJobs
 		}
 	}
+	close(jobs)
+	relayWorkers.Wait()
+	relayPropagated := relayFailed.Load() == 0
 
+	auditDetails, _ := json.Marshal(map[string]interface{}{"scope": req.Scope, "project_id": req.ProjectID, "reason": req.Reason, "relay_delivered": relayDelivered.Load(), "relay_failed": relayFailed.Load()})
 	audit := &models.AuditEvent{
 		OrganizationID: orgID,
 		EventType:      "cp.security.emergency_lockdown",
+		ActorID:        actorID,
 		ActorType:      "admin",
 		Action:         "emergency_lockdown",
-		Details:        fmt.Sprintf(`{"scope":"%s","project_id":"%s","reason":"%s"}`, req.Scope, req.ProjectID, req.Reason),
-		Result:         "success",
+		Details:        string(auditDetails),
+		Result:         map[bool]string{true: "failure", false: "success"}[transitionFailed || !relayPropagated],
 		OccurredAt:     time.Now().Format(time.RFC3339),
 	}
-	s.db.Create(audit)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status": "lockdown_activated", "scope": req.Scope,
-		"affected_harnesses": len(affectedHarnesses), "relay_propagated": relayPropagated,
+	auditPersisted := s.db.Create(audit).Error == nil
+	statusCode := http.StatusOK
+	status := "lockdown_activated"
+	if transitionFailed || !relayPropagated || !auditPersisted {
+		statusCode = http.StatusConflict
+		status = "lockdown_partially_applied"
+	}
+	writeJSON(w, statusCode, map[string]interface{}{
+		"status": status, "scope": req.Scope,
+		"affected_harnesses": len(affectedHarnesses), "affected_sessions": affectedSessions, "session_outcomes": outcomes,
+		"relay_propagated": relayPropagated, "relay_delivered": relayDelivered.Load(), "relay_failed": relayFailed.Load(), "lockdown_state_persisted": true, "audit_persisted": auditPersisted,
+	})
+}
+
+func (s *Server) handleSecurityLockdownRelease(w http.ResponseWriter, r *http.Request) {
+	if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+		return
+	}
+	orgID := getOrgID(r)
+	actorID := getActorID(r)
+	var req struct {
+		Scope     string `json:"scope"`
+		ProjectID string `json:"project_id"`
+		Reason    string `json:"reason"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Scope != "org" && req.Scope != "project" {
+		writeError(w, http.StatusBadRequest, "scope must be org or project")
+		return
+	}
+	if req.Scope == "project" && strings.TrimSpace(req.ProjectID) == "" {
+		writeError(w, http.StatusBadRequest, "project scope requires project_id")
+		return
+	}
+	if strings.TrimSpace(req.Reason) == "" {
+		writeError(w, http.StatusBadRequest, "reason is required")
+		return
+	}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var organization models.Organization
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", orgID).First(&organization).Error; err != nil {
+			return err
+		}
+		if req.Scope == "project" {
+			var project models.Project
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND organization_id = ?", req.ProjectID, orgID).First(&project).Error; err != nil {
+				return err
+			}
+		} else {
+			req.ProjectID = ""
+		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		updated := tx.Model(&models.SecurityLockdown{}).
+			Where("organization_id = ? AND scope = ? AND project_id = ? AND status = ?", orgID, req.Scope, req.ProjectID, "active").
+			Updates(map[string]interface{}{"status": "released", "released_by": actorID, "released_at": now})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		details, _ := json.Marshal(map[string]string{"scope": req.Scope, "project_id": req.ProjectID, "reason": req.Reason})
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: orgID, EventType: "cp.security.lockdown_released", ActorID: actorID, ActorType: "admin",
+			Action: "release_lockdown", ResourceType: "security_lockdown", ResourceID: req.ProjectID,
+			Details: string(details), Result: "success", OccurredAt: now,
+		}).Error
+	})
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		writeError(w, http.StatusConflict, "no active lockdown exists for the requested scope")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var harnesses []models.Harness
+	harnessQuery := s.db.Where("organization_id = ?", orgID)
+	if req.Scope == "project" {
+		harnessQuery = harnessQuery.Where("harness_id IN (?)", s.db.Model(&models.Session{}).Select("harness_id").Where("organization_id = ? AND project_id = ?", orgID, req.ProjectID))
+	}
+	if err := harnessQuery.Find(&harnesses).Error; err != nil {
+		writeJSON(w, http.StatusConflict, map[string]interface{}{"status": "lockdown_released", "relay_propagated": false, "error": "release persisted but affected harnesses could not be resolved"})
+		return
+	}
+	relayCtx, cancelRelay := stdctx.WithTimeout(r.Context(), 30*time.Second)
+	defer cancelRelay()
+	jobs := make(chan models.Harness)
+	var delivered atomic.Int64
+	var failed atomic.Int64
+	workerCount := len(harnesses)
+	if workerCount > 16 {
+		workerCount = 16
+	}
+	var workers sync.WaitGroup
+	for worker := 0; worker < workerCount; worker++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for harness := range jobs {
+				if err := s.pushRelayDirectiveContext(relayCtx, "release_lockdown", orgID, harness.HarnessID, req.Reason, map[string]interface{}{"scope": req.Scope, "project_id": req.ProjectID}); err != nil {
+					failed.Add(1)
+				} else {
+					delivered.Add(1)
+				}
+			}
+		}()
+	}
+	for _, harness := range harnesses {
+		select {
+		case jobs <- harness:
+		case <-relayCtx.Done():
+			failed.Add(1)
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	deliveryDetails, _ := json.Marshal(map[string]interface{}{"scope": req.Scope, "project_id": req.ProjectID, "relay_delivered": delivered.Load(), "relay_failed": failed.Load()})
+	deliveryResult := "success"
+	if failed.Load() > 0 {
+		deliveryResult = "partial"
+	}
+	auditErr := models.CreateAuditEvent(s.db, &models.AuditEvent{
+		OrganizationID: orgID, EventType: "cp.security.lockdown_release_delivery", ActorID: actorID, ActorType: "admin",
+		Action: "release_lockdown_delivery", ResourceType: "security_lockdown", ResourceID: req.ProjectID,
+		Details: string(deliveryDetails), Result: deliveryResult, OccurredAt: time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	statusCode := http.StatusOK
+	status := "lockdown_released"
+	if failed.Load() > 0 || auditErr != nil {
+		statusCode = http.StatusConflict
+		status = "lockdown_released_with_propagation_failures"
+	}
+	writeJSON(w, statusCode, map[string]interface{}{
+		"status": status, "scope": req.Scope, "project_id": req.ProjectID,
+		"relay_propagated": failed.Load() == 0, "relay_delivered": delivered.Load(), "relay_failed": failed.Load(), "audit_persisted": auditErr == nil,
 	})
 }
 
 // handleSecurityLockdownImpact previews the lockdown blast radius
 // (security UX9).
 func (s *Server) handleSecurityLockdownImpact(w http.ResponseWriter, r *http.Request) {
+	if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+		return
+	}
 	orgID := getOrgID(r)
 	scope := r.URL.Query().Get("scope")
+	if scope == "" {
+		scope = "org"
+	}
 	projectID := r.URL.Query().Get("project_id")
-	q := s.db.Model(&models.Session{}).Where("organization_id = ? AND status = 'active'", orgID)
-	hq := s.db.Model(&models.Harness{}).Where("organization_id = ?", orgID)
-	if scope == "project" && projectID != "" {
+	if scope != "org" && scope != "project" {
+		writeError(w, http.StatusBadRequest, "scope must be org or project")
+		return
+	}
+	if scope == "project" {
+		if projectID == "" {
+			writeError(w, http.StatusBadRequest, "project scope requires project_id")
+			return
+		}
+		var count int64
+		if err := s.db.Model(&models.Project{}).Where("id = ? AND organization_id = ?", projectID, orgID).Count(&count).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if count != 1 {
+			writeError(w, http.StatusNotFound, "project not found")
+			return
+		}
+	}
+	statuses := models.SessionNonTerminalStatuses()
+	q := s.db.Model(&models.Session{}).Where("organization_id = ? AND status IN ?", orgID, statuses)
+	if scope == "project" {
 		q = q.Where("project_id = ?", projectID)
 	}
-	var activeSessions, activeHarnesses int64
-	q.Count(&activeSessions)
-	hq.Where("status IN ?", []string{"enrolled", "active"}).Count(&activeHarnesses)
+	type statusCount struct {
+		Status string
+		Count  int64
+	}
+	var counts []statusCount
+	if err := q.Select("status, COUNT(*) AS count").Group("status").Scan(&counts).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	breakdown := make(map[string]int64, len(statuses))
+	var inProgressSessions int64
+	for _, item := range counts {
+		breakdown[item.Status] = item.Count
+		inProgressSessions += item.Count
+	}
+	hq := s.db.Model(&models.Harness{}).Where("organization_id = ?", orgID)
+	if scope == "project" {
+		hq = hq.Where("harness_id IN (?)", s.db.Model(&models.Session{}).Select("harness_id").
+			Where("organization_id = ? AND project_id = ? AND status IN ?", orgID, projectID, statuses))
+	}
+	var affectedHarnesses int64
+	if err := hq.Count(&affectedHarnesses).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"scope": scope, "active_sessions": activeSessions, "active_harnesses": activeHarnesses,
+		"scope": scope, "project_id": projectID, "active_sessions": breakdown["active"],
+		"in_progress_sessions": inProgressSessions, "affected_harnesses": affectedHarnesses, "status_breakdown": breakdown,
 	})
 }
 
@@ -4957,186 +6102,331 @@ func (s *Server) handleScanSession(w http.ResponseWriter, r *http.Request) {
 // surface minimal so PR 2's durability work is reviewable on its own.
 
 func (s *Server) handleListAlertEndpoints(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAlertPermission(w, r, AlertActionRead, "") {
+		return
+	}
 	orgID := getOrgID(r)
-	var endpoints []models.AlertEndpoint
-	s.db.Where("organization_id = ?", orgID).Order("created_at DESC").Find(&endpoints)
-	writeJSON(w, http.StatusOK, redactAlertEndpoints(endpoints))
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 200 {
+			limit = parsed
+		}
+	}
+	type alertEndpointListRow struct {
+		models.AlertEndpoint
+		SecretConfigured bool `gorm:"column:secret_configured"`
+	}
+	var rows []alertEndpointListRow
+	query := s.db.Model(&models.AlertEndpoint{}).
+		Select("id, organization_id, name, type, credential_id, rotation_required, last_rotated_at, last_test_at, last_test_status, severities_json, enabled, created_at, updated_at, CASE WHEN target_enc <> '' OR target <> '' THEN true ELSE false END AS secret_configured").
+		Where("organization_id = ?", orgID).Order("id ASC").Limit(limit + 1)
+	if cursor := r.URL.Query().Get("cursor"); cursor != "" {
+		query = query.Where("id > ?", cursor)
+	}
+	if err := query.Scan(&rows).Error; err != nil {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionRead, "", "failure", map[string]interface{}{"reason_code": "storage_error"}) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not list alert endpoints")
+		return
+	}
+	if len(rows) > limit {
+		w.Header().Set("X-Next-Cursor", rows[limit-1].ID)
+		rows = rows[:limit]
+	}
+	responses := make([]AlertEndpointResponse, 0, len(rows))
+	for _, row := range rows {
+		response := redactAlertEndpoint(row.AlertEndpoint)
+		response.SecretConfigured = row.SecretConfigured
+		responses = append(responses, response)
+	}
+	if err := s.auditAlertAction(r, AlertActionRead, "", "success", map[string]interface{}{"count": len(rows)}); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not record alert endpoint access")
+		return
+	}
+	writeJSON(w, http.StatusOK, responses)
 }
 
 func (s *Server) handleCreateAlertEndpoint(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	role := getRole(r)
-	if role != "admin" && role != "owner" && role != "super_admin" {
-		writeError(w, http.StatusForbidden, "organization administrator role required")
+	if !s.requireAlertPermission(w, r, AlertActionCreate, "") {
 		return
 	}
 	if s.keyProvider == nil {
 		// PAT-1502 PR 2: write paths fail closed when no KeyProvider
 		// is configured. An unconfigured server cannot accept secret
 		// material.
+		if !s.recordAlertAuditOrFail(w, r, AlertActionCreate, "", "failure", map[string]interface{}{"reason_code": "provider_not_configured"}) {
+			return
+		}
 		writeError(w, http.StatusServiceUnavailable, "alert endpoint storage is not configured")
 		return
 	}
 	var req AlertEndpointCreateRequest
 	if err := decodeJSON(r, &req); err != nil {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionCreate, "", "failure", map[string]interface{}{"reason_code": "invalid_request"}) {
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	target := strings.TrimSpace(req.Target)
 	if req.Name == "" || target == "" {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionCreate, "", "failure", map[string]interface{}{"reason_code": "missing_required_field"}) {
+			return
+		}
 		writeError(w, http.StatusBadRequest, "name and target are required")
 		return
 	}
-	if !isAcceptableAlertTarget(req.Type, target) {
-		writeError(w, http.StatusBadRequest, "target must be an http(s) URL on a public host")
+	if len(req.Name) > 255 || len(target) > 1024 {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionCreate, "", "failure", map[string]interface{}{"reason_code": "field_too_long"}) {
+			return
+		}
+		writeError(w, http.StatusBadRequest, "name or target exceeds the allowed length")
 		return
 	}
 	if req.Type == "" {
 		req.Type = "webhook"
 	}
-	severitiesJSON, _ := json.Marshal(req.Severities)
+	if req.Type != "slack" && req.Type != "webhook" && req.Type != "siem" {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionCreate, "", "failure", map[string]interface{}{"reason_code": "invalid_provider_type"}) {
+			return
+		}
+		writeError(w, http.StatusBadRequest, "unsupported alert endpoint type")
+		return
+	}
+	if !isAcceptableAlertTarget(req.Type, target) {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionCreate, "", "failure", map[string]interface{}{"reason_code": "invalid_target"}) {
+			return
+		}
+		writeError(w, http.StatusBadRequest, "target does not match the selected provider format")
+		return
+	}
+	severities, valid := normalizeAlertSeverities(req.Severities)
+	if !valid {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionCreate, "", "failure", map[string]interface{}{"reason_code": "invalid_severity"}) {
+			return
+		}
+		writeError(w, http.StatusBadRequest, "unsupported alert severity")
+		return
+	}
+	severitiesJSON, _ := json.Marshal(severities)
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
-	enc, kekID, err := PersistTarget(s.keyProvider, target)
+	epID := models.GenerateID("alert")
+	enc, kekID, credentialID, bindingVersion, err := keymgmt.SealAlertSecret(s.keyProvider, target, keymgmt.AlertSecretContext{
+		OrganizationID: orgID, EndpointID: epID, ProviderType: req.Type,
+	})
 	if err != nil {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionCreate, "", "failure", map[string]interface{}{"reason_code": "encryption_failed"}) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "could not seal target")
 		return
 	}
 	ep := &models.AlertEndpoint{
+		Base:           models.Base{ID: epID},
 		OrganizationID: orgID, Name: req.Name, Type: req.Type,
 		Target: "", TargetEnc: enc, TargetKEKID: kekID,
-		SeveritiesJSON: string(severitiesJSON), Enabled: enabled,
+		TargetBindingVersion: bindingVersion,
+		CredentialID:         credentialID,
+		SeveritiesJSON:       string(severitiesJSON), Enabled: enabled,
 	}
-	if err := s.db.Create(ep).Error; err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(ep).Error; err != nil {
+			return err
+		}
+		return s.auditAlertActionDB(tx, r, AlertActionCreate, ep.ID, "success", map[string]interface{}{
+			"credential_id": ep.CredentialID, "type": ep.Type, "enabled": ep.Enabled,
+		})
+	}); err != nil {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionCreate, "", "failure", map[string]interface{}{"reason_code": "storage_error"}) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not create alert endpoint")
 		return
 	}
-	credID := credentialIDForTarget(target)
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID,
-		ActorID:        getActorID(r),
-		ActorType:      "user",
-		EventType:      "security.alert_endpoint.create",
-		Action:         "create",
-		ResourceType:   "alert_endpoint",
-		ResourceID:     ep.ID,
-		Result:         "success",
-		Details:        fmt.Sprintf(`{"credential_id":%q,"type":%q,"name":%q}`, credID, ep.Type, ep.Name),
-	})
 	writeJSON(w, http.StatusCreated, redactAlertEndpoint(*ep))
 }
 
 func (s *Server) handleDeleteAlertEndpoint(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	role := getRole(r)
-	if role != "admin" && role != "owner" && role != "super_admin" {
-		writeError(w, http.StatusForbidden, "organization administrator role required")
+	id := chi.URLParam(r, "id")
+	if !s.requireAlertPermission(w, r, AlertActionDelete, id) {
 		return
 	}
-	id := chi.URLParam(r, "id")
 	var ep models.AlertEndpoint
 	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&ep).Error; err != nil {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionDelete, id, "failure", map[string]interface{}{"reason_code": "not_found"}) {
+			return
+		}
 		writeError(w, http.StatusNotFound, "alert endpoint not found")
 		return
 	}
-	// We resolve the target (encrypted preferred, legacy fallback)
-	// solely to compute a stable credential_id for the audit row.
-	// The plaintext URL never leaves this handler.
-	target, _ := ResolveTarget(s.keyProvider, ep.TargetEnc, ep.TargetKEKID, ep.Target)
-	credID := credentialIDForTarget(target)
-	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).Delete(&models.AlertEndpoint{}).Error; err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("id = ? AND organization_id = ?", id, orgID).Delete(&models.AlertEndpoint{}).Error; err != nil {
+			return err
+		}
+		return s.auditAlertActionDB(tx, r, AlertActionDelete, id, "success", map[string]interface{}{
+			"credential_id": credentialIDForSecret(ep), "type": ep.Type,
+		})
+	}); err != nil {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionDelete, id, "failure", map[string]interface{}{"reason_code": "storage_error", "credential_id": credentialIDForSecret(ep)}) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not delete alert endpoint")
 		return
 	}
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID,
-		ActorID:        getActorID(r),
-		ActorType:      "user",
-		EventType:      "security.alert_endpoint.delete",
-		Action:         "delete",
-		ResourceType:   "alert_endpoint",
-		ResourceID:     id,
-		Result:         "success",
-		Details:        fmt.Sprintf(`{"credential_id":%q,"type":%q,"name":%q}`, credID, ep.Type, ep.Name),
-	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
-// Alert endpoint rotation — replaces the stored credential with a
-// new one. The previous credential is destroyed at the provider
-// level (the DEK is overwritten; the old DEK ciphertext remains on
-// disk but cannot be decrypted). Provider-side revocation (e.g.
-// disabling a Slack webhook) is a separate operation against the
-// upstream service — this endpoint only updates PCCP's record.
-// PAT-1502 PR 2.
+// Alert endpoint rotation replaces PCCP's stored credential. It cannot revoke
+// the previous credential at Slack or another upstream provider, so the
+// response and audit record explicitly preserve that operator obligation.
 func (s *Server) handleRotateAlertEndpoint(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	role := getRole(r)
-	if role != "admin" && role != "owner" && role != "super_admin" {
-		writeError(w, http.StatusForbidden, "organization administrator role required")
+	id := chi.URLParam(r, "id")
+	if !s.requireAlertPermission(w, r, AlertActionRotate, id) {
 		return
 	}
 	if s.keyProvider == nil {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionRotate, id, "failure", map[string]interface{}{"reason_code": "provider_not_configured"}) {
+			return
+		}
 		writeError(w, http.StatusServiceUnavailable, "alert endpoint storage is not configured")
 		return
 	}
-	id := chi.URLParam(r, "id")
 	var req struct {
 		Target string `json:"target"`
+		Enable *bool  `json:"enable,omitempty"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionRotate, id, "failure", map[string]interface{}{"reason_code": "invalid_request"}) {
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	target := strings.TrimSpace(req.Target)
 	if target == "" {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionRotate, id, "failure", map[string]interface{}{"reason_code": "missing_target"}) {
+			return
+		}
 		writeError(w, http.StatusBadRequest, "target is required")
+		return
+	}
+	if len(target) > 1024 {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionRotate, id, "failure", map[string]interface{}{"reason_code": "field_too_long"}) {
+			return
+		}
+		writeError(w, http.StatusBadRequest, "target exceeds the allowed length")
 		return
 	}
 	var ep models.AlertEndpoint
 	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&ep).Error; err != nil {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionRotate, id, "failure", map[string]interface{}{"reason_code": "not_found"}) {
+			return
+		}
 		writeError(w, http.StatusNotFound, "alert endpoint not found")
 		return
 	}
 	if !isAcceptableAlertTarget(ep.Type, target) {
-		writeError(w, http.StatusBadRequest, "target must be an http(s) URL on a public host")
+		if !s.recordAlertAuditOrFail(w, r, AlertActionRotate, id, "failure", map[string]interface{}{"reason_code": "invalid_target", "credential_id": credentialIDForSecret(ep)}) {
+			return
+		}
+		writeError(w, http.StatusBadRequest, "target does not match the selected provider format")
 		return
 	}
-	enc, kekID, err := PersistTarget(s.keyProvider, target)
+	enc, kekID, newCredID, bindingVersion, err := keymgmt.SealAlertSecret(s.keyProvider, target, keymgmt.AlertSecretContext{
+		OrganizationID: orgID, EndpointID: id, ProviderType: ep.Type,
+	})
 	if err != nil {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionRotate, id, "failure", map[string]interface{}{"reason_code": "encryption_failed", "credential_id": credentialIDForSecret(ep)}) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "could not seal new target")
 		return
 	}
-	oldCredID := credentialIDForTarget(mustResolveTarget(s.keyProvider, ep.TargetEnc, ep.TargetKEKID, ep.Target))
-	if err := s.db.Model(&models.AlertEndpoint{}).
-		Where("id = ? AND organization_id = ?", id, orgID).
-		Updates(map[string]interface{}{
-			"target":        "",
-			"target_enc":    enc,
-			"target_kek_id": kekID,
-		}).Error; err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	oldCredID := credentialIDForSecret(ep)
+	hadPriorCredential := ep.Target != "" || ep.TargetEnc != ""
+	now := time.Now().UTC()
+	enabled := ep.Enabled
+	revocationRequired := hadPriorCredential && (oldCredID == "" || oldCredID != newCredID)
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		var updateErr error
+		enabled, updateErr = applyAlertRotation(tx, ep, enc, kekID, newCredID, bindingVersion, now, req.Enable)
+		if updateErr != nil {
+			return updateErr
+		}
+		return s.auditAlertActionDB(tx, r, AlertActionRotate, id, "success", map[string]interface{}{
+			"old_credential_id": oldCredID, "new_credential_id": newCredID, "type": ep.Type,
+			"provider_revocation_required": revocationRequired, "enabled": enabled,
+		})
+	}); err != nil {
+		reasonCode := "storage_error"
+		if errors.Is(err, errAlertEndpointChanged) {
+			reasonCode = "endpoint_changed"
+		}
+		if !s.recordAlertAuditOrFail(w, r, AlertActionRotate, id, "failure", map[string]interface{}{"reason_code": reasonCode, "credential_id": oldCredID}) {
+			return
+		}
+		if errors.Is(err, errAlertEndpointChanged) {
+			writeError(w, http.StatusConflict, "alert endpoint is being tested or changed; retry rotation")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not rotate alert endpoint")
 		return
 	}
-	newCredID := credentialIDForTarget(target)
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID,
-		ActorID:        getActorID(r),
-		ActorType:      "user",
-		EventType:      "security.alert_endpoint.rotate",
-		Action:         "rotate",
-		ResourceType:   "alert_endpoint",
-		ResourceID:     id,
-		Result:         "success",
-		Details:        fmt.Sprintf(`{"old_credential_id":%q,"new_credential_id":%q,"type":%q}`, oldCredID, newCredID, ep.Type),
-	})
 	updated := ep
 	updated.Target = ""
 	updated.TargetEnc = enc
 	updated.TargetKEKID = kekID
-	writeJSON(w, http.StatusOK, redactAlertEndpoint(updated))
+	updated.TargetBindingVersion = bindingVersion
+	updated.CredentialID = newCredID
+	updated.RotationRequired = false
+	updated.LastRotatedAt = &now
+	updated.Enabled = enabled
+	response := redactAlertEndpoint(updated)
+	response.ProviderRevocationRequired = revocationRequired
+	writeJSON(w, http.StatusOK, response)
+}
+
+// handleDisableAlertEndpoint stops delivery without deleting the encrypted
+// configuration or its audit correlation identifier.
+func (s *Server) handleDisableAlertEndpoint(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	id := chi.URLParam(r, "id")
+	if !s.requireAlertPermission(w, r, AlertActionDisable, id) {
+		return
+	}
+	var ep models.AlertEndpoint
+	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&ep).Error; err != nil {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionDisable, id, "failure", map[string]interface{}{"reason_code": "not_found"}) {
+			return
+		}
+		writeError(w, http.StatusNotFound, "alert endpoint not found")
+		return
+	}
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.AlertEndpoint{}).
+			Where("id = ? AND organization_id = ?", id, orgID).
+			Update("enabled", false).Error; err != nil {
+			return err
+		}
+		return s.auditAlertActionDB(tx, r, AlertActionDisable, id, "success", map[string]interface{}{
+			"credential_id": credentialIDForSecret(ep), "type": ep.Type, "enabled": false,
+		})
+	}); err != nil {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionDisable, id, "failure", map[string]interface{}{"reason_code": "storage_error", "credential_id": credentialIDForSecret(ep)}) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not disable alert endpoint")
+		return
+	}
+	ep.Enabled = false
+	writeJSON(w, http.StatusOK, redactAlertEndpoint(ep))
 }
 
 // Alert endpoint test — sends a synthetic Slack-style "ping" to the
@@ -5146,87 +6436,133 @@ func (s *Server) handleRotateAlertEndpoint(w http.ResponseWriter, r *http.Reques
 // a short reason. PAT-1502 PR 2.
 func (s *Server) handleTestAlertEndpoint(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	role := getRole(r)
-	if role != "admin" && role != "owner" && role != "super_admin" {
-		writeError(w, http.StatusForbidden, "organization administrator role required")
+	id := chi.URLParam(r, "id")
+	if !s.requireAlertPermission(w, r, AlertActionTest, id) {
 		return
 	}
 	if s.keyProvider == nil {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionTest, id, "failure", map[string]interface{}{"reason_code": "provider_not_configured"}) {
+			return
+		}
 		writeError(w, http.StatusServiceUnavailable, "alert endpoint storage is not configured")
 		return
 	}
-	id := chi.URLParam(r, "id")
 	var ep models.AlertEndpoint
 	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&ep).Error; err != nil {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionTest, id, "failure", map[string]interface{}{"reason_code": "not_found"}) {
+			return
+		}
 		writeError(w, http.StatusNotFound, "alert endpoint not found")
 		return
 	}
-	target, err := ResolveTarget(s.keyProvider, ep.TargetEnc, ep.TargetKEKID, ep.Target)
+	if ep.RotationRequired {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionTest, id, "failure", map[string]interface{}{"reason_code": "rotation_required", "credential_id": credentialIDForSecret(ep)}) {
+			return
+		}
+		writeError(w, http.StatusConflict, "credential rotation is required before testing")
+		return
+	}
+	now := time.Now()
+	if s.alertNow != nil {
+		now = s.alertNow()
+	}
+	if err := s.reserveAlertTest(r, ep, now); err != nil {
+		switch {
+		case errors.Is(err, errAlertTestRateLimited):
+			if auditErr := s.auditAlertAction(r, AlertActionTest, id, "denied", map[string]interface{}{"reason_code": "rate_limited", "credential_id": credentialIDForSecret(ep)}); auditErr != nil {
+				writeError(w, http.StatusInternalServerError, "could not record test denial")
+				return
+			}
+			writeError(w, http.StatusTooManyRequests, "rate limited; try again later")
+		case errors.Is(err, errAlertEndpointChanged):
+			if auditErr := s.auditAlertAction(r, AlertActionTest, id, "denied", map[string]interface{}{"reason_code": "endpoint_changed", "credential_id": credentialIDForSecret(ep)}); auditErr != nil {
+				writeError(w, http.StatusInternalServerError, "could not record endpoint conflict")
+				return
+			}
+			writeError(w, http.StatusConflict, "alert endpoint changed; retry the test")
+		default:
+			if auditErr := s.auditAlertAction(r, AlertActionTest, id, "failure", map[string]interface{}{"reason_code": "storage_error", "credential_id": credentialIDForSecret(ep)}); auditErr != nil {
+				writeError(w, http.StatusInternalServerError, "could not record test reservation failure")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "could not reserve test delivery")
+		}
+		return
+	}
+	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&ep).Error; err != nil {
+		if !s.recordAlertAuditOrFail(w, r, AlertActionTest, id, "failure", map[string]interface{}{"reason_code": "endpoint_changed", "credential_id": credentialIDForSecret(ep)}) {
+			return
+		}
+		writeError(w, http.StatusConflict, "alert endpoint changed; retry the test")
+		return
+	}
+	target, err := keymgmt.OpenAlertSecret(s.keyProvider, ep.TargetEnc, ep.TargetKEKID, ep.Target, ep.TargetBindingVersion, ep.CredentialID, keymgmt.AlertSecretContext{
+		OrganizationID: orgID, EndpointID: ep.ID, ProviderType: ep.Type,
+	})
 	if err != nil {
+		if finishErr := s.finishAlertTest(r, ep, now, "decryption_failed", "failure", map[string]interface{}{"reason_code": "decryption_failed", "credential_id": credentialIDForSecret(ep)}); finishErr != nil {
+			writeError(w, http.StatusInternalServerError, "could not record target resolution failure")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "could not resolve target")
 		return
 	}
 	if target == "" {
+		if finishErr := s.finishAlertTest(r, ep, now, "credential_not_configured", "failure", map[string]interface{}{"reason_code": "credential_not_configured"}); finishErr != nil {
+			writeError(w, http.StatusInternalServerError, "could not record missing credential")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "endpoint has no secret configured")
 		return
 	}
-	// Per-endpoint rate limit (PAT-1502 PR 2): one test per minute.
-	now := time.Now()
-	if s.testAlert != nil && s.testAlert.now != nil {
-		now = s.testAlert.now()
-	}
-	if !s.testAlertRateLimit(id, now) {
-		writeError(w, http.StatusTooManyRequests, "rate limited; try again later")
-		return
-	}
-	// SSRF guard: reject private/loopback/link-local hosts.
-	if err := assertPublicHost(target); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if !isAcceptableAlertTarget(ep.Type, target) {
+		if finishErr := s.finishAlertTest(r, ep, now, "invalid_target", "failure", map[string]interface{}{"reason_code": "invalid_target", "credential_id": credentialIDForSecret(ep)}); finishErr != nil {
+			writeError(w, http.StatusInternalServerError, "could not record invalid target")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "stored target is invalid")
 		return
 	}
 	payload := []byte(`{"text":"[pccp] alert endpoint test"}`)
-	ctx, cancel := ctxWithTimeout(r.Context(), 5*time.Second)
+	ctx, cancel := stdctx.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	req2, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(payload))
 	if err != nil {
+		if finishErr := s.finishAlertTest(r, ep, now, "request_build_failed", "failure", map[string]interface{}{"reason_code": "request_build_failed", "credential_id": credentialIDForSecret(ep)}); finishErr != nil {
+			writeError(w, http.StatusInternalServerError, "could not record request build failure")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "could not build test request")
 		return
 	}
 	req2.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := client.Do(req2)
+	resp, err := s.alertHTTPClient.Do(req2)
 	if err != nil {
-		s.db.Create(&models.AuditEvent{
-			OrganizationID: orgID,
-			ActorID:        getActorID(r),
-			ActorType:      "user",
-			EventType:      "security.alert_endpoint.test",
-			Action:         "test",
-			ResourceType:   "alert_endpoint",
-			ResourceID:     id,
-			Result:         "failure",
-			Details:        fmt.Sprintf(`{"credential_id":%q,"reason":%q}`, credentialIDForTarget(target), err.Error()),
-		})
+		reason := security.AlertDeliveryErrorClass(err)
+		if err := s.finishAlertTest(r, ep, now, reason, "failure", map[string]interface{}{"credential_id": credentialIDForSecret(ep), "reason_code": reason}); err != nil {
+			writeError(w, http.StatusInternalServerError, "test delivery failed and could not be recorded")
+			return
+		}
 		writeError(w, http.StatusBadGateway, "test delivery failed")
 		return
 	}
 	defer resp.Body.Close()
-	ok := resp.StatusCode < 300
+	_, _ = io.CopyN(io.Discard, resp.Body, 64<<10)
+	ok := resp.StatusCode >= 200 && resp.StatusCode < 300
 	statusClass := "non_2xx"
 	if ok {
 		statusClass = "2xx"
 	}
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID,
-		ActorID:        getActorID(r),
-		ActorType:      "user",
-		EventType:      "security.alert_endpoint.test",
-		Action:         "test",
-		ResourceType:   "alert_endpoint",
-		ResourceID:     id,
-		Result:         "success",
-		Details:        fmt.Sprintf(`{"credential_id":%q,"status_class":%q,"http_status":%d}`, credentialIDForTarget(target), statusClass, resp.StatusCode),
-	})
+	result := "success"
+	if !ok {
+		result = "failure"
+	}
+	if err := s.finishAlertTest(r, ep, now, statusClass, result, map[string]interface{}{
+		"credential_id": credentialIDForSecret(ep), "status_class": statusClass, "http_status": resp.StatusCode,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "test result could not be recorded")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status_class": statusClass,
 		"http_status":  resp.StatusCode,
@@ -5444,6 +6780,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	q.Order("opened_at DESC").Limit(10).Find(&activeSessions)
 	dash["active_sessions"] = activeSessions
+	var activeSessionCount int64
+	s.db.Model(&models.Session{}).Where("organization_id = ? AND status = ?", orgID, "active").Count(&activeSessionCount)
+	dash["active_session_count"] = activeSessionCount
 
 	// Recent audit events
 	var recentEvents []models.AuditEvent
@@ -5475,7 +6814,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	var recentProjects []models.Project
 	s.db.Model(&models.Project{}).Where("organization_id = ?", orgID).
 		Order("updated_at DESC").Limit(5).Find(&recentProjects)
-	dash["recent_projects"] = recentProjects
+	recentProjectRows, err := s.decorateProjects(recentProjects, orgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	dash["recent_projects"] = recentProjectRows
 	dash["recent_events"] = recentEvents
 
 	writeJSON(w, http.StatusOK, dash)
@@ -5961,19 +7305,25 @@ func (s *Server) handleSeedEnterpriseFeatures(w http.ResponseWriter, r *http.Req
 func (s *Server) handleListChangeSubmissions(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
 	var envs []models.ActionEnvelope
-	q := s.db.Where("action_type = ?", "changeboard.submit").Order("occurred_at DESC").Limit(100)
-	if orgID != "" {
-		q = q.Where("organization_id = ?", orgID)
+	if orgID == "" {
+		writeError(w, http.StatusForbidden, "organization context required")
+		return
 	}
+	q := s.db.Where("organization_id = ? AND action_type = ?", orgID, "changeboard.submit").Order("occurred_at DESC").Limit(100)
 	q.Find(&envs)
+	transcriptVisible := hasConsolePermission(r, permissionLiveTranscript)
 	out := make([]map[string]any, 0, len(envs))
 	for _, e := range envs {
-		var payload map[string]any
-		_ = json.Unmarshal([]byte(e.ActionPayload), &payload)
-		out = append(out, map[string]any{
+		row := map[string]any{
 			"envelope_id": e.ID, "harness_id": e.HarnessID, "session_id": e.SessionID,
-			"occurred_at": e.OccurredAt, "payload": payload,
-		})
+			"occurred_at": e.OccurredAt,
+		}
+		if transcriptVisible {
+			var payload map[string]any
+			_ = json.Unmarshal([]byte(e.ActionPayload), &payload)
+			row["payload"] = payload
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -5989,43 +7339,27 @@ func (s *Server) handleReviewChangeSubmission(w http.ResponseWriter, r *http.Req
 		decision = "changeboard.reject"
 	}
 	var env models.ActionEnvelope
-	if err := s.db.Where("id = ?", id).First(&env).Error; err != nil {
+	orgID := getOrgID(r)
+	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&env).Error; err != nil {
 		writeError(w, http.StatusNotFound, "submission not found")
-		return
-	}
-	base := strings.TrimSuffix(config.RelayAdminURL(), "/")
-	if base == "" {
-		writeError(w, http.StatusPreconditionFailed, "live review requires the relay admin channel (config relay_admin_url)")
 		return
 	}
 	var payload map[string]any
 	_ = json.Unmarshal([]byte(env.ActionPayload), &payload)
 	subID, _ := payload["submission_id"].(string)
-	directivePayload, _ := json.Marshal(map[string]string{"submission_id": subID})
-	body, _ := json.Marshal(map[string]any{
-		"org_id":       env.OrganizationID,
-		"target":       env.HarnessID,
-		"command_type": decision,
-		"reason":       "reviewed via console",
-		"issued_by":    "console:" + getOrgID(r),
-		"payload_b64":  base64.StdEncoding.EncodeToString(directivePayload),
-	})
-	resp, err := http.Post(base+"/v1/admin/directives", "application/json", bytes.NewReader(body))
-	if err != nil {
+	if err := s.pushRelayDirectiveContext(r.Context(), decision, orgID, env.HarnessID, "reviewed via console", map[string]interface{}{"submission_id": subID}); err != nil {
 		writeError(w, http.StatusBadGateway, "relay directive delivery failed: "+err.Error())
 		return
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		writeError(w, http.StatusBadGateway, "relay rejected directive: "+resp.Status)
-		return
-	}
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: getOrgID(r), EventType: "cp.governance.submission_reviewed",
+	if err := s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID, EventType: "cp.governance.submission_reviewed",
 		ActorType: "admin", Action: decision, ResourceType: "change_submission",
 		ResourceID: subID, Details: "harness=" + env.HarnessID,
 		Result: "delivered", OccurredAt: time.Now().Format(time.RFC3339),
-	})
+	}).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "directive delivered but audit persistence failed")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "directive delivered", "submission": subID})
 }
 

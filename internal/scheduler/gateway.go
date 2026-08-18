@@ -9,12 +9,14 @@ import (
 	"hash/fnv"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/netpolicy"
 	"github.com/patrickrho-patty/pccp/internal/scheduler/queue"
 )
 
@@ -347,10 +349,8 @@ func (g *Gateway) validateMediaURL(raw string) error {
 
 // isPrivateIP reports loopback, link-local, private, and metadata ranges.
 func isPrivateIP(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() || ip.IsUnspecified() ||
-		ip.Equal(net.IPv4(169, 254, 169, 254)) ||
-		ip.Equal(net.IPv4zero)
+	addr, ok := netip.AddrFromSlice(ip)
+	return !ok || !netpolicy.IsPublicAddress(addr)
 }
 
 // measureInput estimates input tokens and counts media parts from the raw

@@ -97,6 +97,15 @@ func TestEndToEndProvenance(t *testing.T) {
 	}
 
 	// 5. Issue capability lease
+	if err := db.Create(&models.Harness{
+		OrganizationID: org.ID,
+		HarnessID:      "hrn_test",
+		PublicKey:      "test-key",
+		AllowedUsers:   `["` + user.ID + `"]`,
+		Status:         "enrolled",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	capLease, err := polSvc.IssueCapabilityLease(policy.IssueLeaseRequest{
 		OrganizationID: org.ID,
 		SubjectPeerID:  "hrn_test",

@@ -3,8 +3,10 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
+	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/policy"
 	"gorm.io/driver/sqlite"
@@ -23,6 +25,9 @@ func policyTestServer(t *testing.T) (*Server, *gorm.DB) {
 		&models.PolicyPack{}, &models.PolicyTemplate{}, &models.PolicyAcknowledgement{},
 		&models.PolicyException{}, &models.AuditEvent{}, &models.ServiceSigningKey{},
 		&models.Session{}, &models.Harness{}, &models.Project{}, &models.CapabilityLease{},
+		&models.Role{}, &models.UserRole{},
+		&models.SecurityLockdown{}, &models.FleetDesiredState{},
+		&identity.AdminCredentials{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
 			t.Fatal(err)
@@ -169,27 +174,35 @@ func TestAckGateBlocksSessionsUntilAcked(t *testing.T) {
 	user := models.User{Email: "u@corp.kr", Name: "u", Status: "active"}
 	user.OrganizationID = org.ID
 	db.Create(&user)
+	role := models.Role{OrganizationID: org.ID, Name: "session-user", Permissions: `["session:open","inference:use"]`}
+	db.Create(&role)
+	db.Create(&models.UserRole{OrganizationID: org.ID, UserID: user.ID, RoleID: role.ID, Scope: "org"})
 
 	epoch, err := srv.policy.CreatePolicyEpochFull(policy.EpochRequest{OrganizationID: org.ID, AllowedModels: []string{"patty-code-standard"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := doJSON(t, srv, "POST", "/api/policy/epochs/"+epoch.EpochID+"/require-ack", "", org.ID)
+	adminClaims := &identity.Claims{Email: user.Email, OrganizationID: org.ID, Role: "admin"}
+	adminClaims.Subject = user.ID
+	rec := doUserJSONWithClaims(t, srv, "POST", "/api/policy/epochs/"+epoch.EpochID+"/require-ack", "", adminClaims)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("require-ack failed: %d", rec.Code)
 	}
 
 	// Session blocked before ack
-	rec = doJSON(t, srv, "POST", "/api/sessions", `{"user_id":"`+user.ID+`"}`, org.ID)
-	if rec.Code != http.StatusForbidden {
+	rec = doUserJSONWithClaims(t, srv, "POST", "/api/sessions", `{"user_id":"`+user.ID+`"}`, adminClaims)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "acknowledgement") {
 		t.Fatalf("expected 403 without ack, got %d: %s", rec.Code, rec.Body.String())
 	}
 	// Ack → session opens
-	rec = doJSON(t, srv, "POST", "/api/policy/epochs/"+epoch.EpochID+"/ack", `{"user_id":"`+user.ID+`"}`, org.ID)
+	ackClaims := &identity.Claims{Email: user.Email, OrganizationID: org.ID, Role: "member"}
+	ackClaims.Subject = user.ID
+	rec = doUserJSONWithClaims(t, srv, "POST", "/api/policy/epochs/"+epoch.EpochID+"/ack", `{"user_id":"`+user.ID+`"}`,
+		ackClaims)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("ack failed: %d", rec.Code)
 	}
-	rec = doJSON(t, srv, "POST", "/api/sessions", `{"user_id":"`+user.ID+`"}`, org.ID)
+	rec = doUserJSONWithClaims(t, srv, "POST", "/api/sessions", `{"user_id":"`+user.ID+`"}`, adminClaims)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("expected 201 after ack, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -238,6 +251,31 @@ func TestPolicyPackCreateAssignAndExport(t *testing.T) {
 	db.Model(&models.PolicyPack{}).Count(&count)
 	if count != 2 {
 		t.Fatalf("expected 2 packs after import, got %d", count)
+	}
+}
+
+func TestPolicyPackAssignmentCannotTargetAnotherOrganizationProject(t *testing.T) {
+	srv, db := policyTestServer(t)
+	org := models.Organization{Name: "o", Slug: "pack-owner", Status: "active"}
+	other := models.Organization{Name: "other", Slug: "pack-target", Status: "active"}
+	db.Create(&org)
+	db.Create(&other)
+	project := models.Project{Name: "foreign", Slug: "foreign-pack-target", Status: "active"}
+	project.OrganizationID = other.ID
+	db.Create(&project)
+	pack := models.PolicyPack{OrganizationID: org.ID, Name: "owner-pack", Version: "1", Status: "active"}
+	db.Create(&pack)
+
+	rec := doJSON(t, srv, http.MethodPost, "/api/policy/packs/"+pack.ID+"/assign",
+		`{"scope":"project","scope_id":"`+project.ID+`"}`, org.ID)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("cross-tenant assignment status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := db.First(&project, "id = ?", project.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if project.PolicyPackID != "" {
+		t.Fatalf("cross-tenant assignment changed project policy pack to %q", project.PolicyPackID)
 	}
 }
 

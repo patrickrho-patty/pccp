@@ -3,9 +3,10 @@ package api
 import (
 	"errors"
 	"fmt"
-	"github.com/patrickrho-patty/pccp/internal/config"
+	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/catalog"
 	"github.com/patrickrho-patty/pccp/internal/command"
 	"github.com/patrickrho-patty/pccp/internal/compliance"
+	"github.com/patrickrho-patty/pccp/internal/config"
 	"github.com/patrickrho-patty/pccp/internal/configmgmt"
 	"github.com/patrickrho-patty/pccp/internal/connectors"
 	"github.com/patrickrho-patty/pccp/internal/detection"
@@ -87,7 +89,7 @@ func (s *Server) initAdditional() *AdditionalServices {
 		Attestation: attestation.New(),
 		Billing:     mustBilling(s.db),
 		Command:     command.New(),
-		Incident:    incident.New(s.db),
+		Incident:    incident.New(s.db, s.sessionLifecycle),
 		Korean:      korean.New(s.db),
 		MCP:         mcp.New(s.db),
 		Network:     network.New(s.db),
@@ -103,11 +105,18 @@ func (s *Server) initAdditional() *AdditionalServices {
 		GPUOps:      gpuops.New(s.db),
 		KeyMgmt:     keymgmt.New(),
 		MCPMarket:   mcpmarket.New(),
-		Realtime:    realtime.New(),
+		Realtime:    realtime.New(s.db),
 		Sovereign:   sovereign.New(),
 		SSO:         sso.New(s.db, "pccp-sso-secret"),
 		Catalog:     mustCatalog(s.db),
 		PublicCloud: mustPublicCloud(s.db),
+	}
+	ext.Incident.SetFleetService(s.fleet)
+	if err := ext.SSO.ConfigureSCIMTokensJSON(os.Getenv("PCCP_SCIM_TOKENS")); err != nil {
+		log.Printf("api: SCIM configuration rejected: %v", err)
+	}
+	if orgID, token := os.Getenv("PCCP_SCIM_ORG_ID"), os.Getenv("PCCP_SCIM_TOKEN"); orgID != "" && token != "" {
+		ext.SSO.ConfigureSCIMTokenForOrganization(orgID, token)
 	}
 	return ext
 }
@@ -277,18 +286,6 @@ func (s *Server) setupAdditionalRoutes(r chi.Router, ext *AdditionalServices) {
 		r.Get("/categories", s.wrapMarketCategories(ext))
 		r.Post("/seed", s.wrapMarketSeed(ext))
 	})
-
-	// SSO: SCIM stays behind admin auth (token-authenticated per the
-	// SCIM handler); the login endpoints mount PUBLICLY in server.go
-	// (pre-login they must be reachable without a console JWT).
-	r.Route("/sso", func(r chi.Router) {
-		r.Post("/scim", s.wrapSSOSCIM(ext))
-	})
-
-	// Public SCIM v2 provisioning surface (web/01 B7). Fail-closed:
-	// HandleSCIMRequest requires a configured bearer token, so an
-	// unconfigured deployment always answers 503, never open.
-	r.Handle("/scim/v2/*", s.wrapSSOSCIM(ext))
 
 	// Sovereign
 	r.Route("/sovereign", func(r chi.Router) {
@@ -583,11 +580,16 @@ func (s *Server) wrapIncidentList(ext *AdditionalServices) http.HandlerFunc {
 
 func (s *Server) wrapIncidentCreate(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+			return
+		}
 		var inc incident.Incident
 		if err := decodeJSON(r, &inc); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
+		inc.OrganizationID = getOrgID(r)
+		inc.CreatedBy = getActorID(r)
 		result, err := ext.Incident.CreateIncident(inc)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -599,9 +601,20 @@ func (s *Server) wrapIncidentCreate(ext *AdditionalServices) http.HandlerFunc {
 
 func (s *Server) wrapIncidentContain(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+			return
+		}
 		var req incident.ContainRequest
 		if err := decodeJSON(r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		req.OrganizationID = getOrgID(r)
+		if claims, ok := claimsFromCtx(r.Context()); ok {
+			req.PerformedBy = claims.Email
+		}
+		if strings.TrimSpace(req.Reason) == "" {
+			writeError(w, http.StatusBadRequest, "reason is required")
 			return
 		}
 		result, err := ext.Incident.Contain(req)
@@ -615,13 +628,26 @@ func (s *Server) wrapIncidentContain(ext *AdditionalServices) http.HandlerFunc {
 
 func (s *Server) wrapIncidentResolve(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+			return
+		}
 		id := chi.URLParam(r, "id")
 		orgID := getOrgID(r)
 		var req struct {
 			Resolution string `json:"resolution"`
 		}
-		decodeJSON(r, &req)
-		ext.Incident.Resolve(orgID, id, req.Resolution)
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if err := ext.Incident.Resolve(orgID, id, req.Resolution, getActorID(r)); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				writeError(w, http.StatusNotFound, "incident not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "resolved"})
 	}
 }
@@ -766,7 +792,26 @@ func (s *Server) wrapReportGenerate(ext *AdditionalServices) http.HandlerFunc {
 		if req.Period == "" {
 			req.Period = time.Now().Format("2006-01")
 		}
-		report, err := ext.Reporting.GenerateReport(orgID, reporting.ReportType(req.Type), req.Period, req.GeneratedBy)
+		var data interface{}
+		if reporting.ReportType(req.Type) == reporting.ReportMonthlyUsage {
+			if !requireUsagePermission(w, r, UsageActionExport, "organization", orgID) {
+				return
+			}
+			monthStart, err := time.Parse("2006-01", req.Period)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "보고서 기간은 YYYY-MM 형식이어야 합니다")
+				return
+			}
+			monthStart = monthStart.UTC()
+			monthEnd := monthStart.AddDate(0, 1, 0)
+			usage, err := s.buildUsageReport(orgID, usageFilter{Context: r.Context()}, req.Period, monthStart.Format(time.RFC3339), monthEnd.Format(time.RFC3339))
+			if err != nil {
+				writeUsageReportError(w, err)
+				return
+			}
+			data = usage
+		}
+		report, err := ext.Reporting.GenerateReport(orgID, reporting.ReportType(req.Type), req.Period, req.GeneratedBy, data)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -1365,15 +1410,28 @@ func (s *Server) wrapMarketSeed(ext *AdditionalServices) http.HandlerFunc {
 
 func (s *Server) wrapSSOSAMLRedirect(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 		var req struct {
-			IdpEntityID string `json:"idp_entity_id"`
-			IdpSSOURL   string `json:"idp_sso_url"`
-			RelayState  string `json:"relay_state"`
+			Organization string `json:"organization"`
 		}
-		decodeJSON(r, &req)
-		ext.SSO.ConfigureSAML(req.IdpEntityID, req.IdpSSOURL, "")
-		url, err := ext.SSO.GenerateSAMLRedirect(req.RelayState)
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		release, allowed := ext.SSO.BeginPublicRequest(publicSSORateKey(r, "saml-start"))
+		if !allowed {
+			writeError(w, http.StatusTooManyRequests, "SSO request rate exceeded")
+			return
+		}
+		defer release()
+		binding, err := issueSSOTransactionCookie(w, "saml")
 		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not create SSO transaction")
+			return
+		}
+		url, err := ext.SSO.BeginSAMLLogin(req.Organization, binding)
+		if err != nil {
+			clearSSOTransactionCookie(w, "saml")
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -1383,78 +1441,86 @@ func (s *Server) wrapSSOSAMLRedirect(ext *AdditionalServices) http.HandlerFunc {
 
 func (s *Server) wrapSSOSAMLCallback(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, (1<<20)+(64<<10))
 		var req struct {
 			SAMLResponse string `json:"saml_response"`
 			RelayState   string `json:"relay_state"`
 		}
-		decodeJSON(r, &req)
-		resp, err := ext.SSO.HandleSAMLCallback(req.SAMLResponse, req.RelayState)
+		if strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/x-www-form-urlencoded") {
+			if err := r.ParseForm(); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid SAML form response")
+				return
+			}
+			req.SAMLResponse = r.PostForm.Get("SAMLResponse")
+			req.RelayState = r.PostForm.Get("RelayState")
+		} else if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid SAML callback body")
+			return
+		}
+		release, allowed := ext.SSO.BeginPublicRequest(publicSSORateKey(r, "saml-callback"))
+		if !allowed {
+			writeError(w, http.StatusTooManyRequests, "SSO request rate exceeded")
+			return
+		}
+		defer release()
+		binding, cookieErr := readSSOTransactionCookie(r, "saml")
+		if cookieErr != nil {
+			writeError(w, http.StatusBadRequest, "SAML transaction cookie is missing")
+			return
+		}
+		resp, err := ext.SSO.CompleteSAMLLogin(req.SAMLResponse, req.RelayState, binding)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := ext.SSO.ValidateSSOCompletion(resp.OrganizationID, "saml", resp.ConfigDigest); err != nil {
+			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
 		// Complete the login: bind the verified identity to an org,
 		// provision the user if first login, and issue the SAME console
 		// JWT the password path issues.
-		orgID, oerr := s.orgForSSOIssuer(resp.Issuer)
-		if oerr != nil {
-			writeError(w, http.StatusUnauthorized, oerr.Error())
-			return
-		}
-		user, perr := ext.SSO.ProvisionUserFromSSO(orgID, resp)
+		orgID := resp.OrganizationID
+		user, perr := ext.SSO.ProvisionUserFromSSO(orgID, resp.Issuer, resp.User)
 		if perr != nil {
 			writeError(w, http.StatusInternalServerError, perr.Error())
 			return
 		}
-		token, terr := s.auth.IssueToken(user.Email, orgID, "member")
-		if terr != nil {
-			writeError(w, http.StatusInternalServerError, terr.Error())
+		if err := ext.SSO.ValidateSSOCompletion(orgID, "saml", resp.ConfigDigest); err != nil {
+			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
-		s.db.Create(&models.AuditEvent{
-			OrganizationID: orgID, EventType: "cp.auth.sso_login",
-			ActorType: "user", Action: "sso_login", ResourceType: "user",
-			ResourceID: user.ID, Details: "method=saml email=" + user.Email,
-			Result: "success", OccurredAt: time.Now().Format(time.RFC3339),
-		})
-		writeJSON(w, http.StatusOK, map[string]string{"token": token, "email": user.Email, "org_id": orgID})
-	}
-}
-
-// orgForSSOIssuer resolves which organization an IdP assertion belongs
-// to: the org whose SSOConfig references the issuer; a single-org
-// deployment binds any issuer to that org; otherwise refused (an
-// unbound IdP must never mint sessions).
-func (s *Server) orgForSSOIssuer(issuer string) (string, error) {
-	var orgs []models.Organization
-	s.db.Find(&orgs)
-	var matches []models.Organization
-	for _, o := range orgs {
-		if issuer != "" && strings.Contains(o.SSOConfig, issuer) {
-			matches = append(matches, o)
+		code, handoffErr := ext.SSO.CreateLoginHandoff(orgID, user.ID, "saml", resp.BrowserBinding, resp.ConfigDigest)
+		if handoffErr != nil {
+			writeError(w, http.StatusInternalServerError, handoffErr.Error())
+			return
 		}
+		completionURL, completionErr := ext.SSO.LoginCompletionURL(orgID, "saml", code)
+		if completionErr != nil {
+			writeError(w, http.StatusInternalServerError, completionErr.Error())
+			return
+		}
+		http.Redirect(w, r, completionURL, http.StatusSeeOther)
 	}
-	if len(matches) == 1 {
-		return matches[0].ID, nil
-	}
-	if len(matches) > 1 {
-		return "", errors.New("sso: issuer bound to multiple organizations — configuration error")
-	}
-	if len(orgs) == 1 {
-		return orgs[0].ID, nil
-	}
-	return "", errors.New("sso: no organization bound to this identity provider")
 }
 
 func (s *Server) wrapSSOOIDCAuthURL(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		redirectURI := r.URL.Query().Get("redirect_uri")
-		state := r.URL.Query().Get("state")
-		issuer := r.URL.Query().Get("issuer")
-		clientID := r.URL.Query().Get("client_id")
-		ext.SSO.ConfigureOIDC(issuer, clientID, "")
-		url, err := ext.SSO.OIDCAuthURL(redirectURI, state)
+		orgRef := r.URL.Query().Get("organization")
+		release, allowed := ext.SSO.BeginPublicRequest(publicSSORateKey(r, "oidc-start"))
+		if !allowed {
+			writeError(w, http.StatusTooManyRequests, "SSO request rate exceeded")
+			return
+		}
+		defer release()
+		binding, err := issueSSOTransactionCookie(w, "oidc")
 		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not create SSO transaction")
+			return
+		}
+		url, err := ext.SSO.BeginOIDCLogin(orgRef, binding)
+		if err != nil {
+			clearSSOTransactionCookie(w, "oidc")
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -1464,47 +1530,104 @@ func (s *Server) wrapSSOOIDCAuthURL(ext *AdditionalServices) http.HandlerFunc {
 
 func (s *Server) wrapSSOOIDCCallback(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Code        string `json:"code"`
-			RedirectURI string `json:"redirect_uri"`
+		release, allowed := ext.SSO.BeginPublicRequest(publicSSORateKey(r, "oidc-callback"))
+		if !allowed {
+			writeError(w, http.StatusTooManyRequests, "SSO request rate exceeded")
+			return
 		}
-		decodeJSON(r, &req)
-		tok, err := ext.SSO.HandleOIDCCallback(req.Code, req.RedirectURI)
+		defer release()
+		binding, cookieErr := readSSOTransactionCookie(r, "oidc")
+		if cookieErr != nil {
+			writeError(w, http.StatusBadRequest, "OIDC transaction cookie is missing")
+			return
+		}
+		resp, err := ext.SSO.CompleteOIDCLogin(r.Context(), r.URL.Query().Get("code"), r.URL.Query().Get("state"), binding)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		// Verify the ID token (JWKS-checked) and build the identity —
-		// an unverified token never mints a session.
-		resp, verr := ext.SSO.ParseOIDCIDToken(tok.IDToken)
-		if verr != nil {
-			writeError(w, http.StatusUnauthorized, verr.Error())
+		orgID := resp.OrganizationID
+		if err := ext.SSO.ValidateSSOCompletion(orgID, "oidc", resp.ConfigDigest); err != nil {
+			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
-		// Complete the login (single-org binding; issuer-scoped orgs
-		// resolve through the token's issuer claim when present).
-		orgID, oerr := s.orgForSSOIssuer("")
-		if oerr != nil {
-			writeError(w, http.StatusUnauthorized, oerr.Error())
-			return
-		}
-		user, perr := ext.SSO.ProvisionOIDCUser(orgID, resp)
+		user, perr := ext.SSO.ProvisionOIDCUser(orgID, resp.Issuer, resp.User)
 		if perr != nil {
 			writeError(w, http.StatusInternalServerError, perr.Error())
 			return
 		}
-		token, terr := s.auth.IssueToken(user.Email, orgID, "member")
-		if terr != nil {
-			writeError(w, http.StatusInternalServerError, terr.Error())
+		if err := ext.SSO.ValidateSSOCompletion(orgID, "oidc", resp.ConfigDigest); err != nil {
+			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
-		s.db.Create(&models.AuditEvent{
-			OrganizationID: orgID, EventType: "cp.auth.sso_login",
-			ActorType: "user", Action: "sso_login", ResourceType: "user",
-			ResourceID: user.ID, Details: "method=oidc email=" + user.Email,
-			Result: "success", OccurredAt: time.Now().Format(time.RFC3339),
+		code, handoffErr := ext.SSO.CreateLoginHandoff(orgID, user.ID, "oidc", resp.BrowserBinding, resp.ConfigDigest)
+		if handoffErr != nil {
+			writeError(w, http.StatusInternalServerError, handoffErr.Error())
+			return
+		}
+		completionURL, completionErr := ext.SSO.LoginCompletionURL(orgID, "oidc", code)
+		if completionErr != nil {
+			writeError(w, http.StatusInternalServerError, completionErr.Error())
+			return
+		}
+		http.Redirect(w, r, completionURL, http.StatusSeeOther)
+	}
+}
+
+func (s *Server) wrapSSOSessionExchange(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		var req struct {
+			Code     string `json:"code"`
+			Provider string `json:"provider"`
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid SSO handoff body")
+			return
+		}
+		release, allowed := ext.SSO.BeginPublicRequest(publicSSORateKey(r, "sso-session"))
+		if !allowed {
+			writeError(w, http.StatusTooManyRequests, "SSO request rate exceeded")
+			return
+		}
+		defer release()
+		if req.Provider != "oidc" && req.Provider != "saml" {
+			writeError(w, http.StatusBadRequest, "invalid SSO handoff provider")
+			return
+		}
+		binding, cookieErr := readSSOTransactionCookie(r, req.Provider)
+		if cookieErr != nil {
+			writeError(w, http.StatusBadRequest, "SSO transaction cookie is missing")
+			return
+		}
+		var token, email, orgID string
+		err := ext.SSO.RedeemLoginHandoff(req.Code, req.Provider, binding, func(tx *gorm.DB, handoff *models.SSOLoginHandoff, user *models.User) error {
+			orgID, email = handoff.OrganizationID, user.Email
+			if err := tx.Create(&models.AuditEvent{
+				OrganizationID: handoff.OrganizationID, EventType: "cp.auth.sso_login",
+				ActorType: "user", Action: "sso_login", ResourceType: "user",
+				ResourceID: user.ID, Details: "method=" + handoff.Provider + " email=" + user.Email,
+				Result: "success", OccurredAt: time.Now().Format(time.RFC3339),
+			}).Error; err != nil {
+				return fmt.Errorf("could not persist SSO login audit: %w", err)
+			}
+			issued, err := s.auth.IssueTokenForUserWithDB(tx, user.ID, handoff.OrganizationID, "member")
+			if err != nil {
+				return err
+			}
+			token = issued
+			return nil
 		})
-		writeJSON(w, http.StatusOK, map[string]string{"token": token, "email": user.Email, "org_id": orgID})
+		if err != nil {
+			status := http.StatusUnauthorized
+			if errors.Is(err, sso.ErrInvalidLoginHandoff) {
+				status = http.StatusBadRequest
+			}
+			writeError(w, status, err.Error())
+			return
+		}
+		clearSSOTransactionCookie(w, req.Provider)
+		writeJSON(w, http.StatusOK, map[string]string{"token": token, "email": email, "org_id": orgID})
 	}
 }
 

@@ -1,16 +1,23 @@
 package api
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/patrickrho-patty/pccp/internal/fleet"
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // fleet_extra.go: web/09 — bulk actions (A5), change freeze (A3),
@@ -19,7 +26,12 @@ import (
 // lockdown (A11), server-side inventory query + live status (A12).
 
 // handleFleetBulkAction applies one action to a filtered selection (A5).
+var fleetBulkConcurrency = make(chan struct{}, 16)
+
 func (s *Server) handleFleetBulkAction(w http.ResponseWriter, r *http.Request) {
+	if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+		return
+	}
 	var req struct {
 		Action      string   `json:"action"`
 		Reason      string   `json:"reason"`
@@ -30,42 +42,293 @@ func (s *Server) handleFleetBulkAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Action == "" || req.Reason == "" || len(req.TargetIDs) == 0 {
+	if req.Action == "" || strings.TrimSpace(req.Reason) == "" || len(req.TargetIDs) == 0 {
 		writeError(w, http.StatusBadRequest, "action + reason + harness_ids[] required")
 		return
 	}
-	if len(req.TargetIDs) > 500 {
-		writeError(w, http.StatusBadRequest, "max 500 harnesses per bulk action")
+	if len(req.TargetIDs) > 32 {
+		writeError(w, http.StatusBadRequest, "max 32 harnesses per synchronous bulk action")
 		return
 	}
-	orgID := getOrgID(r)
-	executed, failed := 0, 0
-	var failures []string
-	for _, hid := range req.TargetIDs {
-		err := s.fleet.PerformAction(fleet.ActionRequest{
-			OrganizationID: orgID,
-			HarnessID:      hid,
-			Action:         fleet.FleetAction(req.Action),
-			Reason:         req.Reason,
-			PerformedBy:    req.PerformedBy,
-		})
-		if err != nil {
-			failed++
-			failures = append(failures, hid+": "+err.Error())
+	action := fleet.FleetAction(req.Action)
+	if !fleet.IsBulkHarnessScopedAction(action) {
+		writeError(w, http.StatusBadRequest, "unsupported harness-scoped action; use the security lockdown workflow for organization containment")
+		return
+	}
+	seen := make(map[string]struct{}, len(req.TargetIDs))
+	deduplicated := make([]string, 0, len(req.TargetIDs))
+	for _, id := range req.TargetIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
 			continue
 		}
-		executed++
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		deduplicated = append(deduplicated, id)
 	}
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID, EventType: "cp.fleet.bulk_action", ActorType: "admin",
-		Action: req.Action, ResourceType: "harness", ResourceID: "bulk",
-		Details:    fmt.Sprintf(`{"reason":"%s","executed":%d,"failed":%d}`, req.Reason, executed, failed),
-		Result:     "success",
-		OccurredAt: time.Now().Format(time.RFC3339),
+	if len(deduplicated) == 0 {
+		writeError(w, http.StatusBadRequest, "at least one non-empty harness_id is required")
+		return
+	}
+	req.TargetIDs = deduplicated
+	orgID := getOrgID(r)
+	req.PerformedBy = getActorID(r)
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" || len(idempotencyKey) > 128 {
+		writeError(w, http.StatusBadRequest, "Idempotency-Key header is required and must be at most 128 characters")
+		return
+	}
+	digestTargets := append([]string(nil), req.TargetIDs...)
+	sort.Strings(digestTargets)
+	digestPayload, _ := json.Marshal(map[string]interface{}{"action": req.Action, "reason": req.Reason, "harness_ids": digestTargets})
+	requestDigest := fmt.Sprintf("%x", sha256.Sum256(digestPayload))
+	operation := models.FleetBulkOperation{
+		OrganizationID: orgID, IdempotencyKey: idempotencyKey, RequestDigest: requestDigest,
+		Status: "running", LeaseExpiresAt: time.Now().UTC().Add(5 * time.Minute),
+	}
+	var reserved bool
+	reservationErr := s.db.Transaction(func(tx *gorm.DB) error {
+		reservation := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&operation)
+		if reservation.Error != nil {
+			return reservation.Error
+		}
+		reserved = reservation.RowsAffected == 1
+		if !reserved {
+			return nil
+		}
+		rows := make([]models.FleetBulkTargetOutcome, 0, len(req.TargetIDs))
+		for _, harnessID := range req.TargetIDs {
+			rows = append(rows, models.FleetBulkTargetOutcome{
+				OrganizationID: orgID, OperationID: operation.ID, HarnessID: harnessID, Result: "pending",
+			})
+		}
+		return tx.Create(&rows).Error
 	})
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"executed": executed, "failed": failed, "failures": failures,
+	if reservationErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve bulk operation")
+		return
+	}
+	if !reserved {
+		var existing models.FleetBulkOperation
+		if err := s.db.Where("organization_id = ? AND idempotency_key = ?", orgID, idempotencyKey).First(&existing).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to resolve bulk operation")
+			return
+		}
+		if existing.RequestDigest != requestDigest {
+			writeError(w, http.StatusConflict, "Idempotency-Key was already used for a different request")
+			return
+		}
+		if existing.Status == "complete" && existing.ResponseJSON != "" {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.Header().Set("Idempotent-Replay", "true")
+			w.WriteHeader(existing.HTTPStatus)
+			_, _ = w.Write([]byte(existing.ResponseJSON))
+			return
+		}
+		leaseExpired := (!existing.LeaseExpiresAt.IsZero() && time.Now().UTC().After(existing.LeaseExpiresAt)) ||
+			(existing.LeaseExpiresAt.IsZero() && time.Since(existing.UpdatedAt) > 5*time.Minute)
+		if existing.Status == "running" && leaseExpired {
+			responseJSON, recovered := s.recoverExpiredFleetBulkOperation(existing)
+			if recovered {
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+				w.Header().Set("Idempotent-Replay", "true")
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(responseJSON))
+				return
+			}
+		}
+		writeError(w, http.StatusConflict, "bulk operation is already running")
+		return
+	}
+	results := make([]map[string]string, len(req.TargetIDs))
+	jobs := make(chan int)
+	ctx := r.Context()
+	var workers sync.WaitGroup
+	workerCount := 8
+	if len(req.TargetIDs) < workerCount {
+		workerCount = len(req.TargetIDs)
+	}
+	for worker := 0; worker < workerCount; worker++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				hid := req.TargetIDs[index]
+				select {
+				case fleetBulkConcurrency <- struct{}{}:
+				case <-ctx.Done():
+					results[index] = map[string]string{"harness_id": hid, "result": "failed", "error": "request cancelled before execution"}
+					s.db.Model(&models.FleetBulkTargetOutcome{}).Where("operation_id = ? AND harness_id = ? AND result = ?", operation.ID, hid, "pending").Updates(map[string]interface{}{"result": "failed", "error": "request cancelled before execution"})
+					continue
+				}
+				claimed := s.db.Model(&models.FleetBulkTargetOutcome{}).
+					Where("operation_id = ? AND harness_id = ? AND result = ?", operation.ID, hid, "pending").
+					Update("result", "running")
+				if claimed.Error != nil || claimed.RowsAffected != 1 {
+					<-fleetBulkConcurrency
+					results[index] = map[string]string{"harness_id": hid, "result": "failed", "error": "durable target claim failed; action was not executed"}
+					continue
+				}
+				err := s.fleet.PerformAction(fleet.ActionRequest{
+					Context:        ctx,
+					OrganizationID: orgID,
+					HarnessID:      hid,
+					Action:         fleet.FleetAction(req.Action),
+					Reason:         req.Reason,
+					PerformedBy:    req.PerformedBy,
+				})
+				<-fleetBulkConcurrency
+				if err != nil {
+					result := "failed"
+					var executionErr *fleet.ActionExecutionError
+					if errors.As(err, &executionErr) && (executionErr.LocalApplied || executionErr.RelayDelivered) {
+						result = "partial"
+					}
+					results[index] = map[string]string{"harness_id": hid, "result": result, "error": err.Error()}
+					s.db.Model(&models.FleetBulkTargetOutcome{}).Where("operation_id = ? AND harness_id = ? AND result = ?", operation.ID, hid, "running").Updates(map[string]interface{}{"result": result, "error": err.Error()})
+					continue
+				}
+				results[index] = map[string]string{"harness_id": hid, "result": "executed"}
+				s.db.Model(&models.FleetBulkTargetOutcome{}).Where("operation_id = ? AND harness_id = ? AND result = ?", operation.ID, hid, "running").Updates(map[string]interface{}{"result": "executed", "error": ""})
+			}
+		}()
+	}
+sendBulkJobs:
+	for index := range req.TargetIDs {
+		select {
+		case jobs <- index:
+		case <-ctx.Done():
+			for pending := index; pending < len(req.TargetIDs); pending++ {
+				results[pending] = map[string]string{"harness_id": req.TargetIDs[pending], "result": "failed", "error": "request cancelled before execution"}
+				s.db.Model(&models.FleetBulkTargetOutcome{}).Where("operation_id = ? AND harness_id = ? AND result = ?", operation.ID, req.TargetIDs[pending], "pending").Updates(map[string]interface{}{"result": "failed", "error": "request cancelled before execution"})
+			}
+			break sendBulkJobs
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	executed, partial, failed := 0, 0, 0
+	var failures []string
+	var persistenceErr error
+	for _, outcome := range results {
+		switch outcome["result"] {
+		case "failed":
+			failed++
+			failures = append(failures, outcome["harness_id"]+": "+outcome["error"])
+		case "partial":
+			partial++
+			failures = append(failures, outcome["harness_id"]+": "+outcome["error"])
+		default:
+			executed++
+		}
+	}
+	result := "success"
+	if partial > 0 || (failed > 0 && executed > 0) {
+		result = "partial"
+	} else if failed > 0 {
+		result = "failure"
+	}
+	summary, err := json.Marshal(map[string]interface{}{"reason": req.Reason, "executed": executed, "partial": partial, "failed": failed})
+	if err != nil {
+		persistenceErr = err
+	}
+	if persistenceErr == nil {
+		if err := models.CreateAuditEvent(s.db, &models.AuditEvent{
+			OrganizationID: orgID, EventType: "cp.fleet.bulk_action", ActorID: req.PerformedBy, ActorType: "admin",
+			Action: req.Action, ResourceType: "harness", ResourceID: "bulk",
+			Details:    string(summary),
+			Result:     result,
+			OccurredAt: time.Now().Format(time.RFC3339),
+		}); err != nil {
+			persistenceErr = err
+		}
+	}
+	response := map[string]interface{}{
+		"executed": executed, "partial": partial, "failed": failed, "failures": failures, "outcomes": results,
+	}
+	statusCode := http.StatusOK
+	if persistenceErr != nil {
+		statusCode = http.StatusInternalServerError
+		response["error"] = "bulk actions ran, but one or more durable audit outcomes could not be persisted"
+	}
+	responseJSON, err := json.Marshal(response)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode bulk operation response")
+		return
+	}
+	finalized := s.db.Model(&models.FleetBulkOperation{}).Where("id = ? AND status = ?", operation.ID, "running").Updates(map[string]interface{}{
+		"status": "complete", "response_json": string(responseJSON), "http_status": statusCode,
 	})
+	if finalized.Error != nil || finalized.RowsAffected != 1 {
+		writeError(w, http.StatusInternalServerError, "failed to finalize bulk operation")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(statusCode)
+	_, _ = w.Write(responseJSON)
+}
+
+func (s *Server) recoverExpiredFleetBulkOperation(operation models.FleetBulkOperation) (string, bool) {
+	responseJSON := ""
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var locked models.FleetBulkOperation
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND organization_id = ?", operation.ID, operation.OrganizationID).First(&locked).Error; err != nil {
+			return err
+		}
+		leaseExpired := (!locked.LeaseExpiresAt.IsZero() && time.Now().UTC().After(locked.LeaseExpiresAt)) ||
+			(locked.LeaseExpiresAt.IsZero() && time.Since(locked.UpdatedAt) > 5*time.Minute)
+		if locked.Status != "running" || !leaseExpired {
+			return gorm.ErrInvalidData
+		}
+		if err := tx.Model(&models.FleetBulkTargetOutcome{}).Where("operation_id = ? AND result = ?", locked.ID, "running").Updates(map[string]interface{}{
+			"result": "indeterminate", "error": "worker lease expired after execution began; verify harness state before issuing a new action",
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&models.FleetBulkTargetOutcome{}).Where("operation_id = ? AND result = ?", locked.ID, "pending").Updates(map[string]interface{}{
+			"result": "failed", "error": "worker lease expired before execution",
+		}).Error; err != nil {
+			return err
+		}
+		var rows []models.FleetBulkTargetOutcome
+		if err := tx.Where("operation_id = ?", locked.ID).Order("harness_id ASC").Find(&rows).Error; err != nil {
+			return err
+		}
+		outcomes := make([]map[string]string, 0, len(rows))
+		executed, partial, failed := 0, 0, 0
+		for _, row := range rows {
+			outcomes = append(outcomes, map[string]string{"harness_id": row.HarnessID, "result": row.Result, "error": row.Error})
+			switch row.Result {
+			case "executed":
+				executed++
+			case "partial", "indeterminate":
+				partial++
+			default:
+				failed++
+			}
+		}
+		body, err := json.Marshal(map[string]interface{}{
+			"executed": executed, "partial": partial, "failed": failed, "outcomes": outcomes,
+			"error": "the prior worker lease expired; indeterminate targets were not retried automatically",
+		})
+		if err != nil {
+			return err
+		}
+		responseJSON = string(body)
+		updated := tx.Model(&models.FleetBulkOperation{}).Where("id = ? AND status = ?", locked.ID, "running").Updates(map[string]interface{}{
+			"status": "complete", "response_json": responseJSON, "http_status": http.StatusConflict,
+		})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return gorm.ErrInvalidData
+		}
+		return nil
+	})
+	return responseJSON, err == nil
 }
 
 // handleFleetChangeFreeze activates a repo-scoped change freeze (A3).
@@ -148,20 +411,57 @@ func (s *Server) handleFleetSnapshot(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
 	harnessID := chi.URLParam(r, "id")
 	var harness models.Harness
-	if err := s.db.Where("(id = ? OR harness_id = ?) AND organization_id = ?", harnessID, harnessID, orgID).First(&harness).Error; err != nil {
-		writeError(w, http.StatusNotFound, "harness not found")
+	var device models.Device
+	var sessions []models.Session
+	var findings []models.SecurityFinding
+	var approvals []models.Approval
+	var trail []models.AuditEvent
+	var sessionTotal, findingTotal, approvalTotal int64
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("(id = ? OR harness_id = ?) AND organization_id = ?", harnessID, harnessID, orgID).First(&harness).Error; err != nil {
+			return err
+		}
+		if harness.DeviceID != "" {
+			if err := tx.Where("id = ? AND organization_id = ?", harness.DeviceID, orgID).First(&device).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+		}
+		sessionQuery := tx.Model(&models.Session{}).Where("harness_id = ? AND organization_id = ?", harness.HarnessID, orgID)
+		if err := sessionQuery.Count(&sessionTotal).Error; err != nil {
+			return err
+		}
+		if err := sessionQuery.Order("created_at DESC").Limit(500).Find(&sessions).Error; err != nil {
+			return err
+		}
+		sessionIDs := make([]string, 0, len(sessions))
+		for _, session := range sessions {
+			sessionIDs = append(sessionIDs, session.SessionID)
+		}
+		if len(sessionIDs) > 0 {
+			findingQuery := tx.Model(&models.SecurityFinding{}).Where("organization_id = ? AND session_id IN ?", orgID, sessionIDs)
+			if err := findingQuery.Count(&findingTotal).Error; err != nil {
+				return err
+			}
+			if err := findingQuery.Order("created_at DESC").Limit(1000).Find(&findings).Error; err != nil {
+				return err
+			}
+			approvalQuery := tx.Model(&models.Approval{}).Where("organization_id = ? AND session_id IN ?", orgID, sessionIDs)
+			if err := approvalQuery.Count(&approvalTotal).Error; err != nil {
+				return err
+			}
+			if err := approvalQuery.Order("created_at DESC").Limit(1000).Find(&approvals).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Where("organization_id = ? AND resource_id IN ?", orgID, []string{harness.ID, harness.HarnessID}).Order("created_at DESC").Limit(200).Find(&trail).Error
+	}); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			writeError(w, http.StatusNotFound, "harness not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	var device models.Device
-	s.db.Where("id = ?", harness.DeviceID).First(&device)
-	var sessions []models.Session
-	s.db.Where("harness_id = ? AND organization_id = ?", harness.HarnessID, orgID).Find(&sessions)
-	var findings []models.SecurityFinding
-	s.db.Where("session_id IN (?)", s.db.Model(&models.Session{}).Select("session_id").Where("harness_id = ?", harness.HarnessID)).Find(&findings)
-	var approvals []models.Approval
-	s.db.Where("session_id IN (?)", s.db.Model(&models.Session{}).Select("session_id").Where("harness_id = ?", harness.HarnessID)).Find(&approvals)
-	var trail []models.AuditEvent
-	s.db.Where("organization_id = ? AND resource_id = ?", orgID, harness.ID).Order("created_at DESC").Limit(100).Find(&trail)
 
 	bundle := map[string]interface{}{
 		"collected_at": time.Now().Format(time.RFC3339),
@@ -171,9 +471,27 @@ func (s *Server) handleFleetSnapshot(w http.ResponseWriter, r *http.Request) {
 		"findings":     findings,
 		"approvals":    approvals,
 		"action_trail": trail,
+		"limits": map[string]interface{}{
+			"sessions": 500, "findings": 1000, "approvals": 1000, "action_trail": 200,
+			"sessions_total": sessionTotal, "findings_total": findingTotal, "approvals_total": approvalTotal,
+			"truncated": sessionTotal > int64(len(sessions)) || findingTotal > int64(len(findings)) || approvalTotal > int64(len(approvals)),
+		},
+	}
+	shortID := harness.HarnessID
+	if len(shortID) > 12 {
+		shortID = shortID[:12]
+	}
+	shortID = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			return r
+		}
+		return '-'
+	}, shortID)
+	if shortID == "" {
+		shortID = "unknown"
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=harness-%s-forensic.json", harness.HarnessID[:12]))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=harness-%s-forensic.json", shortID))
 	writeJSON(w, http.StatusOK, bundle)
 }
 
@@ -193,35 +511,66 @@ func (s *Server) handleFleetApprovals(w http.ResponseWriter, r *http.Request) {
 
 // handleFleetImpactPreview counts what a scoped lockdown would hit (A11).
 func (s *Server) handleFleetImpactPreview(w http.ResponseWriter, r *http.Request) {
+	if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+		return
+	}
 	orgID := getOrgID(r)
 	action := r.URL.Query().Get("action")
 	scope := r.URL.Query().Get("scope")
 	if action == "" {
 		action = "emergency_lockdown"
 	}
+	if action == "emergency_lockdown" {
+		s.handleSecurityLockdownImpact(w, r)
+		return
+	}
+	if scope == "" {
+		scope = "org"
+	}
+	if scope != "org" && scope != "project" {
+		writeError(w, http.StatusBadRequest, "scope must be org or project")
+		return
+	}
+	if action != "quarantine_device" && action != "revoke_harness_certificate" {
+		writeError(w, http.StatusBadRequest, "unsupported fleet action")
+		return
+	}
+	projectID := r.URL.Query().Get("project_id")
+	if scope == "project" {
+		if projectID == "" {
+			writeError(w, http.StatusBadRequest, "project scope requires project_id")
+			return
+		}
+		var projectCount int64
+		if err := s.db.Model(&models.Project{}).Where("id = ? AND organization_id = ?", projectID, orgID).Count(&projectCount).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if projectCount != 1 {
+			writeError(w, http.StatusNotFound, "project not found")
+			return
+		}
+	}
 	harnesses := int64(0)
 	sessions := int64(0)
+	nonTerminal := models.SessionNonTerminalStatuses()
 	switch action {
-	case "emergency_lockdown":
-		switch scope {
-		case "project":
-			if pid := r.URL.Query().Get("project_id"); pid != "" {
-				s.db.Model(&models.Session{}).Where("organization_id = ? AND project_id = ? AND status = 'active'", orgID, pid).Count(&sessions)
-				s.db.Model(&models.Harness{}).Where("organization_id = ?", orgID).Count(&harnesses)
-			} else {
-				s.db.Model(&models.Harness{}).Where("organization_id = ?", orgID).Count(&harnesses)
-				s.db.Model(&models.Session{}).Where("organization_id = ? AND status = 'active'", orgID).Count(&sessions)
-			}
-		default: // org
-			s.db.Model(&models.Harness{}).Where("organization_id = ?", orgID).Count(&harnesses)
-			s.db.Model(&models.Session{}).Where("organization_id = ? AND status = 'active'", orgID).Count(&sessions)
-		}
 	case "quarantine_device", "revoke_harness_certificate":
-		s.db.Model(&models.Harness{}).Where("organization_id = ? AND status != 'revoked'", orgID).Count(&harnesses)
-		s.db.Model(&models.Session{}).Where("organization_id = ? AND status = 'active'", orgID).Count(&sessions)
+		if scope == "project" {
+			writeError(w, http.StatusBadRequest, "project scope is supported only for emergency_lockdown")
+			return
+		}
+		if err := s.db.Model(&models.Harness{}).Where("organization_id = ? AND status != 'revoked'", orgID).Count(&harnesses).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if err := s.db.Model(&models.Session{}).Where("organization_id = ? AND status IN ?", orgID, nonTerminal).Count(&sessions).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"action": action, "scope": scope,
+		"action": action, "scope": scope, "project_id": projectID,
 		"affected_harnesses": harnesses, "affected_sessions": sessions,
 	})
 }
@@ -232,7 +581,7 @@ func (s *Server) handleFleetStatus(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
 	var total, active, quarantined int64
 	s.db.Model(&models.Harness{}).Where("organization_id = ?", orgID).Count(&total)
-	s.db.Model(&models.Harness{}).Where("organization_id = ? AND status = 'enrolled'", orgID).Count(&active)
+	s.db.Model(&models.Harness{}).Where("organization_id = ? AND status IN ?", orgID, models.HarnessPermittedStatuses()).Count(&active)
 	s.db.Model(&models.Harness{}).Where("organization_id = ? AND status = 'quarantined'", orgID).Count(&quarantined)
 	var stale int64
 	s.db.Model(&models.Harness{}).Where("organization_id = ? AND (last_heartbeat IS NULL OR last_heartbeat = '' OR last_heartbeat < ?)", orgID, time.Now().Add(-10*time.Minute).Format(time.RFC3339)).Count(&stale)
@@ -246,88 +595,27 @@ func (s *Server) handleFleetStatus(w http.ResponseWriter, r *http.Request) {
 // filters + pagination (A12). Backward-compatible: no params = full list.
 func (s *Server) handleFleetInventoryQuery(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	inventory, err := s.fleet.GetFleetInventory(orgID)
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 {
+		size = 50
+	}
+	if size > 100 {
+		size = 100
+	}
+	inventory, total, err := s.fleet.GetFleetInventoryPage(orgID, fleet.InventoryQuery{
+		Status: r.URL.Query().Get("status"), Risk: r.URL.Query().Get("risk"),
+		Version: r.URL.Query().Get("version"), HarnessID: r.URL.Query().Get("harness_id"),
+		Search: r.URL.Query().Get("search"), Offset: (page - 1) * size, Limit: size,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Filters (A12): status, risk, version, search.
-	status := r.URL.Query().Get("status")
-	risk := r.URL.Query().Get("risk")
-	version := r.URL.Query().Get("version")
-	search := r.URL.Query().Get("search")
-	filtered := inventory[:0]
-	for _, item := range inventory {
-		if status != "" && item.Harness.Status != status {
-			continue
-		}
-		if risk != "" && item.Harness.RiskState != risk {
-			continue
-		}
-		if version != "" && item.Harness.BinaryVersion != version && !(version == "stale" && (item.Harness.BinaryVersion == "" || item.Harness.LastHeartbeat == "")) {
-			continue
-		}
-		if search != "" {
-			name := item.Harness.Name + " " + item.Harness.HarnessID
-			if item.User != nil {
-				name += " " + item.User.Email + " " + item.User.Name
-			}
-			if !containsFold(name, search) {
-				continue
-			}
-		}
-		filtered = append(filtered, item)
-	}
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	size, _ := strconv.Atoi(r.URL.Query().Get("size"))
-	if page > 0 && size > 0 {
-		total := len(filtered)
-		start := (page - 1) * size
-		if start > total {
-			start = total
-		}
-		end := start + size
-		if end > total {
-			end = total
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"data": filtered[start:end], "total": total, "page": page, "size": size,
-		})
-		return
-	}
-	writeJSON(w, http.StatusOK, filtered)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"data": inventory, "total": total, "page": page, "size": size,
+	})
 }
-
-func containsFold(haystack, needle string) bool {
-	return len(needle) == 0 || len(haystack) >= len(needle) && indexFold(haystack, needle) >= 0
-}
-
-func indexFold(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if equalFold(s[i:i+len(sub)], sub) {
-			return i
-		}
-	}
-	return -1
-}
-
-func equalFold(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		ca, cb := a[i], b[i]
-		if 'A' <= ca && ca <= 'Z' {
-			ca += 'a' - 'A'
-		}
-		if 'A' <= cb && cb <= 'Z' {
-			cb += 'a' - 'A'
-		}
-		if ca != cb {
-			return false
-		}
-	}
-	return true
-}
-
-var _ = json.Marshal

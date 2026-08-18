@@ -28,8 +28,12 @@ func setupAPITest(t *testing.T) (*httptest.Server, *gorm.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	org := models.Organization{Name: "Test", Slug: "test-api", Status: "active"}
+	if err := database.Create(&org).Error; err != nil {
+		t.Fatal(err)
+	}
 	authSvc := identity.NewAuthService(database, "test-secret")
-	authSvc.BootstrapAdmin("admin@patty.dev", "admin123", "")
+	authSvc.BootstrapAdmin("admin@patty.dev", "admin123", org.ID)
 	return httptest.NewServer(server), database
 }
 
@@ -81,8 +85,14 @@ func TestAPISessionLifecycle(t *testing.T) {
 	defer ts.Close()
 	token := getTestToken(t, ts)
 
-	org := models.Organization{Name: "Test", Slug: "test-api", Status: "active"}
-	database.Create(&org)
+	var admin identity.AdminCredentials
+	if err := database.Where("email = ?", "admin@patty.dev").First(&admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	var org models.Organization
+	if err := database.First(&org, "id = ?", admin.OrganizationID).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	user := models.User{
 		AuditBase: models.AuditBase{OrganizationID: org.ID},
@@ -90,6 +100,21 @@ func TestAPISessionLifecycle(t *testing.T) {
 		Status: "active", Locale: "ko-KR",
 	}
 	database.Create(&user)
+	database.Create(&models.Harness{
+		OrganizationID: org.ID,
+		HarnessID:      "hrn-test",
+		PublicKey:      "test-key",
+		AllowedUsers:   `["` + user.ID + `"]`,
+		Status:         "enrolled",
+	})
+	permissions, _ := json.Marshal([]string{"session:open", "inference:use"})
+	role := models.Role{OrganizationID: org.ID, Name: "session-test-user", Permissions: string(permissions), IsSystem: true}
+	if err := database.Create(&role).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&models.UserRole{OrganizationID: org.ID, UserID: user.ID, RoleID: role.ID, Scope: "org"}).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	// Governed open requires an active policy epoch (web/02 A1).
 	polSvc, err := policy.New(database)

@@ -34,7 +34,21 @@ export function isLiveSession(s: { status?: string }): boolean {
 // isInProgressSession: sessions the Live view tracks in its secondary
 // group — explicitly labeled, never counted as live.
 export function isInProgressSession(s: { status?: string }): boolean {
-  return s?.status === 'active' || s?.status === 'idle' || s?.status === 'paused'
+	return s?.status === 'pending' || s?.status === 'active' || s?.status === 'idle' || s?.status === 'paused'
+}
+
+export type SessionLifecycleAction = 'pause' | 'resume' | 'close'
+
+// allowedSessionActions is the UI mirror of the canonical server transition
+// table, limited to lifecycle controls exposed in the console.
+export function allowedSessionActions(status: string): SessionLifecycleAction[] {
+  switch (status) {
+    case 'pending': return ['pause', 'close']
+    case 'active': return ['pause', 'close']
+    case 'idle': return ['pause', 'resume', 'close']
+    case 'paused': return ['resume', 'close']
+    default: return []
+  }
 }
 
 // sessionLastActivity returns the session's last governed-exchange
@@ -44,9 +58,9 @@ export function sessionLastActivity(s: { last_activity_at?: string; opened_at?: 
 }
 
 // formatSessionTime / relativeAge reuse the shared tenant formatters so
-// every surface shows the same labeled KST time and relative age.
-export { formatTenantTime as formatSessionTime } from './utils/format'
-import { formatRelative } from './utils/format'
+// every surface shows the same labeled tenant time and relative age.
+export { formatTenantTime as formatSessionTime } from './utils/format.ts'
+import { formatRelative } from './utils/format.ts'
 
 export function relativeAge(iso: string, now: number = Date.now()): string {
   return formatRelative(iso, now)
@@ -54,9 +68,10 @@ export function relativeAge(iso: string, now: number = Date.now()): string {
 
 // streamFreshness classifies SSE health from the ms elapsed since the
 // last received event — connection health, distinct from session health.
-export function streamFreshness(msSinceLastEvent: number | null): { label: string; ok: boolean } {
-  if (msSinceLastEvent === null) return { label: '수신 대기', ok: false }
-  if (msSinceLastEvent < 15_000) return { label: `최신 (${Math.floor(msSinceLastEvent / 1000)}초 전 수신)`, ok: true }
-  if (msSinceLastEvent < 60_000) return { label: `지연 (${Math.floor(msSinceLastEvent / 1000)}초 전 수신)`, ok: false }
-  return { label: '지연 (60초+ 무수신)', ok: false }
+export function streamFreshness(msSinceLastEvent: number | null, connected: boolean = true): { label: string; ok: boolean } {
+	if (!connected) return { label: '실시간 연결 끊김 · 스냅샷으로 복구 중', ok: false }
+	if (msSinceLastEvent === null) return { label: '실시간 연결됨 · 첫 수신 대기', ok: true }
+	if (msSinceLastEvent < 35_000) return { label: `실시간 연결됨 · ${Math.floor(msSinceLastEvent / 1000)}초 전 수신`, ok: true }
+	if (msSinceLastEvent < 60_000) return { label: `스트림 지연 · ${Math.floor(msSinceLastEvent / 1000)}초 무수신`, ok: false }
+	return { label: '스트림 응답 없음 · 스냅샷으로 복구 중', ok: false }
 }

@@ -14,9 +14,11 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"gorm.io/gorm"
 
 	"github.com/patrickrho-patty/pccp/internal/impact"
+	"github.com/patrickrho-patty/pccp/internal/metering"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/registry"
 )
@@ -32,10 +34,14 @@ import (
 // user, session, and project scopes. CSV exports the exact ledger rows rather
 // than a second independently calculated summary.
 func (s *Server) handleUsageSummaryExtended(w http.ResponseWriter, r *http.Request) {
-	if !requireUsageRead(w, r) {
+	orgID := getOrgID(r)
+	action := usageReadAction(r)
+	if r.URL.Query().Get("format") == "csv" {
+		action = UsageActionExport
+	}
+	if !requireUsagePermission(w, r, action, "organization", orgID) {
 		return
 	}
-	orgID := getOrgID(r)
 	days, since, until := usageWindowFromRequest(r, time.Now())
 	if r.URL.Query().Get("format") == "csv" {
 		sinceTime, sinceErr := time.Parse(time.RFC3339, since)
@@ -44,12 +50,12 @@ func (s *Server) handleUsageSummaryExtended(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusBadRequest, "사용량 기간이 올바르지 않습니다")
 			return
 		}
-		s.streamUsageCSV(w, orgID, usageFilter{}, sinceTime, untilTime)
+		s.streamUsageCSV(w, orgID, usageFilter{Context: r.Context(), SnapshotAt: time.Now().UTC()}, sinceTime, untilTime)
 		return
 	}
-	report, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{}), fmt.Sprintf("%dd", days), since, until)
+	report, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{Projection: usageProjectionUser | usageProjectionModel | usageProjectionLedger}), fmt.Sprintf("%dd", days), since, until)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeUsageReportError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, report)
@@ -57,7 +63,7 @@ func (s *Server) handleUsageSummaryExtended(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) streamUsageCSV(w http.ResponseWriter, orgID string, filter usageFilter, since, until time.Time) {
 	rows, err := s.usageRecordsQuery(orgID, filter, since, until).
-		Order("COALESCE(metered_at, created_at) DESC, id DESC").Rows()
+		Order("metered_at DESC, id DESC").Rows()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -66,36 +72,186 @@ func (s *Server) streamUsageCSV(w http.ResponseWriter, orgID string, filter usag
 
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=usage-summary.csv")
+	w.Header().Set("Trailer", "X-Export-Error")
 	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"occurred_at", "record_id", "metric_type", "unit", "quantity", "pricing_state", "rate_micros_per_unit", "amount_micros", "currency", "user_id", "harness_id", "session_id", "model_package_id", "endpoint_id"})
+	if err := cw.Write([]string{"occurred_at", "record_id", "metric_type", "unit", "meter_state", "reason_code", "included_in_totals", "quantity", "pricing_state", "rate_micros_per_unit", "amount_micros", "currency", "user_id", "harness_id", "session_id", "project_id", "model_package_id", "endpoint_id", "adjustment", "applied_rate_micros_per_1k", "applied_price_version", "applied_price_source"}); err != nil {
+		return
+	}
+	written := 0
 	for rows.Next() {
 		var record models.UsageRecord
 		if err := s.db.ScanRows(rows, &record); err != nil {
+			w.Header().Set("X-Export-Error", "row_scan_failed")
 			return
 		}
 		unit := normalizeUsageUnit(record.Unit)
 		if unit == "" {
-			unit = expectedMeterUnits[record.MetricType]
-		}
-		if unit == "" {
 			unit = UnitUnknown
+		}
+		meterState, reasonCode, includedInTotals := usageStateForQuantity(record.Quantity), "", true
+		if _, err := metering.Validate(record.MetricType, record.Unit); err != nil {
+			meterState, reasonCode, includedInTotals = MeterStateError, "invalid_meter_unit", false
 		}
 		amount, currency := int64(0), ""
 		if record.PricingState == models.UsagePricingPriced {
 			amount = record.CostMicros
 			currency = strings.ToUpper(strings.TrimSpace(record.Currency))
 		}
-		_ = cw.Write([]string{
-			effectiveUsageTime(record).Format(time.RFC3339), record.ID, record.MetricType, unit,
-			strconv.FormatInt(record.Quantity, 10), record.PricingState, rateMicros(amount, record.Quantity),
-			strconv.FormatInt(amount, 10), currency, record.UserID, record.HarnessID, record.SessionID,
-			record.ModelPackageID, record.EndpointID,
-		})
-		cw.Flush()
-		if cw.Error() != nil {
+		appliedRate := ""
+		if strings.TrimSpace(record.AppliedPriceVersion) != "" || strings.TrimSpace(record.AppliedPriceSource) != "" {
+			appliedRate = strconv.FormatInt(record.AppliedRateMicrosPer1K, 10)
+		}
+		if err := cw.Write([]string{
+			csvSafe(effectiveUsageTime(record).Format(time.RFC3339)), csvSafe(record.ID), csvSafe(record.MetricType), csvSafe(unit),
+			csvSafe(string(meterState)), csvSafe(reasonCode), strconv.FormatBool(includedInTotals), strconv.FormatInt(record.Quantity, 10), csvSafe(record.PricingState), rateMicros(amount, record.Quantity),
+			strconv.FormatInt(amount, 10), csvSafe(currency), csvSafe(record.UserID), csvSafe(record.HarnessID), csvSafe(record.SessionID), csvSafe(record.ProjectID),
+			csvSafe(record.ModelPackageID), csvSafe(record.EndpointID), strconv.FormatBool(record.Adjustment), appliedRate, csvSafe(record.AppliedPriceVersion), csvSafe(record.AppliedPriceSource),
+		}); err != nil {
+			w.Header().Set("X-Export-Error", "write_failed")
 			return
 		}
+		written++
+		if written%256 == 0 {
+			cw.Flush()
+			if cw.Error() != nil {
+				w.Header().Set("X-Export-Error", "write_failed")
+				return
+			}
+		}
 	}
+	if err := rows.Err(); err != nil {
+		w.Header().Set("X-Export-Error", "row_read_failed")
+		return
+	}
+	cw.Flush()
+	if cw.Error() != nil {
+		w.Header().Set("X-Export-Error", "write_failed")
+	}
+}
+
+type usageExportClaims struct {
+	OrganizationID string `json:"org_id"`
+	Range          string `json:"range"`
+	WindowStart    string `json:"window_start"`
+	WindowEnd      string `json:"window_end"`
+	SnapshotAt     string `json:"snapshot_at"`
+	Actor          string `json:"actor"`
+	Role           string `json:"role"`
+	UserID         string `json:"user_id,omitempty"`
+	SessionID      string `json:"session_id,omitempty"`
+	ProjectID      string `json:"project_id,omitempty"`
+	Purpose        string `json:"purpose"`
+	jwt.RegisteredClaims
+}
+
+func (s *Server) handleUsageCSVTicket(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	userID, sessionID, projectID := strings.TrimSpace(r.URL.Query().Get("user_id")), strings.TrimSpace(r.URL.Query().Get("session_id")), strings.TrimSpace(r.URL.Query().Get("project_id"))
+	if (userID != "" && sessionID != "") || (userID != "" && projectID != "") || (sessionID != "" && projectID != "") {
+		writeError(w, http.StatusBadRequest, "내보내기 범위는 하나만 지정할 수 있습니다")
+		return
+	}
+	resourceType, resourceID := "organization", orgID
+	if userID != "" {
+		resourceType, resourceID = "user", userID
+	} else if sessionID != "" {
+		resourceType, resourceID = "session", sessionID
+	} else if projectID != "" {
+		resourceType, resourceID = "project", projectID
+	}
+	if !requireUsagePermission(w, r, UsageActionExport, resourceType, resourceID) {
+		return
+	}
+	var scopeCount int64
+	switch resourceType {
+	case "user":
+		s.db.Model(&models.User{}).Where("organization_id = ? AND id = ?", orgID, userID).Count(&scopeCount)
+	case "session":
+		var session models.Session
+		if err := s.db.Where("organization_id = ? AND (id = ? OR session_id = ?)", orgID, sessionID, sessionID).First(&session).Error; err == nil && strings.TrimSpace(session.SessionID) != "" {
+			scopeCount = 1
+			sessionID = session.SessionID
+		}
+	case "project":
+		s.db.Model(&models.Project{}).Where("organization_id = ? AND id = ?", orgID, projectID).Count(&scopeCount)
+	default:
+		scopeCount = 1
+	}
+	if scopeCount != 1 {
+		writeError(w, http.StatusNotFound, "내보내기 범위를 찾을 수 없습니다")
+		return
+	}
+	rangeLabel := r.URL.Query().Get("range")
+	switch rangeLabel {
+	case "7d", "30d", "90d", "365d":
+	default:
+		rangeLabel = "30d"
+	}
+	now := time.Now().UTC()
+	_, defaultStart, defaultEnd := usageWindowFromRequest(r, now)
+	windowStart, windowEnd, snapshotAt := defaultStart, defaultEnd, now.Format(time.RFC3339Nano)
+	explicitWindow := r.URL.Query().Get("window_start") != "" || r.URL.Query().Get("window_end") != "" || r.URL.Query().Get("snapshot_at") != ""
+	if explicitWindow {
+		windowStart, windowEnd, snapshotAt = r.URL.Query().Get("window_start"), r.URL.Query().Get("window_end"), r.URL.Query().Get("snapshot_at")
+		startTime, startErr := time.Parse(time.RFC3339, windowStart)
+		endTime, endErr := time.Parse(time.RFC3339, windowEnd)
+		snapshotTime, snapshotErr := time.Parse(time.RFC3339, snapshotAt)
+		if startErr != nil || endErr != nil || snapshotErr != nil || !startTime.Before(endTime) || snapshotTime.IsZero() || snapshotTime.After(now) {
+			writeError(w, http.StatusBadRequest, "내보내기 기간 또는 스냅샷이 올바르지 않습니다")
+			return
+		}
+		windowStart, windowEnd, snapshotAt = startTime.UTC().Format(time.RFC3339Nano), endTime.UTC().Format(time.RFC3339Nano), snapshotTime.UTC().Format(time.RFC3339Nano)
+	}
+	actor, role := "", ""
+	if identity, ok := claimsFromCtx(r.Context()); ok {
+		actor, role = identity.Email, identity.Role
+	}
+	claims := usageExportClaims{
+		OrganizationID: orgID, Range: rangeLabel, WindowStart: windowStart, WindowEnd: windowEnd, SnapshotAt: snapshotAt,
+		Actor: actor, Role: role, UserID: userID, SessionID: sessionID, ProjectID: projectID, Purpose: "usage_csv",
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer: "pccp-usage-export", IssuedAt: jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Minute)),
+		},
+	}
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(s.jwtSecret))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "내보내기 티켓을 만들 수 없습니다")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"download_url": "/api/exports/usage?ticket=" + token, "expires_at": claims.ExpiresAt.Time.Format(time.RFC3339)})
+}
+
+func (s *Server) handleUsageCSVTicketDownload(w http.ResponseWriter, r *http.Request) {
+	claims := &usageExportClaims{}
+	token, err := jwt.ParseWithClaims(r.URL.Query().Get("ticket"), claims, func(token *jwt.Token) (interface{}, error) {
+		if token.Method != jwt.SigningMethodHS256 {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return []byte(s.jwtSecret), nil
+	}, jwt.WithIssuer("pccp-usage-export"))
+	if err != nil || !token.Valid || claims.Purpose != "usage_csv" || claims.OrganizationID == "" {
+		writeError(w, http.StatusUnauthorized, "내보내기 티켓이 올바르지 않거나 만료되었습니다")
+		return
+	}
+	windowStart, startErr := time.Parse(time.RFC3339, claims.WindowStart)
+	windowEnd, endErr := time.Parse(time.RFC3339, claims.WindowEnd)
+	snapshotAt, snapshotErr := time.Parse(time.RFC3339, claims.SnapshotAt)
+	if startErr != nil || endErr != nil || snapshotErr != nil || !windowStart.Before(windowEnd) || snapshotAt.IsZero() {
+		writeError(w, http.StatusUnauthorized, "내보내기 티켓의 범위가 올바르지 않습니다")
+		return
+	}
+	s.streamUsageCSV(w, claims.OrganizationID, usageFilter{
+		Context: r.Context(), SnapshotAt: snapshotAt, UserID: claims.UserID, SessionID: claims.SessionID, ProjectID: claims.ProjectID,
+	}, windowStart, windowEnd)
+}
+
+func csvSafe(value string) string {
+	trimmed := strings.TrimLeft(value, " \t\r\n")
+	if trimmed != "" && strings.ContainsRune("=+-@", rune(trimmed[0])) {
+		return "'" + value
+	}
+	return value
 }
 
 // --- 17: audit ---

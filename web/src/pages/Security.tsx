@@ -8,6 +8,7 @@ import { formatRelative } from '../utils/format'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
 import { exportCSV } from '../utils/csv'
+import { useAuth } from '../hooks/useAuth'
 
 const CATEGORY_INFO: Record<string, { ko: string; en: string; icon: string; desc: string }> = {
   pii: { ko: '개인정보', en: 'PII Detection', icon: '🆔', desc: '한국 개인정보(주민번호, 사업자번호 등) 감지' },
@@ -61,8 +62,19 @@ type RuleOverride = { rule_id: string; enabled?: boolean | null; severity?: stri
 
 type Finding = { id: string; finding_type: string; severity: string; title: string; title_ko?: string; status: string; occurred_at: string; session_id?: string; direction?: string; suppressed?: boolean }
 
+function alertSeverityLabel(raw: unknown): string {
+	try {
+		const values = JSON.parse(typeof raw === 'string' && raw ? raw : '[]')
+		return Array.isArray(values) && values.length ? values.join(', ') : '전체'
+	} catch {
+		return '설정 확인 필요'
+	}
+}
+
 export default function Security() {
   const confirm = useConfirm()
+	const { can } = useAuth()
+	const canReadAlerts = can('security.alert_endpoint.read')
   const [tab, setTab] = useState<'dashboard' | 'rules' | 'findings' | 'scanner' | 'incidents' | 'alerts'>('dashboard')
   const [rules, setRules] = useState<Rule[]>([])
   const [rulesLoaded, setRulesLoaded] = useState(false)
@@ -89,8 +101,12 @@ export default function Security() {
   const [incidentModal, setIncidentModal] = useState(false)
   const [incidentForm, setIncidentForm] = useState({ title: '', title_ko: '', severity: 'high', category: 'credential_leak', finding_ids: [] as string[] })
   const [alerts, setAlerts] = useState<any[]>([])
+	const [alertCursor, setAlertCursor] = useState('')
   const [alertModal, setAlertModal] = useState(false)
   const [alertForm, setAlertForm] = useState({ name: '', type: 'webhook', target: '', severities: ['critical', 'high'] })
+  const [rotateAlert, setRotateAlert] = useState<any>(null)
+  const [rotateTarget, setRotateTarget] = useState('')
+  const [rotateEnable, setRotateEnable] = useState(false)
   const [lexicon, setLexicon] = useState<any>(null)
   const [lexiconForm, setLexiconForm] = useState('')
   const [sessionPick, setSessionPick] = useState('')
@@ -175,7 +191,19 @@ export default function Security() {
   }
 
   const loadIncidents = () => api.listIncidents().then(d => setIncidents(Array.isArray(d) ? d : [])).catch(() => {})
-  const loadAlerts = () => api.securityAlerts().then(d => setAlerts(Array.isArray(d) ? d : [])).catch(() => {})
+	const loadAlerts = (append = false) => {
+		if (!canReadAlerts) {
+			setAlerts([])
+			setAlertCursor('')
+			return
+		}
+		if (append && !alertCursor) return
+		api.securityAlerts(append ? alertCursor : '').then(page => {
+			const rows = Array.isArray(page.data) ? page.data : []
+			setAlerts(current => append ? [...current, ...rows] : rows)
+			setAlertCursor(page.nextCursor)
+		}).catch((err: any) => showToast(err.message || '알림 라우트를 불러오지 못했습니다', 'error'))
+	}
   const loadLexicon = () => api.securityLexicon().then(d => { setLexicon(d); setLexiconForm(JSON.stringify(d?.patterns || {}, null, 2)) }).catch(() => {})
 
   useEffect(() => {
@@ -190,14 +218,17 @@ export default function Security() {
 
   useEffect(() => {
     loadRules()
-    loadFindings()
     loadStats()
     loadIncidents()
     loadAlerts()
     loadLexicon()
     api.listSessions().then((d: any[]) => setSessions(Array.isArray(d) ? d : [])).catch(() => {})
     api.listProjects().then((d: any[]) => setProjects(Array.isArray(d) ? d : [])).catch(() => {})
-  }, [findingFilters])
+	}, [])
+
+	useEffect(() => {
+		loadFindings()
+	}, [findingFilters])
 
   const toggleFavorite = (id: string) => {
     setFavorites(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
@@ -342,11 +373,29 @@ export default function Security() {
 
   const submitAlert = async () => {
     if (!alertForm.name || !alertForm.target) { showToast('이름과 대상 URL을 입력하세요', 'error'); return }
+		if (alertForm.severities.length === 0) { showToast('라우팅할 심각도를 하나 이상 선택하세요', 'error'); return }
     try {
       await api.createSecurityAlert(alertForm)
       showToast('알림 라우트 추가됨', 'success')
       setAlertModal(false)
       setAlertForm({ name: '', type: 'webhook', target: '', severities: ['critical', 'high'] })
+      loadAlerts()
+    } catch (err: any) { showToast(err.message, 'error') }
+  }
+
+  const submitAlertRotation = async () => {
+    if (!rotateAlert || !rotateTarget.trim()) { showToast('새 대상 URL을 입력하세요', 'error'); return }
+    try {
+      const result: any = await api.rotateSecurityAlert(rotateAlert.id, rotateTarget.trim(), rotateEnable)
+      setRotateTarget('')
+      setRotateAlert(null)
+      setRotateEnable(false)
+      showToast(
+        result.provider_revocation_required
+          ? 'PCCP 저장 자격 증명을 교체했습니다. 이전 자격 증명은 공급자에서 별도로 폐기하세요.'
+          : 'PCCP 저장 자격 증명을 교체했습니다.',
+        result.provider_revocation_required ? 'info' : 'success',
+      )
       loadAlerts()
     } catch (err: any) { showToast(err.message, 'error') }
   }
@@ -699,7 +748,7 @@ export default function Security() {
               <EmptyState icon="🚨" title="인시던트가 없습니다" message="발견들을 그룹화해 인시던트를 만들면 봉쇄/해결 워크플로를 탈 수 있습니다" action={{ label: '+ 인시던트 생성', onClick: () => setIncidentModal(true) }} />
             </div>
           ) : (
-            <div className="space-y-2">
+			  <div className="space-y-2">
               {incidents.map(inc => (
                 <div key={inc.id} className={`card flex items-center gap-3 py-3 px-4 ${inc.status === 'open' ? 'border-l-4 border-l-red-500' : ''}`}>
                   <span className="text-xl">🚨</span>
@@ -719,8 +768,8 @@ export default function Security() {
                     {(inc.status === 'open' || inc.status === 'contained') && <button onClick={() => resolveIncident(inc)} className="btn-sm btn-primary">해결</button>}
                   </div>
                 </div>
-              ))}
-            </div>
+				))}
+			  </div>
           )}
         </div>
       )}
@@ -731,17 +780,21 @@ export default function Security() {
           <div>
             <div className="flex justify-between items-center mb-3">
               <h3 className="text-lg font-semibold">알림 라우팅 · Alert Routing (§10C.14)</h3>
-              <button onClick={() => setAlertModal(true)} className="btn-primary text-sm">+ 라우트 추가</button>
+			  {can('security.alert_endpoint.create') && <button onClick={() => setAlertModal(true)} className="btn-primary text-sm">+ 라우트 추가</button>}
             </div>
-            {alerts.length === 0 ? (
+			{!canReadAlerts ? (
+				<div className="card text-center py-10">
+					<EmptyState icon="🔒" title="알림 라우트 조회 권한이 없습니다" message="조직 소유자에게 security.alert_endpoint.read 권한을 요청하세요." />
+				</div>
+			) : alerts.length === 0 ? (
               <div className="card text-center py-10">
-                <EmptyState icon="📣" title="알림 라우트가 없습니다" message="Slack/웹훅/SIEM 대상으로 발견을 실시간 전달하세요" action={{ label: '+ 라우트 추가', onClick: () => setAlertModal(true) }} />
+				<EmptyState icon="📣" title="알림 라우트가 없습니다" message="Slack/웹훅/SIEM 대상으로 발견을 실시간 전달하세요" action={can('security.alert_endpoint.create') ? { label: '+ 라우트 추가', onClick: () => setAlertModal(true) } : undefined} />
               </div>
             ) : (
               <div className="space-y-2">
-                {alerts.map(a => (
+				{alerts.map(a => (
                   <div key={a.id} className="card flex items-center gap-3 py-3 px-4">
-                    <span>{a.type === 'slack' ? '💬' : a.type === 'siem' ? '📡' : '�'}</span>
+					<span>{a.type === 'slack' ? '💬' : a.type === 'siem' ? '📡' : '🔗'}</span>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium">{a.name} <span className="text-xs text-gray-400">{a.type}</span></div>
                       <div className="text-[10px] text-gray-400 font-mono truncate">
@@ -749,26 +802,34 @@ export default function Security() {
                           ? `credential: ${a.credential_id || 'configured'} · ${a.target_redacted || '***'}`
                           : 'credential: not configured'}
                       </div>
-                      <div className="text-[10px] text-gray-400">심각도: {JSON.parse(a.severities || '[]').length ? JSON.parse(a.severities).join(', ') : '전체'}</div>
+                      <div className="flex gap-1 mt-1 flex-wrap">
+                        <span className={a.enabled ? 'badge-green' : 'badge-gray'}>{a.enabled ? '활성' : '비활성'}</span>
+                        {a.rotation_required && <span className="badge-red">공급자 자격 증명 교체 필요</span>}
+                        {a.last_test_status && <span className={a.last_test_status === '2xx' ? 'badge-green' : 'badge-yellow'}>최근 테스트: {a.last_test_status}</span>}
+                      </div>
+					  <div className="text-[10px] text-gray-400">심각도: {alertSeverityLabel(a.severities)}</div>
                     </div>
-                    <button onClick={async () => {
+					{can('security.alert_endpoint.test') && <button onClick={async () => {
                       try {
                         const r: any = await api.testSecurityAlert(a.id)
                         showToast(r.ok ? `테스트 전달 성공 (HTTP ${r.http_status})` : `테스트 실패 (HTTP ${r.http_status})`, r.ok ? 'success' : 'error')
                       } catch (err: any) { showToast(err.message, 'error') }
-                    }} className="btn-link">테스트</button>
-                    <button onClick={async () => {
-                      const next = window.prompt('새 webhook URL을 입력하세요 (rotate 후 이전 키는 폐기):', '')
-                      if (!next) return
-                      try {
-                        await api.rotateSecurityAlert(a.id, next)
-                        showToast('교체됨', 'success'); loadAlerts()
-                      } catch (err: any) { showToast(err.message, 'error') }
-                    }} className="btn-link">교체</button>
-                    <button onClick={async () => { await api.deleteSecurityAlert(a.id); showToast('삭제됨', 'info'); loadAlerts() }} className="btn-link-danger">삭제</button>
-                  </div>
-                ))}
-              </div>
+					}} className="btn-link">테스트</button>}
+					{can('security.alert_endpoint.rotate') && <button onClick={() => { setRotateAlert(a); setRotateTarget(''); setRotateEnable(a.enabled) }} className="btn-link">교체</button>}
+					{can('security.alert_endpoint.disable') && a.enabled && <button onClick={async () => {
+                      if (!await confirm({ title: '알림 라우트 비활성화', message: `${a.name}의 자동 알림 전달을 중지하시겠습니까?`, danger: true })) return
+                      try { await api.disableSecurityAlert(a.id); showToast('알림 전달을 중지했습니다', 'info'); loadAlerts() }
+                      catch (err: any) { showToast(err.message, 'error') }
+                    }} className="btn-link">비활성화</button>}
+					{can('security.alert_endpoint.delete') && <button onClick={async () => {
+                      if (!await confirm({ title: '알림 라우트 삭제', message: `${a.name} 라우트를 PCCP에서 삭제하시겠습니까? 공급자의 기존 자격 증명은 자동 폐기되지 않습니다.`, danger: true })) return
+                      try { await api.deleteSecurityAlert(a.id); showToast('삭제됨', 'info'); loadAlerts() }
+                      catch (err: any) { showToast(err.message, 'error') }
+					}} className="btn-link-danger">삭제</button>}
+				  </div>
+				))}
+				{alertCursor && <button onClick={() => loadAlerts(true)} className="btn-secondary text-sm w-full">더 보기</button>}
+			  </div>
             )}
           </div>
 
@@ -815,6 +876,34 @@ export default function Security() {
         )}
       </Modal>
 
+      <Modal open={!!rotateAlert} title="알림 자격 증명 교체 · Rotate Credential" onClose={() => { setRotateAlert(null); setRotateTarget(''); setRotateEnable(false) }} size="sm"
+        footer={<ModalFooter onCancel={() => { setRotateAlert(null); setRotateTarget(''); setRotateEnable(false) }} onConfirm={submitAlertRotation} confirmLabel="교체" disabled={!rotateTarget.trim()} />}>
+        <div className="space-y-3">
+          <p className="text-xs text-gray-500">
+            PCCP에 저장된 자격 증명만 교체합니다. 기존 Slack 웹훅 또는 공급자 토큰은 해당 공급자에서 별도로 폐기해야 합니다.
+          </p>
+          <div>
+            <label className="label">새 대상 URL · New target (write-only)</label>
+            <input
+              className="input font-mono text-xs"
+              type="password"
+              autoComplete="new-password"
+              data-1p-ignore="true"
+              data-bwignore="true"
+              data-form-type="other"
+              spellCheck={false}
+              value={rotateTarget}
+              onChange={e => setRotateTarget(e.target.value)}
+              placeholder="https://hooks.slack.com/services/…"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <input type="checkbox" checked={rotateEnable} onChange={e => setRotateEnable(e.target.checked)} />
+            교체 후 이 라우트 활성화
+          </label>
+        </div>
+      </Modal>
+
       {/* Suppress modal */}
       <Modal open={!!suppressTarget} title="억제 · Suppress (Accept Risk)" subtitle={suppressTarget?.title_ko || suppressTarget?.title} onClose={() => setSuppressTarget(null)} size="sm"
         footer={<ModalFooter onCancel={() => setSuppressTarget(null)} onConfirm={submitSuppress} confirmLabel="억제 실행" disabled={!suppressForm.reason.trim()} />}>
@@ -853,8 +942,8 @@ export default function Security() {
           {lockdownImpact && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs space-y-1">
               <div className="font-semibold text-red-700">영향 미리보기 · Impact:</div>
-              <div>· {lockdownImpact.active_sessions}개 활성 세션이 종료됩니다</div>
-              <div>· {lockdownImpact.active_harnesses}개 하네스 위험도가 high로 상향됩니다</div>
+              <div>· 진행 중 세션 {lockdownImpact.in_progress_sessions}개가 종료됩니다 (활성 {lockdownImpact.active_sessions}개)</div>
+              <div>· 영향받는 하네스 {lockdownImpact.affected_harnesses}개의 위험도가 high로 상향됩니다</div>
             </div>
           )}
         </div>
@@ -891,7 +980,7 @@ export default function Security() {
           field is cleared on close so it cannot leak through subsequent form
           renders, autofill, or browser-extension snapshots. */}
       <Modal open={alertModal} title="알림 라우트 추가 · Add Alert Route" onClose={() => { setAlertModal(false); setAlertForm({ name: '', type: 'webhook', target: '', severities: ['critical', 'high'] }) }} size="sm"
-        footer={<ModalFooter onCancel={() => { setAlertModal(false); setAlertForm({ name: '', type: 'webhook', target: '', severities: ['critical', 'high'] }); }} onConfirm={submitAlert} confirmLabel="추가" disabled={!alertForm.name || !alertForm.target} />}>
+        footer={<ModalFooter onCancel={() => { setAlertModal(false); setAlertForm({ name: '', type: 'webhook', target: '', severities: ['critical', 'high'] }); }} onConfirm={submitAlert} confirmLabel="추가" disabled={!alertForm.name || !alertForm.target || alertForm.severities.length === 0} />}>
         <div className="space-y-3">
           <div><label className="label">이름 · Name</label><input className="input" value={alertForm.name} onChange={e => setAlertForm({ ...alertForm, name: e.target.value })} placeholder="oncall-webhook" /></div>
           <div><label className="label">유형 · Type</label><select className="input" value={alertForm.type} onChange={e => setAlertForm({ ...alertForm, type: e.target.value })}>
@@ -917,13 +1006,20 @@ export default function Security() {
           </div>
           <div><label className="label">라우팅 심각도</label>
             <div className="flex gap-2 flex-wrap">
-              {['critical', 'high', 'medium', 'low'].map(s => (
+				<label className="text-xs flex items-center gap-1 font-medium">
+					<input type="checkbox" checked={alertForm.severities.length === 5} onChange={() => setAlertForm({ ...alertForm, severities: alertForm.severities.length === 5 ? [] : ['critical', 'high', 'medium', 'low', 'info'] })} />
+					전체
+				</label>
+			  {['critical', 'high', 'medium', 'low', 'info'].map(s => (
                 <label key={s} className="text-xs flex items-center gap-1">
                   <input type="checkbox" checked={alertForm.severities.includes(s)} onChange={() => { const list = [...alertForm.severities]; const i = list.indexOf(s); if (i >= 0) list.splice(i, 1); else list.push(s); setAlertForm({ ...alertForm, severities: list }) }} />
                   {s}
                 </label>
               ))}
             </div>
+			<p className={`text-[10px] mt-1 ${alertForm.severities.length === 0 ? 'text-red-500' : 'text-gray-400'}`}>
+				{alertForm.severities.length === 0 ? '하나 이상의 심각도를 선택해야 합니다.' : '선택한 심각도의 발견만 이 라우트로 전달합니다.'}
+			</p>
           </div>
         </div>
       </Modal>
@@ -1006,6 +1102,6 @@ function RuleBuilder({ rule, before, onSave, onCancel }: { rule: Rule | null; be
 }
 
 function authHeaders() {
-  const token = localStorage.getItem('pccp_token')
+  const token = sessionStorage.getItem('pccp_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }

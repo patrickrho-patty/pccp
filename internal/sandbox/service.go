@@ -113,6 +113,17 @@ func (s *Service) CreateSandbox(req CreateRequest) (*Sandbox, error) {
 	if req.BaseImage == "" {
 		req.BaseImage = "patty/sandbox-base:latest"
 	}
+	if req.SessionID != "" {
+		var session models.Session
+		if err := s.db.Select("harness_id").Where("organization_id = ? AND session_id = ?", req.OrganizationID, req.SessionID).First(&session).Error; err != nil {
+			return nil, fmt.Errorf("sandbox: session not found in organization")
+		}
+		if isolated, err := models.HarnessSandboxIsolationActive(s.db, req.OrganizationID, session.HarnessID); err != nil {
+			return nil, fmt.Errorf("sandbox: fleet desired state unavailable: %w", err)
+		} else if isolated {
+			return nil, fmt.Errorf("sandbox: harness is under durable isolation policy")
+		}
+	}
 
 	// Image allowlist (web/15 D): when the org pins an allowlist, an
 	// image outside it is refused fail-closed.

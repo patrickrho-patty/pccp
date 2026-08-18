@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/patrickrho-patty/pccp/internal/models"
@@ -64,16 +65,22 @@ func (s *Server) handleAckEpoch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	userID := req.UserID
-	if userID == "" {
-		userID = getActorID(r)
+	claims, ok := claimsFromCtx(r.Context())
+	if !ok || strings.TrimSpace(claims.Subject) == "" {
+		writeError(w, http.StatusForbidden, "policy acknowledgement requires an immutable user subject")
+		return
+	}
+	userID := strings.TrimSpace(claims.Subject)
+	if req.UserID != "" && req.UserID != userID {
+		writeError(w, http.StatusForbidden, "users may acknowledge policy only for their own immutable subject")
+		return
 	}
 	if userID == "" {
 		writeError(w, http.StatusBadRequest, "user_id is required")
 		return
 	}
 	if err := s.policy.AckEpoch(orgID, id, userID); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "acked"})

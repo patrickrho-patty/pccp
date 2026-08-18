@@ -61,7 +61,7 @@ export default function EndpointDetail() {
       <div className="flex gap-2 shrink-0 flex-wrap">
         <button className="btn-sm btn-primary" onClick={async () => { await api.issueEndpointLease(ep.id || ep.endpoint_id); showToast('리스 발급됨', 'success') }}>리스 발급 · Issue Lease</button>
         {ep.status !== 'draining' && (
-          <button className="btn-sm btn-secondary" onClick={async () => { await fetch(`/api/endpoints/${ep.id}/drain`, { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('pccp_token') || ''}` } }); showToast('드레인 시작', 'info'); load() }}>드레인 · Drain</button>
+          <button className="btn-sm btn-secondary" onClick={async () => { await fetch(`/api/endpoints/${ep.id}/drain`, { method: 'POST', headers: { Authorization: `Bearer ${sessionStorage.getItem('pccp_token') || ''}` } }); showToast('드레인 시작', 'info'); load() }}>드레인 · Drain</button>
         )}
       </div>
     </div>

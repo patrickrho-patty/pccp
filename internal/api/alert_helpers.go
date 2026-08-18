@@ -1,127 +1,115 @@
 package api
 
 import (
-	"context"
-	"fmt"
-	"net"
-	"net/url"
+	"errors"
+	"net/http"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/patrickrho-patty/pccp/internal/keymgmt"
+	"github.com/patrickrho-patty/pccp/internal/models"
+	"github.com/patrickrho-patty/pccp/internal/security"
+	"gorm.io/gorm"
 )
 
-// isAcceptableAlertTarget enforces the SSRF-safe URL contract for
-// alert endpoints. PAT-1502 PR 2.
-func isAcceptableAlertTarget(providerType, raw string) bool {
-	if raw == "" {
-		return false
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return false
-	}
-	host := u.Hostname()
-	if host == "" {
-		return false
-	}
-	if err := assertPublicHost(raw); err != nil {
-		return false
-	}
-	return true
-}
-
-// assertPublicHost refuses loopback, private, link-local, and
-// unspecified addresses. Both literal IPs and resolved names are
-// checked. PAT-1502 PR 2.
-func assertPublicHost(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return fmt.Errorf("invalid URL")
-	}
-	host := u.Hostname()
-	if host == "" {
-		return fmt.Errorf("missing host")
-	}
-	// If the host is an IP, check directly. Otherwise resolve and
-	// check every returned address.
-	if ip := net.ParseIP(host); ip != nil {
-		return rejectIfNonPublic(ip)
-	}
-	addrs, err := net.LookupIP(host)
-	if err != nil {
-		return fmt.Errorf("could not resolve host")
-	}
-	for _, ip := range addrs {
-		if err := rejectIfNonPublic(ip); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func rejectIfNonPublic(ip net.IP) error {
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsPrivate() || ip.IsUnspecified() || ip.IsMulticast() {
-		return fmt.Errorf("target host is not publicly routable")
-	}
-	return nil
-}
-
-// mustResolveTarget is the variant used inside handlers that need a
-// stable credential_id for an audit row even when decryption fails;
-// in that case we fall back to the legacy plaintext column so the
-// audit row still correlates to the stored secret.
-func mustResolveTarget(provider keymgmt.KeyProvider, enc, kekID, fallback string) string {
-	if v, err := ResolveTarget(provider, enc, kekID, fallback); err == nil {
-		return v
-	}
-	if fallback != "" {
-		return fallback
-	}
-	return ""
-}
-
-// alertTestCooldown is the per-endpoint test cooldown (PAT-1502 PR 2).
 const alertTestCooldown = time.Minute
 
-// testAlertState tracks last-test timestamps for rate limiting.
-// Tests inject their own clock via Server.testAlertNow; the default
-// is time.Now. PAT-1502 PR 2.
-type testAlertState struct {
-	mu     sync.Mutex
-	lastAt map[string]time.Time
-	now    func() time.Time
+var (
+	errAlertTestRateLimited = errors.New("alert test rate limited")
+	errAlertEndpointChanged = errors.New("alert endpoint changed")
+)
+
+func isAcceptableAlertTarget(providerType, raw string) bool {
+	return security.ValidateAlertTarget(providerType, raw) == nil
 }
 
-func newTestAlertState() *testAlertState {
-	return &testAlertState{lastAt: make(map[string]time.Time), now: time.Now}
+func (s *Server) finishAlertTest(r *http.Request, ep models.AlertEndpoint, at time.Time, status, result string, details map[string]interface{}) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		update := tx.Model(&models.AlertEndpoint{}).
+			Where("id = ? AND organization_id = ? AND target = ? AND target_enc = ? AND target_kek_id = ? AND target_binding_version = ? AND credential_id = ?",
+				ep.ID, ep.OrganizationID, ep.Target, ep.TargetEnc, ep.TargetKEKID, ep.TargetBindingVersion, ep.CredentialID).
+			Updates(map[string]interface{}{"last_test_at": at.UTC(), "last_test_status": status})
+		if update.Error != nil {
+			return update.Error
+		}
+		if update.RowsAffected != 1 {
+			return errAlertEndpointChanged
+		}
+		return s.auditAlertActionDB(tx, r, AlertActionTest, ep.ID, result, details)
+	})
 }
 
-// testAlertRateLimit returns true when the test is allowed. PAT-1502 PR 2.
-func (s *Server) testAlertRateLimit(id string, now time.Time) bool {
-	if s.testAlert == nil {
-		s.testAlert = newTestAlertState()
+func normalizeAlertSeverities(values []string) ([]string, bool) {
+	if values == nil {
+		return []string{}, true
 	}
-	s.testAlert.mu.Lock()
-	defer s.testAlert.mu.Unlock()
-	last, ok := s.testAlert.lastAt[id]
-	if ok && now.Sub(last) < alertTestCooldown {
-		return false
+	allowed := map[string]bool{"info": true, "low": true, "medium": true, "high": true, "critical": true}
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		value := strings.ToLower(strings.TrimSpace(raw))
+		if !allowed[value] {
+			return nil, false
+		}
+		if !seen[value] {
+			seen[value] = true
+			out = append(out, value)
+		}
 	}
-	s.testAlert.lastAt[id] = now
-	return true
+	return out, true
 }
 
-// ctxWithTimeout is a tiny wrapper so callers can be concise. Kept
-// here so the import lives in this file. PAT-1502 PR 2.
-func ctxWithTimeout(parent context.Context, d time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(parent, d)
+func applyAlertRotation(tx *gorm.DB, ep models.AlertEndpoint, enc, kekID, credentialID string, bindingVersion int, rotatedAt time.Time, enable *bool) (bool, error) {
+	values := map[string]interface{}{
+		"target": "", "target_enc": enc, "target_kek_id": kekID,
+		"target_binding_version": bindingVersion, "credential_id": credentialID,
+		"rotation_required": false, "last_rotated_at": rotatedAt.UTC(),
+	}
+	if enable != nil {
+		values["enabled"] = *enable
+	}
+	result := tx.Model(&models.AlertEndpoint{}).
+		Where("id = ? AND organization_id = ? AND target = ? AND target_enc = ? AND target_kek_id = ? AND target_binding_version = ? AND credential_id = ? AND (last_test_status IS NULL OR last_test_status <> ? OR last_test_at IS NULL OR last_test_at <= ?)",
+			ep.ID, ep.OrganizationID, ep.Target, ep.TargetEnc, ep.TargetKEKID, ep.TargetBindingVersion, ep.CredentialID, "pending", rotatedAt.UTC().Add(-alertTestCooldown)).
+		Updates(values)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected != 1 {
+		return false, errAlertEndpointChanged
+	}
+	var current struct{ Enabled bool }
+	if err := tx.Model(&models.AlertEndpoint{}).Select("enabled").Where("id = ? AND organization_id = ?", ep.ID, ep.OrganizationID).Scan(&current).Error; err != nil {
+		return false, err
+	}
+	return current.Enabled, nil
 }
 
-// trimSpace is a tiny alias used by callers above to keep noise low.
-func trimSpace(s string) string { return strings.TrimSpace(s) }
+// reserveAlertTest performs the rate-limit decision atomically in the shared
+// database, so concurrent API replicas cannot each issue a test delivery.
+func (s *Server) reserveAlertTest(r *http.Request, ep models.AlertEndpoint, now time.Time) error {
+	now = now.UTC()
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.AlertEndpoint{}).
+			Where("id = ? AND organization_id = ? AND target = ? AND target_enc = ? AND target_kek_id = ? AND target_binding_version = ? AND credential_id = ? AND (last_test_at IS NULL OR last_test_at <= ?)",
+				ep.ID, ep.OrganizationID, ep.Target, ep.TargetEnc, ep.TargetKEKID, ep.TargetBindingVersion, ep.CredentialID, now.Add(-alertTestCooldown)).
+			Updates(map[string]interface{}{"last_test_at": now, "last_test_status": "pending"})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			var current models.AlertEndpoint
+			if err := tx.Select("target, target_enc, target_kek_id, target_binding_version, credential_id").
+				Where("id = ? AND organization_id = ?", ep.ID, ep.OrganizationID).First(&current).Error; err != nil {
+				return errAlertEndpointChanged
+			}
+			if current.Target != ep.Target || current.TargetEnc != ep.TargetEnc || current.TargetKEKID != ep.TargetKEKID ||
+				current.TargetBindingVersion != ep.TargetBindingVersion || current.CredentialID != ep.CredentialID {
+				return errAlertEndpointChanged
+			}
+			return errAlertTestRateLimited
+		}
+		return s.auditAlertActionDB(tx, r, AlertActionTest, ep.ID, "started", map[string]interface{}{
+			"reason_code": "test_reserved", "credential_id": ep.CredentialID,
+		})
+	})
+}

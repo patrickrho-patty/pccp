@@ -1,29 +1,49 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../api'
 import { showToast } from '../components/Toast'
 import { formatRelative } from '../utils/format'
+import { modelPackageState } from '../allowedModelView'
 
 // ModelDetail (00 A7 /{entity}/:id) — deep-linkable model package view
 // with endpoints, entitlement, and publish/recall actions.
 export default function ModelDetail() {
   const { id } = useParams<{ id: string }>()
   const [pkg, setPkg] = useState<any>(null)
-  const [endpoints, setEndpoints] = useState<any[]>([])
+  const [allEndpoints, setAllEndpoints] = useState<any[]>([])
   const [epochs, setEpochs] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+	const loadGeneration = useRef(0)
 
   const load = () => {
     if (!id) return
-    api.listModels().then((d: any[]) => {
-      const m = (Array.isArray(d) ? d : []).find((x: any) => x.id === id || x.package_id === id || x.model_id === id)
-      setPkg(m || null)
-      setLoading(false)
-    }).catch(() => setLoading(false))
-    api.listEndpoints().then((d: any[]) => setEndpoints((Array.isArray(d) ? d : []).filter((e: any) => e.model_id === id || e.model_package_id === id || e.model_id === pkg?.model_id))).catch(() => {})
-    api.listEpochs().then((d: any[]) => setEpochs(Array.isArray(d) ? d : [])).catch(() => {})
+	const generation = ++loadGeneration.current
+	setLoading(true)
+	setPkg(null)
+	setAllEndpoints([])
+	setEpochs([])
+	api.getModel(id).then((model: any) => {
+	  if (loadGeneration.current === generation) setPkg(model || null)
+	}).catch(() => {
+	  if (loadGeneration.current === generation) setPkg(null)
+	}).finally(() => {
+	  if (loadGeneration.current === generation) setLoading(false)
+	})
+	api.listEndpoints().then((d: any[]) => {
+	  if (loadGeneration.current === generation) setAllEndpoints(Array.isArray(d) ? d : [])
+	}).catch(() => {
+	  if (loadGeneration.current === generation) setAllEndpoints([])
+	})
+	api.listEpochs().then((d: any[]) => {
+	  if (loadGeneration.current === generation) setEpochs(Array.isArray(d) ? d : [])
+	}).catch(() => {
+	  if (loadGeneration.current === generation) setEpochs([])
+	})
   }
-  useEffect(() => { load() }, [id])
+	useEffect(() => {
+	  load()
+	  return () => { loadGeneration.current++ }
+	}, [id])
 
   if (loading) return <div className="text-gray-400 p-8 text-center">로딩 중...</div>
   if (!pkg) return (
@@ -32,6 +52,8 @@ export default function ModelDetail() {
       <p className="text-gray-400 p-8 text-center">모델 패키지를 찾을 수 없습니다</p>
     </div>
   )
+	const packageState = modelPackageState(pkg)
+	const endpoints = allEndpoints.filter((endpoint: any) => endpoint.model_id === pkg.model_id || endpoint.model_package_id === pkg.package_id || endpoint.model_package_id === pkg.id)
 
   const statusBadge = (s: string) =>
     s === 'published' ? 'badge-green' : s === 'recalled' ? 'badge-red' : 'badge-yellow'
@@ -45,7 +67,7 @@ export default function ModelDetail() {
           <p className="text-xs text-gray-400 mt-1 font-mono">{pkg.model_id} · {pkg.package_id}</p>
         </div>
         <div className="flex gap-2 items-center shrink-0">
-          <span className={statusBadge(pkg.status)}>{pkg.status || '-'}</span>
+          <span className={statusBadge(packageState)}>{packageState}</span>
           <span className="badge-blue">{pkg.entitlement_class || 'standard'}</span>
         </div>
       </div>
@@ -96,10 +118,10 @@ export default function ModelDetail() {
       </div>
 
       <div className="flex gap-2 shrink-0 flex-wrap">
-        {pkg.status !== 'published' && (
+        {packageState === 'draft' && (
           <button className="btn-sm btn-primary" onClick={async () => { await api.publishModel(pkg.id); showToast('게시됨', 'success'); load() }}>게시 · Publish</button>
         )}
-        {pkg.status === 'published' && (
+        {packageState === 'published' && (
           <button className="btn-sm btn-danger" onClick={async () => { await api.recallModel(pkg.id); showToast('리콜됨', 'info'); load() }}>리콜 · Recall</button>
         )}
       </div>

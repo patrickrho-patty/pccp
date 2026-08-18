@@ -38,6 +38,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/relay"
 )
 
@@ -216,8 +217,16 @@ func runDARIArm(ctx context.Context, turns int, sched Schedule) (Result, error) 
 
 	// Enroll a bench harness via the admin API surface (direct service
 	// call — same code path the HTTP handler drives).
+	if err := db.Create(&models.User{
+		AuditBase: models.AuditBase{Base: models.Base{ID: "bench-user"}, OrganizationID: "org-bench"},
+		Email:     "bench-user@bench.invalid",
+		Name:      "Benchmark User",
+		Status:    models.UserStatusActive,
+	}).Error; err != nil {
+		return res, err
+	}
 	pub, priv, _ := ed25519.GenerateKey(nil)
-	_, _, err = svc.Identity().EnrollHarness(identityEnrollRequest("org-bench", "harness-bench", hex.EncodeToString(pub)))
+	_, _, err = svc.Identity().EnrollHarness(identityEnrollRequest("org-bench", "bench-user", "harness-bench", hex.EncodeToString(pub)))
 	if err != nil {
 		return res, err
 	}

@@ -46,7 +46,7 @@ type Report struct {
 }
 
 // GenerateReport generates a report of the specified type.
-func (s *Service) GenerateReport(orgID string, reportType ReportType, period string, generatedBy string) (*Report, error) {
+func (s *Service) GenerateReport(orgID string, reportType ReportType, period string, generatedBy string, data interface{}) (*Report, error) {
 	report := &Report{
 		ID:             fmt.Sprintf("rpt_%d", time.Now().UnixMilli()),
 		Type:           reportType,
@@ -56,17 +56,19 @@ func (s *Service) GenerateReport(orgID string, reportType ReportType, period str
 		GeneratedBy:    generatedBy,
 	}
 
-	switch reportType {
-	case ReportWeeklyGovernance:
-		report.Data = s.generateGovernanceReport(orgID)
-	case ReportMonthlyUsage:
-		report.Data = s.generateUsageReport(orgID)
-	case ReportSecuritySummary:
-		report.Data = s.generateSecurityReport(orgID)
-	case ReportExecutiveSummary:
-		report.Data = s.generateExecutiveReport(orgID)
-	default:
-		report.Data = map[string]string{"message": "report type not yet implemented"}
+	if data != nil {
+		report.Data = data
+	} else {
+		switch reportType {
+		case ReportWeeklyGovernance:
+			report.Data = s.generateGovernanceReport(orgID)
+		case ReportSecuritySummary:
+			report.Data = s.generateSecurityReport(orgID)
+		case ReportExecutiveSummary:
+			report.Data = s.generateExecutiveReport(orgID)
+		default:
+			report.Data = map[string]string{"message": "report type not yet implemented"}
+		}
 	}
 
 	// Compute provenance digest (PRD §45.3)
@@ -137,42 +139,6 @@ func (s *Service) generateGovernanceReport(orgID string) *WeeklyGovernanceReport
 	s.db.Where("organization_id = ?", orgID).Find(&findings)
 	for _, f := range findings {
 		r.FindingsByType[f.FindingType]++
-	}
-
-	return r
-}
-
-// MonthlyUsageReport shows token usage and cost.
-type MonthlyUsageReport struct {
-	Period         string           `json:"period"`
-	TotalTokensIn  int64            `json:"total_tokens_in"`
-	TotalTokensOut int64            `json:"total_tokens_out"`
-	TotalCostKRW   int64            `json:"total_cost_krw"`
-	ModelBreakdown map[string]int64 `json:"model_breakdown"`
-	UserBreakdown  map[string]int64 `json:"user_breakdown"`
-	DailyAverages  map[string]int64 `json:"daily_averages"`
-}
-
-func (s *Service) generateUsageReport(orgID string) *MonthlyUsageReport {
-	r := &MonthlyUsageReport{
-		Period:         time.Now().Format("2006-01"),
-		ModelBreakdown: make(map[string]int64),
-		UserBreakdown:  make(map[string]int64),
-		DailyAverages:  make(map[string]int64),
-	}
-
-	var records []models.UsageRecord
-	s.db.Where("organization_id = ?", orgID).Find(&records)
-
-	for _, rec := range records {
-		if rec.MetricType == "tokens_in" {
-			r.TotalTokensIn += rec.Quantity
-		}
-		if rec.MetricType == "tokens_out" {
-			r.TotalTokensOut += rec.Quantity
-		}
-		r.ModelBreakdown[rec.ModelPackageID] += rec.Quantity
-		r.UserBreakdown[rec.UserID] += rec.Quantity
 	}
 
 	return r

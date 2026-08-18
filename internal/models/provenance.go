@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -86,7 +87,7 @@ type ProvenanceSpan struct {
 	AttributionState string  `gorm:"type:varchar(32);not null" json:"attribution_state"`
 	Confidence       float64 `json:"confidence,omitempty"`
 	// Origin
-	SessionID      string `gorm:"type:varchar(64)" json:"session_id,omitempty"`
+	SessionID      string `gorm:"type:varchar(64);index" json:"session_id,omitempty"`
 	UserID         string `gorm:"type:varchar(64)" json:"user_id,omitempty"`
 	HarnessID      string `gorm:"type:varchar(64)" json:"harness_id,omitempty"`
 	ModelPackageID string `gorm:"type:varchar(64)" json:"model_package_id,omitempty"`
@@ -117,8 +118,8 @@ type CommitBinding struct {
 // AuditEvent is an immutable audit log entry (PRD §40).
 type AuditEvent struct {
 	Base
-	OrganizationID string `gorm:"type:varchar(64);index;uniqueIndex:idx_audit_org_seq,priority:1;not null" json:"organization_id"`
-	EventType      string `gorm:"type:varchar(64);not null;index" json:"event_type"`
+	OrganizationID string `gorm:"type:varchar(64);index;index:idx_audit_realtime,priority:1;uniqueIndex:idx_audit_org_seq,priority:1;not null" json:"organization_id"`
+	EventType      string `gorm:"type:varchar(64);not null;index;index:idx_audit_realtime,priority:2" json:"event_type"`
 	ActorID        string `gorm:"type:varchar(64)" json:"actor_id,omitempty"`
 	ActorType      string `gorm:"type:varchar(32)" json:"actor_type,omitempty"` // user, admin, system, harness
 	Action         string `gorm:"type:varchar(128)" json:"action"`
@@ -140,7 +141,7 @@ type AuditEvent struct {
 	PrevEventDigest string `gorm:"type:varchar(128)" json:"prev_event_digest,omitempty"`
 	// ChainSeq is the per-org monotonic insertion sequence. UUID IDs
 	// are not chronological, so chain order and linkage use this.
-	ChainSeq   int64  `gorm:"uniqueIndex:idx_audit_org_seq,priority:2" json:"chain_seq"`
+	ChainSeq   int64  `gorm:"uniqueIndex:idx_audit_org_seq,priority:2;index:idx_audit_realtime,priority:3" json:"chain_seq"`
 	OccurredAt string `gorm:"type:timestamp" json:"occurred_at"`
 }
 
@@ -196,6 +197,33 @@ func (e *AuditEvent) BeforeCreate(tx *gorm.DB) error {
 		e.PrevEventDigest = ""
 	}
 	e.EventDigest = e.ComputeAuditDigest()
+	return nil
+}
+
+// CreateAuditEvent retries the optimistic per-organization chain allocation
+// when another writer wins the same sequence. Callers outside an existing
+// transaction should use this helper instead of a bare Create so an applied
+// control-plane action is not misreported solely because its audit writers
+// raced. Transactional callers must keep the audit insert in their transaction.
+func CreateAuditEvent(db *gorm.DB, event *AuditEvent) error {
+	const maxAttempts = 8
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		err := db.Create(event).Error
+		if err == nil {
+			return nil
+		}
+		message := strings.ToLower(err.Error())
+		chainConflict := strings.Contains(message, "idx_audit_org_seq") ||
+			(strings.Contains(message, "unique") && strings.Contains(message, "chain_seq")) ||
+			(strings.Contains(message, "duplicate key") && strings.Contains(message, "audit"))
+		if !chainConflict || attempt == maxAttempts-1 {
+			return err
+		}
+		event.ChainSeq = 0
+		event.PrevEventDigest = ""
+		event.EventDigest = ""
+		time.Sleep(time.Duration(attempt+1) * time.Millisecond)
+	}
 	return nil
 }
 

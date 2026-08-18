@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
@@ -67,38 +66,10 @@ func AutoMigrate(db *gorm.DB) error {
 	if err := db.AutoMigrate(append(models.AllModels(), &identity.AdminCredentials{})...); err != nil {
 		return fmt.Errorf("db: auto-migrate: %w", err)
 	}
-	if err := normalizeUsageLedger(db); err != nil {
-		return fmt.Errorf("db: normalize usage ledger: %w", err)
+	if err := runMigrations(db); err != nil {
+		return fmt.Errorf("db: run migrations: %w", err)
 	}
 	log.Printf("db: auto-migration complete (%d models)", len(models.AllModels())+1)
-	return nil
-}
-
-func normalizeUsageLedger(db *gorm.DB) error {
-	validOccurrence := "occurred_at IS NOT NULL AND occurred_at > ?"
-	args := []interface{}{time.Date(2, 1, 1, 0, 0, 0, 0, time.UTC)}
-	if db.Dialector.Name() == "sqlite" {
-		validOccurrence += " AND occurred_at <> ''"
-	}
-	if err := db.Exec("UPDATE usage_records SET metered_at = occurred_at WHERE metered_at IS NULL AND "+validOccurrence, args...).Error; err != nil {
-		return err
-	}
-	if err := db.Exec("UPDATE usage_records SET pricing_state = ? WHERE (pricing_state IS NULL OR pricing_state = '') AND cost_micros <> 0", models.UsagePricingPriced).Error; err != nil {
-		return err
-	}
-	if err := db.Exec("UPDATE usage_records SET pricing_state = ? WHERE pricing_state IS NULL OR pricing_state = ''", models.UsagePricingUnpriced).Error; err != nil {
-		return err
-	}
-	for _, statement := range []string{
-		"CREATE INDEX IF NOT EXISTS idx_usage_org_metered_id ON usage_records (organization_id, metered_at, id)",
-		"CREATE INDEX IF NOT EXISTS idx_usage_org_user_metered_id ON usage_records (organization_id, user_id, metered_at, id)",
-		"CREATE INDEX IF NOT EXISTS idx_usage_org_session_metered_id ON usage_records (organization_id, session_id, metered_at, id)",
-		"CREATE INDEX IF NOT EXISTS idx_sessions_org_project_session ON sessions (organization_id, project_id, session_id)",
-	} {
-		if err := db.Exec(statement).Error; err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -110,6 +81,19 @@ func normalizeUsageLedger(db *gorm.DB) error {
 // For SQLite, if DSN is empty, defaults to .data/pccp.db
 // For Postgres, if DSN is empty, builds from standard PG env vars.
 func FromEnv() (*gorm.DB, error) {
+	database, err := OpenFromEnvNoMigrate()
+	if err != nil {
+		return nil, err
+	}
+	if err := AutoMigrate(database); err != nil {
+		return nil, err
+	}
+	return database, nil
+}
+
+// ConfigFromEnv resolves the same runtime driver/DSN without opening or
+// migrating. Maintenance commands use it to avoid configuration drift.
+func ConfigFromEnv() Config {
 	driver := os.Getenv("PCCP_DB_DRIVER")
 	if driver == "" {
 		driver = "sqlite"
@@ -132,16 +116,13 @@ func FromEnv() (*gorm.DB, error) {
 		}
 	}
 
-	db, err := New(Config{Driver: driver, DSN: dsn})
-	if err != nil {
-		return nil, err
-	}
+	return Config{Driver: driver, DSN: dsn}
+}
 
-	if err := AutoMigrate(db); err != nil {
-		return nil, err
-	}
-
-	return db, nil
+// OpenFromEnvNoMigrate opens the production-configured database without
+// changing schema. Explicit backfills must never migrate implicitly.
+func OpenFromEnvNoMigrate() (*gorm.DB, error) {
+	return New(ConfigFromEnv())
 }
 
 func getenvDefault(key, defaultVal string) string {

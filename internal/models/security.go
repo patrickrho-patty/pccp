@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 // SecurityRule is a persisted, per-org toggleable detection/DLP rule (PRD §16).
 // The detection catalogs and patterns live in internal/security; this record
 // stores the admin's enabled/action override so toggles stick and disabled
@@ -55,20 +57,47 @@ type AlertEndpoint struct {
 	// window only (PAT-1502 PR 2). New writes go to TargetEnc; legacy
 	// rows are migrated by the backfill command, then Target is
 	// dropped in a later PR. Never marshalled to JSON.
-	Target         string `gorm:"type:varchar(1024)" json:"-"`
-	// TargetEnc is the keymgmt Envelope JSON for the encrypted URL.
+	Target string `gorm:"type:varchar(1024)" json:"-"`
+	// TargetEnc is base64(JSON(keymgmt.Envelope)) for the encrypted URL.
 	// When non-empty, the dispatch path decrypts via the configured
 	// KeyProvider. When empty AND Target is non-empty, the dispatch
 	// path falls back to Target with a startup warning. Both must
 	// not be empty in production.
-	TargetEnc      string `gorm:"type:text" json:"-"`
-	TargetKEKID    string `gorm:"type:varchar(128);index" json:"-"`
-	SeveritiesJSON string `gorm:"type:text" json:"severities,omitempty"` // JSON array of severities to route
-	Enabled        bool   `gorm:"default:true" json:"enabled"`
+	TargetEnc   string `gorm:"type:text" json:"-"`
+	TargetKEKID string `gorm:"type:varchar(128);index" json:"-"`
+	// TargetBindingVersion identifies the row-bound authenticated-data format.
+	// Version 1 binds ciphertext to organization, endpoint ID, and provider type.
+	TargetBindingVersion int `gorm:"default:0" json:"-"`
+	// CredentialID is derived from the plaintext credential before sealing, so
+	// it remains stable across envelope nonce and KEK changes without requiring
+	// reads to decrypt the secret.
+	CredentialID     string     `gorm:"type:varchar(72);index" json:"-"`
+	RotationRequired bool       `gorm:"default:false;index" json:"-"`
+	LastRotatedAt    *time.Time `gorm:"type:timestamp" json:"-"`
+	LastTestAt       *time.Time `gorm:"type:timestamp" json:"-"`
+	LastTestStatus   string     `gorm:"type:varchar(32)" json:"-"`
+	SeveritiesJSON   string     `gorm:"type:text" json:"severities,omitempty"` // JSON array of severities to route
+	Enabled          bool       `gorm:"default:true" json:"enabled"`
 }
 
 // TableName overrides for alert endpoints.
 func (AlertEndpoint) TableName() string { return "alert_endpoints" }
+
+// AlertDeliveryJob is the durable outbox between finding persistence and
+// external webhook delivery. Relay request processing never performs network
+// I/O; workers claim these rows and retry bounded failures asynchronously.
+type AlertDeliveryJob struct {
+	Base
+	OrganizationID string    `gorm:"type:varchar(64);index:idx_alert_job_ready,priority:1;not null" json:"organization_id"`
+	EndpointID     string    `gorm:"type:varchar(64);index;not null" json:"endpoint_id"`
+	FindingID      string    `gorm:"type:varchar(64);index;not null" json:"finding_id"`
+	Status         string    `gorm:"type:varchar(24);index:idx_alert_job_ready,priority:2;not null;default:'pending'" json:"status"`
+	Attempts       int       `gorm:"default:0" json:"attempts"`
+	AvailableAt    time.Time `gorm:"index:idx_alert_job_ready,priority:3" json:"available_at"`
+	LastReason     string    `gorm:"type:varchar(64)" json:"last_reason,omitempty"`
+}
+
+func (AlertDeliveryJob) TableName() string { return "alert_delivery_jobs" }
 
 // PIILexicon is the versioned, org-overridable Korean-PII lexicon
 // (security C5, §16.3): patterns are no longer code-only constants —

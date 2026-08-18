@@ -1,5 +1,12 @@
 package models
 
+import (
+	"strings"
+	"time"
+
+	"gorm.io/gorm"
+)
+
 // Organization is the top-level tenant entity (PRD §8.1, §12).
 type Organization struct {
 	Base
@@ -10,7 +17,7 @@ type Organization struct {
 	ParentOrgID      string `gorm:"type:varchar(64);index" json:"parent_org_id,omitempty"`
 	Profile          string `gorm:"type:varchar(32);default:'enterprise'" json:"profile"` // enterprise, public, sovereign
 	Status           string `gorm:"type:varchar(32);default:'active'" json:"status"`
-	SSOConfig        string `gorm:"type:text" json:"sso_config,omitempty"` // JSON: OIDC/SAML config
+	SSOConfig        string `gorm:"type:text" json:"-"` // server-only OIDC/SAML config; never serialize secrets
 	PolicyPackID     string `gorm:"type:varchar(64);index" json:"policy_pack_id,omitempty"`
 	DefaultRetention string `gorm:"type:varchar(64)" json:"default_retention,omitempty"`
 	DataRegion       string `gorm:"type:varchar(64)" json:"data_region,omitempty"`
@@ -39,18 +46,21 @@ type BusinessUnit struct {
 // User is an authenticated human user (PRD §8.1).
 type User struct {
 	AuditBase
-	Email          string `gorm:"type:varchar(255);uniqueIndex:idx_email_org" json:"email"`
-	EmailKo        string `gorm:"type:varchar(255)" json:"email_ko,omitempty"`
-	Name           string `gorm:"type:varchar(255)" json:"name"`
-	NameKo         string `gorm:"type:varchar(255)" json:"name_ko"` // Korean name (PRD §44.3)
-	EmployeeId     string `gorm:"type:varchar(128)" json:"employee_id,omitempty"`
-	Title          string `gorm:"type:varchar(255)" json:"title,omitempty"`
-	TitleKo        string `gorm:"type:varchar(255)" json:"title_ko,omitempty"`
-	Status         string `gorm:"type:varchar(32);default:'active'" json:"status"`      // active, suspended, offboarded
-	AuthMethod     string `gorm:"type:varchar(32)" json:"auth_method"`                  // oidc, saml, ldap, local
-	ExternalID     string `gorm:"type:varchar(255);index" json:"external_id,omitempty"` // SSO subject
-	MFAEnrolled    bool   `gorm:"default:false" json:"mfa_enrolled"`
-	WebAuthnCredID string `gorm:"type:text" json:"webauthn_credential_id,omitempty"`
+	Email                  string `gorm:"type:varchar(255);index;not null" json:"email"`
+	EmailKo                string `gorm:"type:varchar(255)" json:"email_ko,omitempty"`
+	Name                   string `gorm:"type:varchar(255)" json:"name"`
+	NameKo                 string `gorm:"type:varchar(255)" json:"name_ko"` // Korean name (PRD §44.3)
+	EmployeeId             string `gorm:"type:varchar(128)" json:"employee_id,omitempty"`
+	Title                  string `gorm:"type:varchar(255)" json:"title,omitempty"`
+	TitleKo                string `gorm:"type:varchar(255)" json:"title_ko,omitempty"`
+	Status                 string `gorm:"type:varchar(32);default:'active'" json:"status"`                              // active, suspended, offboarded
+	LifecycleEpoch         uint64 `gorm:"not null;default:0" json:"-"`                                                  // invalidates console tokens across lifecycle changes
+	AuthMethod             string `gorm:"type:varchar(32)" json:"auth_method"`                                          // oidc, saml, ldap, local
+	ExternalID             string `gorm:"type:varchar(255);index" json:"external_id,omitempty"`                         // SSO subject
+	ExternalIssuer         string `gorm:"type:varchar(512);index;not null;default:''" json:"external_issuer,omitempty"` // verified IdP issuer/provider namespace
+	ExternalIssuerVerified bool   `gorm:"not null;default:false" json:"-"`                                              // explicit/provisioned namespace, never inferred from email/current IdP
+	MFAEnrolled            bool   `gorm:"default:false" json:"mfa_enrolled"`
+	WebAuthnCredID         string `gorm:"type:text" json:"webauthn_credential_id,omitempty"`
 	// Korean enterprise attributes (PRD §12.2)
 	BusinessUnitID  string  `gorm:"type:varchar(64);index" json:"business_unit_id,omitempty"`
 	ContractorInfo  string  `gorm:"type:text" json:"contractor_info,omitempty"` // JSON
@@ -58,6 +68,52 @@ type User struct {
 	Locale          string  `gorm:"type:varchar(10);default:'ko-KR'" json:"locale"`
 	Timezone        string  `gorm:"type:varchar(64);default:'Asia/Seoul'" json:"timezone"`
 	LastLoginAt     *string `gorm:"type:timestamp" json:"last_login_at,omitempty"`
+}
+
+// SSOAuthFlow is a short-lived, one-time browser login transaction. Only a
+// digest of the browser-visible state is stored; IdP responses are bound to the
+// organization configuration and request that initiated the flow.
+type SSOAuthFlow struct {
+	Base
+	OrganizationID string     `gorm:"type:varchar(64);index;not null" json:"-"`
+	Provider       string     `gorm:"type:varchar(16);index;not null" json:"-"`
+	StateHash      string     `gorm:"type:varchar(64);uniqueIndex;not null" json:"-"`
+	RequestID      string     `gorm:"type:varchar(128)" json:"-"`
+	Nonce          string     `gorm:"type:varchar(128)" json:"-"`
+	PKCEVerifier   string     `gorm:"type:varchar(128)" json:"-"`
+	ConfigDigest   string     `gorm:"type:varchar(64);not null" json:"-"`
+	BrowserBinding string     `gorm:"type:varchar(64);not null" json:"-"`
+	ExpiresAt      time.Time  `gorm:"index;not null" json:"-"`
+	ConsumedAt     *time.Time `gorm:"index" json:"-"`
+}
+
+// SSOLoginHandoff is a one-time, browser-bound exchange from an IdP callback
+// to the SPA. The browser-visible code is never stored in plaintext.
+type SSOLoginHandoff struct {
+	Base
+	OrganizationID string     `gorm:"type:varchar(64);index;not null" json:"-"`
+	UserID         string     `gorm:"type:varchar(64);index;not null" json:"-"`
+	Provider       string     `gorm:"type:varchar(16);not null" json:"-"`
+	CodeHash       string     `gorm:"type:varchar(64);uniqueIndex;not null" json:"-"`
+	BrowserBinding string     `gorm:"type:varchar(64);not null" json:"-"`
+	ConfigDigest   string     `gorm:"type:varchar(64);not null" json:"-"`
+	ExpiresAt      time.Time  `gorm:"index;not null" json:"-"`
+	ConsumedAt     *time.Time `gorm:"index" json:"-"`
+}
+
+// SSOSecret stores an envelope-encrypted organization SSO credential. The
+// organization configuration contains only the stable secret name.
+type SSOSecret struct {
+	Base
+	OrganizationID string `gorm:"type:varchar(64);uniqueIndex:idx_sso_secret_org_name,priority:1;not null" json:"-"`
+	Name           string `gorm:"type:varchar(128);uniqueIndex:idx_sso_secret_org_name,priority:2;not null" json:"-"`
+	Ciphertext     string `gorm:"type:text;not null" json:"-"`
+	KEKID          string `gorm:"type:varchar(255);not null" json:"-"`
+}
+
+func (u *User) BeforeSave(_ *gorm.DB) error {
+	u.Email = strings.ToLower(strings.TrimSpace(u.Email))
+	return nil
 }
 
 // Role defines authorization roles (PRD §8.1).
@@ -149,6 +205,13 @@ type EnrollmentCode struct {
 // set fails closed.
 func HarnessStatusPermitted(status string) bool {
 	return status == "enrolled" || status == "active"
+}
+
+// HarnessPermittedStatuses returns the canonical positive standing set for
+// SQL predicates. Keeping query and in-memory checks on the same allowlist
+// makes unknown future states fail closed.
+func HarnessPermittedStatuses() []string {
+	return []string{"enrolled", "active"}
 }
 
 // CredentialRevocationRecord is the durable revocation ledger: the

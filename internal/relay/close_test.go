@@ -32,6 +32,7 @@ func TestCloseExchangeChainRootIsDeterministic(t *testing.T) {
 	future := time.Now().Add(time.Hour).Format(time.RFC3339)
 	past := time.Now().Add(-time.Hour).Format(time.RFC3339)
 	db.Create(&models.Harness{OrganizationID: orgID, HarnessID: harness, Status: "enrolled"})
+	seedGovernedSession(t, db, orgID, "u", harness, sess)
 	db.Create(&models.CapabilityLease{OrganizationID: orgID, LeaseID: leaseID, SubjectPeerID: harness,
 		UserID: "u", SessionID: sess, PolicyEpochID: epochID,
 		AllowedModelPackages: `["` + modelPkg + `"]`, NotBefore: past, NotAfter: future, Status: "active"})

@@ -360,4 +360,4 @@ export default function Repositories() {
   )
 }
 
-function authHeaders() { const token = localStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }
+function authHeaders() { const token = sessionStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }

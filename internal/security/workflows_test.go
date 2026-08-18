@@ -1,17 +1,25 @@
 package security
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+type workflowDoerFunc func(*http.Request) (*http.Response, error)
+
+func (f workflowDoerFunc) Do(req *http.Request) (*http.Response, error) { return f(req) }
 
 func workflowsDB(t *testing.T) (*Service, *gorm.DB) {
 	t.Helper()
@@ -20,7 +28,7 @@ func workflowsDB(t *testing.T) (*Service, *gorm.DB) {
 		t.Fatal(err)
 	}
 	for _, m := range []interface{}{
-		&models.SecurityFinding{}, &models.AlertEndpoint{}, &models.PIILexicon{},
+		&models.SecurityFinding{}, &models.AlertEndpoint{}, &models.AlertDeliveryJob{}, &models.PIILexicon{},
 		&models.PromptExchange{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
@@ -59,15 +67,14 @@ func TestDispatchAlertsRoutesBySeverity(t *testing.T) {
 	svc, db := workflowsDB(t)
 	received := 0
 	var gotPayload map[string]interface{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	svc.SetAlertHTTPClient(workflowDoerFunc(func(r *http.Request) (*http.Response, error) {
 		received++
 		json.NewDecoder(r.Body).Decode(&gotPayload)
-		w.WriteHeader(200)
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
 	}))
-	defer srv.Close()
 
 	// Endpoint routes only critical findings.
-	ep := models.AlertEndpoint{OrganizationID: "org1", Name: "oncall", Type: "webhook", Target: srv.URL, SeveritiesJSON: `["critical"]`, Enabled: true}
+	ep := models.AlertEndpoint{OrganizationID: "org1", Name: "oncall", Type: "webhook", Target: "https://alerts.example/hook", SeveritiesJSON: `["critical"]`, Enabled: true}
 	db.Create(&ep)
 
 	f := models.SecurityFinding{OrganizationID: "org1", FindingType: "secret", Severity: "high", Title: "t", Status: "open"}
@@ -82,6 +89,84 @@ func TestDispatchAlertsRoutesBySeverity(t *testing.T) {
 	}
 	if gotPayload == nil || gotPayload["severity"] != "critical" {
 		t.Fatalf("payload mismatch: %v", gotPayload)
+	}
+}
+
+func TestSeverityRoutingEmptyMeansAllMalformedFailsClosed(t *testing.T) {
+	if !severityRouted("", "critical") || !severityRouted("[]", "low") || !severityRouted("null", "high") {
+		t.Fatal("unset and explicitly empty severity filters must route all severities")
+	}
+	if severityRouted("not-json", "critical") {
+		t.Fatal("malformed stored severity filter must fail closed")
+	}
+}
+
+func TestRotationRequiredEndpointCannotDeliver(t *testing.T) {
+	svc, db := workflowsDB(t)
+	called := 0
+	svc.SetAlertHTTPClient(workflowDoerFunc(func(*http.Request) (*http.Response, error) {
+		called++
+		return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}, nil
+	}))
+	db.Create(&models.AlertEndpoint{OrganizationID: "org1", Name: "quarantined", Type: "webhook", Target: "https://example.com/hook", Enabled: true, RotationRequired: true})
+	if delivered := svc.DispatchAlerts("org1", models.SecurityFinding{OrganizationID: "org1", Severity: "critical"}); delivered != 0 || called != 0 {
+		t.Fatalf("rotation-required endpoint delivered: delivered=%d called=%d", delivered, called)
+	}
+}
+
+func TestAlertProviderReadinessFailsForEncryptedRowsWithoutProvider(t *testing.T) {
+	_, db := workflowsDB(t)
+	db.Create(&models.AlertEndpoint{OrganizationID: "org1", Name: "encrypted", Type: "webhook", TargetEnc: "opaque"})
+	if err := ValidateAlertProviderReadiness(db, nil); err == nil {
+		t.Fatal("process must not become ready with encrypted endpoints and no provider")
+	}
+}
+
+func TestAlertProviderReadinessRejectsLegacyAndAuthenticatesEveryEnvelope(t *testing.T) {
+	_, db := workflowsDB(t)
+	provider, _ := keymgmt.NewLocalProvider([]byte("0123456789abcdef0123456789abcdef"), "ready")
+	legacy := models.AlertEndpoint{Base: models.Base{ID: "legacy-ready"}, OrganizationID: "org1", Name: "legacy", Type: "webhook", Target: "https://example.com/legacy"}
+	if err := db.Create(&legacy).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateAlertProviderReadiness(db, provider); err == nil {
+		t.Fatal("readiness must reject plaintext rows")
+	}
+	db.Delete(&legacy)
+	ctx := keymgmt.AlertSecretContext{OrganizationID: "org1", EndpointID: "encrypted-ready", ProviderType: "webhook"}
+	encoded, kekID, credentialID, bindingVersion, err := keymgmt.SealAlertSecret(provider, "https://example.com/hook", ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep := models.AlertEndpoint{Base: models.Base{ID: ctx.EndpointID}, OrganizationID: ctx.OrganizationID, Name: "encrypted", Type: ctx.ProviderType,
+		TargetEnc: encoded, TargetKEKID: kekID, TargetBindingVersion: bindingVersion, CredentialID: credentialID}
+	if err := db.Create(&ep).Error; err != nil {
+		t.Fatal(err)
+	}
+	wrongProvider, _ := keymgmt.NewLocalProvider([]byte("fedcba9876543210fedcba9876543210"), "ready")
+	if err := ValidateAlertProviderReadiness(db, wrongProvider); err == nil {
+		t.Fatal("readiness must authenticate envelopes, not only match KEK ids")
+	}
+	if err := ValidateAlertProviderReadiness(db, provider); err != nil {
+		t.Fatalf("valid provider should pass readiness: %v", err)
+	}
+}
+
+func TestDispatchAlertLogDoesNotContainTargetOrRawTransportError(t *testing.T) {
+	svc, db := workflowsDB(t)
+	target := "https://hooks.slack.com/services/A/B/never-log"
+	svc.SetAlertHTTPClient(workflowDoerFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("dial failed for " + target)
+	}))
+	db.Create(&models.AlertEndpoint{OrganizationID: "org1", Name: target, Type: "slack", Target: target, CredentialID: "cred-safe", Enabled: true})
+
+	var logs bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	_ = svc.DispatchAlerts("org1", models.SecurityFinding{OrganizationID: "org1", Severity: "critical", Title: "x"})
+	if strings.Contains(logs.String(), target) || strings.Contains(logs.String(), "never-log") || strings.Contains(logs.String(), "dial failed") {
+		t.Fatalf("delivery log leaked credential/error detail: %s", logs.String())
 	}
 }
 

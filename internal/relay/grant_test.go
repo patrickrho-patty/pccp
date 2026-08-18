@@ -116,6 +116,7 @@ func TestGovernInferenceVerifiesPresentedGrant(t *testing.T) {
 	past := time.Now().Add(-time.Hour).Format(time.RFC3339)
 
 	db.Create(&models.Harness{OrganizationID: orgID, HarnessID: harnessID, Status: "enrolled"})
+	seedGovernedSession(t, db, orgID, userID, harnessID, sessionID)
 	lease := &models.CapabilityLease{
 		OrganizationID: orgID, LeaseID: leaseID, SubjectPeerID: harnessID,
 		UserID: userID, SessionID: sessionID, PolicyEpochID: epochID,

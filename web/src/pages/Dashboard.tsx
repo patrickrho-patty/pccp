@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { api } from '../api'
 import { formatRelative } from '../utils/format'
-import { formatUsageAmount, UsageReportData } from '../components/UsageReport'
+import { formatUsageStateInteger, formatUsageAmount, UsageReportData } from '../components/UsageReport'
 
 export default function Dashboard() {
   const [data, setData] = useState<any>(null)
@@ -10,19 +11,24 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const [findingCount, setFindingCount] = useState(0)
 	const [usage, setUsage] = useState<UsageReportData | null>(null)
+  const [usageError, setUsageError] = useState(false)
 
   useEffect(() => {
+    let active = true
+    const controller = new AbortController()
     Promise.all([
-      fetch('/api/dashboard', { headers: authHeaders() }).then(r => r.json()).catch(() => ({})),
-      fetch('/api/korean/governance-brief', { headers: authHeaders() }).then(r => r.json()).catch(() => null),
-      fetch('/api/security/findings', { headers: authHeaders() }).then(r => r.json()).catch(() => []),
-	  fetch('/api/analytics/usage-extended?range=30d&limit=1', { headers: authHeaders() }).then(r => r.ok ? r.json() : null).catch(() => null),
+	  api.dashboard().catch(() => ({})),
+	  api.governanceBrief().catch(() => null),
+	  api.securityFindings().catch(() => []),
+	  api.usageExtended('30d', '', controller.signal, true).catch(error => { if (error?.name !== 'AbortError') setUsageError(true); return null }),
 	]).then(([dash, brf, findings, usageReport]) => {
+      if (!active) return
       setData(dash); setBrief(brf)
 	  setUsage(usageReport)
       setFindingCount(Array.isArray(findings) ? findings.filter((f: any) => f.status === 'open').length : 0)
       setLoading(false)
     })
+    return () => { active = false; controller.abort() }
   }, [])
 
   if (loading) return <div className="text-gray-500">로딩 중...</div>
@@ -31,7 +37,7 @@ export default function Dashboard() {
   const stats = [
     { label: '사용자', labelEn: 'Users', value: data?.users || 0, color: 'bg-blue-500', route: '/users' },
     { label: '하네스', labelEn: 'Harnesses', value: data?.harnesses || 0, color: 'bg-green-500', route: '/harnesses' },
-    { label: '활성 세션', labelEn: 'Active Sessions', value: data?.active_sessions?.length || 0, color: 'bg-purple-500', route: '/sessions' },
+	{ label: '활성 세션', labelEn: 'Active Sessions', value: data?.active_session_count ?? 0, color: 'bg-purple-500', route: '/sessions?status=active' },
     { label: '엔드포인트', labelEn: 'Endpoints', value: data?.endpoints || 0, color: 'bg-orange-500', route: '/models' },
   ]
 
@@ -58,10 +64,10 @@ export default function Dashboard() {
       </div>
 
 	  <Link to="/analytics#usage-ledger" className="card p-4 mb-6 grid grid-cols-2 md:grid-cols-4 gap-4 hover:shadow-md transition-shadow">
-	    <div><div className="text-[10px] text-gray-400">최근 30일 총 토큰</div><div className="text-lg font-bold text-blue-700">{usage?.record_count ? usage.total_tokens.toLocaleString() : '미수집'}</div></div>
-	    <div><div className="text-[10px] text-gray-400">입력 / 출력</div><div className="text-sm font-semibold">{usage?.record_count ? `${usage.input_tokens.toLocaleString()} / ${usage.output_tokens.toLocaleString()}` : '—'}</div></div>
+	    <div><div className="text-[10px] text-gray-400">최근 30일 총 토큰</div><div className="text-lg font-bold text-blue-700">{usageError ? '조회 오류' : formatUsageStateInteger(usage?.total_tokens, usage?.total_tokens_state)}</div></div>
+	    <div><div className="text-[10px] text-gray-400">입력 / 출력</div><div className="text-sm font-semibold">{usageError ? '조회 오류' : `${formatUsageStateInteger(usage?.input_tokens, usage?.input_tokens_state)} / ${formatUsageStateInteger(usage?.output_tokens, usage?.output_tokens_state)}`}</div></div>
 	    <div><div className="text-[10px] text-gray-400">비용 ({usage?.display_currency || '통화 미확인'})</div><div className="text-sm font-semibold text-orange-700">{usage?.display_total?.state === 'recorded' || usage?.display_total?.state === 'zero' ? formatUsageAmount(usage.display_total.amount_micros, usage.display_total.currency) : usage?.display_total?.state === 'error' ? '집계 오류' : '미수집'}</div></div>
-	    <div><div className="text-[10px] text-gray-400">원장 상태</div><div className={`text-sm font-semibold ${!usage || usage.record_count === 0 ? 'text-gray-500' : usage.reconciled ? 'text-green-700' : 'text-red-700'}`}>{!usage ? '확인 불가' : usage.record_count === 0 ? '수집 내역 없음' : usage.reconciled ? `대사 완료 · ${usage.record_count.toLocaleString()}건` : `확인 필요 · ${usage.record_count.toLocaleString()}건`}</div><div className="text-[10px] text-blue-600 mt-1">원장 상세 보기 →</div></div>
+	    <div><div className="text-[10px] text-gray-400">원장 상태</div><div className={`text-sm font-semibold ${usageError ? 'text-red-700' : !usage || usage.record_count === 0 ? 'text-gray-500' : usage.reconciled ? 'text-green-700' : 'text-red-700'}`}>{usageError ? '권한 또는 조회 오류' : !usage ? '확인 불가' : usage.record_count === 0 ? '수집 내역 없음' : usage.reconciled ? `대사 완료 · ${usage.record_count.toLocaleString()}건` : `확인 필요 · ${usage.record_count.toLocaleString()}건`}</div><div className="text-[10px] text-blue-600 mt-1">원장 상세 보기 →</div></div>
 	  </Link>
 
       {/* Incidents + gaps (A5) */}
@@ -143,7 +149,7 @@ export default function Dashboard() {
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">활성 세션</span>
-                <Link to="/sessions" className="font-bold text-blue-600 hover:underline">{data?.active_sessions?.length || 0}</Link>
+				<Link to="/sessions" className="font-bold text-blue-600 hover:underline">{data?.active_session_count ?? 0}</Link>
               </div>
             </div>
           </div>
@@ -194,9 +200,4 @@ export default function Dashboard() {
       </div>
     </div>
   )
-}
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('pccp_token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
 }

@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const InsecureDevelopmentJWTSecret = "dev-only-change-in-production"
+
 // ServerConfig holds control plane server configuration.
 type ServerConfig struct {
 	// HTTP server
@@ -36,7 +38,7 @@ func LoadFromEnv() ServerConfig {
 		HTTPAddr:          getenvDefault("PCCP_HTTP_ADDR", ":8080"),
 		DBDriver:          getenvDefault("PCCP_DB_DRIVER", "sqlite"),
 		DBDSN:             os.Getenv("PCCP_DB_DSN"),
-		JWTSecret:         getenvDefault("PCCP_JWT_SECRET", "dev-only-change-in-production"),
+		JWTSecret:         os.Getenv("PCCP_JWT_SECRET"),
 		CAKeyFile:         getenvDefault("PCCP_CA_KEY", ".keys/ca.key"),
 		CACertFile:        getenvDefault("PCCP_CA_CERT", ".keys/ca.cert"),
 		AdminEmail:        getenvDefault("PCCP_ADMIN_EMAIL", "admin@patty.dev"),
@@ -45,6 +47,23 @@ func LoadFromEnv() ServerConfig {
 		DefaultLocale:     getenvDefault("PCCP_DEFAULT_LOCALE", "ko-KR"),
 		DeploymentProfile: getenvDefault("PCCP_PROFILE", "enterprise"),
 	}
+}
+
+// ValidateJWTSecret prevents production from silently signing administrator
+// sessions with a source-known or brute-forceable HMAC key. Insecure values are
+// accepted only behind the explicit development mode used by local tooling.
+func ValidateJWTSecret(secret string, allowInsecureDevelopment bool) error {
+	if allowInsecureDevelopment {
+		return nil
+	}
+	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		return fmt.Errorf("PCCP_JWT_SECRET is required")
+	}
+	if secret == InsecureDevelopmentJWTSecret || len(secret) < 32 {
+		return fmt.Errorf("PCCP_JWT_SECRET must be a non-default secret of at least 32 characters")
+	}
+	return nil
 }
 
 // RelayConfig holds Relay (data plane) configuration.
@@ -99,12 +118,12 @@ type PIAConfig struct {
 	AssuranceLevel      string `json:"assurance_level"`
 	AttestationInterval string `json:"attestation_interval"` // duration string
 	// Worker-agent mode (DARI scheduler S1)
-	WorkerMode          bool   `json:"worker_mode"`
-	SchedulerAddr       string `json:"scheduler_addr"`
-	CredentialFile      string `json:"credential_file"`
-	SubjectKeyFile      string `json:"subject_key_file"`
-	ConfigEnvelopeFile  string `json:"config_envelope_file"`
-	ConfigPublicKeyHex  string `json:"config_public_key_hex"`
+	WorkerMode         bool   `json:"worker_mode"`
+	SchedulerAddr      string `json:"scheduler_addr"`
+	CredentialFile     string `json:"credential_file"`
+	SubjectKeyFile     string `json:"subject_key_file"`
+	ConfigEnvelopeFile string `json:"config_envelope_file"`
+	ConfigPublicKeyHex string `json:"config_public_key_hex"`
 	// Database
 	DBDriver string `json:"db_driver"`
 	DBDSN    string `json:"db_dsn"`

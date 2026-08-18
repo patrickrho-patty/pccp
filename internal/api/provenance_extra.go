@@ -74,11 +74,11 @@ func (s *Server) handleProvenanceExport(w http.ResponseWriter, r *http.Request) 
 	}
 	// Assemble the chain (actions, spans, changesets, receipts).
 	var actions []models.ActionEnvelope
-	s.db.Where("session_id = ?", sess.SessionID).Order("occurred_at ASC").Find(&actions)
+	s.db.Where("organization_id = ? AND session_id = ?", orgID, sess.SessionID).Order("occurred_at ASC").Find(&actions)
 	var spans []models.ProvenanceSpan
-	s.db.Where("session_id = ?", sess.SessionID).Order("created_at ASC").Find(&spans)
+	s.db.Where("organization_id = ? AND session_id = ?", orgID, sess.SessionID).Order("created_at ASC").Find(&spans)
 	var changeSets []models.ChangeSet
-	s.db.Where("session_id = ?", sess.SessionID).Order("created_at ASC").Find(&changeSets)
+	s.db.Where("organization_id = ? AND session_id = ?", orgID, sess.SessionID).Order("created_at ASC").Find(&changeSets)
 	var receipts []models.EvidenceReceipt
 	s.db.Where("session_id = ?", sess.SessionID).Find(&receipts)
 
@@ -110,7 +110,11 @@ func (s *Server) handleProvenanceExport(w http.ResponseWriter, r *http.Request) 
 	}
 	outRaw, _ := json.MarshalIndent(out, "", "  ")
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Disposition", "attachment; filename=provenance-"+sess.SessionID[:12]+".bundle.json")
+	fileID := sess.SessionID
+	if len(fileID) > 12 {
+		fileID = fileID[:12]
+	}
+	w.Header().Set("Content-Disposition", "attachment; filename=provenance-"+fileID+".bundle.json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(outRaw)
 }

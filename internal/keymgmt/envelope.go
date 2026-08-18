@@ -87,6 +87,10 @@ func unwrap(kek, sealed []byte) ([]byte, error) {
 
 // gcmEncrypt is the shared AES-GCM seal: fresh nonce + ciphertext.
 func gcmEncrypt(key, plaintext []byte) (nonce, ciphertext []byte, err error) {
+	return gcmEncryptAAD(key, plaintext, nil)
+}
+
+func gcmEncryptAAD(key, plaintext, aad []byte) (nonce, ciphertext []byte, err error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, nil, err
@@ -99,7 +103,7 @@ func gcmEncrypt(key, plaintext []byte) (nonce, ciphertext []byte, err error) {
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, nil, err
 	}
-	return nonce, gcm.Seal(nil, nonce, plaintext, nil), nil
+	return nonce, gcm.Seal(nil, nonce, plaintext, aad), nil
 }
 
 // Envelope is one encrypted payload: the wrapped DEK + the ciphertext.
@@ -114,6 +118,12 @@ type Envelope struct {
 // AES-GCM-encrypts the payload; the DEK is wrapped under the
 // provider's KEK. The DEK is zeroed after use.
 func Seal(provider KeyProvider, plaintext []byte) (*Envelope, error) {
+	return SealWithAAD(provider, plaintext, nil)
+}
+
+// SealWithAAD binds the encrypted payload to immutable caller-supplied
+// context. Moving the ciphertext to a different row then fails authentication.
+func SealWithAAD(provider KeyProvider, plaintext, aad []byte) (*Envelope, error) {
 	dek := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
 		return nil, err
@@ -124,7 +134,7 @@ func Seal(provider KeyProvider, plaintext []byte) (*Envelope, error) {
 	if err != nil {
 		return nil, fmt.Errorf("keymgmt: wrap DEK: %w", err)
 	}
-	nonce, ciphertext, err := gcmEncrypt(dek, plaintext)
+	nonce, ciphertext, err := gcmEncryptAAD(dek, plaintext, aad)
 	if err != nil {
 		return nil, err
 	}
@@ -139,6 +149,11 @@ func Seal(provider KeyProvider, plaintext []byte) (*Envelope, error) {
 // Open decrypts an envelope: the DEK is unwrapped by the provider and
 // the payload decrypted. Fails closed on any tampering (GCM tag).
 func Open(provider KeyProvider, env *Envelope) ([]byte, error) {
+	return OpenWithAAD(provider, env, nil)
+}
+
+// OpenWithAAD authenticates the same immutable context used when sealing.
+func OpenWithAAD(provider KeyProvider, env *Envelope, aad []byte) ([]byte, error) {
 	if env == nil {
 		return nil, errors.New("keymgmt: nil envelope")
 	}
@@ -158,7 +173,10 @@ func Open(provider KeyProvider, env *Envelope) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	plaintext, err := gcm.Open(nil, env.Nonce, env.Ciphertext, nil)
+	if len(env.Nonce) != gcm.NonceSize() {
+		return nil, errors.New("keymgmt: invalid payload nonce size")
+	}
+	plaintext, err := gcm.Open(nil, env.Nonce, env.Ciphertext, aad)
 	if err != nil {
 		return nil, fmt.Errorf("keymgmt: decrypt (tampered or wrong key): %w", err)
 	}

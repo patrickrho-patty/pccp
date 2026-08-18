@@ -40,8 +40,15 @@ type koreanForcedVersion struct {
 // GatherGovernanceState builds the view from audit-trail governance
 // state (freezes, recalls, forced version) plus the tool registry
 // and sandbox definitions.
-func (s *Service) GatherGovernanceState(orgID, repoID, modelID string) GovernanceStateView {
+func (s *Service) GatherGovernanceState(orgID, repoID, modelID string, harnessIDs ...string) GovernanceStateView {
 	view := GovernanceStateView{OrgID: orgID, RepoID: repoID, ModelID: modelID}
+	if len(harnessIDs) > 0 && harnessIDs[0] != "" {
+		if desired, err := models.ActiveFleetDesiredStates(s.db, orgID, harnessIDs[0]); err == nil {
+			for _, state := range desired {
+				view.Desired = append(view.Desired, FleetDesiredStateView{Action: state.Action, Parameters: state.ParametersJSON})
+			}
+		}
+	}
 
 	// Freeze: the most recent started/ended event decides.
 	var events []models.AuditEvent

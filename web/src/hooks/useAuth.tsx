@@ -8,6 +8,8 @@ interface AuthState {
   role: string
   email: string
   orgId: string
+  permissions: string[]
+  can: (permission: string) => boolean
   profile: ConsoleProfile
   login: (token: string) => void
   logout: () => void
@@ -20,6 +22,8 @@ const AuthContext = createContext<AuthState>({
   role: '',
   email: '',
   orgId: '',
+  permissions: [],
+  can: () => false,
   profile: 'customer',
   login: () => {},
   logout: () => {},
@@ -27,14 +31,14 @@ const AuthContext = createContext<AuthState>({
 })
 
 // Decode JWT payload (without verification — verification happens server-side)
-function decodeJWT(token: string): { role: string; email: string; org_id: string } {
+function decodeJWT(token: string): { role: string; email: string; org_id: string; permissions: string[] } {
   try {
-    const payload = token.split('.')[1]
+    const payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
     const padded = payload + '='.repeat((4 - payload.length % 4) % 4)
     const decoded = JSON.parse(atob(padded))
-    return { role: decoded.role || '', email: decoded.email || '', org_id: decoded.org_id || '' }
+    return { role: decoded.role || '', email: decoded.email || '', org_id: decoded.org_id || '', permissions: Array.isArray(decoded.permissions) ? decoded.permissions : [] }
   } catch {
-    return { role: '', email: '', org_id: '' }
+    return { role: '', email: '', org_id: '', permissions: [] }
   }
 }
 
@@ -44,16 +48,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState('')
   const [email, setEmail] = useState('')
   const [orgId, setOrgId] = useState('')
+  const [permissions, setPermissions] = useState<string[]>([])
   const [profile, setProfileState] = useState<ConsoleProfile>('customer')
 
   useEffect(() => {
-    const token = localStorage.getItem('pccp_token')
+    const token = sessionStorage.getItem('pccp_token')
     if (token) {
       const claims = decodeJWT(token)
       setIsAuthenticated(true)
       setRole(claims.role)
       setEmail(claims.email)
       setOrgId(claims.org_id)
+      setPermissions(claims.permissions)
 
       // Determine default profile from role
       const savedProfile = localStorage.getItem('pccp_profile') as ConsoleProfile | null
@@ -68,13 +74,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(false)
   }, [])
 
+	useEffect(() => {
+		const expire = () => {
+			setIsAuthenticated(false)
+			setRole('')
+			setEmail('')
+			setOrgId('')
+			setPermissions([])
+		}
+		window.addEventListener('pccp-auth-expired', expire)
+		return () => window.removeEventListener('pccp-auth-expired', expire)
+	}, [])
+
   const login = (token: string) => {
-    localStorage.setItem('pccp_token', token)
+    sessionStorage.setItem('pccp_token', token)
     const claims = decodeJWT(token)
     setIsAuthenticated(true)
     setRole(claims.role)
     setEmail(claims.email)
     setOrgId(claims.org_id)
+    setPermissions(claims.permissions)
 
     // Auto-select profile based on role
     if (claims.role === 'super_admin' || claims.email.includes('@patty.')) {
@@ -87,12 +106,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const logout = () => {
-    localStorage.removeItem('pccp_token')
+    sessionStorage.removeItem('pccp_token')
     localStorage.removeItem('pccp_profile')
     setIsAuthenticated(false)
     setRole('')
     setEmail('')
     setOrgId('')
+    setPermissions([])
   }
 
   const setProfile = (p: ConsoleProfile) => {
@@ -100,8 +120,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('pccp_profile', p)
   }
 
+  const can = (permission: string) => {
+    if (['admin', 'owner', 'super_admin', 'security_admin'].includes(role)) return true
+    if (['viewer', 'auditor', 'security_viewer'].includes(role) && permission === 'security.alert_endpoint.read') return true
+    return permissions.includes(permission) || permissions.includes('security.alert_endpoint.*')
+  }
+
   return (
-    <AuthContext.Provider value={{ isAuthenticated, loading, role, email, orgId, profile, login, logout, setProfile }}>
+    <AuthContext.Provider value={{ isAuthenticated, loading, role, email, orgId, permissions, can, profile, login, logout, setProfile }}>
       {children}
     </AuthContext.Provider>
   )

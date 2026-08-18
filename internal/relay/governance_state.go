@@ -23,6 +23,7 @@ type wireGovernanceState struct {
 	Standards  []wireGovernanceStandard `cbor:"9,keyasint,omitempty"`
 	Tools      []wireGovernanceTool     `cbor:"10,keyasint,omitempty"`
 	Sandboxes  []wireGovernanceSandbox  `cbor:"11,keyasint,omitempty"`
+	Desired    []wireFleetDesiredState  `cbor:"12,keyasint,omitempty"`
 }
 
 type wireGovernanceFreeze struct {
@@ -68,6 +69,11 @@ type wireGovernanceSandbox struct {
 	RiskClass    string `cbor:"3,keyasint"`
 }
 
+type wireFleetDesiredState struct {
+	Action     string `cbor:"1,keyasint"`
+	Parameters string `cbor:"2,keyasint,omitempty"`
+}
+
 // GovernanceStateView is the projection the relay gathers from its
 // services to build the snapshot.
 type GovernanceStateView struct {
@@ -81,6 +87,7 @@ type GovernanceStateView struct {
 	Standards  []GovernanceStandardView
 	Tools      []GovernanceToolView
 	Sandboxes  []GovernanceSandboxView
+	Desired    []FleetDesiredStateView
 }
 
 // GovernanceFreezeView and friends mirror the wire structs.
@@ -127,6 +134,11 @@ type GovernanceSandboxView struct {
 	RiskClass    string
 }
 
+type FleetDesiredStateView struct {
+	Action     string
+	Parameters string
+}
+
 // BuildGovernanceState assembles the wire snapshot from a view.
 func BuildGovernanceState(v GovernanceStateView) *wireGovernanceState {
 	snap := &wireGovernanceState{
@@ -156,6 +168,9 @@ func BuildGovernanceState(v GovernanceStateView) *wireGovernanceState {
 	}
 	for _, sb := range v.Sandboxes {
 		snap.Sandboxes = append(snap.Sandboxes, wireGovernanceSandbox(sb))
+	}
+	for _, desired := range v.Desired {
+		snap.Desired = append(snap.Desired, wireFleetDesiredState(desired))
 	}
 	return snap
 }

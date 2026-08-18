@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { EntitySelect } from '../components/EntitySelect'
 import { FavoriteStar } from '../hooks/useFavorites'
 import { showToast } from '../components/Toast'
 import { formatUsageAmount, UsageReport } from '../components/UsageReport'
-import { userActions, userActionSpec, applyUserLifecycle, canIssueEnrollment, STATUS_KO, STATUS_BADGE, UserLifecycleAction } from '../userLifecycle'
+import { useAuth } from '../hooks/useAuth'
+import { userActions, userActionSpec, applyUserLifecycle, canIssueEnrollment, lifecycleDenialLabel, STATUS_KO, STATUS_BADGE, UserLifecycleAction } from '../userLifecycle'
 
 // UserDetail (web/01 B4): /users/:id with tabs — Overview /
 // Entitlement / Sessions / Harnesses / Usage / Audit / Contractor.
@@ -19,8 +20,14 @@ const TABS = [
   { id: 'contractor', label: '계약', en: 'Contractor' },
 ]
 
+const emptyContractor = () => ({
+  sponsor_user_id: '', company: '', contract_start: '', contract_end: '',
+  allowed_repo_ids: [] as string[], allowed_model_classes: [] as string[], network_zone: '',
+})
+
 export default function UserDetail() {
   const { id } = useParams<{ id: string }>()
+  const { email: operatorEmail } = useAuth()
   const [params, setParams] = useSearchParams()
   const tab = params.get('tab') || 'overview'
   const setTab = (t: string) => setParams(t === 'overview' ? {} : { tab: t })
@@ -34,56 +41,112 @@ export default function UserDetail() {
   const [entitlements, setEntitlements] = useState<any>({ assignments: [], roles: [] })
   const [roles, setRoles] = useState<any[]>([])
   const [ssoStatus, setSsoStatus] = useState<any>(null)
-  const [contractor, setContractor] = useState<any>({
-    sponsor_user_id: '', company: '', contract_start: '', contract_end: '',
-    allowed_repo_ids: [] as string[], allowed_model_classes: [] as string[], network_zone: '',
-  })
+  const [contractor, setContractor] = useState<any>(emptyContractor())
   const [enrollmentCode, setEnrollmentCode] = useState<any>(null)
+  const [usageLoading, setUsageLoading] = useState(true)
+  const [usageError, setUsageError] = useState(false)
   const [reasonText, setReasonText] = useState('')
   const [pendingAction, setPendingAction] = useState<UserLifecycleAction | null>(null)
   const [lifecycleBusy, setLifecycleBusy] = useState(false)
   const [loading, setLoading] = useState(true)
+  const detailedUsageID = useRef('')
+  const summaryUsageID = useRef('')
+	const loadGeneration = useRef(0)
+	const routeID = useRef(id)
+	routeID.current = id
 
-  const load = async () => {
-    if (!id) return
+	const load = async (requestedID = id) => {
+		if (!requestedID || requestedID !== routeID.current) return
+		const targetID = requestedID
+		const generation = ++loadGeneration.current
     setLoading(true)
-    await Promise.all([
-      api.getUser(id).then(setUser).catch(() => setUser(null)),
-      api.listSessions().then((d: any[]) => setSessions((Array.isArray(d) ? d : []).filter((s: any) => s.user_id === id))).catch(() => {}),
-      api.getUserHarnesses(id).then(d => setHarnesses(Array.isArray(d) ? d : [])).catch(() => {}),
-      api.listHarnesses().then(d => setAllHarnesses(Array.isArray(d) ? d : [])).catch(() => {}),
-      api.getUserAudit(id).then(d => setAuditEvents(Array.isArray(d) ? d : [])).catch(() => {}),
-      api.getUserUsage(id).then(setUsage).catch(() => setUsage(null)),
-      api.getUserEntitlements(id).then(setEntitlements).catch(() => {}),
-      api.listRoles().then(d => setRoles(Array.isArray(d) ? d : [])).catch(() => {}),
-      api.getUserSSOStatus(id).then(setSsoStatus).catch(() => setSsoStatus(null)),
-    ])
-    if (user?.contractor_info) {
-      try { setContractor({ ...contractor, ...JSON.parse(user.contractor_info) }) } catch { /* legacy blob */ }
+		const [loadedUser, loadedSessions, loadedHarnesses, loadedAllHarnesses, loadedAudit, loadedEntitlements, loadedRoles, loadedSSO] = await Promise.all([
+			api.getUser(targetID).catch(() => null),
+			api.listSessions().then((d: any[]) => (Array.isArray(d) ? d : []).filter((s: any) => s.user_id === targetID)).catch(() => []),
+			api.getUserHarnesses(targetID).then(d => Array.isArray(d) ? d : []).catch(() => []),
+			api.listHarnesses().then(d => Array.isArray(d) ? d : []).catch(() => []),
+			api.getUserAudit(targetID).then(d => Array.isArray(d) ? d : []).catch(() => []),
+			api.getUserEntitlements(targetID).catch(() => ({ assignments: [], roles: [] })),
+			api.listRoles().then(d => Array.isArray(d) ? d : []).catch(() => []),
+			api.getUserSSOStatus(targetID).catch(() => null),
+		])
+		if (generation !== loadGeneration.current || targetID !== routeID.current) return
+		setUser(loadedUser)
+		setSessions(loadedSessions)
+		setHarnesses(loadedHarnesses)
+		setAllHarnesses(loadedAllHarnesses)
+		setAuditEvents(loadedAudit)
+		setEntitlements(loadedEntitlements)
+		setRoles(loadedRoles)
+		setSsoStatus(loadedSSO)
+    const nextContractor = emptyContractor()
+    if (loadedUser?.contractor_info) {
+      try { Object.assign(nextContractor, JSON.parse(loadedUser.contractor_info)) } catch { /* legacy blob */ }
     }
+    setContractor(nextContractor)
     setLoading(false)
   }
-  useEffect(() => { load() }, [id])
+  useEffect(() => {
+		setUser(null)
+		setPendingAction(null)
+		setEnrollmentCode(null)
+    load()
+		return () => { loadGeneration.current++ }
+  }, [id])
+
+  useEffect(() => {
+    if (!id) return
+    detailedUsageID.current = ''
+    summaryUsageID.current = ''
+    setUsage(null)
+    setUsageLoading(true)
+    setUsageError(false)
+  }, [id])
+
+  useEffect(() => {
+    if (!id) return
+    const detailed = tab === 'usage'
+    if (detailed ? detailedUsageID.current === id : summaryUsageID.current === id) return
+    const controller = new AbortController()
+    setUsageLoading(true)
+    api.getUserUsage(id, '30d', '', controller.signal, !detailed).then(d => {
+      setUsage(d)
+      setUsageError(false)
+      if (detailed) {
+        detailedUsageID.current = id
+        summaryUsageID.current = id
+      } else {
+        summaryUsageID.current = id
+      }
+    }).catch((error: any) => {
+      if (error?.name !== 'AbortError') { setUsage(null); setUsageError(true) }
+    }).finally(() => { if (!controller.signal.aborted) setUsageLoading(false) })
+    return () => controller.abort()
+  }, [id, tab])
 
   if (loading && !user) return <div className="text-gray-400 p-8 text-center">로딩 중...</div>
   if (!user) return <div className="text-gray-400 p-8 text-center">사용자를 찾을 수 없습니다</div>
+  const mutable = user.can_manage === true && user.status !== 'offboarded'
 
   // Lifecycle moves run through the dedicated endpoints with a captured
   // reason (PAT-1489). A 409 means the page state is stale — reload so the
   // header re-derives valid actions from the persisted state. Suspend and
   // resume only invalidate user + audit (targeted reload); offboard changes
   // sessions and harnesses too (full reload).
-  const refreshCore = async () => {
+	const refreshCore = async () => {
+		const targetID = id!
+		const generation = ++loadGeneration.current
     const [u, audit] = await Promise.all([
-      api.getUser(id!).catch(() => null),
-      api.getUserAudit(id!).catch(() => [] as any[]),
+			api.getUser(targetID).catch(() => null),
+			api.getUserAudit(targetID).catch(() => [] as any[]),
     ])
+		if (generation !== loadGeneration.current || targetID !== routeID.current) return
     if (u) setUser(u)
     setAuditEvents(Array.isArray(audit) ? audit : [])
   }
 
   const runLifecycle = async () => {
-    if (!id || !pendingAction) return
+    if (!id || !pendingAction || lifecycleBusy) return
     if (!reasonText.trim()) {
       showToast('사유를 입력해주세요 (감사 로그에 기록됩니다)', 'error')
       return
@@ -94,7 +157,9 @@ export default function UserDetail() {
       if (pendingAction === 'offboard') {
         showToast(`퇴사 완료 — 세션 ${res.closed_sessions} 종료, 하네스 ${res.revoked_harnesses} 해제`, 'success')
       } else {
-        showToast(pendingAction === 'suspend' ? '정지 완료 — 상태가 반영되었습니다' : '재활성화 완료 — 상태가 반영되었습니다', 'success')
+        showToast(pendingAction === 'suspend'
+          ? `정지 완료 — 세션 ${res.closed_sessions}개 종료, 권한 임대 ${res.revoked_leases}개 회수`
+          : '재활성화 완료 — 상태가 반영되었습니다', 'success')
       }
       setPendingAction(null)
       setReasonText('')
@@ -112,66 +177,84 @@ export default function UserDetail() {
   }
 
   const assignRole = async (roleId: string, scope: string, scopeId: string) => {
-    if (!id) return
+    if (!id || lifecycleBusy) return
+		const targetID = id
+		setLifecycleBusy(true)
     try {
       const current = entitlements.assignments || []
       const next = [
         ...current.filter((a: any) => !(a.role_id === roleId && a.scope === scope && a.scope_id === scopeId)),
         { role_id: roleId, scope, scope_id: scopeId },
       ].map(a => ({ role_id: a.role_id, scope: a.scope, scope_id: a.scope_id || '' }))
-      await api.putUserEntitlements(id, next)
-      const fresh = await api.getUserEntitlements(id)
-      setEntitlements(fresh)
+			await api.putUserEntitlements(targetID, next)
+			const fresh = await api.getUserEntitlements(targetID)
+			if (routeID.current === targetID) setEntitlements(fresh)
       showToast('권한 저장 완료', 'success')
-    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+		} catch (e: any) { showToast(e?.message || '실패', 'error') }
+		finally { setLifecycleBusy(false) }
   }
   const revokeRole = async (roleId: string, scope: string, scopeId: string) => {
-    if (!id) return
+    if (!id || lifecycleBusy) return
+		const targetID = id
+		setLifecycleBusy(true)
     try {
       const next = (entitlements.assignments || [])
         .filter((a: any) => !(a.role_id === roleId && a.scope === scope && a.scope_id === scopeId))
         .map((a: any) => ({ role_id: a.role_id, scope: a.scope, scope_id: a.scope_id || '' }))
-      await api.putUserEntitlements(id, next)
-      const fresh = await api.getUserEntitlements(id)
-      setEntitlements(fresh)
+			await api.putUserEntitlements(targetID, next)
+			const fresh = await api.getUserEntitlements(targetID)
+			if (routeID.current === targetID) setEntitlements(fresh)
       showToast('권한 해제 완료', 'success')
-    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+		} catch (e: any) { showToast(e?.message || '실패', 'error') }
+		finally { setLifecycleBusy(false) }
   }
 
   const saveContractor = async () => {
-    if (!id) return
+    if (!id || lifecycleBusy) return
+		const targetID = id
+		setLifecycleBusy(true)
     try {
-      const updated = await api.putContractor(id, contractor)
-      setUser(updated)
+			const updated = await api.putContractor(targetID, contractor)
+			if (routeID.current === targetID) setUser(updated)
       showToast('계약 정보 저장 완료', 'success')
-    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+		} catch (e: any) { showToast(e?.message || '실패', 'error') }
+		finally { setLifecycleBusy(false) }
   }
 
   const issueEnrollment = async () => {
-    if (!id) return
+    if (!id || lifecycleBusy) return
+		const targetID = id
+		setLifecycleBusy(true)
     try {
-      const res = await api.issueEnrollmentCode(id)
-      setEnrollmentCode(typeof res === 'string' ? { code: res } : res)
-    } catch (e: any) { showToast(e?.message || '발급 실패', 'error') }
+			const res = await api.issueEnrollmentCode(targetID)
+			if (routeID.current === targetID) setEnrollmentCode(typeof res === 'string' ? { code: res } : res)
+		} catch (e: any) { showToast(e?.message || '발급 실패', 'error') }
+		finally { setLifecycleBusy(false) }
   }
 
   const grantHarness = async (harnessId: string) => {
-    if (!id || !harnessId) return
+    if (!id || !harnessId || lifecycleBusy) return
+		const targetID = id
+		setLifecycleBusy(true)
     try {
-      await api.grantUserHarness(id, harnessId)
-      const d = await api.getUserHarnesses(id)
-      setHarnesses(Array.isArray(d) ? d : [])
+			await api.grantUserHarness(targetID, harnessId)
+			const d = await api.getUserHarnesses(targetID)
+			if (routeID.current === targetID) setHarnesses(Array.isArray(d) ? d : [])
       showToast('하네스 바인딩 완료', 'success')
-    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+		} catch (e: any) { showToast(e?.message || '실패', 'error') }
+		finally { setLifecycleBusy(false) }
   }
   const revokeHarness = async (harnessId: string) => {
-    if (!id) return
+    if (!id || lifecycleBusy) return
+		const targetID = id
+		setLifecycleBusy(true)
     try {
-      await api.revokeUserHarness(id, harnessId)
-      const d = await api.getUserHarnesses(id)
-      setHarnesses(Array.isArray(d) ? d : [])
+			await api.revokeUserHarness(targetID, harnessId)
+			const d = await api.getUserHarnesses(targetID)
+			if (routeID.current === targetID) setHarnesses(Array.isArray(d) ? d : [])
       showToast('하네스 바인딩 해제', 'success')
-    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+		} catch (e: any) { showToast(e?.message || '실패', 'error') }
+		finally { setLifecycleBusy(false) }
   }
 
   return (
@@ -201,16 +284,19 @@ export default function UserDetail() {
             </div>
           </div>
           <div className="flex gap-2 shrink-0 flex-wrap">
-            {canIssueEnrollment(user.status) && (
-              <button className="btn-sm btn-secondary" onClick={issueEnrollment}>초대 코드 발급</button>
+            {canIssueEnrollment(user.status, user.can_manage) && (
+              <button className="btn-sm btn-secondary" disabled={lifecycleBusy} onClick={issueEnrollment}>초대 코드 발급</button>
             )}
-            {userActions(user.status).map(a => (
+            {userActions(user.allowed_actions).map(a => (
               <button key={a.action} disabled={lifecycleBusy}
                 className={a.action === 'offboard' ? 'btn-sm btn-danger' : 'btn-sm btn-secondary'}
                 onClick={() => { setPendingAction(a.action); setReasonText('') }}>{a.label}</button>
             ))}
           </div>
         </div>
+        {lifecycleDenialLabel(user.lifecycle_denial_reason) && (
+          <p className="mt-2 text-[11px] text-amber-700">{lifecycleDenialLabel(user.lifecycle_denial_reason)}</p>
+        )}
         {enrollmentCode && (
           <div className="mt-3 p-3 bg-gray-50 rounded-lg">
             <div className="text-[10px] text-gray-500">1회용 등록 코드</div>
@@ -223,17 +309,24 @@ export default function UserDetail() {
             <p className={`text-[11px] ${userActionSpec(pendingAction).danger ? 'text-red-600' : 'text-green-700'}`}>
               {userActionSpec(pendingAction).effect} 대상: {user.name_ko || user.name} ({user.email}). 사유를 남겨주세요.
             </p>
+            <p className="text-[11px] text-gray-500">실행자: <span className="font-medium text-gray-700">{operatorEmail || '현재 콘솔 운영자'}</span></p>
             <textarea className="input text-xs w-full" rows={2} placeholder="사유 (감사 로그에 기록됩니다)"
-              value={reasonText} onChange={e => setReasonText(e.target.value)} />
+              disabled={lifecycleBusy} value={reasonText} onChange={e => setReasonText(e.target.value)} />
             <div className="flex items-center gap-2">
               <button className={userActionSpec(pendingAction).danger ? 'btn-sm btn-danger' : 'btn-sm btn-primary'} disabled={lifecycleBusy} onClick={runLifecycle}>
                 {lifecycleBusy ? '처리 중...' : `${userActionSpec(pendingAction).label} 확정`}
               </button>
-              <button className="btn-sm btn-secondary" onClick={() => setPendingAction(null)}>취소</button>
+              <button className="btn-sm btn-secondary" disabled={lifecycleBusy} onClick={() => setPendingAction(null)}>취소</button>
             </div>
           </div>
         )}
       </div>
+
+      {user.status === 'offboarded' && (
+        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-[11px] text-gray-600">
+          퇴사 처리된 사용자의 기록입니다. 감사, 세션, 사용량 및 과거 바인딩은 조회할 수 있지만 권한·하네스·계약 정보는 변경할 수 없습니다.
+        </div>
+      )}
 
       <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
         {TABS.map(t => (
@@ -287,11 +380,12 @@ export default function UserDetail() {
                     {assigned.map((a: any) => (
                       <span key={a.id} className="text-[10px] px-2 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 flex items-center gap-1">
                         {a.scope || 'org'}
-                        <button onClick={() => revokeRole(r.id, a.scope, a.scope_id || '')}>✕</button>
+                        {mutable && <button disabled={lifecycleBusy} onClick={() => revokeRole(r.id, a.scope, a.scope_id || '')}>✕</button>}
                       </span>
                     ))}
-                    {assigned.length === 0 && (
+                    {mutable && assigned.length === 0 && (
                       <button className="text-[10px] px-2 py-1 rounded bg-gray-100 hover:bg-blue-50 text-blue-600"
+                        disabled={lifecycleBusy}
                         onClick={() => assignRole(r.id, 'org', '')}>부여</button>
                     )}
                   </div>
@@ -325,25 +419,25 @@ export default function UserDetail() {
             {harnesses.map((h: any) => (
               <div key={h.id} className="flex justify-between items-center text-[11px] border-b border-gray-50 py-1">
                 <span className="text-gray-700">{h.name} <span className="text-gray-400">({h.harness_id})</span></span>
-                <button className="text-[10px] px-2 py-1 rounded text-red-600 hover:bg-red-50" onClick={() => revokeHarness(h.id)}>해제</button>
+                {mutable && <button className="text-[10px] px-2 py-1 rounded text-red-600 hover:bg-red-50" disabled={lifecycleBusy} onClick={() => revokeHarness(h.id)}>해제</button>}
               </div>
             ))}
             {harnesses.length === 0 && <p className="text-[11px] text-gray-400">바인딩된 하네스 없음</p>}
           </div>
-          <div className="flex gap-2 items-center shrink-0">
-            <select className="input text-xs" defaultValue=""
+          {mutable && <div className="flex gap-2 items-center shrink-0">
+            <select className="input text-xs" defaultValue="" disabled={lifecycleBusy}
               onChange={e => { if (e.target.value) grantHarness(e.target.value) }}>
               <option value="">하네스 바인딩 추가...</option>
               {allHarnesses.filter((h: any) => !harnesses.some((b: any) => b.id === h.id)).map((h: any) => (
                 <option key={h.id} value={h.id}>{h.name} ({h.harness_id})</option>
               ))}
             </select>
-          </div>
+          </div>}
         </div>
       )}
 
       {tab === 'usage' && (
-        <UsageReport report={usage} title={`${user.name_ko || user.name} 사용량 및 비용 원장`} loadMore={(cursor) => api.getUserUsage(id!, '30d', cursor)} />
+        usageLoading ? <div className="card p-4 text-[11px] text-gray-400">사용량 원장을 불러오는 중입니다.</div> : usageError ? <div className="card p-4 text-[11px] text-red-600">사용량 원장을 조회할 권한이 없거나 조회 중 오류가 발생했습니다.</div> : <UsageReport report={usage} title={`${user.name_ko || user.name} 사용량 및 비용 원장`} loadMore={(cursor, signal) => api.getUserUsage(id!, '30d', cursor, signal)} />
       )}
 
       {tab === 'audit' && (
@@ -351,12 +445,23 @@ export default function UserDetail() {
           <h3 className="text-xs font-bold mb-2">감사 이벤트 ({auditEvents.length})</h3>
           {auditEvents.length === 0 ? <p className="text-[11px] text-gray-400">감사 이벤트 없음</p> : (
             <div className="space-y-1">
-              {auditEvents.map((e: any) => (
-                <div key={e.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
-                  <span className="text-gray-700">{e.action}</span>
-                  <span className="text-gray-400">{(e.occurred_at || '').slice(0, 16)} · {e.result}</span>
-                </div>
-              ))}
+              {auditEvents.map((e: any) => {
+                let details: any = {}
+                try { details = JSON.parse(e.details || '{}') } catch { details = {} }
+                return (
+                  <div key={e.id} className="border-b border-gray-50 py-2 text-[11px]">
+                    <div className="flex justify-between gap-3">
+                      <span className="font-medium text-gray-700">{e.action}</span>
+                      <span className="text-gray-400">{(e.occurred_at || '').slice(0, 16)} · {e.result}</span>
+                    </div>
+                    <div className="mt-0.5 text-[10px] text-gray-500">
+                      실행자 {e.actor_id || e.actor_type || '—'}
+                      {details.from && details.to ? ` · ${STATUS_KO[details.from] || details.from} → ${STATUS_KO[details.to] || details.to}` : ''}
+                      {details.reason ? ` · 사유: ${details.reason}` : ''}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
@@ -365,7 +470,7 @@ export default function UserDetail() {
       {tab === 'contractor' && (
         <div className="card p-4 space-y-3">
           <h3 className="text-xs font-bold">계약직 프로필 (Contractor)</h3>
-          <div className="grid grid-cols-2 gap-2">
+          <fieldset disabled={!mutable || lifecycleBusy} className="grid grid-cols-2 gap-2">
             <div>
               <label className="text-[10px] text-gray-500">스폰서 (사번/이메일)</label>
               <EntitySelect entity="user" value={contractor.sponsor_user_id} onChange={v => setContractor({ ...contractor, sponsor_user_id: v })} />
@@ -401,8 +506,8 @@ export default function UserDetail() {
                 <option value="external">외부망</option>
               </select>
             </div>
-          </div>
-          <button className="btn-sm btn-primary" onClick={saveContractor}>계약 정보 저장</button>
+          </fieldset>
+          {mutable && <button className="btn-sm btn-primary" disabled={lifecycleBusy} onClick={saveContractor}>계약 정보 저장</button>}
         </div>
       )}
     </div>

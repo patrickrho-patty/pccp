@@ -27,6 +27,7 @@ func TestNewWebBindingServerGovernsEnvelopes(t *testing.T) {
 	future := time.Now().Add(time.Hour).Format(time.RFC3339)
 	past := time.Now().Add(-time.Hour).Format(time.RFC3339)
 	db.Create(&models.Harness{OrganizationID: orgID, HarnessID: harnessID, Status: "enrolled"})
+	seedGovernedSession(t, db, orgID, "u", harnessID, sessionID)
 	db.Create(&models.CapabilityLease{OrganizationID: orgID, LeaseID: leaseID, SubjectPeerID: harnessID,
 		UserID: "u", SessionID: sessionID, PolicyEpochID: epochID,
 		AllowedModelPackages: `["` + modelPkg + `"]`, NotBefore: past, NotAfter: future, Status: "active"})

@@ -502,6 +502,6 @@ export default function SREConsole() {
 }
 
 function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('pccp_token')
+  const token = sessionStorage.getItem('pccp_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }

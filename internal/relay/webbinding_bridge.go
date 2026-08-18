@@ -132,7 +132,7 @@ func (s *Service) EnsureWebSessionGovernance(subjectThumb [32]byte, sessionID, m
 
 	// Harness identity for the browser subject (idempotent).
 	var h models.Harness
-	if err := s.db.Where("harness_id = ?", harnessID).First(&h).Error; err != nil {
+	if err := s.db.Where("organization_id = ? AND harness_id = ?", orgID, harnessID).First(&h).Error; err != nil {
 		h = models.Harness{
 			OrganizationID: orgID, HarnessID: harnessID,
 			DeviceID: "browser", BinaryVersion: "web", Status: "enrolled",
@@ -162,21 +162,39 @@ func (s *Service) EnsureWebSessionGovernance(subjectThumb [32]byte, sessionID, m
 		return "", "", fmt.Errorf("webbinding: model not allowed under the active policy epoch")
 	}
 
-	// Session lease (idempotent by session).
-	var existing models.CapabilityLease
-	q := s.db.Where("subject_peer_id = ? AND session_id = ? AND status = 'active'", harnessID, "web-"+sessionID)
-	if err := q.First(&existing).Error; err == nil {
-		return harnessID, orgID, nil
+	// Session lease is reusable only when its complete authority context is
+	// still current. A reconnect must never inherit an older epoch or a lease
+	// issued for another model.
+	now := time.Now().UTC()
+	var existing []models.CapabilityLease
+	q := s.db.Where(
+		"organization_id = ? AND subject_peer_id = ? AND user_id = ? AND session_id = ? AND policy_epoch_id = ? AND status = 'active' AND not_before <= ? AND not_after > ?",
+		orgID, harnessID, "browser", "web-"+sessionID, epoch.EpochID, now.Format(time.RFC3339), now.Format(time.RFC3339),
+	).Order("not_after DESC")
+	if err := q.Find(&existing).Error; err != nil {
+		return "", "", fmt.Errorf("webbinding: resolve existing lease: %w", err)
+	}
+	for i := range existing {
+		var allowed []string
+		if json.Unmarshal([]byte(existing[i].AllowedModelPackages), &allowed) != nil {
+			continue
+		}
+		for _, allowedModel := range allowed {
+			if allowedModel == model || allowedModel == pkg.PackageID {
+				return harnessID, orgID, nil
+			}
+		}
 	}
 	lease, lerr := s.Policy().IssueCapabilityLease(policy.IssueLeaseRequest{
-		OrganizationID: orgID,
-		SubjectPeerID:  harnessID,
-		UserID:         "browser",
-		SessionID:      "web-" + sessionID,
-		PolicyEpochID:  epoch.EpochID,
-		AllowedModels:  []string{model},
-		Validity:       12 * time.Hour,
-		TokenBudget:    1 << 22,
+		OrganizationID:   orgID,
+		SubjectPeerID:    harnessID,
+		UserID:           "browser",
+		SessionID:        "web-" + sessionID,
+		PolicyEpochID:    epoch.EpochID,
+		AllowedModels:    []string{model},
+		Validity:         12 * time.Hour,
+		TokenBudget:      1 << 22,
+		ServicePrincipal: true,
 	})
 	if lerr != nil {
 		return "", "", fmt.Errorf("webbinding: lease: %w", lerr)

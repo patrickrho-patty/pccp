@@ -75,7 +75,7 @@ export default function Compliance() {
   const downloadExport = async (format: string) => {
     // Authenticated fetch + blob download (the endpoint sits behind the
     // admin JWT middleware, so a plain window.open would 401).
-    const token = localStorage.getItem('pccp_token')
+    const token = sessionStorage.getItem('pccp_token')
     try {
       const resp = await fetch(`/api/compliance/export?certification=${encodeURIComponent(selected)}&format=${format}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},

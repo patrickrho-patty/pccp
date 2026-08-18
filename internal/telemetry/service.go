@@ -1,12 +1,15 @@
 package telemetry
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/patrickrho-patty/pccp/internal/metering"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -34,7 +37,7 @@ func New(db *gorm.DB) *Service {
 }
 
 // MetricType identifies a telemetry metric type (DARI §50).
-type MetricType string
+type MetricType = metering.Metric
 
 const (
 	MetricConnectionHealth   MetricType = "connection.health"
@@ -49,6 +52,17 @@ const (
 	MetricCollaborationCount MetricType = "collaboration.count"
 	MetricTransferBytes      MetricType = "transfer.bytes"
 	MetricErrorRate          MetricType = "error.rate"
+	MetricTokensIn           MetricType = metering.TokensIn
+	MetricTokensOut          MetricType = metering.TokensOut
+	MetricCacheRead          MetricType = metering.CacheRead
+	MetricCacheWrite         MetricType = metering.CacheWrite
+	MetricMediaTokens        MetricType = metering.MediaTokens
+	MetricGPUSeconds         MetricType = metering.GPUSeconds
+	MetricStorageBytes       MetricType = metering.StorageBytes
+	MetricToolCall           MetricType = metering.ToolCall
+	MetricReservation        MetricType = metering.Reservation
+	MetricFlatFee            MetricType = metering.FlatFee
+	MetricRefund             MetricType = metering.Refund
 )
 
 // IncrementCounter increments a named counter.
@@ -142,57 +156,150 @@ func (s *Service) GetHistogramStats(name string) HistogramStats {
 // RecordMetering records a metering event for billing (DARI §50).
 // Metering events MUST be tied to authenticated Exchange/Session IDs.
 type MeteringEvent struct {
-	OrganizationID string     `json:"organization_id"`
-	SessionID      string     `json:"session_id"`
-	ExchangeID     string     `json:"exchange_id"`
-	UserID         string     `json:"user_id"`
-	HarnessID      string     `json:"harness_id"`
-	ModelPackageID string     `json:"model_package_id"`
-	EndpointID     string     `json:"endpoint_id"`
-	Sequence       uint64     `json:"sequence"`
-	MetricType     MetricType `json:"metric_type"`
-	Quantity       int64      `json:"quantity"`
-	Unit           string     `json:"unit"`
-	OccurredAt     time.Time  `json:"occurred_at"`
+	OrganizationID         string     `json:"organization_id"`
+	SessionID              string     `json:"session_id"`
+	ExchangeID             string     `json:"exchange_id"`
+	UserID                 string     `json:"user_id"`
+	HarnessID              string     `json:"harness_id"`
+	ModelPackageID         string     `json:"model_package_id"`
+	EndpointID             string     `json:"endpoint_id"`
+	Sequence               uint64     `json:"sequence"`
+	MetricType             MetricType `json:"metric_type"`
+	Quantity               int64      `json:"quantity"`
+	Unit                   string     `json:"unit"`
+	CostMicros             int64      `json:"cost_micros"`
+	Currency               string     `json:"currency"`
+	PricingState           string     `json:"pricing_state"`
+	Adjustment             bool       `json:"adjustment"`
+	AppliedRateMicrosPer1K int64      `json:"applied_rate_micros_per_1k"`
+	AppliedPriceVersion    string     `json:"applied_price_version"`
+	AppliedPriceSource     string     `json:"applied_price_source"`
+	OccurredAt             time.Time  `json:"occurred_at"`
 }
 
 // RecordMetering records a metering event.
 func (s *Service) RecordMetering(event MeteringEvent) error {
-	if event.SessionID == "" {
+	return s.RecordMeteringBatch([]MeteringEvent{event})
+}
+
+func (s *Service) RecordMeteringBatch(events []MeteringEvent) error {
+	return s.RecordMeteringBatchContext(context.Background(), events)
+}
+
+// RecordMeteringBatchContext bounds both ownership lookup and durable ledger
+// insertion. Callers that have already completed inference can supply a short
+// background deadline so client disconnects neither cancel billing nor leave
+// its database work unbounded.
+func (s *Service) RecordMeteringBatchContext(ctx context.Context, events []MeteringEvent) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if len(events) == 0 {
+		return nil
+	}
+	first := events[0]
+	if first.SessionID == "" {
 		return fmt.Errorf("telemetry: metering requires authenticated session ID")
 	}
-	if event.OrganizationID == "" {
+	if first.OrganizationID == "" {
 		return fmt.Errorf("telemetry: metering requires organization ID")
 	}
-	if event.ExchangeID == "" {
-		return fmt.Errorf("telemetry: metering requires authenticated exchange ID")
+	for _, event := range events {
+		if event.OrganizationID != first.OrganizationID || event.SessionID != first.SessionID {
+			return fmt.Errorf("telemetry: metering batch must share organization and session")
+		}
+		if event.ExchangeID == "" {
+			return fmt.Errorf("telemetry: metering requires authenticated exchange ID")
+		}
+		if event.OccurredAt.IsZero() {
+			return fmt.Errorf("telemetry: metering requires occurrence time")
+		}
 	}
-	if event.OccurredAt.IsZero() {
-		return fmt.Errorf("telemetry: metering requires occurrence time")
+	if s == nil || s.db == nil {
+		return fmt.Errorf("telemetry: metering database is unavailable")
 	}
+	var session models.Session
+	if err := s.db.WithContext(ctx).Where("organization_id = ? AND (session_id = ? OR id = ?)", first.OrganizationID, first.SessionID, first.SessionID).First(&session).Error; err != nil {
+		return fmt.Errorf("telemetry: session is not owned by organization: %w", err)
+	}
+	records := make([]models.UsageRecord, 0, len(events))
+	for _, event := range events {
+		unit, err := metering.Validate(string(event.MetricType), event.Unit)
+		if err != nil {
+			return err
+		}
+		if event.Quantity < 0 && !event.Adjustment {
+			return fmt.Errorf("telemetry: negative quantity requires an adjustment event")
+		}
+		if event.UserID != "" && event.UserID != session.UserID {
+			return fmt.Errorf("telemetry: user does not own session")
+		}
+		if event.HarnessID != "" && event.HarnessID != session.HarnessID {
+			return fmt.Errorf("telemetry: harness does not own session")
+		}
+		// Attribution is derived from the authenticated session. Callers may
+		// repeat it for clarity, but cannot omit it to create unattributed rows.
+		event.SessionID = session.SessionID
+		event.UserID = session.UserID
+		event.HarnessID = session.HarnessID
+		pricingState := event.PricingState
+		if pricingState == "" {
+			pricingState = models.UsagePricingUnpriced
+		}
+		switch pricingState {
+		case models.UsagePricingPriced:
+			if strings.TrimSpace(event.Currency) == "" {
+				return fmt.Errorf("telemetry: priced metering requires currency")
+			}
+		case models.UsagePricingUnpriced, models.UsagePricingPending, models.UsagePricingError:
+		default:
+			return fmt.Errorf("telemetry: invalid pricing state %q", pricingState)
+		}
+		if pricingState == models.UsagePricingPriced && (event.MetricType == MetricTokensIn || event.MetricType == MetricTokensOut) {
+			if strings.TrimSpace(event.AppliedPriceVersion) == "" || strings.TrimSpace(event.AppliedPriceSource) == "" {
+				return fmt.Errorf("telemetry: priced token metering requires applied price provenance")
+			}
+			if event.AppliedRateMicrosPer1K < 0 {
+				return fmt.Errorf("telemetry: applied token rate must not be negative")
+			}
+			expectedCost, err := metering.TokenCostMicros(event.Quantity, event.AppliedRateMicrosPer1K)
+			if err != nil {
+				return fmt.Errorf("telemetry: calculate token cost: %w", err)
+			}
+			if event.CostMicros != expectedCost {
+				return fmt.Errorf("telemetry: priced token cost does not match applied rate")
+			}
+		}
 
-	keyInput := fmt.Sprintf("usage:v1:%s:%s:%s:%d", event.OrganizationID, event.ExchangeID, event.MetricType, event.Sequence)
-	digest := sha256.Sum256([]byte(keyInput))
-	eventKey := hex.EncodeToString(digest[:])
-	meteredAt := event.OccurredAt.UTC()
-
-	usage := &models.UsageRecord{
-		OrganizationID: event.OrganizationID,
-		UserID:         event.UserID,
-		HarnessID:      event.HarnessID,
-		SessionID:      event.SessionID,
-		ExchangeID:     event.ExchangeID,
-		EventKey:       &eventKey,
-		ModelPackageID: event.ModelPackageID,
-		EndpointID:     event.EndpointID,
-		MetricType:     string(event.MetricType),
-		Quantity:       event.Quantity,
-		Unit:           event.Unit,
-		PricingState:   models.UsagePricingUnpriced,
-		OccurredAt:     meteredAt.Format(time.RFC3339),
-		MeteredAt:      &meteredAt,
+		keyInput := fmt.Sprintf("usage:v1:%s:%s:%s:%s:%d", event.OrganizationID, event.SessionID, event.ExchangeID, event.MetricType, event.Sequence)
+		digest := sha256.Sum256([]byte(keyInput))
+		eventKey := hex.EncodeToString(digest[:])
+		meteredAt := event.OccurredAt.UTC()
+		records = append(records, models.UsageRecord{
+			OrganizationID:         event.OrganizationID,
+			UserID:                 event.UserID,
+			HarnessID:              event.HarnessID,
+			SessionID:              event.SessionID,
+			ProjectID:              session.ProjectID,
+			ExchangeID:             event.ExchangeID,
+			EventKey:               &eventKey,
+			ModelPackageID:         event.ModelPackageID,
+			EndpointID:             event.EndpointID,
+			MetricType:             string(event.MetricType),
+			Quantity:               event.Quantity,
+			Unit:                   unit,
+			CostMicros:             event.CostMicros,
+			Currency:               strings.ToUpper(strings.TrimSpace(event.Currency)),
+			PricingState:           pricingState,
+			Adjustment:             event.Adjustment,
+			AppliedRateMicrosPer1K: event.AppliedRateMicrosPer1K,
+			AppliedPriceVersion:    event.AppliedPriceVersion,
+			AppliedPriceSource:     event.AppliedPriceSource,
+			OccurredAt:             meteredAt.Format(time.RFC3339),
+			MeteredAt:              &meteredAt,
+		})
 	}
-	return s.db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "event_key"}}, DoNothing: true}).Create(usage).Error
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "event_key"}}, DoNothing: true}).Create(&records).Error
 }
 
 // Snapshot returns all current telemetry values.

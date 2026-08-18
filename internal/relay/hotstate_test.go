@@ -103,14 +103,14 @@ func TestResolveGovernanceSnapshotFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Empty DB → fail-closed at the first resolution step.
-	if _, err := svc.ResolveGovernanceSnapshot(harnessID, modelID); err == nil {
+	if _, err := svc.ResolveGovernanceSnapshot(harnessID, "missing-session", modelID); err == nil {
 		t.Fatal("unresolved governance context must fail closed")
 	}
 
 	// Fully-seeded chain resolves (shared seeder).
-	harnessID, _, modelID = seedGovernedStack(t, db, "hot")
+	harnessID, sessionID, modelID := seedGovernedStack(t, db, "hot")
 
-	snap, err := svc.ResolveGovernanceSnapshot(harnessID, modelID)
+	snap, err := svc.ResolveGovernanceSnapshot(harnessID, sessionID, modelID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,6 +118,77 @@ func TestResolveGovernanceSnapshotFailClosed(t *testing.T) {
 		t.Fatalf("snapshot: %+v", snap)
 	}
 	_ = context.Background()
+}
+
+func TestResolveGovernanceSnapshotBindsCompleteAuthorityContext(t *testing.T) {
+	t.Run("session and user", func(t *testing.T) {
+		db := setupGovernedTestDB(t)
+		harnessID, sessionID, modelID := seedGovernedStack(t, db, "binding-session")
+		var valid models.CapabilityLease
+		if err := db.Where("session_id = ?", sessionID).First(&valid).Error; err != nil {
+			t.Fatal(err)
+		}
+		otherSession := sessionID + "-other"
+		seedGovernedSession(t, db, valid.OrganizationID, "u-other", harnessID, otherSession)
+		if err := db.Model(&valid).Update("status", "revoked").Error; err != nil {
+			t.Fatal(err)
+		}
+		wrong := valid
+		wrong.ID = ""
+		wrong.LeaseID += "-wrong"
+		wrong.UserID = "u-other"
+		wrong.SessionID = otherSession
+		wrong.Status = "active"
+		if err := db.Create(&wrong).Error; err != nil {
+			t.Fatal(err)
+		}
+		svc, err := New(db, "", "relay-binding-session")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.ResolveGovernanceSnapshot(harnessID, sessionID, modelID); err == nil {
+			t.Fatal("a lease for another user/session on the same harness must not authorize this session")
+		}
+	})
+
+	t.Run("model scope", func(t *testing.T) {
+		db := setupGovernedTestDB(t)
+		harnessID, sessionID, modelID := seedGovernedStack(t, db, "binding-model")
+		if err := db.Model(&models.CapabilityLease{}).
+			Where("session_id = ?", sessionID).
+			Update("allowed_model_packages", `["some-other-package"]`).Error; err != nil {
+			t.Fatal(err)
+		}
+		svc, err := New(db, "", "relay-binding-model")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.ResolveGovernanceSnapshot(harnessID, sessionID, modelID); err == nil {
+			t.Fatal("a lease for another model must not authorize the requested model")
+		}
+	})
+
+	t.Run("current epoch and expiry", func(t *testing.T) {
+		db := setupGovernedTestDB(t)
+		harnessID, sessionID, modelID := seedGovernedStack(t, db, "binding-epoch")
+		if err := db.Model(&models.CapabilityLease{}).
+			Where("session_id = ?", sessionID).
+			Update("not_after", time.Now().Add(-time.Minute).Format(time.RFC3339)).Error; err != nil {
+			t.Fatal(err)
+		}
+		svc, err := New(db, "", "relay-binding-epoch")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.ResolveGovernanceSnapshot(harnessID, sessionID, modelID); err == nil {
+			t.Fatal("an expired lease must not authorize the request")
+		}
+	})
+
+	if GovCacheKey("org", "h", "u-one", "s-one", "m", "e") ==
+		GovCacheKey("org", "h", "u-two", "s-two", "m", "e") {
+		t.Fatal("cache keys must isolate user/session authority")
+	}
 }
 
 // TestEnsureModelServingFailsClosedOutsideBootstrap (Task 15/audit): in
@@ -164,6 +235,7 @@ func seedGovernedStack(t *testing.T, db *gorm.DB, suffix string) (harnessID, ses
 	allowed := `["` + pkgID + `"]`
 
 	db.Create(&models.Harness{OrganizationID: orgID, HarnessID: harnessID, Status: "enrolled"})
+	seedGovernedSession(t, db, orgID, userID, harnessID, sessionID)
 	db.Create(&models.CapabilityLease{OrganizationID: orgID, LeaseID: leaseID, SubjectPeerID: harnessID,
 		UserID: userID, SessionID: sessionID, PolicyEpochID: epochID,
 		AllowedModelPackages: allowed, NotBefore: past, NotAfter: future, LeaseSequence: 1, Status: "active"})

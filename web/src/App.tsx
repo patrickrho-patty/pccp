@@ -89,9 +89,15 @@ function AppContent() {
           <Route path="/sre" element={<SREConsole />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/fleet" element={<Fleet />} />
+		  <Route path="/live" element={<LiveView />} />
+		  <Route path="/harnesses/:id" element={<HarnessDetail />} />
+		  <Route path="/users/:id" element={<UserDetail />} />
           <Route path="/sessions" element={<Sessions />} />
+		  <Route path="/sessions/:id" element={<SessionDetail />} />
+		  <Route path="/sessions/:id/provenance" element={<Provenance />} />
           <Route path="/accounts" element={<SubscriberManagement />} />
           <Route path="/models" element={<ModelInfra />} />
+		  <Route path="/models/:id" element={<ModelDetail />} />
           <Route path="/security" element={<Security />} />
           <Route path="/audit" element={<Audit />} />
         </>)}

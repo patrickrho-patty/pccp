@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { useServerTable, buildQuery, ServerQuery } from '../hooks/useServerTable'
@@ -24,11 +24,11 @@ const STATUS_BADGE: Record<string, string> = {
   quarantined: 'bg-amber-50 text-amber-700 border-amber-200',
   revoked: 'bg-red-50 text-red-700 border-red-200',
 }
-const RISK_KO: Record<string, string> = { low: '낮음', elevated: '주의', high: '높음', critical: '심각' }
+const RISK_KO: Record<string, string> = { normal: '정상', low: '낮음', elevated: '주의', high: '높음', critical: '심각' }
 
 const DESTRUCTIVE = new Set([
   'revoke_harness_certificate', 'quarantine_device', 'terminate_session', 'emergency_lockdown',
-  'isolate_sandbox', 'suspend_model', 'invalidate_privileges', 'pause_execution', 'require_upgrade',
+  'isolate_sandbox', 'suspend_model_access', 'invalidate_privilege', 'pause_agent_execution', 'require_client_upgrade',
 ])
 
 export default function Fleet() {
@@ -39,21 +39,25 @@ export default function Fleet() {
       if (Array.isArray(res)) return res
       return { data: res.data ?? [], total: res.total ?? 0, page: res.page, size: res.size }
     })
-  // Deep link (PAT-1496): /fleet?harness=<id> seeds the search with the
-  // exact harness — the server-side search matches HarnessID. Passing it
-  // as the table's initialSearch keeps the visible input and the data
-  // filter in sync from the first render.
-  const [searchParams] = useSearchParams()
-  const deepHarness = searchParams.get('harness') || ''
-  const table = useServerTable<any>(fetchInventory, { size: 25, initialSearch: deepHarness })
+	// Deep link (PAT-1496): use an exact server-side harness filter rather
+	// than a fuzzy search, so similarly named devices cannot appear.
+	const [searchParams] = useSearchParams()
+	const deepHarness = searchParams.get('harness_id') || ''
+	const table = useServerTable<any>(fetchInventory, { size: 25, initialFilters: deepHarness ? { harness_id: deepHarness } : {} })
+	useEffect(() => {
+		table.setFilter('harness_id', deepHarness)
+	}, [deepHarness])
 
   const [status, setStatus] = useState<any>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [actionTarget, setActionTarget] = useState<any>(null) // {harness, action}
   const [reason, setReason] = useState('')
   const [bulkAction, setBulkAction] = useState('')
+	const bulkAttempt = useRef<{ signature: string; key: string } | null>(null)
   const [lockdownOpen, setLockdownOpen] = useState(false)
   const [lockdownScope, setLockdownScope] = useState('org')
+	const [lockdownProjectID, setLockdownProjectID] = useState('')
+	const [projects, setProjects] = useState<any[]>([])
   const [impact, setImpact] = useState<any>(null)
   const [lockdownReason, setLockdownReason] = useState('')
   const [lockdownStep, setLockdownStep] = useState(1)
@@ -69,9 +73,10 @@ export default function Fleet() {
     api.fleetStatus().then(setStatus).catch(() => {})
     api.fleetApprovals().then(d => setApprovals(Array.isArray(d) ? d : [])).catch(() => {})
   }, [])
-  useEffect(() => {
-    refreshStatus()
-    const t = setInterval(refreshStatus, 15000)
+	useEffect(() => {
+		refreshStatus()
+		api.listProjects().then((rows: any) => setProjects(Array.isArray(rows) ? rows : (rows?.data ?? []))).catch(() => setProjects([]))
+		const t = setInterval(refreshStatus, 15000)
     return () => clearInterval(t)
   }, [refreshStatus])
 
@@ -114,12 +119,18 @@ export default function Fleet() {
       showToast('사유가 필요합니다', 'error')
       return
     }
+		const signature = JSON.stringify({ action: bulkAction, reason: reason.trim(), harness_ids: [...selectedIds].sort() })
+		if (!bulkAttempt.current || bulkAttempt.current.signature !== signature) {
+			bulkAttempt.current = { signature, key: crypto.randomUUID() }
+		}
     try {
-      const res = await api.fleetBulkAction([...selectedIds], bulkAction, reason)
+			const res = await api.fleetBulkAction([...selectedIds], bulkAction, reason, bulkAttempt.current.key)
       showToast(`일괄 작업 완료 (${res.executed}건${res.failed ? `, 실패 ${res.failed}` : ''})`, res.failed ? 'error' : 'success')
-      setSelectedIds(new Set())
+      const failedIDs = Array.isArray(res.outcomes) ? res.outcomes.filter((outcome: any) => outcome.result === 'failed').map((outcome: any) => outcome.harness_id) : []
+      setSelectedIds(new Set(failedIDs))
       setBulkAction('')
-      setReason('')
+			setReason('')
+			bulkAttempt.current = null
       table.reload()
       refreshStatus()
     } catch (e: any) {
@@ -127,26 +138,43 @@ export default function Fleet() {
     }
   }
 
-  const previewLockdown = async (scope: string) => {
+  const previewLockdown = async (scope: string, projectID = lockdownProjectID) => {
     try {
-      const res = await api.fleetImpact('emergency_lockdown', scope)
+			if (scope === 'project' && !projectID) {
+				setImpact(null)
+				return
+			}
+			const res = await api.lockdownImpact(scope, scope === 'project' ? projectID : undefined)
       setImpact(res)
     } catch { setImpact(null) }
   }
   const openLockdown = async () => {
-    setLockdownStep(1)
-    setLockdownScope('org')
+		setLockdownStep(1)
+		setLockdownScope('org')
+		setLockdownProjectID('')
     await previewLockdown('org')
     setLockdownOpen(true)
   }
+	const advanceLockdown = async () => {
+		if (lockdownScope === 'project' && !lockdownProjectID) {
+			showToast('프로젝트를 선택하세요', 'error')
+			return
+		}
+		await previewLockdown(lockdownScope)
+		setLockdownStep(2)
+	}
   const confirmLockdown = async () => {
-    if (!lockdownReason.trim()) {
+		if (!lockdownReason.trim()) {
       showToast('사유가 필요합니다', 'error')
       return
-    }
+		}
+		if (lockdownScope === 'project' && !lockdownProjectID) {
+			showToast('프로젝트를 선택하세요', 'error')
+			return
+		}
     try {
-      await api.fleetAction({ harness_id: '', action: 'emergency_lockdown', reason: lockdownReason })
-      showToast('긴급 잠금 실행 완료 — 모든 세션이 종료되었습니다', 'success')
+			const res = await api.securityLockdown({ scope: lockdownScope, project_id: lockdownScope === 'project' ? lockdownProjectID : '', reason: lockdownReason })
+			showToast(`긴급 잠금 실행 완료 — ${res.affected_sessions ?? 0}개 세션 종료`, 'success')
       setLockdownOpen(false)
       setLockdownReason('')
       table.reload()
@@ -191,7 +219,7 @@ export default function Fleet() {
   }
 
   const downloadSnapshot = async (h: any) => {
-    const token = localStorage.getItem('pccp_token')
+    const token = sessionStorage.getItem('pccp_token')
     try {
       const resp = await fetch(`/api/fleet/harnesses/${h.id}/snapshot`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -208,6 +236,11 @@ export default function Fleet() {
   }
 
   const columns: Column<any>[] = [
+    {
+      key: 'select', header: '선택', className: 'w-12',
+      render: (item) => <input type="checkbox" aria-label={`${item.harness.name || item.harness.harness_id} 선택`} checked={selectedIds.has(item.harness.harness_id)} onChange={() => toggleSelect(item.harness.harness_id)} onClick={event => event.stopPropagation()} />,
+      cardLabel: '선택',
+    },
     {
       key: 'harness', header: '하네스',
       render: (item) => {
@@ -228,13 +261,13 @@ export default function Fleet() {
       cardLabel: '하네스',
     },
     {
-      key: 'user', header: '개발자',
+      key: 'user', header: '사용자',
       render: (item) => item.user ? (
         <Link to={`/users/${item.user.id}`} className="text-[11px] text-gray-600 hover:underline">
           {item.user.name_ko || item.user.name}
         </Link>
       ) : <span className="text-[11px] text-gray-400">—</span>,
-      cardLabel: '개발자',
+      cardLabel: '사용자',
     },
     {
       key: 'status', header: '상태',
@@ -255,10 +288,10 @@ export default function Fleet() {
       cardLabel: '위험',
     },
     {
-      key: 'counts', header: '세션 / 승인 / 발견',
+      key: 'counts', header: '활성 세션 / 승인 / 발견',
       render: (item) => (
         <div className="text-[11px] space-x-2">
-          <Link className="text-blue-600 hover:underline" to={`/sessions?user=${item.user?.id || ''}`}>세션 {(item.sessions || []).length}</Link>
+          <Link className="text-blue-600 hover:underline" to={`/sessions?harness_id=${encodeURIComponent(item.harness.harness_id)}`}>활성 세션 {item.active_sessions ?? (item.sessions || []).length}</Link>
           <span className="text-gray-600">승인 {item.open_approvals || 0}</span>
           <span className="text-gray-600">발견 {item.security_findings || 0}</span>
         </div>
@@ -330,8 +363,8 @@ export default function Fleet() {
               <option value="">일괄 작업 ({selectedIds.size})...</option>
               <option value="quarantine_device">격리</option>
               <option value="revoke_harness_certificate">인증 해지</option>
-              <option value="pause_execution">실행 일시정지</option>
-              <option value="require_upgrade">업그레이드 요구</option>
+              <option value="pause_agent_execution">실행 일시정지</option>
+              <option value="require_client_upgrade">업그레이드 요구</option>
             </select>
             {bulkAction && (
               <>
@@ -412,27 +445,46 @@ export default function Fleet() {
       <Modal open={lockdownOpen} title="긴급 잠금 — 2단계 확인"
         onClose={() => setLockdownOpen(false)}
         footer={lockdownStep === 1 ? (
-          <ModalFooter onCancel={() => setLockdownOpen(false)} onConfirm={async () => { setLockdownStep(2); await previewLockdown(lockdownScope) }} confirmLabel="다음" danger />
+          <ModalFooter onCancel={() => setLockdownOpen(false)} onConfirm={advanceLockdown} confirmLabel="다음" danger />
         ) : (
           <ModalFooter onCancel={() => { setLockdownOpen(false); setLockdownStep(1) }} onConfirm={confirmLockdown} confirmLabel="잠금 확정" danger />
         )}>
         {lockdownStep === 1 ? (
           <div className="space-y-2">
-            <p className="text-[11px] text-gray-500">전 조직의 모든 하네스와 활성 세션이 즉시 종료됩니다. 먼저 범위를 확인하세요.</p>
-            <select className="input text-xs w-full" value={lockdownScope}
-              onChange={async e => { setLockdownScope(e.target.value); await previewLockdown(e.target.value) }}>
-              <option value="org">전 조직</option>
-              <option value="project">프로젝트</option>
-            </select>
+			<p className="text-[11px] text-gray-500">
+				{lockdownScope === 'project'
+					? '선택한 프로젝트의 진행 중 세션이 즉시 종료되고 해당 하네스의 위험 상태가 상향됩니다.'
+					: '전 조직의 진행 중 세션이 즉시 종료되고 모든 하네스의 위험 상태가 상향됩니다.'}
+			</p>
+			<select className="input text-xs w-full" value={lockdownScope}
+				onChange={async e => { const scope = e.target.value; setLockdownScope(scope); setLockdownProjectID(''); await previewLockdown(scope, '') }}>
+				<option value="org">전 조직</option>
+				<option value="project">프로젝트</option>
+			</select>
+			{lockdownScope === 'project' && (
+				<select className="input text-xs w-full" value={lockdownProjectID}
+					onChange={async e => { setLockdownProjectID(e.target.value); await previewLockdown('project', e.target.value) }}>
+					<option value="">프로젝트 선택...</option>
+					{projects.map(project => <option key={project.id} value={project.id}>{project.name_ko || project.name}</option>)}
+				</select>
+			)}
             {impact && (
               <div className="text-[11px] text-red-600 bg-red-50 rounded p-2">
-                영향 예측: 하네스 {impact.affected_harnesses} · 활성 세션 {impact.affected_sessions}
+				영향 예측: 하네스 {impact.affected_harnesses} · 진행 중 세션 {impact.in_progress_sessions}
+				{impact.status_breakdown && (
+					<span className="block text-[10px] text-red-500 mt-1">
+						활성 {impact.status_breakdown.active || 0} · 대기 {impact.status_breakdown.pending || 0} · 유휴 {impact.status_breakdown.idle || 0} · 일시정지 {impact.status_breakdown.paused || 0}
+					</span>
+				)}
               </div>
             )}
           </div>
         ) : (
           <div className="space-y-2">
             <p className="text-[11px] text-red-600 font-semibold">확정 시 되돌릴 수 없습니다 (이력은 남습니다).</p>
+			<p className="text-[11px] text-gray-500">
+				범위: {lockdownScope === 'project' ? (projects.find(project => project.id === lockdownProjectID)?.name_ko || projects.find(project => project.id === lockdownProjectID)?.name || lockdownProjectID) : '전 조직'} · 진행 중 세션 {impact?.in_progress_sessions ?? 0}개
+			</p>
             <textarea className="input text-xs w-full" rows={3} placeholder="사유 (필수)"
               value={lockdownReason} onChange={e => setLockdownReason(e.target.value)} />
           </div>

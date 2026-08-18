@@ -23,7 +23,7 @@ export default function GlobalSearch() {
   const search = async (q: string) => {
     setQuery(q)
     if (q.length < 2) { setResults([]); return }
-    const headers = { Authorization: `Bearer ${localStorage.getItem('pccp_token') || ''}` }
+    const headers = { Authorization: `Bearer ${sessionStorage.getItem('pccp_token') || ''}` }
     try {
       const [users, harnesses, sessions, models, repos] = await Promise.all([
         fetch('/api/users', { headers }).then(r => r.json()).catch(() => []),

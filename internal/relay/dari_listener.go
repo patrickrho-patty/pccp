@@ -653,8 +653,8 @@ func (pl *DARIListener) governAIOpen(ctx context.Context, conn *dari.TransportCo
 	// The streamed text already reached the harness as AI_TOKEN_CHUNK
 	// records; the AI_COMPLETE carries usage + finish only (a non-empty
 	// content would duplicate tokens client-side).
-	inTok := resp.Usage["prompt_tokens"]
-	outTok := resp.Usage["completion_tokens"]
+	usage, _ := extractCanonicalTokenUsage(resp.Usage)
+	inTok, outTok := usage.Input, usage.Output
 	completePayload, _ := json.Marshal(map[string]interface{}{
 		"content":       "",
 		"finish_reason": "stop",

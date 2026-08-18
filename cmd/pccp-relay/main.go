@@ -14,7 +14,9 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/config"
 	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/db"
+	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/relay"
+	"github.com/patrickrho-patty/pccp/internal/security"
 )
 
 func main() {
@@ -56,6 +58,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create relay: %v", err)
 	}
+	alertProvider, configured, err := keymgmt.LoadProviderFromEnvironment(os.Getenv)
+	if err != nil {
+		log.Fatalf("failed to configure alert credential provider: %v", err)
+	}
+	if err := security.ValidateAlertProviderReadiness(database, alertProvider); err != nil {
+		log.Fatalf("alert credential provider readiness failed: %v", err)
+	}
+	if configured {
+		svc.SetAlertKeyProvider(alertProvider)
+		log.Printf("alert credential provider configured: kek_id=%s", alertProvider.KEKID())
+	}
 
 	// Print the relay's traffic-issuer public key: the scheduler verifies
 	// traffic envelopes against it (PCCP_SCHED_TRAFFIC_ISSUER_PUBKEY_HEX).
@@ -64,6 +77,7 @@ func main() {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	svc.StartAlertDeliveryWorker(ctx)
 
 	// Build the DARI trust bundle from the identity CA. The relay's
 	// PeerAuthenticator verifies every AUTH_PROOF against this issuer
@@ -102,6 +116,7 @@ func main() {
 	}
 	dariListener := relay.NewDARIListener(svc, paperTLS, trust)
 	svc.AttachDARIListener(dariListener)
+	svc.StartControlEventWorker(ctx)
 	go func() {
 		log.Printf("Starting DARI native listener on %s (issuer=%s, revoked=%d)", dariAddr, svc.Identity().CAIssuerID(), len(revokedSerials))
 		if err := dariListener.ListenTCP(ctx, dariAddr); err != nil && ctx.Err() == nil {

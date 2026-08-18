@@ -37,7 +37,7 @@ func complianceTestServer(t *testing.T) (*Server, *gorm.DB) {
 
 func TestComplianceMetaHasLevelsAndScopes(t *testing.T) {
 	srv, _ := complianceTestServer(t)
-	rec := doJSON(t, srv, "GET", "/api/compliance/meta", "", "")
+	rec := doJSON(t, srv, "GET", "/api/compliance/meta", "", "org-meta")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("meta failed: %d", rec.Code)
 	}

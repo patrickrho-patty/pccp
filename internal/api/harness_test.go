@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/fleet"
 	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/driver/sqlite"
@@ -26,8 +27,15 @@ func harnessTestServer(t *testing.T) (*Server, *gorm.DB) {
 	for _, m := range []interface{}{
 		&models.Organization{}, &models.User{}, &models.Harness{}, &models.Device{},
 		&models.EnrollmentCode{}, &models.OrgSetting{}, &models.Session{},
-		&models.AuditEvent{}, &models.CredentialRevocationRecord{},
-		&models.ServiceSigningKey{},
+		&models.Approval{}, &models.SecurityFinding{}, &models.AuditEvent{}, &models.CredentialRevocationRecord{},
+		&models.ActionEnvelope{}, &models.ChangeSet{}, &models.PromptExchange{}, &models.ProvenanceSpan{},
+		&models.SandboxRecord{},
+		&models.ServiceSigningKey{}, &models.RealtimeEvent{}, &models.RealtimeSequence{}, &models.RealtimeStreamTicket{}, &models.RealtimeTransientEvent{},
+		&models.FleetBulkOperation{},
+		&models.FleetBulkTargetOutcome{},
+		&models.FleetDesiredState{},
+		&models.SecurityLockdown{},
+		&identity.AdminCredentials{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
 			t.Fatal(err)
@@ -48,6 +56,9 @@ func doJSON(t *testing.T, srv *Server, method, path, body string, orgID string) 
 	} else {
 		req = httptest.NewRequest(method, path, nil)
 	}
+	if path == "/api/auth/bootstrap" {
+		req.Header.Set("X-PCCP-Bootstrap-Token", "test-bootstrap-token")
+	}
 	if orgID != "" {
 		req = req.WithContext(contextWithClaims(req.Context(), &identity.Claims{OrganizationID: orgID}))
 	}
@@ -63,7 +74,10 @@ func TestEnrollRejectsMissingOrganization(t *testing.T) {
 		"harness_id": "hrn_test", "public_key_hex": hex.EncodeToString(pub),
 		"binary_version": "1.0.0", "user_id": "u1",
 	})
-	rec := doJSON(t, srv, "POST", "/api/harnesses/enroll", string(body), "")
+	req := httptest.NewRequest(http.MethodPost, "/api/harnesses/enroll", strings.NewReader(string(body)))
+	req = req.WithContext(contextWithClaims(req.Context(), &identity.Claims{}))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 without organization, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -141,6 +155,7 @@ func TestEnrollBlocksBelowForcedVersion(t *testing.T) {
 
 func TestRevokeTerminatesSessionsAndRecordsRevocation(t *testing.T) {
 	srv, db := harnessTestServer(t)
+	srv.fleet.SetRevocationSender(func(fleet.ActionRequest) error { return nil })
 	org := models.Organization{Name: "org", Slug: "org3", Status: "active", MaxHarnessSeats: 100}
 	db.Create(&org)
 	user := models.User{Email: "dev3@corp.kr", Name: "dev", Status: "active"}
@@ -157,10 +172,10 @@ func TestRevokeTerminatesSessionsAndRecordsRevocation(t *testing.T) {
 	}
 	var h models.Harness
 	db.Where("harness_id = ?", "hrn_revoke").First(&h)
-	db.Create(&models.Session{HarnessID: "hrn_revoke", UserID: user.ID, SessionID: "ses-1", Status: "active"})
-	db.Create(&models.Session{HarnessID: "hrn_revoke", UserID: user.ID, SessionID: "ses-2", Status: "closed"})
+	db.Create(&models.Session{AuditBase: models.AuditBase{OrganizationID: org.ID}, HarnessID: "hrn_revoke", UserID: user.ID, SessionID: "ses-1", Status: "active"})
+	db.Create(&models.Session{AuditBase: models.AuditBase{OrganizationID: org.ID}, HarnessID: "hrn_revoke", UserID: user.ID, SessionID: "ses-2", Status: "closed"})
 
-	rec = doJSON(t, srv, "POST", "/api/harnesses/"+h.ID+"/revoke", `{"reason":"offboarded"}`, org.ID)
+	rec = doJSONAsRole(t, srv, "POST", "/api/harnesses/"+h.ID+"/revoke", `{"reason":"offboarded"}`, org.ID, "admin")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("revoke failed: %d %s", rec.Code, rec.Body.String())
 	}
@@ -194,4 +209,25 @@ func doJSON2(t *testing.T, srv *Server, method, path, body string, email string)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	return rec
+}
+
+func TestReactivateHarnessRequiresManagementPermissionAndTenantScope(t *testing.T) {
+	srv, db := harnessTestServer(t)
+	foreign := models.Harness{OrganizationID: "org-b", HarnessID: "foreign-harness", Status: "quarantined", RiskState: "high"}
+	if err := db.Create(&foreign).Error; err != nil {
+		t.Fatal(err)
+	}
+	denied := doSessionJSONWithPermissions(t, srv, http.MethodPost, "/api/harnesses/"+foreign.ID+"/reactivate", "", "org-a", "viewer")
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("viewer reactivation = %d, want 403", denied.Code)
+	}
+	crossTenant := doSessionJSONWithPermissions(t, srv, http.MethodPost, "/api/harnesses/"+foreign.ID+"/reactivate", "", "org-a", "admin")
+	if crossTenant.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant reactivation = %d, want 404: %s", crossTenant.Code, crossTenant.Body.String())
+	}
+	var got models.Harness
+	db.First(&got, "id = ?", foreign.ID)
+	if got.Status != "quarantined" || got.RiskState != "high" {
+		t.Fatalf("foreign harness mutated: %+v", got)
+	}
 }

@@ -1,11 +1,11 @@
-import { useState, useEffect, useMemo, Fragment } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import EmptyState from '../components/EmptyState'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../components/FilterBar'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
-import { modelClassOptions } from '../allowedModels'
+import { filterCatalogModels, modelClassOptions } from '../allowedModels'
 
 const MODEL_FILTER: FilterConfig = {
   searchFields: ['name', 'name_ko', 'package_id', 'model_id'],
@@ -34,12 +34,17 @@ const EP_FILTER: FilterConfig = {
 }
 
 export default function ModelInfra() {
-  const confirm = useConfirm()
-  // A class deep link (?class=…) filters the Packages (PMP) registry, so
-  // land directly on that tab (PAT-1491).
-  const [searchParams] = useSearchParams()
-  const [tab, setTab] = useState<'catalog' | 'packages' | 'endpoints'>(
-    searchParams.get('class') ? 'packages' : 'catalog')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const catalogID = searchParams.get('catalog') || ''
+  const modelClass = searchParams.get('class') || ''
+  const [tab, setTab] = useState<'catalog' | 'packages' | 'endpoints'>('catalog')
+  useEffect(() => {
+    if (catalogID || modelClass) setTab('catalog')
+  }, [catalogID, modelClass])
+  const selectTab = (next: 'catalog' | 'packages' | 'endpoints') => {
+    setTab(next)
+    if (next !== 'catalog' && (catalogID || modelClass)) setSearchParams({}, { replace: true })
+  }
 
   return (
     <div>
@@ -52,7 +57,7 @@ export default function ModelInfra() {
           { id: 'packages', label: '패키지 (PMP)', en: 'Packages (Artifacts)', desc: '서명된 모델 아티팩트' },
           { id: 'endpoints', label: '엔드포인트 (PIA)', en: 'Endpoints (Deployments)', desc: '실행 중인 서빙 인스턴스' },
         ].map(t => (
-          <button key={t.id} onClick={() => setTab(t.id as any)}
+      <button key={t.id} onClick={() => selectTab(t.id as 'catalog' | 'packages' | 'endpoints')}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === t.id ? 'border-patty-600 text-patty-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
             {t.label} <span className="text-xs text-gray-400">{t.en}</span>
           </button>
@@ -73,7 +78,7 @@ export default function ModelInfra() {
         <p className="text-center text-[10px] text-gray-400 mt-1">사용자는 카탈로그 ID만 봄 · 하네스는 엔드포인트 주소를 받지 않음 · PRD §9.2</p>
       </div>
 
-      {tab === 'catalog' && <CatalogTab />}
+      {tab === 'catalog' && <CatalogTab catalogID={catalogID} modelClass={modelClass} />}
       {tab === 'packages' && <PackagesTab />}
       {tab === 'endpoints' && <EndpointsTab />}
     </div>
@@ -81,10 +86,13 @@ export default function ModelInfra() {
 }
 
 // ─── Catalog Tab ──────────────────────────────────────────────
-function CatalogTab() {
+function CatalogTab({ catalogID, modelClass }: { catalogID: string; modelClass: string }) {
+  const confirm = useConfirm()
   const [models, setModels] = useState<any[]>([])
   const [epoch, setEpoch] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [page, setPage] = useState(1)
+  const pageSize = 24
 
   useEffect(() => {
     Promise.all([
@@ -92,14 +100,24 @@ function CatalogTab() {
       fetch('/api/catalog/epoch', { headers: authHeaders() }).then(r => r.json()).catch(() => null),
     ]).then(([m, e]) => { setModels(Array.isArray(m) ? m : []); setEpoch(e); setLoading(false) })
   }, [])
+  useEffect(() => { setPage(1) }, [catalogID, modelClass])
 
-  if (loading) return <div className="text-gray-500">로딩 중...</div>
+    if (loading) return <div className="text-gray-500">로딩 중...</div>
+    const filteredModels = filterCatalogModels(models, catalogID, modelClass)
+    const pagedModels = filteredModels.slice((page - 1) * pageSize, page * pageSize)
+  const hasDeepFilter = Boolean(catalogID || modelClass)
 
   const handleSeed = async () => { await api.catalogSeed(); window.location.reload() }
   const handleWithdraw = async (id: string) => { if (await confirm({ title: '확인', message: '이 모델을 철회하시겠습니까?', danger: true })) { await api.catalogWithdraw(id); window.location.reload() } }
 
   return (
     <div>
+      {hasDeepFilter && (
+        <div className="card mb-4 flex items-center gap-3 border-l-4 border-l-blue-500">
+          <div className="text-sm"><span className="font-semibold">프로젝트 허용 모델 필터</span> · <span className="font-mono text-xs">{catalogID || modelClass}</span></div>
+          <Link to="/models" className="text-xs text-blue-600 hover:underline ml-auto">필터 해제</Link>
+        </div>
+      )}
       {/* Epoch info */}
       {epoch && (
         <div className="flex items-center gap-4 mb-4 p-3 bg-gray-50 rounded-lg">
@@ -117,12 +135,12 @@ function CatalogTab() {
         <button onClick={handleSeed} className="btn-secondary text-sm">기본 모델 등록</button>
       </div>
 
-      {models.length === 0 ? (
-        <div className="card"><EmptyState icon="📦" title="카탈로그 모델이 없습니다" message="카탈로그 시드 버튼으로 기본 모델을 등록하세요" /></div>
+      {filteredModels.length === 0 ? (
+        <div className="card"><EmptyState icon="📦" title={hasDeepFilter ? '일치하는 카탈로그 모델이 없습니다' : '카탈로그 모델이 없습니다'} message={hasDeepFilter ? '등록되지 않았거나, 사용 중단되었거나, 현재 조직에 공개되지 않은 모델입니다.' : '카탈로그 시드 버튼으로 기본 모델을 등록하세요'} /></div>
       ) : (
         <div className="grid grid-cols-3 gap-4">
-          {models.map(m => (
-            <div key={m.catalog_model_id} className="card border-l-4" style={{ borderLeftColor: m.availability === 'available' ? '#22c55e' : m.availability === 'deprecated' ? '#eab308' : '#ef4444' }}>
+          {pagedModels.map(m => (
+            <div key={m.catalog_model_id} className={`card border-l-4 ${catalogID === m.catalog_model_id ? 'ring-2 ring-blue-200' : ''}`} style={{ borderLeftColor: m.availability === 'available' ? '#22c55e' : m.availability === 'deprecated' ? '#eab308' : '#ef4444' }}>
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-sm font-semibold">{m.display_name_ko || m.display_name || m.catalog_model_id}</h4>
                 <span className={`text-xs ${m.availability === 'available' ? 'text-green-600' : m.availability === 'deprecated' ? 'text-yellow-600' : 'text-red-600'}`}>{m.availability}</span>
@@ -146,36 +164,27 @@ function CatalogTab() {
           ))}
         </div>
       )}
+      {filteredModels.length > pageSize && <Pagination total={filteredModels.length} page={page} pageSize={pageSize} onPageChange={setPage} />}
     </div>
   )
 }
 
 // ─── Packages Tab (PMP) ───────────────────────────────────────
 function PackagesTab() {
+  const confirm = useConfirm()
   const [models, setModels] = useState<any[]>([])
   const [endpoints, setEndpoints] = useState<any[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  // Deep-linkable class filter (PAT-1491): /models?class=code lands here.
-  // FilterBar seeds the select DISPLAY from defaultValue but only emits
-  // changes on user interaction — so the data filter is seeded here too,
-  // and a key=deepClass remount re-seeds both when the param changes.
   const [searchParams] = useSearchParams()
   const deepClass = searchParams.get('class') || ''
-  const modelFilter = useMemo(() => ({
-    ...MODEL_FILTER,
-    dropdowns: (MODEL_FILTER.dropdowns || []).map(d => {
-      if (d.key !== 'entitlement_class' || !deepClass) return d
-      const has = d.options.some(o => o.value === deepClass)
-      return { ...d, defaultValue: deepClass, options: has ? d.options : [...d.options, { value: deepClass, label: deepClass }] }
-    }),
-  }), [deepClass])
-  const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: (deepClass ? { entitlement_class: deepClass } : {}) as Record<string, string> })
+  const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
   const [page, setPage] = useState(1)
   const [form, setForm] = useState({ package_id: '', model_id: '', name: '', name_ko: '', family: 'code', version: '1.0.0' })
   const [impactTarget, setImpactTarget] = useState<any>(null)
   const [impact, setImpact] = useState<any>(null)
   const pageSize = 25
+  useEffect(() => { setPage(1) }, [deepClass])
 
   const showImpact = async (m: any) => {
     setImpactTarget(m)
@@ -192,7 +201,8 @@ function PackagesTab() {
   }
   useEffect(() => { load() }, [])
 
-  const filtered = useFilteredData(models, filters, modelFilter)
+  const baseFiltered = useFilteredData(models, filters, MODEL_FILTER)
+  const filtered = deepClass ? baseFiltered.filter(model => model.entitlement_class === deepClass || model.family === deepClass) : baseFiltered
   const paged = filtered.slice((page - 1) * pageSize, page * pageSize)
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -234,7 +244,8 @@ function PackagesTab() {
         </form>
       )}
 
-      <FilterBar key={deepClass} config={modelFilter} onChange={setFilters} />
+      <FilterBar config={MODEL_FILTER} onChange={setFilters} />
+      {deepClass && <div className="text-xs text-blue-700 bg-blue-50 border border-blue-100 rounded px-3 py-2 mb-3">URL 클래스 필터: <span className="font-mono">{deepClass}</span></div>}
 
       <div className="card">
         <table className="w-full overflow-x-auto block">
@@ -268,6 +279,7 @@ function PackagesTab() {
             ))}
           </tbody>
         </table>
+        {filtered.length === 0 && <div className="py-8 text-center text-sm text-gray-400">일치하는 모델 패키지가 없습니다</div>}
         <Pagination total={filtered.length} page={page} pageSize={pageSize} onPageChange={setPage} />
       </div>
 
@@ -368,7 +380,7 @@ function EndpointsTab() {
   )
 }
 
-function authHeaders() {
-  const token = localStorage.getItem('pccp_token')
+function authHeaders(): Record<string, string> {
+  const token = sessionStorage.getItem('pccp_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }

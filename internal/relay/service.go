@@ -6,9 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/patrickrho-patty/pccp/internal/events"
-	"github.com/patrickrho-patty/pccp/internal/scheduler"
 	"io"
 	"log"
 	"net/http"
@@ -19,14 +18,18 @@ import (
 
 	"github.com/patrickrho-patty/pccp/internal/catalog"
 	"github.com/patrickrho-patty/pccp/internal/dari"
+	"github.com/patrickrho-patty/pccp/internal/events"
 	"github.com/patrickrho-patty/pccp/internal/identity"
+	"github.com/patrickrho-patty/pccp/internal/keymgmt"
+	"github.com/patrickrho-patty/pccp/internal/metering"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/policy"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
 	"github.com/patrickrho-patty/pccp/internal/realtime"
+	"github.com/patrickrho-patty/pccp/internal/scheduler"
 	"github.com/patrickrho-patty/pccp/internal/security"
+	"github.com/patrickrho-patty/pccp/internal/telemetry"
 	"github.com/patrickrho-patty/pccp/internal/tools"
-	"github.com/patrickrho-patty/pccp/internal/workintel"
 	"gorm.io/gorm"
 )
 
@@ -38,7 +41,7 @@ type Service struct {
 	db         *gorm.DB
 	provenance *provenance.Service
 	security   *security.Service
-	workintel  *workintel.Service
+	metering   *telemetry.Service
 	realtime   *realtime.Service
 	identity   *identity.Service
 	policy     *policy.Service
@@ -145,8 +148,8 @@ func New(db *gorm.DB, cpURL, relayID string) (*Service, error) {
 		db:         db,
 		provenance: provSvc,
 		security:   security.New(db),
-		workintel:  workintel.New(db),
-		realtime:   realtime.New(),
+		metering:   telemetry.New(db),
+		realtime:   realtime.New(db),
 		identity:   identitySvc,
 		policy:     policySvc,
 		catalog:    catalogSvc,
@@ -157,6 +160,9 @@ func New(db *gorm.DB, cpURL, relayID string) (*Service, error) {
 		exchanges:  make(map[string]*Exchange),
 	}
 	s.forwarder = s.defaultForwarder
+	if err := s.realtime.SetSharedBusSecret(os.Getenv("PCCP_CP_TOKEN")); err != nil {
+		return nil, fmt.Errorf("relay: configure realtime bus: %w", err)
+	}
 	s.hotState = NewHotStateCache(30 * time.Second)
 	s.grantRevocations.m = map[dari.Digest]bool{}
 	s.exchangeGate = NewConcurrencyGate(128)
@@ -203,6 +209,24 @@ func (s *Service) Provenance() *provenance.Service { return s.provenance }
 
 // Catalog exposes the model-catalog service.
 func (s *Service) Catalog() *catalog.Service { return s.catalog }
+
+// SetAlertKeyProvider wires the relay's finding-delivery service. The relay
+// owns a distinct security.Service from the API process.
+func (s *Service) SetAlertKeyProvider(provider keymgmt.KeyProvider) {
+	s.security.SetAlertKeyProvider(provider)
+}
+
+func (s *Service) StartAlertDeliveryWorker(ctx context.Context) {
+	s.security.StartAlertDeliveryWorker(ctx)
+}
+
+func (s *Service) SetAlertHTTPClient(client security.HTTPDoer) {
+	s.security.SetAlertHTTPClient(client)
+}
+
+func (s *Service) ProcessAlertDeliveries(ctx context.Context, limit int) (int, error) {
+	return s.security.ProcessAlertDeliveries(ctx, limit)
+}
 
 // OpenExchange starts a governed exchange for an AI inference request.
 type OpenExchangeRequest struct {
@@ -285,6 +309,11 @@ func (s *Service) OpenExchange(ctx context.Context, req OpenExchangeRequest) (*E
 // authorize performs the governance checks for an exchange and resolves the
 // serving endpoint + lease (carried out via *res so RouteInference reuses).
 func (s *Service) authorize(ctx context.Context, req OpenExchangeRequest, res *governResolution) (dari.VerdictResult, error) {
+	if req.OrganizationID == "" || req.SessionID == "" || req.UserID == "" || req.HarnessID == "" ||
+		req.LeaseID == "" || req.PolicyEpochID == "" || req.ModelPackageID == "" {
+		return dari.VerdictDeny, fmt.Errorf("complete exchange authority context is required")
+	}
+
 	// 1. Validate the capability lease
 	var lease models.CapabilityLease
 	if err := s.db.Where("lease_id = ? AND organization_id = ?", req.LeaseID, req.OrganizationID).First(&lease).Error; err != nil {
@@ -293,14 +322,52 @@ func (s *Service) authorize(ctx context.Context, req OpenExchangeRequest, res *g
 	if lease.Status != "active" {
 		return dari.VerdictDeny, fmt.Errorf("lease status is %s", lease.Status)
 	}
-	notAfter, _ := time.Parse(time.RFC3339, lease.NotAfter)
-	if time.Now().After(notAfter) {
+	if lease.SubjectPeerID != req.HarnessID || lease.SessionID != req.SessionID || lease.UserID != req.UserID || lease.PolicyEpochID != req.PolicyEpochID {
+		return dari.VerdictDeny, fmt.Errorf("capability lease authority binding mismatch")
+	}
+	now := time.Now()
+	notBefore, beforeErr := time.Parse(time.RFC3339, lease.NotBefore)
+	notAfter, afterErr := time.Parse(time.RFC3339, lease.NotAfter)
+	if beforeErr != nil || afterErr != nil || now.Before(notBefore) || !now.Before(notAfter) {
 		return dari.VerdictDeny, fmt.Errorf("lease expired")
+	}
+	if !capabilityLeaseAllowsModel(&lease, req.ModelPackageID) {
+		return dari.VerdictDeny, fmt.Errorf("capability lease does not allow model %s", req.ModelPackageID)
+	}
+
+	var harness models.Harness
+	if err := s.db.Where("organization_id = ? AND harness_id = ?", req.OrganizationID, req.HarnessID).First(&harness).Error; err != nil {
+		return dari.VerdictDeny, fmt.Errorf("harness is not enrolled for organization")
+	}
+	if !models.HarnessStatusPermitted(harness.Status) {
+		return dari.VerdictDeny, fmt.Errorf("harness status is %s", harness.Status)
+	}
+	if restriction, err := models.HarnessAdmissionRestriction(s.db, req.OrganizationID, req.HarnessID); err != nil {
+		return dari.VerdictDeny, fmt.Errorf("fleet desired state unavailable: %w", err)
+	} else if restriction != nil {
+		return dari.VerdictDeny, fmt.Errorf("harness admission blocked by %s", restriction.Action)
+	}
+	var session models.Session
+	if err := s.db.Where("organization_id = ? AND session_id = ? AND harness_id = ? AND user_id = ?",
+		req.OrganizationID, req.SessionID, req.HarnessID, req.UserID).First(&session).Error; err != nil {
+		return dari.VerdictDeny, fmt.Errorf("session authority binding mismatch")
+	}
+	if !models.SessionIsLive(session.Status) {
+		return dari.VerdictDeny, fmt.Errorf("session status is %s", session.Status)
+	}
+	if locked, err := models.ActiveSecurityLockdown(s.db, req.OrganizationID, session.ProjectID); err != nil {
+		return dari.VerdictDeny, fmt.Errorf("security lockdown state unavailable: %w", err)
+	} else if locked {
+		return dari.VerdictDeny, fmt.Errorf("security lockdown is active")
+	}
+	var user models.User
+	if err := s.db.Where("organization_id = ? AND id = ? AND status = ?", req.OrganizationID, req.UserID, models.UserStatusActive).First(&user).Error; err != nil {
+		return dari.VerdictDeny, fmt.Errorf("user is not active for organization")
 	}
 
 	// 2. Validate model is allowed under policy epoch
 	var epoch models.PolicyEpoch
-	if err := s.db.Where("epoch_id = ?", req.PolicyEpochID).First(&epoch).Error; err != nil {
+	if err := s.db.Where("organization_id = ? AND epoch_id = ?", req.OrganizationID, req.PolicyEpochID).First(&epoch).Error; err != nil {
 		return dari.VerdictDeny, fmt.Errorf("policy epoch not found")
 	}
 
@@ -336,8 +403,8 @@ func (s *Service) authorize(ctx context.Context, req OpenExchangeRequest, res *g
 	}
 
 	// Check for valid endpoint lease
-	err = s.db.Where("endpoint_id = ? AND status = 'active' AND not_after > ?",
-		endpoint.EndpointID, time.Now().Format(time.RFC3339)).
+	err = s.db.Where("organization_id = ? AND endpoint_id = ? AND model_package_id = ? AND status = 'active' AND not_after > ?",
+		req.OrganizationID, endpoint.EndpointID, req.ModelPackageID, now.Format(time.RFC3339)).
 		Order("issued_at DESC").First(&epLease).Error
 	if err != nil {
 		return dari.VerdictDeny, fmt.Errorf("no valid endpoint lease for endpoint %s", endpoint.EndpointID)
@@ -371,6 +438,9 @@ func (s *Service) RouteInference(ctx context.Context, req InferenceRequest) (*In
 	if exchange.State != dari.ExchangeAuthorized && exchange.State != dari.ExchangeActive {
 		return nil, fmt.Errorf("relay: exchange state is %s, not authorized", exchange.State)
 	}
+	if err := validateInferenceBinding(exchange, req); err != nil {
+		return nil, err
+	}
 
 	// Update exchange state
 	s.mu.Lock()
@@ -402,6 +472,9 @@ func (s *Service) RouteInferenceStream(ctx context.Context, req InferenceRequest
 	if exchange.State != dari.ExchangeAuthorized && exchange.State != dari.ExchangeActive {
 		return nil, fmt.Errorf("relay: exchange state is %s, not authorized", exchange.State)
 	}
+	if err := validateInferenceBinding(exchange, req); err != nil {
+		return nil, err
+	}
 
 	s.mu.Lock()
 	exchange.State = dari.ExchangeActive
@@ -415,6 +488,19 @@ func (s *Service) RouteInferenceStream(ctx context.Context, req InferenceRequest
 	})
 }
 
+func validateInferenceBinding(exchange *Exchange, req InferenceRequest) error {
+	if exchange.OrganizationID != req.OrganizationID {
+		return fmt.Errorf("relay: inference organization does not match authorized exchange")
+	}
+	if exchange.SessionID != req.SessionID {
+		return fmt.Errorf("relay: inference session does not match authorized exchange")
+	}
+	if exchange.ModelPackageID != req.ModelPackageID {
+		return fmt.Errorf("relay: inference model package does not match authorized exchange")
+	}
+	return nil
+}
+
 // routeViaForwarder runs the post-forward bookkeeping (meter, action
 // record, completion) shared by the streaming and buffered paths.
 func (s *Service) routeViaForwarder(ctx context.Context, exchange *Exchange, req InferenceRequest, fwd func(context.Context, InferenceRequest) (*InferenceResponse, error)) (*InferenceResponse, error) {
@@ -424,16 +510,18 @@ func (s *Service) routeViaForwarder(ctx context.Context, exchange *Exchange, req
 	}
 
 	// Meter usage (§10.2 stage 13 / §29.13) — every governed request is accounted.
-	s.recordUsage(exchange, req, inferenceResp)
+	if err := s.recordUsageContext(ctx, exchange, inferenceResp); err != nil {
+		return nil, fmt.Errorf("relay: record metering: %w", err)
+	}
 
 	// Record the inference action
 	s.provenance.RecordAction(provenance.RecordActionRequest{
-		OrganizationID: req.OrganizationID,
-		SessionID:      req.SessionID,
-		ExchangeID:     req.ExchangeID,
+		OrganizationID: exchange.OrganizationID,
+		SessionID:      exchange.SessionID,
+		ExchangeID:     exchange.ID,
 		UserID:         exchange.UserID,
 		HarnessID:      exchange.HarnessID,
-		ModelPackageID: req.ModelPackageID,
+		ModelPackageID: exchange.ModelPackageID,
 		EndpointID:     exchange.EndpointID,
 		PolicyEpochID:  exchange.PolicyEpochID,
 		LeaseID:        exchange.LeaseID,
@@ -763,62 +851,80 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 
 	// Defense in depth: reject harnesses not in good standing even if a stale
 	// lease exists. (Connect-time gate is Service.AuthorizePeer.)
-	if harness.Status == "revoked" || harness.Status == "quarantined" {
+	if !models.HarnessStatusPermitted(harness.Status) {
 		return nil, nil, fmt.Errorf("relay: harness %s is %s", req.HarnessID, harness.Status)
 	}
-
-	// Live-path heartbeat (web/03 B2): governed exchanges prove
-	// liveness. The write is throttled to one per harness per minute —
-	// fleet freshness needs seconds-level resolution, not per-request
-	// write amplification.
-	s.recordHeartbeat(req.HarnessID)
-	if req.SessionID != "" {
-		s.db.Model(&models.Session{}).Where("session_id = ?", req.SessionID).
-			Update("last_activity_at", time.Now().Format(time.RFC3339))
+	if restriction, err := models.HarnessAdmissionRestriction(s.db, orgID, req.HarnessID); err != nil {
+		return nil, nil, fmt.Errorf("relay: fleet desired state unavailable: %w", err)
+	} else if restriction != nil {
+		return nil, nil, fmt.Errorf("relay: harness admission blocked by %s", restriction.Action)
 	}
 
 	// Session-status enforcement (web/02 B3): a session the control
 	// plane closed/paused/terminated must not keep exchanging, even
 	// on an otherwise healthy connection with a live lease.
-	if req.SessionID != "" {
-		var session models.Session
-		if err := s.db.Where("session_id = ?", req.SessionID).First(&session).Error; err == nil {
-			switch session.Status {
-			case "closed", "terminated":
-				s.denyWithoutExchange(req, orgID, "session_"+session.Status)
-				return nil, nil, fmt.Errorf("relay: session %s is %s — inference refused", req.SessionID, session.Status)
-			case "paused", "idle":
-				s.denyWithoutExchange(req, orgID, "session_"+session.Status)
-				return nil, nil, fmt.Errorf("relay: session %s is %s — resume the session before inference", req.SessionID, session.Status)
-			}
-		}
-		// An unknown session row is not an error here: the DARI
-		// session-governance handshake (lease + epoch binding) is the
-		// authoritative gate; the Session row is the CP-side view.
+	if req.SessionID == "" {
+		return nil, nil, fmt.Errorf("relay: authenticated session is required")
+	}
+	var session models.Session
+	if err := s.db.Where("organization_id = ? AND session_id = ?", orgID, req.SessionID).First(&session).Error; err != nil {
+		return nil, nil, fmt.Errorf("relay: session %s is not registered for organization: %w", req.SessionID, err)
+	}
+	if session.HarnessID != req.HarnessID {
+		return nil, nil, fmt.Errorf("relay: session %s is not bound to harness %s", req.SessionID, req.HarnessID)
+	}
+	switch session.Status {
+	case "closed", "terminated":
+		s.denyWithoutExchange(req, orgID, "session_"+session.Status)
+		return nil, nil, fmt.Errorf("relay: session %s is %s — inference refused", req.SessionID, session.Status)
+	case "paused", "idle":
+		s.denyWithoutExchange(req, orgID, "session_"+session.Status)
+		return nil, nil, fmt.Errorf("relay: session %s is %s — resume the session before inference", req.SessionID, session.Status)
+	}
+	if !models.SessionIsLive(session.Status) {
+		s.denyWithoutExchange(req, orgID, "session_"+session.Status)
+		return nil, nil, fmt.Errorf("relay: session %s is %s — inference requires an active session", req.SessionID, session.Status)
+	}
+	if locked, err := models.ActiveSecurityLockdown(s.db, orgID, session.ProjectID); err != nil {
+		return nil, nil, fmt.Errorf("relay: security lockdown state unavailable: %w", err)
+	} else if locked {
+		s.denyWithoutExchange(req, orgID, "security_lockdown")
+		return nil, nil, fmt.Errorf("relay: security lockdown is active")
+	}
 
-		// Developer standing gate (web/01 B2): a suspended/offboarded
-		// developer must not keep exchanging through any harness, even
-		// with a live lease.
-		if session.UserID != "" {
-			var dev models.User
-			if err := s.db.Where("id = ?", session.UserID).First(&dev).Error; err == nil {
-				if dev.Status != "active" {
-					s.denyWithoutExchange(req, orgID, "user_"+dev.Status)
-					return nil, nil, fmt.Errorf("relay: developer %s is %s — inference refused", session.UserID, dev.Status)
-				}
-			}
+	// User standing gate (web/01 B2): a suspended/offboarded user must
+	// not keep exchanging through any harness, even with a live lease.
+	if session.UserID != "" {
+		var user models.User
+		if err := s.db.Where("organization_id = ? AND id = ?", orgID, session.UserID).First(&user).Error; err != nil {
+			return nil, nil, fmt.Errorf("relay: session user %s is not registered: %w", session.UserID, err)
+		}
+		if user.Status != "active" {
+			s.denyWithoutExchange(req, orgID, "user_"+user.Status)
+			return nil, nil, fmt.Errorf("relay: user %s is %s — inference refused", session.UserID, user.Status)
 		}
 	}
 
+	// Governed exchanges prove liveness only after the session and user
+	// bindings above have passed.
+	s.recordHeartbeat(req.HarnessID)
+	s.db.Model(&models.Session{}).
+		Where("organization_id = ? AND session_id = ?", orgID, req.SessionID).
+		Update("last_activity_at", time.Now().Format(time.RFC3339))
+
 	// 2. Resolve the harness + lease (fail-closed) through the
-	// hot-state snapshot keyed harness+model (Task 15): the full chain
+	// hot-state snapshot keyed by the complete authority context: the full chain
 	// (harness→lease→epoch→package→endpoint→endpoint-lease) resolves
 	// once and is reused per request while fresh.
 	revEpoch, _ := s.identity.RevocationSnapshot()
-	cacheKey := GovCacheKey(req.HarnessID, req.Model)
+	activeEpoch, epochErr := s.Policy().GetActiveEpoch(orgID)
+	if epochErr != nil {
+		return nil, nil, epochErr
+	}
+	cacheKey := GovCacheKey(orgID, req.HarnessID, session.UserID, req.SessionID, req.Model, activeEpoch.EpochID)
 	snap, cerr := s.hotState.Get(cacheKey, time.Now(), revEpoch)
 	if cerr != nil || snap == nil {
-		resolved, rerr := s.ResolveGovernanceSnapshot(req.HarnessID, req.Model)
+		resolved, rerr := s.ResolveGovernanceSnapshot(req.HarnessID, req.SessionID, req.Model)
 		if rerr != nil {
 			reason := "governance_resolution_failed"
 			if strings.Contains(rerr.Error(), "not in registry") {
@@ -914,8 +1020,12 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 	ex.RecordStage(StageDLPScan, secResult.Verdict != "DENY", fmt.Sprintf("%d findings", len(secResult.Findings)))
 	if len(secResult.Findings) > 0 {
 		for _, f := range secResult.Findings {
-			s.security.RecordFinding(orgID, req.SessionID, ex.ID, f)
-			s.realtime.NotifySecurityFinding(orgID, f.Severity, f.TitleKo)
+			persisted, err := s.security.RecordFinding(orgID, req.SessionID, ex.ID, f)
+			if err != nil {
+				_, _ = s.CloseExchange(ctx, ex.ID)
+				return nil, nil, fmt.Errorf("relay: security finding persistence failed")
+			}
+			s.realtime.NotifySecurityFinding(orgID, persisted.ID, persisted.Severity, persisted.TitleKo, persisted.Status)
 		}
 		if secResult.Verdict == "DENY" {
 			s.CloseExchange(ctx, ex.ID)
@@ -971,8 +1081,12 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 				appendEvidence(ex, "dlp_response_scan|"+secResp.Verdict)
 				for _, f := range secResp.Findings {
 					f.Direction = "response"
-					s.security.RecordFinding(orgID, req.SessionID, ex.ID, f)
-					s.realtime.NotifySecurityFinding(orgID, f.Severity, f.TitleKo)
+					persisted, err := s.security.RecordFinding(orgID, req.SessionID, ex.ID, f)
+					if err != nil {
+						_, _ = s.CloseExchange(ctx, ex.ID)
+						return nil, nil, fmt.Errorf("relay: security finding persistence failed")
+					}
+					s.realtime.NotifySecurityFinding(orgID, persisted.ID, persisted.Severity, persisted.TitleKo, persisted.Status)
 				}
 				if secResp.Verdict == "DENY" {
 					s.CloseExchange(ctx, ex.ID)
@@ -984,8 +1098,12 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 
 	appendEvidence(ex, "forward|"+pkg.PackageID)
 	ex.RecordStage(StageForward, true, pkg.PackageID)
+	tokenUsage := canonicalTokenUsage{}
 	if resp != nil && resp.Usage != nil {
-		ex.RecordStage(StageTokenize, true, fmt.Sprintf("in=%d out=%d", resp.Usage["input_tokens"], resp.Usage["output_tokens"]))
+		tokenUsage, _ = extractCanonicalTokenUsage(resp.Usage)
+		if tokenUsage.InputReported || tokenUsage.OutputReported {
+			ex.RecordStage(StageTokenize, true, fmt.Sprintf("in=%d out=%d", tokenUsage.Input, tokenUsage.Output))
+		}
 	}
 
 	// Conversation record (web/02 inspector): the session's prompt/
@@ -1002,10 +1120,7 @@ func (s *Service) GovernInference(ctx context.Context, req GovernRequest, stream
 			respText = content
 		}
 	}
-	inTok, outTok := 0, 0
-	if resp != nil && resp.Usage != nil {
-		inTok, outTok = resp.Usage["input_tokens"], resp.Usage["output_tokens"]
-	}
+	inTok, outTok := int(tokenUsage.Input), int(tokenUsage.Output)
 	s.db.Create(&models.PromptExchange{
 		SessionID: ex.SessionID, ExchangeID: ex.ID,
 		PromptText: promptText, ResponseText: respText,
@@ -1034,6 +1149,7 @@ func (s *Service) emitSpine(ex *Exchange, eventType string, payload map[string]a
 	if s.spine == nil || ex == nil {
 		return
 	}
+	payload["exchange_id"] = ex.ID
 	if _, err := s.spine.Emit(events.EmitRequest{
 		EventType:      "cp.exchange." + eventType,
 		OrganizationID: ex.OrganizationID,
@@ -1069,22 +1185,130 @@ type InferenceResponse struct {
 	DecisionCOSE []byte `json:"-"`
 }
 
+type canonicalTokenUsage struct {
+	Input          int64
+	Output         int64
+	InputReported  bool
+	OutputReported bool
+}
+
+// extractCanonicalTokenUsage normalizes OpenAI-style and internal usage keys
+// exactly once. A present zero is authoritative; fallback keys are consulted
+// only when the provider key is absent.
+func extractCanonicalTokenUsage(values map[string]int) (canonicalTokenUsage, error) {
+	metric := func(primary, fallback string) (int64, bool, error) {
+		value, ok := values[primary]
+		key := primary
+		if !ok {
+			value, ok = values[fallback]
+			key = fallback
+		}
+		if !ok {
+			return 0, false, nil
+		}
+		if value < 0 {
+			return 0, false, fmt.Errorf("relay: provider reported negative %s", key)
+		}
+		return int64(value), true, nil
+	}
+	input, inputReported, err := metric("prompt_tokens", "input_tokens")
+	if err != nil {
+		return canonicalTokenUsage{}, err
+	}
+	output, outputReported, err := metric("completion_tokens", "output_tokens")
+	if err != nil {
+		return canonicalTokenUsage{}, err
+	}
+	return canonicalTokenUsage{Input: input, Output: output, InputReported: inputReported, OutputReported: outputReported}, nil
+}
+
+func modelTokenPrice(pkg models.ModelPackage, input bool) (int64, bool, error) {
+	rate, configured, legacy := pkg.PriceOutputMicrosPer1K, pkg.PriceOutputConfigured, pkg.PriceOutputPer1K
+	if input {
+		rate, configured, legacy = pkg.PriceInputMicrosPer1K, pkg.PriceInputConfigured, pkg.PriceInputPer1K
+	}
+	rate, configured, err := metering.ResolveKRWPriceMicrosPer1K(rate, configured, legacy)
+	if err != nil {
+		return 0, false, fmt.Errorf("relay: token price: %w", err)
+	}
+	return rate, configured, nil
+}
+
 // recordUsage meters token usage for a completed governed inference (§10.2 stage 13).
-func (s *Service) recordUsage(ex *Exchange, req InferenceRequest, resp *InferenceResponse) {
-	if resp != nil && resp.Usage != nil {
-		appendEvidence(ex, fmt.Sprintf("meter|in=%d out=%d", resp.Usage["input_tokens"], resp.Usage["output_tokens"]))
+func (s *Service) recordUsage(ex *Exchange, resp *InferenceResponse) error {
+	return s.recordUsageContext(context.Background(), ex, resp)
+}
+
+func (s *Service) recordUsageContext(parent context.Context, ex *Exchange, resp *InferenceResponse) error {
+	if resp == nil || resp.Usage == nil {
+		return nil
 	}
-	if resp == nil || resp.Usage == nil || s.workintel == nil {
-		return
+	usage, err := extractCanonicalTokenUsage(resp.Usage)
+	if err != nil {
+		return err
 	}
-	tokensIn := int64(resp.Usage["prompt_tokens"])
-	tokensOut := int64(resp.Usage["completion_tokens"])
-	if tokensIn > 0 {
-		s.workintel.RecordUsage(ex.OrganizationID, ex.UserID, ex.HarnessID, ex.SessionID, req.ModelPackageID, ex.EndpointID, "tokens_in", tokensIn, "tokens")
+	if usage.InputReported || usage.OutputReported {
+		appendEvidence(ex, fmt.Sprintf("meter|in=%d out=%d", usage.Input, usage.Output))
 	}
-	if tokensOut > 0 {
-		s.workintel.RecordUsage(ex.OrganizationID, ex.UserID, ex.HarnessID, ex.SessionID, req.ModelPackageID, ex.EndpointID, "tokens_out", tokensOut, "tokens")
+	if s.metering == nil || (!usage.InputReported && !usage.OutputReported) {
+		return nil
 	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	// Inference has already completed, so a browser disconnect must not erase
+	// its billable record. Detach cancellation while retaining request values,
+	// then bound the ownership lookup and insert with a short durable deadline.
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+	defer cancel()
+	var pkg models.ModelPackage
+	if err := s.db.WithContext(persistCtx).Where("package_id = ? OR id = ?", ex.ModelPackageID, ex.ModelPackageID).First(&pkg).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("relay: read model pricing: %w", err)
+	}
+	now := time.Now().UTC()
+	events := make([]telemetry.MeteringEvent, 0, 2)
+	appendTokenEvent := func(sequence uint64, metric telemetry.MetricType, quantity int64, reported, input bool) error {
+		if !reported {
+			return nil
+		}
+		rate, configured, err := modelTokenPrice(pkg, input)
+		if err != nil {
+			return err
+		}
+		event := telemetry.MeteringEvent{
+			OrganizationID: ex.OrganizationID, SessionID: ex.SessionID, ExchangeID: ex.ID,
+			UserID: ex.UserID, HarnessID: ex.HarnessID, ModelPackageID: ex.ModelPackageID,
+			EndpointID: ex.EndpointID, Sequence: sequence, MetricType: metric,
+			Quantity: quantity, Unit: "tokens", OccurredAt: now,
+			PricingState: models.UsagePricingUnpriced,
+		}
+		if !configured {
+			events = append(events, event)
+			return nil
+		}
+		cost, err := metering.TokenCostMicros(quantity, rate)
+		if err != nil {
+			return err
+		}
+		event.CostMicros = cost
+		event.Currency = "KRW"
+		event.PricingState = models.UsagePricingPriced
+		event.AppliedRateMicrosPer1K = rate
+		event.AppliedPriceVersion = pkg.PriceVersion
+		event.AppliedPriceSource = pkg.PriceSource
+		events = append(events, event)
+		return nil
+	}
+	if err := appendTokenEvent(1, telemetry.MetricTokensIn, usage.Input, usage.InputReported, true); err != nil {
+		return err
+	}
+	if err := appendTokenEvent(2, telemetry.MetricTokensOut, usage.Output, usage.OutputReported, false); err != nil {
+		return err
+	}
+	if len(events) == 0 {
+		return nil
+	}
+	return s.metering.RecordMeteringBatchContext(persistCtx, events)
 }
 
 // AuthorizePeer is the connect-time gate: an enrolled harness in good standing
@@ -1097,11 +1321,18 @@ func (s *Service) AuthorizePeer(harnessID string) (string, error) {
 	if err := s.db.Where("harness_id = ?", harnessID).First(&harness).Error; err != nil {
 		return "", fmt.Errorf("relay: unknown harness %s: %w", harnessID, err)
 	}
-	switch harness.Status {
-	case "revoked":
-		return "", fmt.Errorf("relay: harness %s is revoked", harnessID)
-	case "quarantined":
-		return "", fmt.Errorf("relay: harness %s is quarantined", harnessID)
+	if !models.HarnessStatusPermitted(harness.Status) {
+		return "", fmt.Errorf("relay: harness %s status is %s", harnessID, harness.Status)
+	}
+	if restriction, err := models.HarnessAdmissionRestriction(s.db, harness.OrganizationID, harnessID); err != nil {
+		return "", fmt.Errorf("relay: fleet desired state unavailable: %w", err)
+	} else if restriction != nil {
+		return "", fmt.Errorf("relay: harness admission blocked by %s", restriction.Action)
+	}
+	if locked, err := models.ActiveSecurityLockdown(s.db, harness.OrganizationID, ""); err != nil {
+		return "", fmt.Errorf("relay: security lockdown state unavailable: %w", err)
+	} else if locked {
+		return "", fmt.Errorf("relay: organization security lockdown is active")
 	}
 	return harness.OrganizationID, nil
 }

@@ -4,6 +4,7 @@ import { FilterBar, useFilteredData, Pagination, FilterConfig } from '../compone
 import EmptyState from '../components/EmptyState'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
+import { formatCompactTokens, summarizeSubscriberUsage } from '../subscriberUsage'
 
 const FILTER_CONFIG: FilterConfig = {
   searchFields: ['email', 'display_name', 'display_name_ko', 'oauth_provider'],
@@ -43,7 +44,6 @@ export default function SubscriberManagement() {
   const confirm = useConfirm()
   const [accounts, setAccounts] = useState<any[]>([])
   const [harnesses, setHarnesses] = useState<any[]>([])
-  const [usage, setUsage] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', dropdowns: {} as Record<string, string> })
   const [page, setPage] = useState(1)
@@ -95,11 +95,9 @@ export default function SubscriberManagement() {
     Promise.all([
       fetch('/api/public/accounts', { headers: authHeaders() }).then(r => r.json()).catch(() => []),
       fetch('/api/harnesses', { headers: authHeaders() }).then(r => r.json()).catch(() => []),
-      fetch('/api/analytics/usage', { headers: authHeaders() }).then(r => r.json()).catch(() => []),
-    ]).then(([accts, harns, usageData]) => {
+    ]).then(([accts, harns]) => {
       setAccounts(Array.isArray(accts) ? accts : [])
       setHarnesses(Array.isArray(harns) ? harns : [])
-      setUsage(Array.isArray(usageData?.records || usageData) ? (usageData?.records || usageData) : [])
       setLoading(false)
     })
   }, [])
@@ -107,15 +105,8 @@ export default function SubscriberManagement() {
   const filtered = useFilteredData(accounts, filters, FILTER_CONFIG)
   const paged = filtered.slice((page - 1) * pageSize, page * pageSize)
 
-  const getAccountHarnesses = (accountId: string) => harnesses.filter(h => h.account_id === accountId)
-  const getAccountUsage = (accountId: string) => {
-    // Sum usage records for sessions belonging to this account's harnesses
-    const harnessIds = getAccountHarnesses(accountId).map(h => h.harness_id)
-    const recs = usage.filter(u => harnessIds.includes(u.harness_id))
-    const tokensIn = recs.filter(r => r.metric_type === 'tokens_in').reduce((a, r) => a + r.quantity, 0)
-    const tokensOut = recs.filter(r => r.metric_type === 'tokens_out').reduce((a, r) => a + r.quantity, 0)
-    return { tokensIn, tokensOut, total: tokensIn + tokensOut, records: recs.length }
-  }
+  const getAccountHarnesses = (accountId: string) => harnesses.filter(h => h.organization_id === accountId)
+  const getAccountUsage = (accountId: string) => summarizeSubscriberUsage(accounts.find(a => a.id === accountId)?.usage)
 
   // Aggregate stats
   const stats = {
@@ -194,7 +185,7 @@ export default function SubscriberManagement() {
                       </td>
                       <td className="py-3"><span className="badge-gray">{a.subscription_plan || 'free'}</span></td>
                       <td className="py-3"><span className={subStatusBadge[a.subscription_status] || 'badge-gray'}>{subStatusLabel[a.subscription_status] || a.subscription_status}</span></td>
-                      <td className="py-3 text-xs text-gray-500">{(u.total / 1000).toFixed(1)}K</td>
+                      <td className="py-3 text-xs text-gray-500">{u.available ? `${u.total.toLocaleString('ko-KR')}${u.state === 'delayed' ? ' · 지연' : ''}` : u.state === 'error' ? '집계 오류' : '미수집'}</td>
                       <td className="py-3 text-xs">{hs.length}</td>
                       <td className="py-3"><span className={riskBadge(a.account_integrity_state)}>{a.account_integrity_state === 'normal' ? '정상' : '주의'}</span></td>
                       <td className="py-3 text-xs text-gray-400">{a.created_at?.slice(0, 10) || '-'}</td>
@@ -313,13 +304,16 @@ export default function SubscriberManagement() {
               <h3 className="text-sm font-semibold mb-3">사용량 · Usage</h3>
               {(() => {
                 const u = getAccountUsage(selectedAccount.id)
-                return (
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="text-center p-2 bg-blue-50 rounded"><div className="text-lg font-bold text-blue-600">{(u.tokensIn / 1000).toFixed(1)}K</div><div className="text-[10px] text-gray-500">입력 토큰</div></div>
-                    <div className="text-center p-2 bg-green-50 rounded"><div className="text-lg font-bold text-green-600">{(u.tokensOut / 1000).toFixed(1)}K</div><div className="text-[10px] text-gray-500">출력 토큰</div></div>
-                    <div className="text-center p-2 bg-purple-50 rounded"><div className="text-lg font-bold text-purple-600">{u.records}</div><div className="text-[10px] text-gray-500">추론 수</div></div>
-                  </div>
-                )
+                return u.available ? (
+                  <>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="text-center p-2 bg-blue-50 rounded"><div className="text-lg font-bold text-blue-600">{formatCompactTokens(u.tokensIn)}</div><div className="text-[10px] text-gray-500">입력 토큰</div></div>
+                      <div className="text-center p-2 bg-green-50 rounded"><div className="text-lg font-bold text-green-600">{formatCompactTokens(u.tokensOut)}</div><div className="text-[10px] text-gray-500">출력 토큰</div></div>
+                      <div className="text-center p-2 bg-purple-50 rounded"><div className="text-lg font-bold text-purple-600">{u.records.toLocaleString('ko-KR')}</div><div className="text-[10px] text-gray-500">계량 기록</div></div>
+                    </div>
+                    {u.state === 'delayed' && <p className="text-[11px] text-amber-600 mt-2">일부 계량 이벤트의 수집이 15분 이상 지연되었습니다.</p>}
+                  </>
+                ) : <p className="text-xs text-gray-400">{u.state === 'error' ? '사용량 집계 오류로 정확한 합계를 표시할 수 없습니다.' : u.complete ? '선택한 기간의 계량 기록이 없습니다.' : '사용량 집계를 완료하지 못했습니다.'}</p>
               })()}
             </div>
 
@@ -370,6 +364,6 @@ export default function SubscriberManagement() {
 }
 
 function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('pccp_token')
+  const token = sessionStorage.getItem('pccp_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
