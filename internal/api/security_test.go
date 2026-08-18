@@ -40,7 +40,7 @@ func TestSecurityRuleTogglePersists(t *testing.T) {
 	db.Create(&org)
 	// Seed rules then toggle one off; GET must reflect the change.
 	srv.security.EnsureRulesSeeded(org.ID)
-	rec := doJSON(t, srv, "PUT", "/api/security/policy", `{"rule_id":"secret-aws","enabled":false}`, org.ID)
+	rec := doJSON(t, srv, "PUT", "/api/security/policy", `{"rule_id":"secret-aws-key","enabled":false}`, org.ID)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("toggle failed: %d %s", rec.Code, rec.Body.String())
 	}
@@ -48,8 +48,8 @@ func TestSecurityRuleTogglePersists(t *testing.T) {
 	var rules []models.SecurityRule
 	json.Unmarshal(rec.Body.Bytes(), &rules)
 	for _, r := range rules {
-		if r.RuleID == "secret-aws" && r.Enabled {
-			t.Fatal("secret-aws should be disabled after toggle")
+		if r.RuleID == "secret-aws-key" && r.Enabled {
+			t.Fatal("secret-aws-key should be disabled after toggle")
 		}
 	}
 }

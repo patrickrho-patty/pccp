@@ -24,7 +24,7 @@ func policyTemplateSeed() []models.PolicyTemplate {
 		{"no-network", "tools", "네트워크 차단", "No Network", "외부 HTTP 요청 차단", map[string]interface{}{"block_all": []string{"network.http"}, "reason": "보안: 외부 데이터 유출 방지"}},
 		{"no-mcp", "tools", "MCP 서버 제한", "Restrict MCP", "승인되지 않은 MCP 서버 차단", map[string]interface{}{"require_mcp_allowlist": true}},
 		{"kr-pii", "data", "한국 PII 보호", "Korean PII Protection", "주민번호, 사업자번호 자동 마스킹", map[string]interface{}{"dlp_rules": []string{"pii-kr-rrn", "pii-kr-business", "pii-kr-phone"}, "action": "mask"}},
-		{"secrets-block", "data", "비밀정보 차단", "Block Secrets", "API 키, 토큰, 개인키 모델 입력 차단", map[string]interface{}{"dlp_rules": []string{"secret-aws", "secret-jwt", "secret-private-key", "secret-github"}, "action": "block"}},
+		{"secrets-block", "data", "비밀정보 차단", "Block Secrets", "API 키, 토큰, 개인키 모델 입력 차단", map[string]interface{}{"dlp_rules": []string{"secret-aws-key", "secret-jwt", "secret-private-key", "secret-github-pat"}, "action": "block"}},
 		{"context-firewall", "data", "컨텍스트 방화벽", "Context Firewall", "외부 컨텐츠에서 인젝션 감지", map[string]interface{}{"scan_context": true, "block_injection": true}},
 		{"protected-main", "scm", "메인 브랜치 보호", "Protected Main", "main/release/prod 직접 푸시 금지", map[string]interface{}{"protected_branches": []string{"main", "release", "prod"}, "require_pr": true}},
 		{"require-approval", "scm", "AI 변경 승인", "AI Change Approval", "AI가 생성한 모든 커밋은 인간 승인 필요", map[string]interface{}{"require_human_review": true, "block_ai_direct_push": true}},
