@@ -490,20 +490,37 @@ type wireDLPRulePack struct {
 	NotAfterMs int64         `cbor:"4,keyasint"`
 	Rules      []wireDLPRule `cbor:"5,keyasint"`
 	Digest     [32]byte      `cbor:"6,keyasint"`
+	// RuleOverrides carries per-rule enabled/severity/action overrides.
+	// When present, these take precedence over class-level toggles.
+	RuleOverrides []wireDLPRuleOverride `cbor:"7,keyasint,omitempty"`
+}
+
+// wireDLPRuleOverride is a per-rule override (PAT-1431).
+type wireDLPRuleOverride struct {
+	RuleID   string `cbor:"1,keyasint"`
+	Enabled  bool   `cbor:"2,keyasint"`
+	Severity string `cbor:"3,keyasint"`
+	Action   string `cbor:"4,keyasint"`
 }
 
 // BuildDLPRulePack assembles the push from the security service's
-// rule rows.
+// rule rows. It carries both class-level toggles (backward compat)
+// and per-rule overrides (PAT-1431).
 func BuildDLPRulePack(epochID, orgID string, rules []SecurityRuleView, now time.Time) *wireDLPRulePack {
 	pack := &wireDLPRulePack{
 		Version: 1, EpochID: epochID, OrgID: orgID,
 		NotAfterMs: now.Add(24 * time.Hour).UnixMilli(),
 		Rules:      make([]wireDLPRule, 0, len(rules)),
+		RuleOverrides: make([]wireDLPRuleOverride, 0, len(rules)),
 	}
 	for _, r := range rules {
 		pack.Rules = append(pack.Rules, wireDLPRule{
 			RuleID: r.RuleID, Pattern: r.Pattern, Severity: r.Severity,
 			RedactWith: r.RedactWith, Disabled: r.Disabled,
+		})
+		// Per-rule override: the harness maps this to its kr-*/aws-* etc. rules.
+		pack.RuleOverrides = append(pack.RuleOverrides, wireDLPRuleOverride{
+			RuleID: r.RuleID, Enabled: !r.Disabled, Severity: r.Severity, Action: r.Action,
 		})
 	}
 	pack.Digest = dlpPackDigest(pack)
@@ -528,6 +545,7 @@ type SecurityRuleView struct {
 	RuleID     string
 	Pattern    string
 	Severity   string
+	Action     string
 	RedactWith string
 	Disabled   bool
 }

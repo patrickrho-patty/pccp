@@ -1151,7 +1151,8 @@ func (s *Service) RevokeHarness(orgID, harnessID, reason string) error {
 }
 
 // securityRulesFor projects the security service's rules for the DLP
-// rule-pack push.
+// rule-pack push. It carries both class-level toggles (backward compat)
+// and per-rule overrides (PAT-1431).
 func (s *Service) securityRulesFor(orgID string) []SecurityRuleView {
 	rules, err := s.security.ListRules(orgID)
 	if err != nil {
@@ -1160,15 +1161,13 @@ func (s *Service) securityRulesFor(orgID string) []SecurityRuleView {
 	disabled := s.security.DisabledRuleIDs(orgID)
 	out := make([]SecurityRuleView, 0, len(rules))
 	for _, r := range rules {
-		if !r.Enabled || disabled[r.RuleID] {
-			continue
-		}
 		// The model row carries the rule CLASS; the detection regexes
 		// live in the detection engine. The pack pushes the class so
 		// the connector enables the matching built-in lexicon.
+		// Per-rule overrides carry the exact enabled/severity/action state.
 		out = append(out, SecurityRuleView{
 			RuleID: r.RuleID, Pattern: r.Type, Severity: r.Severity,
-			RedactWith: "[REDACTED]", Disabled: disabled[r.RuleID],
+			Action: r.Action, RedactWith: "[REDACTED]", Disabled: disabled[r.RuleID],
 		})
 	}
 	return out
