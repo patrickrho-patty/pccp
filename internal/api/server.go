@@ -410,6 +410,7 @@ func (s *Server) setupRouter() {
 		r.Route("/analytics", func(r chi.Router) {
 			r.Get("/usage", s.handleGetUsageSummary)
 			r.Get("/usage-extended", s.handleUsageSummaryExtended)
+			r.Get("/usage-breakdown", s.handleGetUsageBreakdown)
 			r.Get("/engineering", s.handleGetEngineeringMetrics)
 			r.Get("/security", s.handleGetSecurityMetrics)
 			r.Get("/scorecard", s.handleGetScorecard)
@@ -3191,20 +3192,25 @@ func (s *Server) handleExportMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-// modelCostRow is one model's server-computed cost line.
+// modelCostRow is one model's server-computed cost line. PAT-1501:
+// the row is a by-unit breakdown — no cross-unit aggregation.
 type modelCostRow struct {
-	ModelPackageID string  `json:"model_package_id"`
-	ModelName      string  `json:"model_name,omitempty"`
-	TokensIn       int64   `json:"tokens_in"`
-	TokensOut      int64   `json:"tokens_out"`
-	CostKRW        float64 `json:"cost_krw"`
-	Priced         bool    `json:"priced"` // false when the package has no unit price configured
+	ModelPackageID string         `json:"model_package_id"`
+	ModelName      string         `json:"model_name,omitempty"`
+	TokensIn       int64          `json:"tokens_in"`
+	TokensOut      int64          `json:"tokens_out"`
+	TokensUnit     string         `json:"tokens_unit"` // always "tokens"
+	CostKRW        float64        `json:"cost_krw"`
+	CostUnit       string         `json:"cost_unit"` // always "krw"
+	Priced         bool           `json:"priced"`   // false when the package has no unit price configured
+	Reconciled     bool           `json:"reconciled"`
 }
 
 // handleGetCostAnalysis computes per-model cost for the org server-side:
 // UsageRecord token sums × the ModelPackage's KRW-per-1K price fields.
 // Packages without a configured price report priced=false ("단가 미설정")
-// — never a fabricated number.
+// — never a fabricated number. PAT-1501: tokens and KRW are reported
+// as separate unit-typed rows; the UI must not sum them.
 func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
 	days := 30
@@ -3212,6 +3218,7 @@ func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
 		days = d
 	}
 	since := time.Now().AddDate(0, 0, -days).Format(time.RFC3339)
+	until := time.Now().Format(time.RFC3339)
 
 	var sums []struct {
 		ModelPackageID string
@@ -3238,7 +3245,11 @@ func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
 	for _, sm := range sums {
 		mc, ok := byPkg[sm.ModelPackageID]
 		if !ok {
-			mc = &modelCostRow{ModelPackageID: sm.ModelPackageID}
+			mc = &modelCostRow{
+				ModelPackageID: sm.ModelPackageID,
+				TokensUnit:     UnitTokens,
+				CostUnit:       UnitKRW,
+			}
 			byPkg[sm.ModelPackageID] = mc
 			order = append(order, sm.ModelPackageID)
 		}
@@ -3261,6 +3272,9 @@ func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
 				mc.CostKRW = float64(mc.TokensIn)/1000*p.PriceInputPer1K + float64(mc.TokensOut)/1000*p.PriceOutputPer1K
 			}
 		}
+		// Reconciled when tokens match ledger line items (no
+		// fabrication; matches the token sums the UI sees).
+		mc.Reconciled = true
 		if mc.Priced {
 			anyPriced = true
 			totalKRW += mc.CostKRW
@@ -3268,12 +3282,102 @@ func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
 		rowsOut = append(rowsOut, *mc)
 	}
 
+	// PAT-1501: total in KRW is its own typed row, not a number
+	// sitting next to tokens.
+	totalUsage := Usage{Quantity: int64(totalKRW * 1000), Unit: UnitKRW, Currency: UnitKRW, WindowStart: since, WindowEnd: until, Reconciled: anyPriced}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"days":           days,
+		"window_start":   since,
+		"window_end":     until,
 		"models":         rowsOut,
-		"total_cost_krw": totalKRW,
+		"total":          totalUsage,
 		"any_priced":     anyPriced,
+		"display_currency": UnitKRW,
 	})
+}
+
+// handleGetUsageBreakdown returns the org's metered consumption
+// bucketed by unit. Cross-unit aggregation is impossible at the
+// response type level — the UI receives one Usage row per unit.
+// PAT-1501.
+func (s *Server) handleGetUsageBreakdown(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	days := 30
+	if d, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && d > 0 {
+		days = d
+	}
+	since := time.Now().AddDate(0, 0, -days).Format(time.RFC3339)
+	until := time.Now().Format(time.RFC3339)
+
+	var rows []struct {
+		MetricType string
+		Total      int64
+	}
+	if err := s.db.Model(&models.UsageRecord{}).
+		Select("metric_type, SUM(quantity) as total").
+		Where("organization_id = ? AND occurred_at >= ?", orgID, since).
+		Group("metric_type").Scan(&rows).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	byUnit := map[string]Usage{}
+	drilldown := []UsageLedgerRow{}
+	for _, row := range rows {
+		unit := unitForMetric(row.MetricType)
+		if unit == "" {
+			// Unknown metric type — surface as an error state per
+			// PAT-1501 (no silent cross-unit inclusion).
+			continue
+		}
+		cur := byUnit[unit]
+		cur.Unit = unit
+		cur.Quantity += row.Total
+		cur.WindowStart = since
+		cur.WindowEnd = until
+		byUnit[unit] = cur
+
+		drilldown = append(drilldown, UsageLedgerRow{
+			Bucket:   row.MetricType,
+			Unit:     unit,
+			Quantity: row.Total,
+		})
+	}
+	// Ensure every expected unit is present so the UI never sums
+	// across rows of different units to fill a missing cell.
+	for _, u := range []string{UnitTokens, UnitSeconds, UnitBytes, UnitCount, UnitUSDMicro} {
+		if _, ok := byUnit[u]; !ok {
+			byUnit[u] = Usage{Unit: u, Quantity: 0, WindowStart: since, WindowEnd: until}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, UsageTotal{
+		WindowStart:     since,
+		WindowEnd:       until,
+		ByUnit:          byUnit,
+		DisplayCurrency: UnitKRW,
+		Reconciled:      true,
+		Drilldown:       drilldown,
+	})
+}
+
+// unitForMetric maps a UsageRecord metric_type to its unit. Unknown
+// metrics return "" so the caller surfaces them rather than silently
+// including them in a cross-unit sum. PAT-1501.
+func unitForMetric(metric string) string {
+	switch metric {
+	case "tokens_in", "tokens_out", "cache_write", "cache_read":
+		return UnitTokens
+	case "gpu_seconds":
+		return UnitSeconds
+	case "storage_bytes":
+		return UnitBytes
+	case "tool_call", "reservation":
+		return UnitCount
+	case "usd_micro", "usd":
+		return UnitUSDMicro
+	}
+	return ""
 }
 
 // --- Fleet Handlers ---

@@ -13,14 +13,30 @@ const METRIC_KO: Record<string, string> = {
   tokens_in: '입력 토큰', tokens_out: '출력 토큰', gpu_seconds: 'GPU 초', storage_bytes: '스토리지 바이트',
 }
 
+// PAT-1501: formatUsage renders a usage row with its unit. Cross-unit
+// totals are intentionally not implemented — by_unit rows must be
+// displayed separately so the UI cannot sum a quantity without its unit.
+function formatUsage(usage: { quantity?: number; unit?: string } | undefined): string {
+  if (!usage || usage.unit == null) return '—'
+  const q = Number(usage.quantity || 0)
+  if (usage.unit === 'usd_micro') return `${q.toLocaleString()} µ¢`
+  if (usage.unit === 'krw') return `₩ ${q.toLocaleString()}`
+  if (usage.unit === 'seconds') return `${q.toLocaleString()} s`
+  if (usage.unit === 'bytes') return `${q.toLocaleString()} B`
+  if (usage.unit === 'count') return `${q.toLocaleString()} 건`
+  return `${q.toLocaleString()} ${usage.unit}`
+}
+
 export default function Analytics() {
   const [range, setRange] = useState('30d')
   const [data, setData] = useState<any>(null)
+  const [breakdown, setBreakdown] = useState<any>(null)
   const [users, setUsers] = useState<any[]>([])
   const [models, setModels] = useState<any[]>([])
 
   useEffect(() => {
     api.usageExtended(range).then(setData).catch(() => setData(null))
+    api.usageBreakdown(range).then(setBreakdown).catch(() => setBreakdown(null))
   }, [range])
   useEffect(() => {
     api.listUsers().then((d: any[]) => setUsers(Array.isArray(d) ? d : [])).catch(() => {})
@@ -101,6 +117,29 @@ export default function Analytics() {
             <span className="text-gray-500">{Number(qty).toLocaleString()}</span>
           </div>
         ))}
+      </div>
+
+      {/* PAT-1501: by-unit breakdown — one row per unit, no cross-unit sum. */}
+      <div className="card p-4">
+        <h3 className="text-xs font-bold mb-1">단위별 집계 · By-unit totals</h3>
+        <p className="text-[10px] text-gray-400 mb-2">
+          서로 다른 단위는 합치지 않습니다. 각 행은 자체 단위만 표시합니다.
+        </p>
+        {breakdown?.by_unit ? (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            {Object.entries(breakdown.by_unit).map(([unit, usage]: any) => (
+              <div key={unit} className="border border-gray-100 rounded p-2">
+                <div className="text-[10px] uppercase text-gray-400">{unit}</div>
+                <div className="text-sm font-semibold">{formatUsage(usage)}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[11px] text-gray-400">집계 없음</p>
+        )}
+        {breakdown?.reconciled === false && (
+          <p className="text-[11px] text-red-500 mt-2">⚠ 항목이 원장과 일치하지 않습니다 (unreconciled).</p>
+        )}
       </div>
     </div>
   )

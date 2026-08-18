@@ -22,7 +22,7 @@ func securityTestServer(t *testing.T) (*Server, *gorm.DB) {
 		&models.Organization{}, &models.Session{}, &models.Harness{}, &models.Project{},
 		&models.SecurityFinding{}, &models.SecurityRule{}, &models.AlertEndpoint{},
 		&models.PIILexicon{}, &models.AuditEvent{}, &models.ServiceSigningKey{},
-		&models.PromptExchange{},
+		&models.PromptExchange{}, &models.UsageRecord{}, &models.ModelPackage{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
 			t.Fatal(err)

@@ -299,6 +299,8 @@ export const api = {
   // Analytics (web/16)
   usageExtended: (rangeParam: string) =>
     request<any>(`/api/analytics/usage-extended?range=${rangeParam}`),
+  usageBreakdown: (rangeParam: string) =>
+    request<any>(`/api/analytics/usage-breakdown?range=${rangeParam}`),
 
   // Model infra (web/18)
   assignModelRing: (id: string, releaseRing: string) =>
