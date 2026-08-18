@@ -2,12 +2,14 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"gorm.io/gorm"
 )
 
 // PAT-1501 — usage breakdown redaction discipline tests.
@@ -52,8 +54,8 @@ func TestUsageBreakdownReturnsByUnitMap(t *testing.T) {
 	if strings.Contains(body, `"total":5244567`) {
 		t.Fatalf("response leaked a cross-unit sum: %s", body)
 	}
-	if !resp.Reconciled {
-		t.Fatalf("breakdown must be marked reconciled when ledger matches")
+	if resp.Reconciled || resp.DisplayTotal.State != MeterStateUnavailable {
+		t.Fatalf("metered usage without asserted pricing must keep cost unavailable")
 	}
 }
 
@@ -241,6 +243,8 @@ func TestUsageBreakdownDistinguishesMeterStates(t *testing.T) {
 		MetricType:     "tokens_in",
 		Unit:           "tokens",
 		Quantity:       0,
+		Currency:       "KRW",
+		PricingState:   models.UsagePricingPriced,
 		OccurredAt:     now.Format(time.RFC3339),
 	})
 	db.Create(&models.UsageRecord{
@@ -375,7 +379,7 @@ func TestUsageBreakdownUsesTenantDisplayCurrencyWithAuditableRate(t *testing.T) 
 	org := models.Organization{Name: "o", Slug: "o-display-currency", Status: "active"}
 	db.Create(&org)
 	db.Create(&models.OrgSetting{OrganizationID: org.ID, Key: "billing.display_currency", Value: "USD"})
-	db.Create(&models.OrgSetting{OrganizationID: org.ID, Key: "billing.fx_rates", Value: `{"KRW":{"rate":"0.00072","as_of":"2026-08-18","source":"organization-admin"}}`})
+	db.Create(&models.OrgSetting{OrganizationID: org.ID, Key: "billing.fx_rates", Value: `{"KRW->USD":{"rate":"0.00072","as_of":"2026-08-18","source":"organization-admin","version":"2026-08-18-v1"}}`})
 	now := time.Now().UTC()
 	db.Create(&models.UsageRecord{Base: models.Base{ID: "fx-row", CreatedAt: now}, OrganizationID: org.ID, MetricType: "flat_fee", Unit: "count", Quantity: 1, CostMicros: 1_000_000, Currency: "KRW", OccurredAt: now.Format(time.RFC3339)})
 
@@ -412,7 +416,7 @@ func TestUsageBreakdownReconcilesMultipleSourceCurrenciesDeterministically(t *te
 	org := models.Organization{Name: "o", Slug: "o-multi-currency", Status: "active"}
 	db.Create(&org)
 	db.Create(&models.OrgSetting{OrganizationID: org.ID, Key: "billing.display_currency", Value: "USD"})
-	db.Create(&models.OrgSetting{OrganizationID: org.ID, Key: "billing.fx_rates", Value: `{"KRW":{"rate":"0.00072","as_of":"2026-08-18","source":"organization-admin"},"EUR":{"rate":"1.1","as_of":"2026-08-18","source":"organization-admin"}}`})
+	db.Create(&models.OrgSetting{OrganizationID: org.ID, Key: "billing.fx_rates", Value: `{"KRW->USD":{"rate":"0.00072","as_of":"2026-08-18","source":"organization-admin","version":"2026-08-18-v1"},"EUR->USD":{"rate":"1.1","as_of":"2026-08-18","source":"organization-admin","version":"2026-08-18-v1"}}`})
 	now := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
 	db.Create(&models.UsageRecord{OrganizationID: org.ID, MetricType: "flat_fee", Unit: "count", Quantity: 1, CostMicros: 1_000_000, Currency: "KRW", OccurredAt: now})
 	db.Create(&models.UsageRecord{OrganizationID: org.ID, MetricType: "reservation", Unit: "count", Quantity: 1, CostMicros: 2_000_000, Currency: "EUR", OccurredAt: now})
@@ -573,6 +577,147 @@ func TestUsageScopedEndpointsDoNotExposeAnotherOrganization(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("%s returned %d for another organization", path, rec.Code)
 		}
+	}
+}
+
+func TestUsageLedgerCursorPagesWithoutOverlap(t *testing.T) {
+	srv, db := securityTestServer(t)
+	org := models.Organization{Name: "o", Slug: "o-ledger-pages", Status: "active"}
+	db.Create(&org)
+	now := time.Now().UTC().Add(-time.Minute)
+	for i := 0; i < 121; i++ {
+		record := models.UsageRecord{
+			Base: models.Base{ID: fmt.Sprintf("usage-page-%03d", i)}, OrganizationID: org.ID,
+			MetricType: "tokens_in", Unit: "tokens", Quantity: 1, CostMicros: 1, Currency: "KRW",
+			PricingState: models.UsagePricingPriced, OccurredAt: now.Add(-time.Duration(i) * time.Second).Format(time.RFC3339),
+		}
+		if err := db.Create(&record).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fetch := func(cursor string) UsageTotal {
+		path := "/api/analytics/usage-extended?range=7d&limit=50"
+		if cursor != "" {
+			path += "&cursor=" + cursor
+		}
+		rec := doJSONAsRole(t, srv, "GET", path, "", org.ID, "admin")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("page: %d %s", rec.Code, rec.Body.String())
+		}
+		var report UsageTotal
+		if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+			t.Fatal(err)
+		}
+		return report
+	}
+
+	first := fetch("")
+	second := fetch(first.LedgerNextCursor)
+	third := fetch(second.LedgerNextCursor)
+	if first.RecordCount != 121 || len(first.Drilldown) != 50 || len(second.Drilldown) != 50 || len(third.Drilldown) != 21 {
+		t.Fatalf("page sizes/count mismatch: total=%d pages=%d/%d/%d", first.RecordCount, len(first.Drilldown), len(second.Drilldown), len(third.Drilldown))
+	}
+	seen := map[string]bool{}
+	for _, report := range []UsageTotal{first, second, third} {
+		if report.TotalTokens != 121 {
+			t.Fatalf("summary changed across cursor pages: %d", report.TotalTokens)
+		}
+		for _, row := range report.Drilldown {
+			if seen[row.ID] {
+				t.Fatalf("duplicate ledger row across pages: %s", row.ID)
+			}
+			seen[row.ID] = true
+		}
+	}
+	if len(seen) != 121 || third.LedgerHasMore || third.LedgerNextCursor != "" {
+		t.Fatalf("cursor traversal incomplete: rows=%d last_has_more=%v", len(seen), third.LedgerHasMore)
+	}
+}
+
+func TestUsageCSVStreamsCompleteLedger(t *testing.T) {
+	srv, db := securityTestServer(t)
+	org := models.Organization{Name: "o", Slug: "o-ledger-csv", Status: "active"}
+	db.Create(&org)
+	now := time.Now().UTC().Add(-time.Minute)
+	for i := 0; i < 61; i++ {
+		record := models.UsageRecord{OrganizationID: org.ID, MetricType: "tool_call", Unit: "count", Quantity: 1, PricingState: models.UsagePricingUnpriced, OccurredAt: now.Add(-time.Duration(i) * time.Second).Format(time.RFC3339)}
+		db.Create(&record)
+	}
+	rec := doJSONAsRole(t, srv, "GET", "/api/analytics/usage-extended?range=7d&format=csv", "", org.ID, "auditor")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("csv: %d %s", rec.Code, rec.Body.String())
+	}
+	lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
+	if len(lines) != 62 {
+		t.Fatalf("CSV rows including header = %d, want 62", len(lines))
+	}
+	if !strings.Contains(lines[0], "pricing_state") {
+		t.Fatalf("CSV must disclose cost availability state: %s", lines[0])
+	}
+}
+
+func TestUsageFinancialRoutesRejectViewer(t *testing.T) {
+	srv, db := securityTestServer(t)
+	org := models.Organization{Name: "o", Slug: "o-usage-rbac", Status: "active"}
+	db.Create(&org)
+	for _, path := range []string{"/api/analytics/usage", "/api/analytics/usage-breakdown", "/api/analytics/usage-extended", "/api/analytics/cost"} {
+		rec := doJSONAsRole(t, srv, "GET", path, "", org.ID, "viewer")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("viewer received %d from %s", rec.Code, path)
+		}
+	}
+}
+
+func TestUsageWindowIsHalfOpenAndBounded(t *testing.T) {
+	srv, db := securityTestServer(t)
+	org := models.Organization{Name: "o", Slug: "o-usage-window", Status: "active"}
+	db.Create(&org)
+	since := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	until := since.Add(24 * time.Hour)
+	for _, at := range []time.Time{since, until} {
+		record := models.UsageRecord{OrganizationID: org.ID, MetricType: "tokens_in", Unit: "tokens", Quantity: 1, PricingState: models.UsagePricingUnpriced, OccurredAt: at.Format(time.RFC3339)}
+		db.Create(&record)
+	}
+	report, err := srv.buildUsageReport(org.ID, usageFilter{}, "1d", since.Format(time.RFC3339), until.Format(time.RFC3339))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.RecordCount != 1 || report.TotalTokens != 1 {
+		t.Fatalf("half-open window included wrong records: count=%d tokens=%d", report.RecordCount, report.TotalTokens)
+	}
+	rec := doJSONAsRole(t, srv, "GET", "/api/analytics/usage-breakdown?days=5000", "", org.ID, "admin")
+	var bounded UsageTotal
+	_ = json.Unmarshal(rec.Body.Bytes(), &bounded)
+	if bounded.Range != "30d" {
+		t.Fatalf("unbounded days must fall back to 30d, got %q", bounded.Range)
+	}
+}
+
+func TestUsageFXRequiresTargetAndVersionAndPropagatesFailure(t *testing.T) {
+	srv, db := securityTestServer(t)
+	org := models.Organization{Name: "o", Slug: "o-fx-version", Status: "active"}
+	db.Create(&org)
+	db.Create(&models.OrgSetting{OrganizationID: org.ID, Key: "billing.display_currency", Value: "USD"})
+	db.Create(&models.OrgSetting{OrganizationID: org.ID, Key: "billing.fx_rates", Value: `{"KRW->USD":{"rate":"0.00072","as_of":"2026-08-18","source":"admin"}}`})
+	now := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	db.Create(&models.UsageRecord{OrganizationID: org.ID, ModelPackageID: "model-a", MetricType: "tokens_in", Unit: "tokens", Quantity: 10, CostMicros: 1000, Currency: "KRW", PricingState: models.UsagePricingPriced, OccurredAt: now})
+	rec := doJSONAsRole(t, srv, "GET", "/api/analytics/usage-extended?range=7d", "", org.ID, "admin")
+	var report UsageTotal
+	_ = json.Unmarshal(rec.Body.Bytes(), &report)
+	if report.Reconciled || report.DisplayTotal.State != MeterStateError || report.TotalCostMicros != nil || report.ByModel["model-a"].Reconciled {
+		t.Fatalf("unversioned FX became authoritative: display=%+v total=%v model=%+v", report.DisplayTotal, report.TotalCostMicros, report.ByModel["model-a"])
+	}
+}
+
+func TestUsageQueryNeverComparesTimestampToEmptyString(t *testing.T) {
+	srv, _ := securityTestServer(t)
+	now := time.Now().UTC()
+	query := srv.usageRecordsQuery("org", usageFilter{}, now.Add(-time.Hour), now).Session(&gorm.Session{DryRun: true})
+	var rows []models.UsageRecord
+	statement := query.Find(&rows).Statement.SQL.String()
+	if strings.Contains(statement, "occurred_at") || strings.Contains(statement, "= ''") {
+		t.Fatalf("production usage predicate regressed to unsafe legacy timestamp SQL: %s", statement)
 	}
 }
 

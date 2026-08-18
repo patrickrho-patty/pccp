@@ -31,7 +31,7 @@ func usersTestServer(t *testing.T) (*Server, *gorm.DB) {
 		&models.Device{}, &models.Session{}, &models.AuditEvent{}, &models.ServiceSigningKey{},
 		&models.PolicyEpoch{}, &models.PolicyPack{}, &models.UsageRecord{}, &models.Role{},
 		&models.UserRole{}, &models.EnrollmentCode{}, &models.Project{}, &models.Repository{},
-		&models.ChangeRequest{}, &models.ChangeSet{}, &models.CapabilityLease{},
+		&models.ChangeRequest{}, &models.ChangeSet{}, &models.CapabilityLease{}, &models.OrgSetting{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
 			t.Fatal(err)
@@ -190,14 +190,14 @@ func TestUsageRollup(t *testing.T) {
 	u := mkUser(t, db, org.ID, "dev@corp.kr")
 	now := time.Now().UTC().Format(time.RFC3339)
 	for i := 0; i < 3; i++ {
-		r := models.UsageRecord{MetricType: "tokens_out", Unit: "tokens", Quantity: 10, CostMicros: 2, OccurredAt: now}
+		r := models.UsageRecord{MetricType: "tokens_out", Unit: "tokens", Quantity: 10, CostMicros: 2, Currency: "KRW", PricingState: models.UsagePricingPriced, OccurredAt: now}
 		r.OrganizationID = org.ID
 		r.UserID = u.ID
 		db.Create(&r)
 	}
-	rec := doJSON(t, srv, "GET", "/api/users/"+u.ID+"/usage", "", org.ID)
+	rec := doJSONAsRole(t, srv, "GET", "/api/users/"+u.ID+"/usage", "", org.ID, "admin")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("usage failed: %d", rec.Code)
+		t.Fatalf("usage failed: %d %s", rec.Code, rec.Body.String())
 	}
 	var resp struct {
 		Metrics         []map[string]interface{} `json:"metrics"`

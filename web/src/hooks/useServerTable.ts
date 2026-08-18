@@ -19,6 +19,7 @@ export function useServerTable<T>(
   fetcher: (q: ServerQuery) => Promise<ServerPage<T> | T[]>,
   opts?: {
     initialFilters?: Record<string, string>
+    initialSearch?: string
     size?: number
     debounceMs?: number
     sortFields?: string[]
@@ -28,7 +29,7 @@ export function useServerTable<T>(
   const [rows, setRows] = useState<T[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(opts?.initialSearch ?? '')
   const [filters, setFilters] = useState<Record<string, string>>(opts?.initialFilters ?? {})
   const [sort, setSort] = useState('')
   const [loading, setLoading] = useState(false)

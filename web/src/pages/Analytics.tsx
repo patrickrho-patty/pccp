@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { StatCard } from '../components/StatCard'
@@ -18,16 +18,29 @@ export default function Analytics() {
   const [models, setModels] = useState<any[]>([])
 
   useEffect(() => {
+	const controller = new AbortController()
     setLoadError(false)
-    api.usageExtended(range).then(setData).catch(() => { setData(null); setLoadError(true) })
+	api.usageExtended(range, '', controller.signal).then(setData).catch((error) => {
+	  if (error?.name !== 'AbortError') { setData(null); setLoadError(true) }
+	})
+	return () => controller.abort()
   }, [range])
   useEffect(() => {
     api.listUsers().then((d: any[]) => setUsers(Array.isArray(d) ? d : [])).catch(() => {})
     api.catalogModels().then((d: any[]) => setModels(Array.isArray(d) ? d : [])).catch(() => {})
   }, [])
 
-  const userName = (id: string) => users.find(u => u.id === id)?.name_ko || users.find(u => u.id === id)?.name || id?.slice(0, 8)
-  const modelName = (id: string) => models.find((m: any) => m.id === id || m.package_id === id)?.name || id?.slice(0, 8)
+	const usersByID = useMemo(() => new Map(users.map(user => [user.id, user])), [users])
+	const modelsByID = useMemo(() => {
+	  const result = new Map<string, any>()
+	  for (const model of models) {
+	    if (model.id) result.set(model.id, model)
+	    if (model.package_id) result.set(model.package_id, model)
+	  }
+	  return result
+	}, [models])
+  const userName = (id: string) => usersByID.get(id)?.name_ko || usersByID.get(id)?.name || id?.slice(0, 8)
+  const modelName = (id: string) => modelsByID.get(id)?.name || id?.slice(0, 8)
   const periodLabel = RANGES.find(item => item.value === range)?.label || range
   const hasLedger = Boolean(data?.record_count)
   const delayedMeters = (data?.meters || []).filter(meter => meter.state === 'delayed').length
@@ -70,7 +83,7 @@ export default function Analytics() {
         <a href="#usage-ledger"><StatCard label="총 토큰" value={hasLedger ? data!.total_tokens.toLocaleString() : '미수집'} accent="blue" sub={`${periodLabel} · 원장 ${data?.record_count ?? '—'}건`} /></a>
         <a href="#usage-ledger"><StatCard label="입력 토큰" value={hasLedger ? data!.input_tokens.toLocaleString() : '미수집'} accent="green" sub={periodLabel} /></a>
         <a href="#usage-ledger"><StatCard label="출력 토큰" value={hasLedger ? data!.output_tokens.toLocaleString() : '미수집'} accent="purple" sub={periodLabel} /></a>
-        <a href="#usage-ledger"><StatCard label={`비용 (${data?.display_currency || '통화 미확인'})`} value={data?.display_total?.state === 'unavailable' ? '미수집' : data?.display_total ? formatUsageAmount(data.display_total.amount_micros, data.display_total.currency) : '—'} accent="orange" sub={!hasLedger ? '원장 기록 없음' : data?.display_total?.state === 'unavailable' ? '환율 미설정' : `${periodLabel} · 대사 ${data?.reconciled ? '완료' : '필요'}${delayedMeters ? ` · 지연 ${delayedMeters}` : ''}`} /></a>
+        <a href="#usage-ledger"><StatCard label={`비용 (${data?.display_currency || '통화 미확인'})`} value={data?.display_total?.state === 'recorded' || data?.display_total?.state === 'zero' ? formatUsageAmount(data.display_total.amount_micros, data.display_total.currency) : data?.display_total?.state === 'error' ? '집계 오류' : '미수집'} accent="orange" sub={!hasLedger ? '원장 기록 없음' : data?.display_total?.state === 'unavailable' ? '단가 또는 환율 미설정' : data?.display_total?.state === 'error' ? '원장 확인 필요' : `${periodLabel} · 대사 ${data?.reconciled ? '완료' : '필요'}${delayedMeters ? ` · 지연 ${delayedMeters}` : ''}`} /></a>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -114,7 +127,7 @@ export default function Analytics() {
         )}
       </div>
 
-      <UsageReport report={data} />
+      <UsageReport report={data} loadMore={(cursor) => api.usageExtended(range, cursor)} />
     </div>
   )
 }

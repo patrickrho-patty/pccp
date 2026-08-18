@@ -147,6 +147,9 @@ func (s *Server) handleRevokeUserHarness(w http.ResponseWriter, r *http.Request)
 // handleGetUserUsage returns the canonical, unit-safe ledger report for one
 // user. It shares aggregation and currency rules with every other scope.
 func (s *Server) handleGetUserUsage(w http.ResponseWriter, r *http.Request) {
+	if !requireUsageRead(w, r) {
+		return
+	}
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
 	var user models.User
@@ -155,7 +158,7 @@ func (s *Server) handleGetUserUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	days, since, until := usageWindowFromRequest(r, time.Now())
-	report, err := s.buildUsageReport(orgID, usageFilter{UserID: id}, fmt.Sprintf("%dd", days), since, until)
+	report, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{UserID: id}), fmt.Sprintf("%dd", days), since, until)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

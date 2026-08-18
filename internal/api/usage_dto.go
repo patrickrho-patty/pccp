@@ -46,6 +46,8 @@ type UsageMeter struct {
 	Currency          string     `json:"currency,omitempty"`
 	State             MeterState `json:"state"`
 	Reason            string     `json:"reason,omitempty"`
+	CostState         MeterState `json:"cost_state"`
+	CostReason        string     `json:"cost_reason,omitempty"`
 	LastUpdated       string     `json:"last_updated,omitempty"`
 }
 
@@ -67,39 +69,50 @@ type UsageConversion struct {
 	ConvertedAmountMicros int64      `json:"converted_amount_micros"`
 	RateSource            string     `json:"rate_source,omitempty"`
 	RateAsOf              string     `json:"rate_as_of,omitempty"`
+	RateVersion           string     `json:"rate_version,omitempty"`
 	State                 MeterState `json:"state"`
 	Reason                string     `json:"reason,omitempty"`
+}
+
+type UsageModelTotal struct {
+	InputTokens    int64            `json:"input_tokens"`
+	OutputTokens   int64            `json:"output_tokens"`
+	CostByCurrency map[string]int64 `json:"cost_by_currency"`
+	PricingState   MeterState       `json:"pricing_state"`
 }
 
 // UsageTotal is the canonical usage response shared by organization, user,
 // session, project, and analytics surfaces.
 type UsageTotal struct {
-	Range                string                 `json:"range,omitempty"`
-	WindowStart          string                 `json:"window_start,omitempty"`
-	WindowEnd            string                 `json:"window_end,omitempty"`
-	LastUpdated          string                 `json:"last_updated,omitempty"`
-	ByUnit               map[string]Usage       `json:"by_unit"`
-	DisplayCurrency      string                 `json:"display_currency,omitempty"`
-	DisplayTotal         UsageAmount            `json:"display_total"`
-	CostByCurrency       map[string]UsageAmount `json:"cost_by_currency"`
-	Conversions          []UsageConversion      `json:"conversions"`
-	Meters               []UsageMeter           `json:"meters"`
-	Metrics              []UsageMeter           `json:"metrics"`
-	ByMetric             map[string]UsageMeter  `json:"by_metric"`
-	ByModel              map[string]Usage       `json:"by_model"`
-	ByUser               map[string]Usage       `json:"by_user"`
-	BySession            map[string]Usage       `json:"by_session"`
-	InputTokens          int64                  `json:"input_tokens"`
-	OutputTokens         int64                  `json:"output_tokens"`
-	TotalTokens          int64                  `json:"total_tokens"`
-	TotalCostMicros      int64                  `json:"total_cost_micros"`
-	CostMicros           int64                  `json:"cost_micros"`
-	Currency             string                 `json:"currency,omitempty"`
-	RecordCount          int                    `json:"record_count"`
-	SessionCount         int                    `json:"session_count,omitempty"`
-	Reconciled           bool                   `json:"reconciled"`
-	ReconciliationErrors []string               `json:"reconciliation_errors,omitempty"`
-	Drilldown            []UsageLedgerRow       `json:"drilldown"`
+	Range                string                     `json:"range,omitempty"`
+	WindowStart          string                     `json:"window_start,omitempty"`
+	WindowEnd            string                     `json:"window_end,omitempty"`
+	LastUpdated          string                     `json:"last_updated,omitempty"`
+	ByUnit               map[string]Usage           `json:"by_unit"`
+	DisplayCurrency      string                     `json:"display_currency,omitempty"`
+	DisplayTotal         UsageAmount                `json:"display_total"`
+	CostByCurrency       map[string]UsageAmount     `json:"cost_by_currency"`
+	Conversions          []UsageConversion          `json:"conversions"`
+	Meters               []UsageMeter               `json:"meters"`
+	Metrics              []UsageMeter               `json:"metrics"`
+	ByMetric             map[string]UsageMeter      `json:"by_metric"`
+	ByModel              map[string]Usage           `json:"by_model"`
+	ByUser               map[string]Usage           `json:"by_user"`
+	BySession            map[string]Usage           `json:"by_session"`
+	ModelTotals          map[string]UsageModelTotal `json:"model_totals"`
+	InputTokens          int64                      `json:"input_tokens"`
+	OutputTokens         int64                      `json:"output_tokens"`
+	TotalTokens          int64                      `json:"total_tokens"`
+	TotalCostMicros      *int64                     `json:"total_cost_micros"`
+	CostMicros           *int64                     `json:"cost_micros"`
+	Currency             string                     `json:"currency,omitempty"`
+	RecordCount          int                        `json:"record_count"`
+	SessionCount         int                        `json:"session_count,omitempty"`
+	Reconciled           bool                       `json:"reconciled"`
+	ReconciliationErrors []string                   `json:"reconciliation_errors,omitempty"`
+	Drilldown            []UsageLedgerRow           `json:"drilldown"`
+	LedgerHasMore        bool                       `json:"ledger_has_more"`
+	LedgerNextCursor     string                     `json:"ledger_next_cursor,omitempty"`
 }
 
 type UsageLedgerRow struct {
@@ -111,6 +124,7 @@ type UsageLedgerRow struct {
 	RateMicrosPerUnit string `json:"rate_micros_per_unit,omitempty"`
 	AmountMicros      int64  `json:"amount_micros"`
 	Currency          string `json:"currency,omitempty"`
+	PricingState      string `json:"pricing_state,omitempty"`
 	Note              string `json:"note,omitempty"`
 	RefType           string `json:"ref_type,omitempty"`
 	RefID             string `json:"ref_id,omitempty"`

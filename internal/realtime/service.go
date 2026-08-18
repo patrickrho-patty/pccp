@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -104,7 +105,9 @@ func (s *Service) HandleWebSocket(jwtSecret string) http.HandlerFunc {
 func (s *Service) HandleSSE(jwtSecret string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tokenStr := r.URL.Query().Get("token")
-		claims := &jwt.RegisteredClaims{}
+		// MapClaims keeps org_id reachable so org-scoped broadcasts
+		// (session.update etc.) route to this stream (PAT-1496).
+		claims := jwt.MapClaims{}
 		token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
 			return []byte(jwtSecret), nil
 		})
@@ -112,6 +115,7 @@ func (s *Service) HandleSSE(jwtSecret string) http.HandlerFunc {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		orgID, _ := claims["org_id"].(string)
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -132,8 +136,9 @@ func (s *Service) HandleSSE(jwtSecret string) http.HandlerFunc {
 
 		s.mu.Lock()
 		s.clients[clientID] = &Client{
-			ID:   clientID,
-			Send: ch,
+			ID:    clientID,
+			OrgID: orgID,
+			Send:  ch,
 		}
 		s.mu.Unlock()
 
@@ -149,10 +154,24 @@ func (s *Service) HandleSSE(jwtSecret string) http.HandlerFunc {
 			case <-ctx.Done():
 				return
 			case msg := <-ch:
+				// Name the frame after the event type so browser clients
+				// can subscribe with addEventListener('session.update')
+				// (PAT-1496) — unnamed `data:` frames only fire `onmessage`.
+				// A type carrying frame-break characters would inject
+				// protocol lines, so those degrade to data-only frames.
+				var envelope struct {
+					Type string `json:"type"`
+				}
+				_ = json.Unmarshal(msg, &envelope)
+				if envelope.Type != "" && !strings.ContainsAny(envelope.Type, "\r\n") {
+					fmt.Fprintf(w, "event: %s\n", envelope.Type)
+				}
 				fmt.Fprintf(w, "data: %s\n\n", msg)
 				flusher.Flush()
 			case <-time.After(30 * time.Second):
-				fmt.Fprintf(w, ": keepalive\n\n")
+				// Named heartbeat (not a `:` comment) so clients can prove
+				// the stream is alive even with no session traffic.
+				fmt.Fprintf(w, "event: heartbeat\ndata: {\"ts\":%q}\n\n", time.Now().Format(time.RFC3339))
 				flusher.Flush()
 			}
 		}

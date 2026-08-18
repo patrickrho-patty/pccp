@@ -66,12 +66,12 @@ type Session struct {
 	AuditBase
 	HarnessID    string `gorm:"type:varchar(64);index;not null" json:"harness_id"`
 	UserID       string `gorm:"type:varchar(64);index;not null" json:"user_id"`
-	ProjectID    string `gorm:"type:varchar(64);index" json:"project_id"`
+	ProjectID    string `gorm:"type:varchar(64);index;index:idx_session_project_session,priority:1" json:"project_id"`
 	RepositoryID string `gorm:"type:varchar(64);index" json:"repository_id,omitempty"`
 	Branch       string `gorm:"type:varchar(255)" json:"branch,omitempty"`
 	BaselineID   string `gorm:"type:varchar(64);index" json:"baseline_id,omitempty"`
 	// Protocol state
-	SessionID     string `gorm:"type:varchar(64);uniqueIndex" json:"session_id"` // DARI working session ID
+	SessionID     string `gorm:"type:varchar(64);uniqueIndex;index:idx_session_project_session,priority:2" json:"session_id"` // DARI working session ID
 	PolicyEpochID string `gorm:"type:varchar(64)" json:"policy_epoch_id"`
 	LeaseID       string `gorm:"type:varchar(64);index" json:"lease_id,omitempty"`
 	// Session metadata

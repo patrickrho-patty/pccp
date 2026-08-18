@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { useServerTable, buildQuery, ServerQuery } from '../hooks/useServerTable'
 import { useFavorites, FavoriteStar } from '../hooks/useFavorites'
@@ -39,7 +39,13 @@ export default function Fleet() {
       if (Array.isArray(res)) return res
       return { data: res.data ?? [], total: res.total ?? 0, page: res.page, size: res.size }
     })
-  const table = useServerTable<any>(fetchInventory, { size: 25 })
+  // Deep link (PAT-1496): /fleet?harness=<id> seeds the search with the
+  // exact harness — the server-side search matches HarnessID. Passing it
+  // as the table's initialSearch keeps the visible input and the data
+  // filter in sync from the first render.
+  const [searchParams] = useSearchParams()
+  const deepHarness = searchParams.get('harness') || ''
+  const table = useServerTable<any>(fetchInventory, { size: 25, initialSearch: deepHarness })
 
   const [status, setStatus] = useState<any>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())

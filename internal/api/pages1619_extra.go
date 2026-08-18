@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -31,25 +32,70 @@ import (
 // user, session, and project scopes. CSV exports the exact ledger rows rather
 // than a second independently calculated summary.
 func (s *Server) handleUsageSummaryExtended(w http.ResponseWriter, r *http.Request) {
+	if !requireUsageRead(w, r) {
+		return
+	}
 	orgID := getOrgID(r)
 	days, since, until := usageWindowFromRequest(r, time.Now())
-	report, err := s.buildUsageReport(orgID, usageFilter{}, fmt.Sprintf("%dd", days), since, until)
+	if r.URL.Query().Get("format") == "csv" {
+		sinceTime, sinceErr := time.Parse(time.RFC3339, since)
+		untilTime, untilErr := time.Parse(time.RFC3339, until)
+		if sinceErr != nil || untilErr != nil {
+			writeError(w, http.StatusBadRequest, "사용량 기간이 올바르지 않습니다")
+			return
+		}
+		s.streamUsageCSV(w, orgID, usageFilter{}, sinceTime, untilTime)
+		return
+	}
+	report, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{}), fmt.Sprintf("%dd", days), since, until)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if r.URL.Query().Get("format") == "csv" {
-		w.Header().Set("Content-Type", "text/csv")
-		w.Header().Set("Content-Disposition", "attachment; filename=usage-summary.csv")
-		cw := csv.NewWriter(w)
-		_ = cw.Write([]string{"occurred_at", "record_id", "metric_type", "unit", "quantity", "rate_micros_per_unit", "amount_micros", "currency", "user_id", "harness_id", "session_id", "model_package_id", "endpoint_id"})
-		for _, row := range report.Drilldown {
-			_ = cw.Write([]string{row.OccurredAt, row.ID, row.Bucket, row.Unit, strconv.FormatInt(row.Quantity, 10), row.RateMicrosPerUnit, strconv.FormatInt(row.AmountMicros, 10), row.Currency, row.UserID, row.HarnessID, row.SessionID, row.ModelPackageID, row.EndpointID})
-		}
-		cw.Flush()
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (s *Server) streamUsageCSV(w http.ResponseWriter, orgID string, filter usageFilter, since, until time.Time) {
+	rows, err := s.usageRecordsQuery(orgID, filter, since, until).
+		Order("COALESCE(metered_at, created_at) DESC, id DESC").Rows()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, report)
+	defer rows.Close()
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=usage-summary.csv")
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{"occurred_at", "record_id", "metric_type", "unit", "quantity", "pricing_state", "rate_micros_per_unit", "amount_micros", "currency", "user_id", "harness_id", "session_id", "model_package_id", "endpoint_id"})
+	for rows.Next() {
+		var record models.UsageRecord
+		if err := s.db.ScanRows(rows, &record); err != nil {
+			return
+		}
+		unit := normalizeUsageUnit(record.Unit)
+		if unit == "" {
+			unit = expectedMeterUnits[record.MetricType]
+		}
+		if unit == "" {
+			unit = UnitUnknown
+		}
+		amount, currency := int64(0), ""
+		if record.PricingState == models.UsagePricingPriced {
+			amount = record.CostMicros
+			currency = strings.ToUpper(strings.TrimSpace(record.Currency))
+		}
+		_ = cw.Write([]string{
+			effectiveUsageTime(record).Format(time.RFC3339), record.ID, record.MetricType, unit,
+			strconv.FormatInt(record.Quantity, 10), record.PricingState, rateMicros(amount, record.Quantity),
+			strconv.FormatInt(amount, 10), currency, record.UserID, record.HarnessID, record.SessionID,
+			record.ModelPackageID, record.EndpointID,
+		})
+		cw.Flush()
+		if cw.Error() != nil {
+			return
+		}
+	}
 }
 
 // --- 17: audit ---

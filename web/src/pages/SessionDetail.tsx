@@ -4,15 +4,13 @@ import { api } from '../api'
 import { StatCard } from '../components/StatCard'
 import { FavoriteStar } from '../hooks/useFavorites'
 import { formatUsageAmount, UsageReport, UsageReportData } from '../components/UsageReport'
+import { SESSION_STATUS_META } from '../sessionState'
 
-const STATUS_META: Record<string, { ko: string; badge: string }> = {
-  pending: { ko: '대기', badge: 'bg-gray-100 text-gray-600 border-gray-200' },
-  active: { ko: '활성', badge: 'bg-green-50 text-green-700 border-green-200' },
-  idle: { ko: '유휴', badge: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
-  paused: { ko: '일시정지', badge: 'bg-amber-50 text-amber-700 border-amber-200' },
-  closed: { ko: '종료', badge: 'bg-gray-100 text-gray-500 border-gray-200' },
-  terminated: { ko: '강제종료', badge: 'bg-red-50 text-red-700 border-red-200' },
-}
+// Canonical session state vocabulary (PAT-1496) — badge-only view of the
+// shared table used by Sessions and Live.
+const STATUS_META: Record<string, { ko: string; badge: string }> = Object.fromEntries(
+  Object.entries(SESSION_STATUS_META).map(([k, v]) => [k, { ko: v.ko, badge: v.badge }])
+)
 
 // SessionDetail (web/02 B5) — deep-linkable inspector built on the
 // consolidated /detail endpoint (UX6), with the per-exchange decision
@@ -30,20 +28,26 @@ export default function SessionDetail() {
 
   useEffect(() => {
     if (!id) return
+	let active = true
     setLoading(true)
     Promise.all([
       api.getSessionDetail(id),
       api.getSessionDecisions(id),
       api.getSessionReplay(id),
       api.getSessionVisibility(id),
-      api.getSessionUsage(id),
-    ]).then(([d, dec, rep, vis, usage]) => {
+	]).then(([d, dec, rep, vis]) => {
+	  if (!active) return
       setDetail(d)
       setDecisions(dec)
       setReplay(rep)
       setVisibility(vis)
-      setUsageReport(usage)
-    }).catch(() => {}).finally(() => setLoading(false))
+	}).catch(() => {
+	  if (active) setDetail(null)
+	}).finally(() => { if (active) setLoading(false) })
+	api.getSessionUsage(id).then(usage => {
+	  if (active) setUsageReport(usage)
+	}).catch(() => { if (active) setUsageReport(null) })
+	return () => { active = false }
   }, [id])
 
   if (loading) return <div className="text-gray-400 p-8 text-center">로딩 중...</div>
@@ -98,13 +102,13 @@ export default function SessionDetail() {
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
           <StatCard label="최근 30일 토큰" value={hasUsageLedger && totalTokens != null ? totalTokens.toLocaleString() : '미수집'} accent="blue" to={`/sessions/${sess.session_id || sess.id}`} query="#session-usage-ledger" sub={`원장 ${usageReport?.record_count ?? '—'}건`} />
-          <StatCard label={`최근 30일 비용 (${usageReport?.display_currency || '통화 미확인'})`} value={totalCost?.state === 'unavailable' ? '미수집' : totalCost ? formatUsageAmount(totalCost.amount_micros, totalCost.currency) : '—'} accent="green" to={`/sessions/${sess.session_id || sess.id}`} query="#session-usage-ledger" sub={!hasUsageLedger ? '원장 기록 없음' : `${usageReport?.reconciled ? '원장 대사 완료' : '대사 확인 필요'}${delayedUsageMeters ? ` · 지연 ${delayedUsageMeters}` : ''}`} />
+          <StatCard label={`최근 30일 비용 (${usageReport?.display_currency || '통화 미확인'})`} value={totalCost?.state === 'recorded' || totalCost?.state === 'zero' ? formatUsageAmount(totalCost.amount_micros, totalCost.currency) : totalCost?.state === 'error' ? '집계 오류' : '미수집'} accent="green" to={`/sessions/${sess.session_id || sess.id}`} query="#session-usage-ledger" sub={!hasUsageLedger ? '원장 기록 없음' : `${usageReport?.reconciled ? '원장 대사 완료' : '대사 확인 필요'}${delayedUsageMeters ? ` · 지연 ${delayedUsageMeters}` : ''}`} />
           <StatCard label="익스체인지" value={(detail.exchanges || []).length} accent="purple" />
           <StatCard label="변경셋" value={(detail.change_sets || []).length} accent="orange" />
         </div>
       </div>
 
-      <UsageReport report={usageReport} id="session-usage-ledger" title="세션 사용량 및 비용 원장" />
+      <UsageReport report={usageReport} id="session-usage-ledger" title="세션 사용량 및 비용 원장" loadMore={(cursor) => api.getSessionUsage(id!, '30d', cursor)} />
 
       <div className="flex gap-1 border-b border-gray-200">
         {[

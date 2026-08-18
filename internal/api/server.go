@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -776,6 +777,16 @@ func getRole(r *http.Request) string {
 		return claims.Role
 	}
 	return ""
+}
+
+func requireUsageRead(w http.ResponseWriter, r *http.Request) bool {
+	switch getRole(r) {
+	case "owner", "admin", "super_admin", "billing_admin", "auditor", "security_admin":
+		return true
+	default:
+		writeError(w, http.StatusForbidden, "사용량 및 비용 조회 권한이 없습니다")
+		return false
+	}
 }
 
 // --- Handlers ---
@@ -2208,8 +2219,12 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
 	var sess models.Session
-	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+	if err := s.db.Where("(id = ? OR session_id = ?) AND organization_id = ?", id, id, orgID).First(&sess).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if !models.SessionTransitionAllowed(sess.Status, "closed") {
+		writeError(w, http.StatusConflict, fmt.Sprintf("invalid session transition: %s → closed", sess.Status))
 		return
 	}
 	if err := s.identity.CloseSession(sess.SessionID); err != nil {
@@ -2425,6 +2440,9 @@ func (s *Server) handleGetSessionTimeline(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleGetSessionUsage(w http.ResponseWriter, r *http.Request) {
+	if !requireUsageRead(w, r) {
+		return
+	}
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
 	var sess models.Session
@@ -2433,7 +2451,7 @@ func (s *Server) handleGetSessionUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	days, since, until := usageWindowFromRequest(r, time.Now())
-	report, err := s.buildUsageReport(orgID, usageFilter{SessionID: sess.SessionID}, fmt.Sprintf("%dd", days), since, until)
+	report, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{SessionID: sess.SessionID}), fmt.Sprintf("%dd", days), since, until)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -3115,14 +3133,20 @@ func (s *Server) handleSendBroadcast(w http.ResponseWriter, r *http.Request) {
 // --- Work Intelligence Handlers ---
 
 func (s *Server) handleGetUsageSummary(w http.ResponseWriter, r *http.Request) {
+	if !requireUsageRead(w, r) {
+		return
+	}
 	orgID := getOrgID(r)
-	days := 30
-	summary, err := s.workintel.GetUsageSummary(orgID, days)
+	days, since, until := usageWindowFromRequest(r, time.Now())
+	report, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{}), fmt.Sprintf("%dd", days), since, until)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, summary)
+	writeJSON(w, http.StatusOK, struct {
+		UsageTotal
+		Records []UsageLedgerRow `json:"records"`
+	}{UsageTotal: report, Records: report.Drilldown})
 }
 
 func (s *Server) handleGetEngineeringMetrics(w http.ResponseWriter, r *http.Request) {
@@ -3181,6 +3205,7 @@ type modelCostRow struct {
 	TokensOut          int64   `json:"tokens_out"`
 	TokensUnit         string  `json:"tokens_unit"` // always "tokens"
 	CostKRW            float64 `json:"cost_krw"`
+	ExpectedCostMicros int64   `json:"expected_cost_micros"`
 	CostUnit           string  `json:"cost_unit"` // always "krw"
 	RecordedCostMicros int64   `json:"recorded_cost_micros"`
 	RecordedCurrency   string  `json:"recorded_currency,omitempty"`
@@ -3195,95 +3220,58 @@ type modelCostRow struct {
 // — never a fabricated number. PAT-1501: tokens and KRW are reported
 // as separate unit-typed rows; the UI must not sum them.
 func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
+	if !requireUsageRead(w, r) {
+		return
+	}
 	orgID := getOrgID(r)
 	days, since, until := usageWindowFromRequest(r, time.Now())
-	usageReport, err := s.buildUsageReport(orgID, usageFilter{}, fmt.Sprintf("%dd", days), since, until)
+	usageReport, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{}), fmt.Sprintf("%dd", days), since, until)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	var sums []struct {
-		ModelPackageID string
-		MetricType     string
-		Total          int64
+	packageIDs := make([]string, 0, len(usageReport.ModelTotals))
+	for packageID := range usageReport.ModelTotals {
+		packageIDs = append(packageIDs, packageID)
 	}
-	if err := s.db.Model(&models.UsageRecord{}).
-		Select("model_package_id, metric_type, SUM(quantity) as total").
-		Where("organization_id = ? AND occurred_at >= ? AND metric_type IN ('tokens_in','tokens_out') AND model_package_id != ''", orgID, since).
-		Group("model_package_id, metric_type").Scan(&sums).Error; err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
+	sort.Strings(packageIDs)
 	var pkgs []models.ModelPackage
-	s.db.Find(&pkgs)
-	pkgBy := make(map[string]models.ModelPackage, len(pkgs))
+	if len(packageIDs) > 0 {
+		if err := s.db.Where("package_id IN ? OR id IN ?", packageIDs, packageIDs).Find(&pkgs).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	pkgBy := make(map[string]models.ModelPackage, len(pkgs)*2)
 	for _, p := range pkgs {
 		pkgBy[p.PackageID] = p
+		pkgBy[p.ID] = p
 	}
 
-	byPkg := make(map[string]*modelCostRow)
-	order := []string{}
-	for _, sm := range sums {
-		mc, ok := byPkg[sm.ModelPackageID]
-		if !ok {
-			mc = &modelCostRow{
-				ModelPackageID: sm.ModelPackageID,
-				TokensUnit:     UnitTokens,
-				CostUnit:       UnitKRW,
-			}
-			byPkg[sm.ModelPackageID] = mc
-			order = append(order, sm.ModelPackageID)
-		}
-		if sm.MetricType == "tokens_in" {
-			mc.TokensIn = sm.Total
-		} else {
-			mc.TokensOut = sm.Total
-		}
-	}
-
-	rowsOut := make([]modelCostRow, 0, len(order))
+	rowsOut := make([]modelCostRow, 0, len(packageIDs))
 	totalKRW := 0.0
 	anyPriced := false
 	allReconciled := true
-	type recordedModelCost struct {
-		amount   int64
-		currency string
-		present  bool
-		mixed    bool
-	}
-	recordedByModel := map[string]recordedModelCost{}
-	for _, row := range usageReport.Drilldown {
-		if row.ModelPackageID == "" {
-			continue
-		}
-		recorded := recordedByModel[row.ModelPackageID]
-		recorded.present = true
-		if recorded.currency != "" && row.Currency != "" && recorded.currency != row.Currency {
-			recorded.mixed = true
-		}
-		if recorded.currency == "" {
-			recorded.currency = row.Currency
-		}
-		recorded.amount += row.AmountMicros
-		recordedByModel[row.ModelPackageID] = recorded
-	}
-	for _, pid := range order {
-		mc := byPkg[pid]
+	for _, pid := range packageIDs {
+		total := usageReport.ModelTotals[pid]
+		mc := modelCostRow{ModelPackageID: pid, TokensIn: total.InputTokens, TokensOut: total.OutputTokens, TokensUnit: UnitTokens, CostUnit: UnitKRW}
 		if p, ok := pkgBy[pid]; ok {
 			mc.ModelName = p.Name
 			if p.PriceInputPer1K > 0 || p.PriceOutputPer1K > 0 {
 				mc.Priced = true
 				mc.CostKRW = float64(mc.TokensIn)/1000*p.PriceInputPer1K + float64(mc.TokensOut)/1000*p.PriceOutputPer1K
+				mc.ExpectedCostMicros = int64(math.Round(mc.CostKRW * 1_000_000))
 			}
 		}
-		recorded := recordedByModel[pid]
-		mc.RecordedCostMicros = recorded.amount
-		mc.RecordedCurrency = recorded.currency
-		expectedMicros := int64(math.Round(mc.CostKRW * 1_000_000))
-		mc.DifferenceMicros = recorded.amount - expectedMicros
-		mc.Reconciled = mc.Priced && recorded.present && !recorded.mixed && strings.EqualFold(recorded.currency, "KRW") && mc.DifferenceMicros == 0
+		if len(total.CostByCurrency) == 1 {
+			for currency, amount := range total.CostByCurrency {
+				mc.RecordedCurrency = currency
+				mc.RecordedCostMicros = amount
+			}
+		}
+		mc.DifferenceMicros = mc.RecordedCostMicros - mc.ExpectedCostMicros
+		mc.Reconciled = mc.Priced && total.PricingState == MeterStateRecorded && len(total.CostByCurrency) == 1 && strings.EqualFold(mc.RecordedCurrency, "KRW") && mc.DifferenceMicros == 0
 		if !mc.Reconciled {
 			allReconciled = false
 		}
@@ -3291,18 +3279,20 @@ func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
 			anyPriced = true
 			totalKRW += mc.CostKRW
 		}
-		rowsOut = append(rowsOut, *mc)
+		rowsOut = append(rowsOut, mc)
 	}
 
 	// PAT-1501: total in KRW is its own typed row, not a number
 	// sitting next to tokens.
-	totalUsage := Usage{Quantity: int64(math.Round(totalKRW)), Unit: UnitKRW, Currency: UnitKRW, WindowStart: since, WindowEnd: until, Reconciled: anyPriced && allReconciled}
+	totalUsage := Usage{Quantity: int64(math.Round(totalKRW)), Unit: UnitKRW, Currency: "KRW", WindowStart: since, WindowEnd: until, Reconciled: anyPriced && allReconciled}
+	totalMicros := int64(math.Round(totalKRW * 1_000_000))
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"days":             days,
 		"window_start":     since,
 		"window_end":       until,
 		"models":           rowsOut,
 		"total":            totalUsage,
+		"total_amount":     UsageAmount{AmountMicros: totalMicros, Currency: "KRW", State: usageStateForQuantity(totalMicros)},
 		"any_priced":       anyPriced,
 		"display_currency": UnitKRW,
 		"usage_report":     usageReport,
@@ -3314,9 +3304,12 @@ func (s *Server) handleGetCostAnalysis(w http.ResponseWriter, r *http.Request) {
 // response type level — the UI receives one Usage row per unit.
 // PAT-1501.
 func (s *Server) handleGetUsageBreakdown(w http.ResponseWriter, r *http.Request) {
+	if !requireUsageRead(w, r) {
+		return
+	}
 	orgID := getOrgID(r)
 	days, since, until := usageWindowFromRequest(r, time.Now())
-	report, err := s.buildUsageReport(orgID, usageFilter{}, fmt.Sprintf("%dd", days), since, until)
+	report, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{}), fmt.Sprintf("%dd", days), since, until)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -3337,32 +3330,13 @@ func usageWindowFromRequest(r *http.Request, now time.Time) (days int, since, un
 	case "365d":
 		days = 365
 	default:
-		if d, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && d > 0 {
+		if d, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && d > 0 && d <= 365 {
 			days = d
 		}
 	}
-	since = now.AddDate(0, 0, -days).Format(time.RFC3339)
-	until = now.Format(time.RFC3339)
+	since = now.AddDate(0, 0, -days).Format(time.RFC3339Nano)
+	until = now.Format(time.RFC3339Nano)
 	return days, since, until
-}
-
-// unitForMetric maps a UsageRecord metric_type to its unit. Unknown
-// metrics return "" so the caller surfaces them rather than silently
-// including them in a cross-unit sum. PAT-1501.
-func unitForMetric(metric string) string {
-	switch metric {
-	case "tokens_in", "tokens_out", "cache_write", "cache_read":
-		return UnitTokens
-	case "gpu_seconds":
-		return UnitSeconds
-	case "storage_bytes":
-		return UnitBytes
-	case "tool_call", "reservation":
-		return UnitCount
-	case "usd_micro", "usd":
-		return UnitUSDMicro
-	}
-	return ""
 }
 
 // --- Fleet Handlers ---
@@ -4080,6 +4054,9 @@ func (s *Server) handleRestoreProject(w http.ResponseWriter, r *http.Request) {
 // §29.12): sessions, token usage, and recorded cost across all of the
 // project's sessions.
 func (s *Server) handleProjectUsage(w http.ResponseWriter, r *http.Request) {
+	if !requireUsageRead(w, r) {
+		return
+	}
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
 	var proj models.Project
@@ -4087,18 +4064,18 @@ func (s *Server) handleProjectUsage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "프로젝트를 찾을 수 없습니다")
 		return
 	}
-	var sessionIDs []string
-	if err := s.db.Model(&models.Session{}).Where("organization_id = ? AND project_id = ?", orgID, id).Pluck("session_id", &sessionIDs).Error; err != nil {
+	var sessionCount int64
+	if err := s.db.Model(&models.Session{}).Where("organization_id = ? AND project_id = ?", orgID, id).Count(&sessionCount).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	days, since, until := usageWindowFromRequest(r, time.Now())
-	report, err := s.buildUsageReport(orgID, usageFilter{SessionIDs: sessionIDs}, fmt.Sprintf("%dd", days), since, until)
+	report, err := s.buildUsageReport(orgID, usageFilterFromRequest(r, usageFilter{ProjectID: id}), fmt.Sprintf("%dd", days), since, until)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	report.SessionCount = len(sessionIDs)
+	report.SessionCount = int(sessionCount)
 	writeJSON(w, http.StatusOK, report)
 }
 
@@ -4383,50 +4360,48 @@ func (s *Server) handleDeleteRepository(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "unregistered"})
 }
 
-func (s *Server) handlePauseSession(w http.ResponseWriter, r *http.Request) {
+// applySessionTransition performs one admin session lifecycle move with
+// org-scoped lookup, canonical transition validation (409), and an SSE
+// broadcast so Live surfaces hear it without polling (PAT-1496).
+func (s *Server) applySessionTransition(w http.ResponseWriter, r *http.Request, to, auditEventType, auditAction string) {
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
 	var sess models.Session
-	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
+	if err := s.db.Where("(id = ? OR session_id = ?) AND organization_id = ?", id, id, orgID).First(&sess).Error; err != nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	s.db.Model(&sess).Update("status", "paused")
+	if !models.SessionTransitionAllowed(sess.Status, to) {
+		writeError(w, http.StatusConflict, fmt.Sprintf("invalid session transition: %s → %s", sess.Status, to))
+		return
+	}
+	now := time.Now().Format(time.RFC3339)
+	from := sess.Status
+	s.db.Model(&sess).Updates(map[string]interface{}{
+		"status":           to,
+		"last_activity_at": now,
+	})
+	s.ext().Realtime.NotifySessionUpdate(orgID, sess.SessionID, to)
 	s.db.Create(&models.AuditEvent{
 		OrganizationID: orgID,
-		EventType:      "cp.session.paused",
+		EventType:      auditEventType,
 		ActorType:      "admin",
-		Action:         "pause_session",
+		Action:         auditAction,
 		ResourceType:   "session",
 		ResourceID:     sess.ID,
-		Details:        "session paused",
+		Details:        fmt.Sprintf("session %s → %s", from, to),
 		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
+		OccurredAt:     now,
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "paused"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": to})
+}
+
+func (s *Server) handlePauseSession(w http.ResponseWriter, r *http.Request) {
+	s.applySessionTransition(w, r, "paused", "cp.session.paused", "pause_session")
 }
 
 func (s *Server) handleResumeSession(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	orgID := getOrgID(r)
-	var sess models.Session
-	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&sess).Error; err != nil {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	s.db.Model(&sess).Update("status", "active")
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID,
-		EventType:      "cp.session.resumed",
-		ActorType:      "admin",
-		Action:         "resume_session",
-		ResourceType:   "session",
-		ResourceID:     sess.ID,
-		Details:        "session resumed",
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
-	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "active"})
+	s.applySessionTransition(w, r, "active", "cp.session.resumed", "resume_session")
 }
 
 func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request) {

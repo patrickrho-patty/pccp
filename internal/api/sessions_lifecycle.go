@@ -1,7 +1,7 @@
 package api
 
 import (
-	"fmt"
+	"encoding/json"
 	"net/http"
 	"sort"
 	"time"
@@ -154,23 +154,44 @@ func (s *Server) handleBulkSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var affected int64
+	skipped := make([]string, 0, 4)
 	for _, id := range req.IDs {
+		// Same canonical machine as the single-session actions (PAT-1496):
+		// terminal or illegal transitions are skipped per id, never bulk-
+		// resurrected; only successful rows notify and count.
+		var sess models.Session
+		if err := s.db.Where("(id = ? OR session_id = ?) AND organization_id = ?", id, id, orgID).First(&sess).Error; err != nil {
+			skipped = append(skipped, id)
+			continue
+		}
+		if !models.SessionTransitionAllowed(sess.Status, target) {
+			skipped = append(skipped, id)
+			continue
+		}
+		now := time.Now().Format(time.RFC3339)
+		cols := map[string]interface{}{"status": target, "last_activity_at": now}
+		if target == "closed" {
+			cols["closed_at"] = now
+		}
 		res := s.db.Model(&models.Session{}).
 			Where("(id = ? OR session_id = ?) AND organization_id = ?", id, id, orgID).
-			Update("status", target)
+			Updates(cols)
 		affected += res.RowsAffected
-		// Live-path propagation (B3): the relay enforces session status
-		// on the next exchange; the realtime fan-out notifies watchers.
-		s.ext().Realtime.NotifySessionUpdate(orgID, id, target)
+		if res.RowsAffected > 0 {
+			// Live-path propagation (B3): the relay enforces session status
+			// on the next exchange; the realtime fan-out notifies watchers.
+			s.ext().Realtime.NotifySessionUpdate(orgID, sess.SessionID, target)
+		}
 	}
+	bulkDetails, _ := json.Marshal(map[string]interface{}{"ids": len(req.IDs), "action": req.Action, "affected": affected, "skipped": skipped})
 	s.db.Create(&models.AuditEvent{
 		OrganizationID: orgID, EventType: "cp.sessions.bulk_" + req.Action, ActorType: "admin",
 		Action: "bulk_" + req.Action, ResourceType: "session", ResourceID: "bulk",
-		Details:    fmt.Sprintf(`{"ids":%d,"action":"%s"}`, len(req.IDs), req.Action),
+		Details:    string(bulkDetails),
 		Result:     "success",
 		OccurredAt: time.Now().Format(time.RFC3339),
 	})
-	writeJSON(w, http.StatusOK, map[string]interface{}{"affected": affected})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"affected": affected, "skipped": skipped})
 }
 
 // handleGetSessionVisibility returns the admin's visibility level for the

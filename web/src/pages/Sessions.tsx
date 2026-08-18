@@ -9,20 +9,15 @@ import EmptyState from '../components/EmptyState'
 import { ResponsiveTable, Column } from '../components/ResponsiveTable'
 import { showToast } from '../components/Toast'
 import { useRowNav } from '../hooks/useRowNav'
+import { SESSION_STATUS_META } from '../sessionState'
 
 // Sessions page (web/02 plan): governed AI coding sessions. Server-side
 // list (B4), deep-link inspector (B5), bulk lifecycle (UX7), catalog
 // model select (UX3), consolidated detail fetch (UX6), favorites (UX13),
 // status legend (UX14), visibility badge (B8).
-
-const STATUS_META: Record<string, { ko: string; badge: string; dot: string }> = {
-  pending:    { ko: '대기',   badge: 'bg-gray-100 text-gray-600 border-gray-200',   dot: '⚪' },
-  active:     { ko: '활성',   badge: 'bg-green-50 text-green-700 border-green-200', dot: '🟢' },
-  idle:       { ko: '유휴',   badge: 'bg-yellow-50 text-yellow-700 border-yellow-200', dot: '🟡' },
-  paused:     { ko: '일시정지', badge: 'bg-amber-50 text-amber-700 border-amber-200', dot: '⏸️' },
-  closed:     { ko: '종료',   badge: 'bg-gray-100 text-gray-500 border-gray-200',    dot: '✅' },
-  terminated: { ko: '강제종료', badge: 'bg-red-50 text-red-700 border-red-200',       dot: '🔴' },
-}
+// Canonical state definitions live in sessionState.ts (PAT-1496) — the
+// same vocabulary Live uses.
+const STATUS_META = SESSION_STATUS_META
 
 export default function Sessions() {
   const { favorites, sortPinnedFirst } = useFavorites('sessions')

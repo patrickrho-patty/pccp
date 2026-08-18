@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
@@ -74,17 +75,31 @@ func AutoMigrate(db *gorm.DB) error {
 }
 
 func normalizeUsageLedger(db *gorm.DB) error {
-	validOccurrence := "occurred_at IS NOT NULL"
+	validOccurrence := "occurred_at IS NOT NULL AND occurred_at > ?"
+	args := []interface{}{time.Date(2, 1, 1, 0, 0, 0, 0, time.UTC)}
 	if db.Dialector.Name() == "sqlite" {
 		validOccurrence += " AND occurred_at <> ''"
 	}
-	if err := db.Exec("UPDATE usage_records SET metered_at = occurred_at WHERE metered_at IS NULL AND " + validOccurrence).Error; err != nil {
+	if err := db.Exec("UPDATE usage_records SET metered_at = occurred_at WHERE metered_at IS NULL AND "+validOccurrence, args...).Error; err != nil {
 		return err
 	}
 	if err := db.Exec("UPDATE usage_records SET pricing_state = ? WHERE (pricing_state IS NULL OR pricing_state = '') AND cost_micros <> 0", models.UsagePricingPriced).Error; err != nil {
 		return err
 	}
-	return db.Exec("UPDATE usage_records SET pricing_state = ? WHERE pricing_state IS NULL OR pricing_state = ''", models.UsagePricingUnpriced).Error
+	if err := db.Exec("UPDATE usage_records SET pricing_state = ? WHERE pricing_state IS NULL OR pricing_state = ''", models.UsagePricingUnpriced).Error; err != nil {
+		return err
+	}
+	for _, statement := range []string{
+		"CREATE INDEX IF NOT EXISTS idx_usage_org_metered_id ON usage_records (organization_id, metered_at, id)",
+		"CREATE INDEX IF NOT EXISTS idx_usage_org_user_metered_id ON usage_records (organization_id, user_id, metered_at, id)",
+		"CREATE INDEX IF NOT EXISTS idx_usage_org_session_metered_id ON usage_records (organization_id, session_id, metered_at, id)",
+		"CREATE INDEX IF NOT EXISTS idx_sessions_org_project_session ON sessions (organization_id, project_id, session_id)",
+	} {
+		if err := db.Exec(statement).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // FromEnv creates a database connection from environment variables.

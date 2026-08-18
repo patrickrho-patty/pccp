@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 export type MeterState = 'recorded' | 'zero' | 'unavailable' | 'delayed' | 'error'
@@ -18,6 +19,8 @@ export interface UsageMeter {
   currency?: string
   state: MeterState
   reason?: string
+  cost_state?: MeterState
+  cost_reason?: string
   last_updated?: string
 }
 
@@ -35,6 +38,7 @@ export interface UsageLedgerRow {
   session_id?: string
   model_package_id?: string
   endpoint_id?: string
+  pricing_state?: string
 }
 
 export interface UsageConversion {
@@ -45,6 +49,7 @@ export interface UsageConversion {
   converted_amount_micros: number
   rate_source?: string
   rate_as_of?: string
+  rate_version?: string
   state: MeterState
   reason?: string
 }
@@ -79,6 +84,8 @@ export interface UsageReportData {
   reconciled: boolean
   reconciliation_errors?: string[]
   drilldown?: UsageLedgerRow[]
+  ledger_has_more?: boolean
+  ledger_next_cursor?: string
 }
 
 const METRIC_LABELS: Record<string, string> = {
@@ -154,19 +161,50 @@ function StateBadge({ state, reason }: { state: MeterState; reason?: string }) {
   return <span title={usageReasonLabel(reason)} className={`inline-flex px-2 py-0.5 rounded-full border text-[10px] font-medium ${meta.className}`}>{meta.label}</span>
 }
 
-export function UsageReport({ report, id = 'usage-ledger', title = '사용량 및 비용 원장' }: {
+export function UsageReport({ report, id = 'usage-ledger', title = '사용량 및 비용 원장', loadMore }: {
   report: UsageReportData | null
   id?: string
   title?: string
+  loadMore?: (cursor: string) => Promise<UsageReportData>
 }) {
+  const [ledger, setLedger] = useState<UsageLedgerRow[]>([])
+  const [nextCursor, setNextCursor] = useState('')
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [loadMoreError, setLoadMoreError] = useState(false)
+
+  useEffect(() => {
+    setLedger(report?.drilldown || [])
+    setNextCursor(report?.ledger_next_cursor || '')
+    setLoadMoreError(false)
+  }, [report])
+
   if (!report) {
     return <div className="card p-4 text-[11px] text-gray-400">사용량 정보를 불러오지 못했습니다.</div>
   }
   const meters = report.meters || []
-  const ledger = report.drilldown || []
   const hasLedger = report.record_count > 0
   const delayedMeters = meters.filter(meter => meter.state === 'delayed').length
   const overallState: MeterState = !hasLedger ? 'unavailable' : !report.reconciled ? 'error' : delayedMeters > 0 ? 'delayed' : 'recorded'
+  const displayTotalAvailable = report.display_total?.state === 'recorded' || report.display_total?.state === 'zero'
+
+  const loadNextPage = async () => {
+    if (!loadMore || !nextCursor || loadingMore) return
+    setLoadingMore(true)
+    setLoadMoreError(false)
+    try {
+      const next = await loadMore(nextCursor)
+      setLedger(current => {
+        const byID = new Map(current.map(row => [row.id, row]))
+        for (const row of next.drilldown || []) byID.set(row.id, row)
+        return Array.from(byID.values())
+      })
+      setNextCursor(next.ledger_next_cursor || '')
+    } catch {
+      setLoadMoreError(true)
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   return (
     <div className="card p-4 space-y-4" id={id}>
@@ -194,7 +232,7 @@ export function UsageReport({ report, id = 'usage-ledger', title = '사용량 �
         </div>
         <div className="rounded border border-gray-100 p-3">
           <div className="text-[10px] text-gray-400">표시 통화 합계</div>
-          <div className="text-xs font-semibold mt-1">{report.display_total?.state === 'unavailable' ? '미수집' : formatUsageAmount(report.display_total?.amount_micros, report.display_total?.currency)}</div>
+          <div className="text-xs font-semibold mt-1">{displayTotalAvailable ? formatUsageAmount(report.display_total?.amount_micros, report.display_total?.currency) : report.display_total?.state === 'error' ? '집계 오류' : '미수집'}</div>
           {report.display_total?.reason && <div className="text-[10px] text-red-600 mt-1">{usageReasonLabel(report.display_total.reason)}</div>}
         </div>
         <div className="rounded border border-gray-100 p-3">
@@ -206,7 +244,7 @@ export function UsageReport({ report, id = 'usage-ledger', title = '사용량 �
               <div key={`${conversion.source_currency}-${conversion.target_currency}`} className={conversion.state === 'recorded' ? 'text-gray-500' : 'text-red-600'}>
                 {conversion.source_currency} → {conversion.target_currency}:{' '}
                 {conversion.state === 'recorded'
-                  ? `${formatUsageAmount(conversion.converted_amount_micros, conversion.target_currency)} · 환율 ${conversion.rate} · ${conversion.rate_source || '출처 미기록'} · ${conversion.rate_as_of || '기준일 미기록'}`
+                  ? `${formatUsageAmount(conversion.converted_amount_micros, conversion.target_currency)} · 환율 ${conversion.rate} · ${conversion.rate_source || '출처 미기록'} · ${conversion.rate_as_of || '기준일 미기록'} · ${conversion.rate_version || '버전 미기록'}`
                   : usageReasonLabel(conversion.reason) || '환산 불가'}
               </div>
             ))}
@@ -217,13 +255,14 @@ export function UsageReport({ report, id = 'usage-ledger', title = '사용량 �
       <div className="overflow-x-auto">
         <table className="w-full text-[11px]">
           <thead><tr className="text-left text-gray-400 border-b">
-            <th className="py-2">계량 항목</th><th>상태</th><th className="text-right">수량</th><th className="text-right">단가</th><th className="text-right">금액</th><th>최종 계량</th>
+            <th className="py-2">계량 항목</th><th>계량</th><th>비용</th><th className="text-right">수량</th><th className="text-right">단가</th><th className="text-right">금액</th><th>최종 계량</th>
           </tr></thead>
           <tbody>
             {meters.map((meter, index) => (
               <tr key={`${meter.metric_type}-${meter.unit}-${meter.currency || ''}-${index}`} className="border-b border-gray-50">
                 <td className="py-2 font-medium text-gray-700">{usageMetricLabel(meter.metric_type)}</td>
                 <td><StateBadge state={meter.state} reason={meter.reason} /></td>
+                <td><StateBadge state={meter.cost_state || 'unavailable'} reason={meter.cost_reason} /></td>
                 <td className="text-right font-mono">{formatUsageQuantity(meter)}</td>
                 <td className="text-right font-mono text-gray-500">{formatUsageRate(meter.rate_micros_per_unit, meter.currency, meter.unit)}</td>
                 <td className="text-right font-mono">{formatUsageAmount(meter.amount_micros, meter.currency)}</td>
@@ -235,7 +274,7 @@ export function UsageReport({ report, id = 'usage-ledger', title = '사용량 �
       </div>
 
       <details open>
-        <summary className="cursor-pointer text-xs font-bold text-gray-700">원장 상세 {ledger.length.toLocaleString()}건</summary>
+        <summary className="cursor-pointer text-xs font-bold text-gray-700">원장 상세 {ledger.length.toLocaleString()} / {report.record_count.toLocaleString()}건</summary>
         <p className="text-[10px] text-gray-400 mt-1 mb-2">각 행은 집계 전 원본 계량 기록입니다. 수량·단가·금액과 관련 사용자 및 세션을 함께 확인할 수 있습니다.</p>
         <div className="overflow-x-auto max-h-96">
           <table className="w-full text-[10px]">
@@ -252,7 +291,9 @@ export function UsageReport({ report, id = 'usage-ledger', title = '사용량 �
                   <td className="space-x-2 whitespace-nowrap">
                     {row.user_id && <Link className="text-blue-600 hover:underline" to={`/users/${row.user_id}?tab=usage`}>사용자</Link>}
                     {row.session_id && <Link className="text-blue-600 hover:underline" to={`/sessions/${row.session_id}`}>세션</Link>}
-                    {row.model_package_id && <span title={row.model_package_id}>모델 {row.model_package_id.slice(0, 8)}</span>}
+                    {row.harness_id && <Link className="text-blue-600 hover:underline" to={`/harnesses/${row.harness_id}`}>하네스</Link>}
+                    {row.model_package_id && <Link className="text-blue-600 hover:underline" to={`/models/${row.model_package_id}`}>모델</Link>}
+                    {row.endpoint_id && <Link className="text-blue-600 hover:underline" to={`/endpoints/${row.endpoint_id}`}>엔드포인트</Link>}
                   </td>
                   <td className="font-mono text-gray-400 break-all">{row.id}</td>
                 </tr>
@@ -261,6 +302,14 @@ export function UsageReport({ report, id = 'usage-ledger', title = '사용량 �
             </tbody>
           </table>
         </div>
+        {nextCursor && loadMore && (
+          <div className="mt-3 text-center">
+            <button type="button" className="btn-sm btn-secondary" disabled={loadingMore} onClick={loadNextPage}>
+              {loadingMore ? '불러오는 중...' : '원장 50건 더 보기'}
+            </button>
+          </div>
+        )}
+        {loadMoreError && <p className="mt-2 text-center text-[10px] text-red-600">다음 원장 기록을 불러오지 못했습니다. 다시 시도해 주십시오.</p>}
       </details>
     </div>
   )

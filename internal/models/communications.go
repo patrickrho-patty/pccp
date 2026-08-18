@@ -118,7 +118,7 @@ type UsageRecord struct {
 	Unit       string `gorm:"type:varchar(32)" json:"unit"` // tokens, seconds, bytes
 	// Cost
 	CostMicros   int64  `json:"cost_micros,omitempty"` // millionths of Currency
-	Currency     string `gorm:"type:varchar(8);default:'KRW'" json:"currency,omitempty"`
+	Currency     string `gorm:"type:varchar(8)" json:"currency,omitempty"`
 	PricingState string `gorm:"type:varchar(16);index" json:"pricing_state"` // priced, unpriced, pending, error
 	// OccurredAt is retained for wire/backward compatibility. MeteredAt is the
 	// canonical nullable timestamp used by indexed ledger queries.
@@ -139,9 +139,13 @@ func (u *UsageRecord) BeforeSave(_ *gorm.DB) error {
 		if err != nil {
 			return fmt.Errorf("usage record occurred_at: %w", err)
 		}
-		occurred = occurred.UTC()
-		u.MeteredAt = &occurred
-		u.OccurredAt = occurred.Format(time.RFC3339)
+		if occurred.IsZero() {
+			u.OccurredAt = ""
+		} else {
+			occurred = occurred.UTC()
+			u.MeteredAt = &occurred
+			u.OccurredAt = occurred.Format(time.RFC3339)
+		}
 	}
 	if u.PricingState == "" {
 		if u.CostMicros != 0 {

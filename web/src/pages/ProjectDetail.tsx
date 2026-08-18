@@ -56,7 +56,9 @@ export default function ProjectDetail() {
   const activeSessions = sessions.filter((s: any) => s.status === 'active')
   const hasUsageLedger = Boolean(usage?.record_count)
   const delayedUsageMeters = (usage?.meters || []).filter((meter: any) => meter.state === 'delayed').length
-  const displayCost = usage?.display_total?.state === 'unavailable' ? '미수집' : usage?.display_total ? formatUsageAmount(usage.display_total.amount_micros, usage.display_total.currency) : '—'
+	const displayCost = usage?.display_total?.state === 'recorded' || usage?.display_total?.state === 'zero'
+	  ? formatUsageAmount(usage.display_total.amount_micros, usage.display_total.currency)
+	  : usage?.display_total?.state === 'error' ? '집계 오류' : '미수집'
 
   const submitMember = async () => {
     if (!memberForm.user_id) { showToast('사용자를 선택하세요', 'error'); return }
@@ -166,7 +168,7 @@ export default function ProjectDetail() {
             </div>
           </div>
 
-          <UsageReport report={usage} id="project-usage-ledger" title="프로젝트 사용량 및 비용 원장" />
+          <UsageReport report={usage} id="project-usage-ledger" title="프로젝트 사용량 및 비용 원장" loadMore={(cursor) => api.projectUsage(id!, '30d', cursor)} />
         </>
       )}
 

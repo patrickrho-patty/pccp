@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { formatRelative } from '../utils/format'
+import { formatUsageAmount, UsageReportData } from '../components/UsageReport'
 
 export default function Dashboard() {
   const [data, setData] = useState<any>(null)
@@ -8,14 +9,17 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
   const [findingCount, setFindingCount] = useState(0)
+	const [usage, setUsage] = useState<UsageReportData | null>(null)
 
   useEffect(() => {
     Promise.all([
       fetch('/api/dashboard', { headers: authHeaders() }).then(r => r.json()).catch(() => ({})),
       fetch('/api/korean/governance-brief', { headers: authHeaders() }).then(r => r.json()).catch(() => null),
       fetch('/api/security/findings', { headers: authHeaders() }).then(r => r.json()).catch(() => []),
-    ]).then(([dash, brf, findings]) => {
+	  fetch('/api/analytics/usage-extended?range=30d&limit=1', { headers: authHeaders() }).then(r => r.ok ? r.json() : null).catch(() => null),
+	]).then(([dash, brf, findings, usageReport]) => {
       setData(dash); setBrief(brf)
+	  setUsage(usageReport)
       setFindingCount(Array.isArray(findings) ? findings.filter((f: any) => f.status === 'open').length : 0)
       setLoading(false)
     })
@@ -52,6 +56,13 @@ export default function Dashboard() {
           </Link>
         ))}
       </div>
+
+	  <Link to="/analytics#usage-ledger" className="card p-4 mb-6 grid grid-cols-2 md:grid-cols-4 gap-4 hover:shadow-md transition-shadow">
+	    <div><div className="text-[10px] text-gray-400">최근 30일 총 토큰</div><div className="text-lg font-bold text-blue-700">{usage?.record_count ? usage.total_tokens.toLocaleString() : '미수집'}</div></div>
+	    <div><div className="text-[10px] text-gray-400">입력 / 출력</div><div className="text-sm font-semibold">{usage?.record_count ? `${usage.input_tokens.toLocaleString()} / ${usage.output_tokens.toLocaleString()}` : '—'}</div></div>
+	    <div><div className="text-[10px] text-gray-400">비용 ({usage?.display_currency || '통화 미확인'})</div><div className="text-sm font-semibold text-orange-700">{usage?.display_total?.state === 'recorded' || usage?.display_total?.state === 'zero' ? formatUsageAmount(usage.display_total.amount_micros, usage.display_total.currency) : usage?.display_total?.state === 'error' ? '집계 오류' : '미수집'}</div></div>
+	    <div><div className="text-[10px] text-gray-400">원장 상태</div><div className={`text-sm font-semibold ${!usage || usage.record_count === 0 ? 'text-gray-500' : usage.reconciled ? 'text-green-700' : 'text-red-700'}`}>{!usage ? '확인 불가' : usage.record_count === 0 ? '수집 내역 없음' : usage.reconciled ? `대사 완료 · ${usage.record_count.toLocaleString()}건` : `확인 필요 · ${usage.record_count.toLocaleString()}건`}</div><div className="text-[10px] text-blue-600 mt-1">원장 상세 보기 →</div></div>
+	  </Link>
 
       {/* Incidents + gaps (A5) */}
       <div className="grid grid-cols-2 gap-3 mb-4">

@@ -90,8 +90,8 @@ export const api = {
     request<any>(`/api/users/${id}/harnesses`, { method: 'POST', body: JSON.stringify({ harness_id: harnessId }) }),
   revokeUserHarness: (id: string, harnessId: string) =>
     request<any>(`/api/users/${id}/harnesses/${harnessId}`, { method: 'DELETE' }),
-  getUserUsage: (id: string, rangeParam = '30d') =>
-    request<any>(`/api/users/${id}/usage?range=${rangeParam}`),
+  getUserUsage: (id: string, rangeParam = '30d', cursor = '', signal?: AbortSignal) =>
+	request<any>(`/api/users/${id}/usage?range=${rangeParam}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { signal }),
   importUsersCSV: (file: File, apply: boolean) => {
     const form = new FormData()
     form.append('file', file)
@@ -156,7 +156,7 @@ export const api = {
   restoreProject: (id: string) =>
     request<any>(`/api/projects/${id}/restore`, { method: 'POST' }),
   projectArchiveImpact: (id: string) => request<any>(`/api/projects/${id}/archive-impact`),
-  projectUsage: (id: string, rangeParam = '30d') => request<any>(`/api/projects/${id}/usage?range=${rangeParam}`),
+  projectUsage: (id: string, rangeParam = '30d', cursor = '', signal?: AbortSignal) => request<any>(`/api/projects/${id}/usage?range=${rangeParam}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { signal }),
   projectChangeRequests: (id: string) => request<any[]>(`/api/projects/${id}/change-requests`),
   decideChangeRequest: (id: string, approve: boolean, reason?: string) =>
     request<any>(`/api/change-requests/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve, reason }) }),
@@ -204,7 +204,7 @@ export const api = {
   bulkSessions: (ids: string[], action: string) =>
     request<any>('/api/sessions/bulk', { method: 'POST', body: JSON.stringify({ ids, action }) }),
   getSessionDetail: (id: string) => request<any>(`/api/sessions/${id}/detail`),
-  getSessionUsage: (id: string, rangeParam = '30d') => request<any>(`/api/sessions/${id}/usage?range=${rangeParam}`),
+  getSessionUsage: (id: string, rangeParam = '30d', cursor = '', signal?: AbortSignal) => request<any>(`/api/sessions/${id}/usage?range=${rangeParam}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { signal }),
   getSessionDecisions: (id: string) => request<any>(`/api/sessions/${id}/decisions`),
   getSessionReplay: (id: string) => request<any>(`/api/sessions/${id}/replay`),
   getSessionVisibility: (id: string) => request<any>(`/api/sessions/${id}/visibility`),
@@ -302,8 +302,8 @@ export const api = {
     request<any>('/api/audit/siem', { method: 'PUT', body: JSON.stringify({ webhook, secret }) }),
 
   // Analytics (web/16)
-  usageExtended: (rangeParam: string) =>
-    request<any>(`/api/analytics/usage-extended?range=${rangeParam}`),
+  usageExtended: (rangeParam: string, cursor = '', signal?: AbortSignal) =>
+	request<any>(`/api/analytics/usage-extended?range=${rangeParam}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { signal }),
   usageBreakdown: (rangeParam: string) =>
     request<any>(`/api/analytics/usage-breakdown?range=${rangeParam}`),
 
