@@ -252,6 +252,7 @@ export function validateChange(args: {
   scope: Scope
   role: string
   now: number
+  evals?: HarnessEval[] // precomputed, so callers can share one evaluation with buildPreview
 }): ChangeValidation {
   const { feature, features, harnesses, target, scope, role, now } = args
   const blockers: string[] = []

@@ -45,6 +45,16 @@ export const SYNC_PHASE_BADGES: Record<SyncPhase, string> = {
   failed: 'badge-red',
 }
 
+// Labels for RepoSyncStatus.lastAttemptResult. running/queued reuse the
+// phase labels so the attempt wording can never drift from the phase
+// wording (R7).
+export const ATTEMPT_RESULT_LABELS: Record<NonNullable<RepoSyncStatus['lastAttemptResult']>, string> = {
+  success: '성공',
+  failed: '실패',
+  running: SYNC_PHASE_LABELS.running,
+  queued: SYNC_PHASE_LABELS.queued,
+}
+
 // Snapshots older than this are treated as stale even when the last sync
 // succeeded — evidence may no longer match the source.
 export const SYNC_STALE_AFTER_MS = 24 * 60 * 60 * 1000

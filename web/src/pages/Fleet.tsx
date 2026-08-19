@@ -8,6 +8,7 @@ import EmptyState from '../components/EmptyState'
 import { ResponsiveTable, Column } from '../components/ResponsiveTable'
 import { showToast } from '../components/Toast'
 import { deriveHarnessHealth, riskLabelKo, healthMeta } from '../harnessHealth'
+import { approvalView, rankApprovals } from '../approvalView'
 
 // Fleet page (web/09 plan): live fleet operations — containment happens
 // here. Server-side inventory query (A12), bulk actions (A5), 2-step
@@ -60,6 +61,9 @@ export default function Fleet() {
   const [versionOpen, setVersionOpen] = useState(false)
   const [versionForm, setVersionForm] = useState({ min_version: '', release_ring: 'stable', deadline: '', reason: '' })
   const [approvals, setApprovals] = useState<any[]>([])
+  const [approvalTarget, setApprovalTarget] = useState<any>(null) // approval being decided (PAT-1497)
+  const [approvalDecision, setApprovalDecision] = useState('')
+  const [approvalReason, setApprovalReason] = useState('')
   const [historyTarget, setHistoryTarget] = useState<any>(null)
   const [history, setHistory] = useState<any[]>([])
 
@@ -67,7 +71,25 @@ export default function Fleet() {
     api.fleetStatus().then(setStatus).catch(() => {})
     api.fleetApprovals().then(d => setApprovals(Array.isArray(d) ? d : [])).catch(() => {})
   }, [])
-	useEffect(() => {
+
+  // Governed approve/deny (PAT-1497): shared decision contract for Fleet and
+  // Tools, requires a reason, re-fetches after deciding, and audits server-side.
+  const decideApproval = async () => {
+    if (!approvalTarget) return
+    if (!approvalReason.trim()) {
+      showToast('승인/거절 사유가 필요합니다', 'error')
+      return
+    }
+    try {
+      await api.decideToolApproval(approvalTarget.id, approvalDecision, 'admin')
+      showToast(approvalDecision === 'approved' ? '승인 완료' : '거절 완료', 'success')
+      setApprovalTarget(null)
+      setApprovalReason('')
+      refreshStatus()
+    } catch (e: any) { showToast(e?.message || '처리 실패', 'error') }
+  }
+
+  useEffect(() => {
 		refreshStatus()
 		api.listProjects().then((rows: any) => setProjects(Array.isArray(rows) ? rows : (rows?.data ?? []))).catch(() => setProjects([]))
 		const t = setInterval(refreshStatus, 15000)
@@ -395,20 +417,71 @@ export default function Fleet() {
         </div>
       )}
 
-      {/* Pending approvals (A9) */}
+      {/* Pending approvals (A9 → PAT-1497 governed decision queue) */}
       {approvals.length > 0 && (
         <div className="card p-4">
-          <h3 className="text-xs font-bold mb-2">대기 중 승인 ({approvals.length})</h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-bold">대기 중 승인 ({approvals.length})</h3>
+            <span className="text-[10px] text-gray-400">긴급순: 만료 · 위험도 · 대기 시간</span>
+          </div>
           <div className="space-y-1">
-            {approvals.slice(0, 10).map((a: any) => (
-              <div key={a.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
-                <span className="text-gray-700">{a.approval_type} — {a.session_id?.slice(0, 12) || ''}</span>
-                <span className="text-gray-400">{a.decision}</span>
-              </div>
-            ))}
+            {rankApprovals(approvals).slice(0, 15).map((a: any) => {
+              const v = approvalView(a)
+              const riskKo = a.risk === 'critical' || a.risk === 'high' ? 'text-red-600' : a.risk === 'medium' ? 'text-amber-600' : 'text-gray-500'
+              return (
+                <div key={a.id} className="flex items-start justify-between gap-2 text-[11px] border-b border-gray-50 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-800 font-medium">{v.title}</span>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full border ${v.expired ? 'bg-red-50 text-red-700 border-red-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                        {v.expired ? '만료' : `대기 ${v.ageLabel}`}
+                      </span>
+                      {v.expiresLabel && <span className="text-[9px] text-gray-400">{v.expiresLabel}</span>}
+                    </div>
+                    <div className="text-[10px] text-gray-500 mt-0.5">
+                      요청자 {v.requestedBy}{v.harnessId ? ` · 하네스 ${v.harnessId}` : ''}{v.sessionTitle ? ` · 세션 ${v.sessionTitle}` : ''}
+                    </div>
+                    <div className="text-[10px] text-gray-400">
+                      평가 정책 {a.policy_rule || 'approval_matrix'} · 위험 <span className={riskKo}>{a.risk || 'medium'}</span>
+                      {a.reviewer_id ? ` · 담당 ${a.reviewer_id}` : ''}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <button className="text-[10px] text-blue-600 hover:underline" onClick={() => setApprovalTarget(a)}>상세 · 결정 →</button>
+                    <button className="text-[10px] px-2 py-0.5 rounded bg-green-50 text-green-600" onClick={() => { setApprovalTarget(a); setApprovalDecision('approved') }}>승인</button>
+                    <button className="text-[10px] px-2 py-0.5 rounded bg-red-50 text-red-600" onClick={() => { setApprovalTarget(a); setApprovalDecision('denied') }}>거절</button>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
+
+      {/* Approval decision detail + confirm (PAT-1497) */}
+      <Modal open={!!approvalTarget} title={`승인 결정 — ${approvalTarget ? approvalView(approvalTarget).title : ''}`}
+        onClose={() => { setApprovalTarget(null); setApprovalReason(''); setApprovalDecision('') }} size="md"
+        footer={<ModalFooter onCancel={() => { setApprovalTarget(null); setApprovalReason(''); setApprovalDecision('') }} onConfirm={decideApproval} confirmLabel={approvalDecision === 'approved' ? '승인 확정' : '거절 확정'} danger={approvalDecision === 'denied'} disabled={!approvalReason.trim()} />}>
+        {approvalTarget && (() => {
+          const v = approvalView(approvalTarget)
+          return (
+            <div className="space-y-2 text-[11px]">
+              <div className="text-[11px] bg-gray-50 rounded-lg p-2">
+                <div className="text-green-600">{v.title}</div>
+                <div className="text-gray-500">요청자 {v.requestedBy}{v.harnessId ? ` · 하네스 ${v.harnessId}` : ''}{v.sessionTitle ? ` · 세션 ${v.sessionTitle}` : ''}</div>
+                <div className="text-gray-400">대기 {v.ageLabel}{v.expiresLabel ? ` · ${v.expiresLabel}` : ''} · 평가 정책 {approvalTarget.policy_rule || 'approval_matrix'}</div>
+              </div>
+              <div className="text-[11px] text-gray-600">
+                {approvalDecision === 'approved' ? '승인 시 요청된 효과가 적용됩니다. 이 결정은 감사 로그에 기록됩니다.' : '거절 시 요청된 효과는 차단됩니다. 이 결정은 감사 로그에 기록됩니다.'}
+              </div>
+              <textarea className="input text-xs w-full" rows={2} placeholder="결정 사유 (필수) — 감사 및 후속 검토에 사용됩니다" value={approvalReason} onChange={e => setApprovalReason(e.target.value)} />
+              <div className="text-[10px] text-blue-600">
+                <a className="hover:underline" href={`#${v.detailRoute}`} onClick={e => { e.preventDefault(); window.location.hash = v.detailRoute; setApprovalTarget(null) }}>정확한 요청 증거 보기 →</a>
+              </div>
+            </div>
+          )
+        })()}
+      </Modal>
 
       {/* Per-harness action history (A6) */}
       <Modal open={!!historyTarget} title={`작업 이력 — ${historyTarget?.harness?.name || historyTarget?.harness_id || ''}`}

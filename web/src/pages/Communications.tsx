@@ -16,6 +16,7 @@ import {
   resolveAudiencePreview,
 } from '../broadcastAudience'
 import type { BroadcastScopeType } from '../broadcastAudience'
+import { formatShortTime } from '../utils/format'
 
 // Communications hub (web/13 plan): real-time SSE (A1), threading/
 // mentions/reactions/read receipts (B1/B2), AI-context linking (B4),
@@ -101,7 +102,7 @@ export default function Communications() {
 
   const loadMessages = (conv: any) => {
     setActiveConv(conv)
-    api.listMessages(conv.id).then((d: any[]) => setMessages(Array.isArray(d) ? d : [])).catch(() => setMessages([]))
+    api.listMessages(conv.id).then((d: any[]) => setMessages((Array.isArray(d) ? d : []).map(enrichMessage))).catch(() => setMessages([]))
   }
 
   // SSE (A1): live fan-out for messages/broadcasts/transfers/presence.
@@ -117,7 +118,7 @@ export default function Communications() {
             if (activeConv && event.payload?.conversation_id === activeConv.id) {
               setMessages(prev => {
                 const exists = prev.some(m => m.id === event.payload?.message?.id)
-                return exists ? prev : [...prev, event.payload.message]
+                return exists ? prev : [...prev, enrichMessage(event.payload.message)]
               })
             }
             setUnread(prev => { const n = new Set(prev); n.add(event.payload?.conversation_id); return n })
@@ -363,6 +364,14 @@ export default function Communications() {
     if (!msg.read_by) return []
     try { return JSON.parse(msg.read_by) } catch { return [] }
   }
+  // Parse the JSON columns once when messages are set, not per row per
+  // render (same enrichment pattern as audienceSizeOf in loadAll).
+  const enrichMessage = (m: any) => ({
+    ...m,
+    _reactions: parseReactions(m),
+    _mentions: parseMentions(m),
+    _readBy: parseReadBy(m),
+  })
 
   const sortedConvs = sortPinnedFirst(conversations, c => c.id)
 
@@ -409,9 +418,9 @@ export default function Communications() {
               <>
                 <div className="flex-1 overflow-auto space-y-2 pr-1">
                   {messages.filter(m => !m.deleted_by).map((m: any) => {
-                    const reactions = parseReactions(m)
-                    const mentions = parseMentions(m)
-                    const readBy = parseReadBy(m)
+                    const reactions: Record<string, string[]> = m._reactions || {}
+                    const mentions: string[] = m._mentions || []
+                    const readBy: string[] = m._readBy || []
                     const isCommand = m.content_type === 'command'
                     return (
                       <div key={m.id} className={`text-xs ${isCommand ? 'border-l-2 border-red-400 bg-red-50/50 p-2 rounded' : ''}`}
@@ -485,7 +494,7 @@ export default function Communications() {
                 <div className="text-[10px] text-gray-400 mt-0.5">
                   대상: {SCOPE_KO[b.target_type] || b.target_type || '전체'}
                   {audienceCount !== null && ` · 수신 ${audienceCount}명`}
-                  {b.expires_at && ` · 만료 ${String(b.expires_at).slice(0, 16)}`}
+                  {b.expires_at && ` · 만료 ${formatShortTime(b.expires_at)}`}
                 </div>
                 {b.requires_ack && <div className="text-[10px] text-amber-600 mt-0.5">확인 필요 · ack {b.ack_count || 0}</div>}
               </div>
@@ -564,14 +573,14 @@ export default function Communications() {
         <div className="space-y-2">
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="text-[10px] text-gray-500">심각도</label>
-              <select className="input text-xs w-full" value={bcForm.severity} onChange={e => setBcForm({ ...bcForm, severity: e.target.value })}>
+              <label htmlFor="bc-severity" className="text-[10px] text-gray-500">심각도</label>
+              <select id="bc-severity" className="input text-xs w-full" value={bcForm.severity} onChange={e => setBcForm({ ...bcForm, severity: e.target.value })}>
                 {Object.entries(SEVERITY_KO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-[10px] text-gray-500">수신 대상 범위 (필수)</label>
-              <select className="input text-xs w-full" value={bcForm.scope_type}
+              <label htmlFor="bc-scope" className="text-[10px] text-gray-500">수신 대상 범위 (필수)</label>
+              <select id="bc-scope" className="input text-xs w-full" value={bcForm.scope_type}
                 onChange={e => setBcForm({ ...bcForm, scope_type: e.target.value as BroadcastScopeType, target_id: '' })}>
                 <option value="">선택...</option>
                 {Object.entries(SCOPE_KO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
@@ -607,8 +616,8 @@ export default function Communications() {
             <textarea id="bc-body-ko" className="input text-xs w-full" rows={2} value={bcForm.body_ko} onChange={e => setBcForm({ ...bcForm, body_ko: e.target.value })} />
           </div>
           <div>
-            <label className="text-[10px] text-gray-500">만료 시각 (선택)</label>
-            <input type="datetime-local" className="input text-xs w-full" value={bcForm.expires_at} onChange={e => setBcForm({ ...bcForm, expires_at: e.target.value })} />
+            <label htmlFor="bc-expires" className="text-[10px] text-gray-500">만료 시각 (선택)</label>
+            <input id="bc-expires" type="datetime-local" className="input text-xs w-full" value={bcForm.expires_at} onChange={e => setBcForm({ ...bcForm, expires_at: e.target.value })} />
           </div>
           <label className="flex items-center gap-2 text-xs text-gray-600">
             <input type="checkbox" checked={bcForm.requires_ack} onChange={e => setBcForm({ ...bcForm, requires_ack: e.target.checked })} />
@@ -616,8 +625,8 @@ export default function Communications() {
           </label>
           {(bcForm.severity === 'critical' || bcForm.severity === 'emergency') && (
             <div>
-              <label className="text-[10px] text-red-500">심각/긴급 전송 사유 (필수, 감사 로그 기록)</label>
-              <input className="input text-xs w-full" placeholder="예: 긴급 보안 패치 적용" value={bcForm.confirm_reason} onChange={e => setBcForm({ ...bcForm, confirm_reason: e.target.value })} />
+              <label htmlFor="bc-confirm-reason" className="text-[10px] text-red-500">심각/긴급 전송 사유 (필수, 감사 로그 기록)</label>
+              <input id="bc-confirm-reason" className="input text-xs w-full" placeholder="예: 긴급 보안 패치 적용" value={bcForm.confirm_reason} onChange={e => setBcForm({ ...bcForm, confirm_reason: e.target.value })} />
             </div>
           )}
 
@@ -631,7 +640,7 @@ export default function Communications() {
               <>
                 <div className="text-[11px] text-gray-700">
                   수신 <span className="font-semibold">{bcPreview.eligible.length}명</span>
-                  {bcPreview.excluded.length > 0 && <span className="text-gray-400"> · 제외 {bcPreview.excluded.length}명 (정지/오프보딩)</span>}
+                  {bcPreview.excluded.length > 0 && <span className="text-gray-400"> · 제외 {bcPreview.excluded.length}명 (정지/퇴사)</span>}
                   <span className="text-gray-400"> · 온라인 {bcReach.online} · 오프라인 {bcReach.offline}</span>
                 </div>
                 {bcPreview.eligible.length > 0 && (

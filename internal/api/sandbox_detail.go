@@ -31,13 +31,7 @@ func (s *Server) handleGetSandboxDetail(w http.ResponseWriter, r *http.Request) 
 	}
 
 	result := map[string]interface{}{
-		"sandbox": sandbox.Sandbox{
-			DBID: rec.ID, ID: rec.ID,
-			OrganizationID: rec.OrganizationID, SessionID: rec.SessionID, RepositoryID: rec.RepositoryID, UserID: rec.UserID,
-			Mode: sandbox.RuntimeMode(rec.Mode), BaseImage: rec.BaseImage, ImageDigest: rec.ImageDigest,
-			CPULimit: rec.CPULimit, MemoryLimitMB: rec.MemoryLimitMB, NetworkPolicy: rec.NetworkPolicy,
-			Status: rec.Status, RuntimeProvider: rec.RuntimeProvider, ResourceLimits: rec.ResourceLimitsJSON,
-		},
+		"sandbox":       sandbox.SandboxFromRecord(rec),
 		"created_at":    rec.CreatedAt.Format(time.RFC3339),
 		"updated_at":    rec.UpdatedAt.Format(time.RFC3339),
 		"valid_actions": sandbox.ValidActions(rec.Status),

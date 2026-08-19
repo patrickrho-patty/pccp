@@ -5,7 +5,7 @@ import { StatCard } from '../components/StatCard'
 import { Modal, ModalFooter } from '../components/Modal'
 import { formatRelative, formatShortTime } from '../utils/format'
 import { showToast } from '../components/Toast'
-import { resolveRepoSync, classifySyncError, treeViewState, SyncDataset } from '../repoSync'
+import { resolveRepoSync, classifySyncError, treeViewState, ATTEMPT_RESULT_LABELS, SyncDataset } from '../repoSync'
 import { scopedListRoute } from '../relationLinks'
 
 function authHeaders(): Record<string, string> { const token = sessionStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }
@@ -20,6 +20,7 @@ export default function RepositoryDetail() {  const { id: paramId } = useParams<
   const [baselines, setBaselines] = useState<any[]>([])
   const [heatmaps, setHeatmaps] = useState<any[]>([])
   const [sessions, setSessions] = useState<any[]>([])
+  const [activeSessionCount, setActiveSessionCount] = useState(0)
   const [findings, setFindings] = useState<any[]>([])
   const [treePath, setTreePath] = useState('')
   const [tree, setTree] = useState<any[]>([])
@@ -36,8 +37,11 @@ export default function RepositoryDetail() {  const { id: paramId } = useParams<
     api.getRepository(id).then(setRepo).catch(() => setRepo(null)).finally(() => setLoading(false))
     api.repoBranches(id).then(d => { setBranches(Array.isArray(d) ? d : []); setDatasetErrors(e => ({ ...e, branches: '' })) }).catch((err: any) => setDatasetErrors(e => ({ ...e, branches: err?.message || 'load failed' })))
     api.repoBaselines(id).then(d => { setBaselines(Array.isArray(d) ? d : []); setDatasetErrors(e => ({ ...e, baselines: '' })) }).catch((err: any) => setDatasetErrors(e => ({ ...e, baselines: err?.message || 'load failed' })))
-    api.repoHeatmap().then(d => { setHeatmaps((Array.isArray(d) ? d : []).filter((h: any) => h.repository_id === id)); setDatasetErrors(e => ({ ...e, heatmap: '' })) }).catch((err: any) => setDatasetErrors(e => ({ ...e, heatmap: err?.message || 'load failed' })))
+    api.repoHeatmap(id).then(d => { setHeatmaps(Array.isArray(d) ? d : []); setDatasetErrors(e => ({ ...e, heatmap: '' })) }).catch((err: any) => setDatasetErrors(e => ({ ...e, heatmap: err?.message || 'load failed' })))
     api.listSessionsPaged(`page=1&size=100&repository=${encodeURIComponent(id)}`).then((res: any) => setSessions(res?.data || [])).catch(() => {})
+    // 활성 세션 카드 uses the paged endpoint's total, not the fetched page —
+    // the list above caps at 100 rows and would silently undercount.
+    api.listSessionsPaged(`page=1&size=1&status=active&repository=${encodeURIComponent(id)}`).then((res: any) => setActiveSessionCount(res?.total ?? 0)).catch(() => {})
     api.securityFindings({ repository: id }).then((d: any) => setFindings(Array.isArray(d) ? d : [])).catch(() => {})
   }
   useEffect(() => { loadRepo() }, [id])
@@ -82,7 +86,6 @@ export default function RepositoryDetail() {  const { id: paramId } = useParams<
   // Heatmap API returns risk_score (0..1); heat_score/level/findings_count
   // never existed, which produced the unexplained "민감도 점수: -" (PAT-1493).
   const heatScore = heat && heat.risk_score != null ? Math.round(heat.risk_score * 100) : null
-  const activeSessions = sessions.filter((s: any) => s.status === 'active')
 
   // Canonical sync status (PAT-1493) — same object shape as the list page,
   // plus per-dataset availability probed on this page.
@@ -122,7 +125,7 @@ export default function RepositoryDetail() {  const { id: paramId } = useParams<
           <div>마지막 성공: {formatShortTime(sync.lastSuccessAt)}</div>
           <div>
             최근 시도: {formatShortTime(sync.lastAttemptAt)}
-            {sync.lastAttemptResult && ` · ${{ success: '성공', failed: '실패', running: '진행 중', queued: '대기 중' }[sync.lastAttemptResult]}`}
+            {sync.lastAttemptResult && ` · ${ATTEMPT_RESULT_LABELS[sync.lastAttemptResult]}`}
           </div>
           <div>소스 기준 커밋: {formatShortTime(repo.last_commit_at)}</div>
         </div>
@@ -143,7 +146,7 @@ export default function RepositoryDetail() {  const { id: paramId } = useParams<
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 stat-grid mb-6">
         <StatCard label="브랜치" value={branches.length} accent="blue" />
         <StatCard label="베이스라인" value={baselines.length} accent="green" />
-        <StatCard label="활성 세션" value={activeSessions.length} accent="purple" to={scopedListRoute('sessions', { parent: { entity: 'repository', id }, status: 'active' })} sub="활성 세션 목록" />
+        <StatCard label="활성 세션" value={activeSessionCount} accent="purple" to={scopedListRoute('sessions', { parent: { entity: 'repository', id }, status: 'active' })} sub="활성 세션 목록" />
         <StatCard label="보안 발견" value={findings.length} accent="red" to={scopedListRoute('security', { parent: { entity: 'repository', id }, tab: 'findings' })} sub="저장소 발견 목록" />
         <StatCard label="민감도" value={repo.sensitivity || 'internal'} accent={repo.sensitivity === 'restricted' || repo.sensitivity === 'confidential' ? 'red' : 'yellow'} />
       </div>

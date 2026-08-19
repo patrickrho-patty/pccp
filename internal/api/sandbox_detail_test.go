@@ -188,6 +188,39 @@ func TestSandboxDestroyIdempotent(t *testing.T) {
 	}
 }
 
+// Cross-tenant destroy/snapshot must be invisible: both handlers scope
+// by the caller's org, so a known foreign id is indistinguishable from a
+// missing one — and must not mutate the record.
+func TestSandboxDestroySnapshotOrgScoped(t *testing.T) {
+	srv, db := toolsSandboxTestServer(t)
+	org := models.Organization{Name: "o", Slug: "osbx", Status: "active"}
+	db.Create(&org)
+	other := models.Organization{Name: "o2", Slug: "osbx2", Status: "active"}
+	db.Create(&other)
+	rec := models.SandboxRecord{OrganizationID: other.ID, Mode: "local", BaseImage: "img", Status: "running"}
+	db.Create(&rec)
+
+	resp := doJSON(t, srv, "POST", "/api/sandboxes/"+rec.ID+"/destroy", "", org.ID)
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant destroy must 404, got %d", resp.Code)
+	}
+	resp = doJSON(t, srv, "POST", "/api/sandboxes/"+rec.ID+"/snapshot", "", org.ID)
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant snapshot must 404, got %d", resp.Code)
+	}
+
+	var after models.SandboxRecord
+	db.First(&after, "id = ?", rec.ID)
+	if after.Status != "running" {
+		t.Fatalf("cross-tenant destroy must not mutate the record, status=%q", after.Status)
+	}
+	var evts []models.AuditEvent
+	db.Where("resource_id = ? AND action IN ?", rec.ID, []string{"sandbox_destroy", "forensic_snapshot"}).Find(&evts)
+	if len(evts) != 0 {
+		t.Fatalf("cross-tenant calls must mint no lifecycle evidence, got %d events", len(evts))
+	}
+}
+
 // Lifecycle audit events must carry the sandbox's organization: the detail
 // endpoint filters evidence by organization_id, so an event written
 // without it (the review finding) is invisible — including the

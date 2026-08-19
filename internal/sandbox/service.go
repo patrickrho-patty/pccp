@@ -357,13 +357,7 @@ func (s *Service) ListSandboxes(orgID string) ([]Sandbox, error) {
 	}
 	out := make([]Sandbox, 0, len(recs))
 	for _, rec := range recs {
-		out = append(out, Sandbox{
-			DBID: rec.ID, ID: rec.ID,
-			OrganizationID: rec.OrganizationID, SessionID: rec.SessionID, RepositoryID: rec.RepositoryID, UserID: rec.UserID,
-			Mode: RuntimeMode(rec.Mode), BaseImage: rec.BaseImage, ImageDigest: rec.ImageDigest,
-			CPULimit: rec.CPULimit, MemoryLimitMB: rec.MemoryLimitMB, NetworkPolicy: rec.NetworkPolicy,
-			Status: rec.Status, RuntimeProvider: rec.RuntimeProvider, ResourceLimits: rec.ResourceLimitsJSON,
-		})
+		out = append(out, SandboxFromRecord(rec))
 	}
 	return out, nil
 }
@@ -371,15 +365,23 @@ func (s *Service) ListSandboxes(orgID string) ([]Sandbox, error) {
 func (s *Service) GetSandbox(sandboxID string) (*Sandbox, error) {
 	var rec models.SandboxRecord
 	if err := s.db.Where("id = ?", sandboxID).First(&rec).Error; err == nil {
-		return &Sandbox{
-			DBID: rec.ID, ID: rec.ID,
-			OrganizationID: rec.OrganizationID, SessionID: rec.SessionID, RepositoryID: rec.RepositoryID, UserID: rec.UserID,
-			Mode: RuntimeMode(rec.Mode), BaseImage: rec.BaseImage, ImageDigest: rec.ImageDigest,
-			CPULimit: rec.CPULimit, MemoryLimitMB: rec.MemoryLimitMB, NetworkPolicy: rec.NetworkPolicy,
-			Status: rec.Status, RuntimeProvider: rec.RuntimeProvider, ResourceLimits: rec.ResourceLimitsJSON,
-		}, nil
+		sb := SandboxFromRecord(rec)
+		return &sb, nil
 	}
 	return nil, fmt.Errorf("sandbox: %s not found", sandboxID)
+}
+
+// SandboxFromRecord maps a durable SandboxRecord onto the API-facing
+// Sandbox — the single mapping shared by list, get, and the detail
+// vertical.
+func SandboxFromRecord(rec models.SandboxRecord) Sandbox {
+	return Sandbox{
+		DBID: rec.ID, ID: rec.ID,
+		OrganizationID: rec.OrganizationID, SessionID: rec.SessionID, RepositoryID: rec.RepositoryID, UserID: rec.UserID,
+		Mode: RuntimeMode(rec.Mode), BaseImage: rec.BaseImage, ImageDigest: rec.ImageDigest,
+		CPULimit: rec.CPULimit, MemoryLimitMB: rec.MemoryLimitMB, NetworkPolicy: rec.NetworkPolicy,
+		Status: rec.Status, RuntimeProvider: rec.RuntimeProvider, ResourceLimits: rec.ResourceLimitsJSON,
+	}
 }
 
 func IsModeAllowed(projectAllowedModes []RuntimeMode, requested RuntimeMode) bool {

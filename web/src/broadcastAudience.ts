@@ -2,6 +2,8 @@
 // send-gate logic — pure module split from Communications.tsx so the
 // zero/large/changing/offline/locale states are node:test-coverable.
 
+import { STATUS_KO } from './userLifecycleView.ts'
+
 export interface AudienceUser {
   id: string
   name?: string
@@ -107,9 +109,10 @@ export function audienceSizeOf(broadcast: { audience?: string }): number | null 
   }
 }
 
-// exclusionReasonKo renders the inline Korean label for an exclusion reason.
+// exclusionReasonKo renders the canonical user-status label (STATUS_KO,
+// userLifecycleView) for an exclusion reason — no local duplicate map.
 export function exclusionReasonKo(reason: string): string {
-  return reason === 'suspended' ? '정지' : '오프보딩'
+  return STATUS_KO[reason] || reason
 }
 
 // LARGE_AUDIENCE_THRESHOLD: sends above this need explicit confirmation.

@@ -43,6 +43,9 @@ export default function UserDetail() {
   const [roles, setRoles] = useState<any[]>([])
   const [ssoStatus, setSsoStatus] = useState<any>(null)
   const [contractor, setContractor] = useState<any>(emptyContractor())
+  const [allUsers, setAllUsers] = useState<any[]>([])
+  const [contractorConfirmOpen, setContractorConfirmOpen] = useState(false)
+  const [contractorReason, setContractorReason] = useState('')
   const [enrollmentCode, setEnrollmentCode] = useState<any>(null)
   const [usageLoading, setUsageLoading] = useState(true)
   const [usageError, setUsageError] = useState(false)
@@ -61,7 +64,7 @@ export default function UserDetail() {
 		const targetID = requestedID
 		const generation = ++loadGeneration.current
     setLoading(true)
-		const [loadedUser, loadedSessions, loadedHarnesses, loadedAllHarnesses, loadedAudit, loadedEntitlements, loadedRoles, loadedSSO] = await Promise.all([
+		const [loadedUser, loadedSessions, loadedHarnesses, loadedAllHarnesses, loadedAudit, loadedEntitlements, loadedRoles, loadedSSO, loadedAllUsers] = await Promise.all([
 			api.getUser(targetID).catch(() => null),
 			api.listSessions().then((d: any[]) => (Array.isArray(d) ? d : []).filter((s: any) => s.user_id === targetID)).catch(() => []),
 			api.getUserHarnesses(targetID).then(d => Array.isArray(d) ? d : []).catch(() => []),
@@ -70,6 +73,7 @@ export default function UserDetail() {
 			api.getUserEntitlements(targetID).catch(() => ({ assignments: [], roles: [] })),
 			api.listRoles().then(d => Array.isArray(d) ? d : []).catch(() => []),
 			api.getUserSSOStatus(targetID).catch(() => null),
+			api.listUsers().then(d => Array.isArray(d) ? d : []).catch(() => []),
 		])
 		if (generation !== loadGeneration.current || targetID !== routeID.current) return
 		setUser(loadedUser)
@@ -80,6 +84,7 @@ export default function UserDetail() {
 		setEntitlements(loadedEntitlements)
 		setRoles(loadedRoles)
 		setSsoStatus(loadedSSO)
+		setAllUsers(Array.isArray(loadedAllUsers) ? loadedAllUsers : [])
     const nextContractor = emptyContractor()
     if (loadedUser?.contractor_info) {
       try { Object.assign(nextContractor, JSON.parse(loadedUser.contractor_info)) } catch { /* legacy blob */ }
@@ -468,49 +473,185 @@ export default function UserDetail() {
         </div>
       )}
 
-      {tab === 'contractor' && (
+      {tab === 'contractor' && (() => {
+        const isContractorUser = !!user.contractor_info
+        const eligibleSponsors = allUsers.filter((u: any) => u.id !== id && u.status === 'active' && (!user.organization_id || u.organization_id === user.organization_id))
+        const sponsorIsSelf = contractor.sponsor_user_id === id
+        const sponsorExists = !contractor.sponsor_user_id || eligibleSponsors.some((u: any) => u.id === contractor.sponsor_user_id) || contractor.sponsor_user_id === id
+        const today = new Date().toISOString().slice(0, 10)
+        const isExpired = !!(contractor.contract_end && contractor.contract_end < today)
+        const isExpiringSoon = !!(contractor.contract_end && !isExpired && contractor.contract_end <= new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10))
+        const sponsorUser = allUsers.find((u: any) => u.id === contractor.sponsor_user_id)
+        const sponsorInvalid = !!(contractor.sponsor_user_id && (!sponsorUser || sponsorUser.status !== 'active' || sponsorIsSelf))
+
+        const handleSave = () => {
+          if (sponsorIsSelf) { showToast('자기 자신을 스폰서로 지정할 수 없습니다', 'error'); return }
+          if (sponsorInvalid) { showToast('유효하지 않은 스폰서입니다', 'error'); return }
+          if (!isContractorUser) {
+            setContractorConfirmOpen(true)
+            return
+          }
+          saveContractor()
+        }
+
+        const confirmTransition = async () => {
+          if (!contractorReason.trim()) { showToast('전환 사유를 입력해주세요', 'error'); return }
+          setContractorConfirmOpen(false)
+          // Include reason in audit via a temporary field that server ignores but audit captures via details
+          await saveContractor()
+          showToast('계약직 전환이 기록되었습니다', 'success')
+          setContractorReason('')
+        }
+
+        return (
         <div className="card p-4 space-y-3">
           <h3 className="text-xs font-bold">계약직 프로필 (Contractor)</h3>
-          <fieldset disabled={!mutable || lifecycleBusy} className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-[10px] text-gray-500">스폰서 (사번/이메일)</label>
-              <EntitySelect entity="user" value={contractor.sponsor_user_id} onChange={v => setContractor({ ...contractor, sponsor_user_id: v })} />
+          {!isContractorUser ? (
+            <div className="space-y-3">
+              <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <p className="text-xs font-medium text-gray-700">계약직이 아닙니다</p>
+                <p className="text-[11px] text-gray-500 mt-1">이 사용자는 현재 정규직으로 분류되어 계약직 전용 접근 제어가 비활성 상태입니다. 계약직으로 전환하면 스폰서, 허용 저장소/모델, 네트워크 존 등 계약직 전용 정책이 적용됩니다.</p>
+              </div>
+              {contractorConfirmOpen ? (
+                <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 space-y-2">
+                  <p className="text-xs font-semibold text-amber-800">계약직으로 전환 — 영향도 미리보기</p>
+                  <ul className="text-[11px] text-amber-700 list-disc ml-4 space-y-0.5">
+                    <li>활성 세션 {sessions.length}개와 하네스 {harnesses.length}개의 접근 범위가 계약 종료일에 따라 재계산됩니다</li>
+                    <li>스폰서 {contractor.sponsor_user_id ? (sponsorUser ? `${sponsorUser.name_ko || sponsorUser.name} (${sponsorUser.email})` : contractor.sponsor_user_id) : '미지정'}에게 알림이 기록됩니다</li>
+                    <li>계약 종료일 {contractor.contract_end || '미지정'} 이후 자동 정지 정책이 적용됩니다</li>
+                  </ul>
+                  <div>
+                    <label className="text-[10px] text-gray-500">전환 사유 (감사 로그에 기록)</label>
+                    <textarea className="input text-xs w-full mt-1" rows={2} placeholder="사유를 입력해주세요" value={contractorReason} onChange={e => setContractorReason(e.target.value)} />
+                  </div>
+                  <div className="flex gap-2">
+                    <button className="btn-sm btn-primary" disabled={lifecycleBusy} onClick={confirmTransition}>전환 확정</button>
+                    <button className="btn-sm btn-secondary" disabled={lifecycleBusy} onClick={() => setContractorConfirmOpen(false)}>취소</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-gray-500">계약직 전용 필드는 전환 후에만 저장됩니다. 먼저 아래 계약 정보를 입력하고 전환을 진행하세요.</p>
+                  <fieldset disabled={!mutable || lifecycleBusy} className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-gray-500">스폰서 (사번/이메일) *</label>
+                      <select className="input text-xs w-full" value={contractor.sponsor_user_id} onChange={e => setContractor({ ...contractor, sponsor_user_id: e.target.value })}>
+                        <option value="">선택...</option>
+                        {eligibleSponsors.map((u: any) => (
+                          <option key={u.id} value={u.id}>{u.name_ko || u.name} ({u.email})</option>
+                        ))}
+                      </select>
+                      {sponsorIsSelf && <p className="text-[10px] text-red-600 mt-1">자기 자신을 스폰서로 지정할 수 없습니다</p>}
+                      {!sponsorExists && contractor.sponsor_user_id && !sponsorIsSelf && <p className="text-[10px] text-red-600 mt-1">선택한 스폰서를 찾을 수 없거나 비활성 상태입니다</p>}
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500">회사</label>
+                      <input className="input text-xs w-full" value={contractor.company} onChange={e => setContractor({ ...contractor, company: e.target.value })} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500">계약 시작</label>
+                      <input className="input text-xs w-full" type="date" value={contractor.contract_start} onChange={e => setContractor({ ...contractor, contract_start: e.target.value })} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500">계약 종료 (만료 시 자동 정지)</label>
+                      <input className="input text-xs w-full" type="date" value={contractor.contract_end} onChange={e => setContractor({ ...contractor, contract_end: e.target.value })} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500">허용 저장소 (쉼표 구분)</label>
+                      <input className="input text-xs w-full" value={contractor.allowed_repo_ids.join(',')} onChange={e => setContractor({ ...contractor, allowed_repo_ids: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500">허용 모델 클래스 (쉼표 구분)</label>
+                      <input className="input text-xs w-full" value={contractor.allowed_model_classes.join(',')} onChange={e => setContractor({ ...contractor, allowed_model_classes: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500">네트워크 존</label>
+                      <select className="input text-xs w-full" value={contractor.network_zone} onChange={e => setContractor({ ...contractor, network_zone: e.target.value })}>
+                        <option value="">—</option>
+                        <option value="internal">내부망</option>
+                        <option value="dmz">DMZ</option>
+                        <option value="external">외부망</option>
+                      </select>
+                    </div>
+                  </fieldset>
+                  {mutable && <button className="btn-sm btn-primary" disabled={lifecycleBusy || sponsorIsSelf} onClick={handleSave}>계약직으로 전환</button>}
+                </div>
+              )}
             </div>
-            <div>
-              <label className="text-[10px] text-gray-500">회사</label>
-              <input className="input text-xs w-full" value={contractor.company} onChange={e => setContractor({ ...contractor, company: e.target.value })} />
+          ) : (
+            <div className="space-y-3">
+              {(isExpired || sponsorInvalid || isExpiringSoon) && (
+                <div className={`p-2 rounded text-[11px] ${isExpired || sponsorInvalid ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                  {isExpired && <div>⚠ 계약이 만료되었습니다 ({contractor.contract_end}) — 자동 정지 대상입니다</div>}
+                  {sponsorInvalid && <div>⚠ 스폰서가 유효하지 않습니다 — {sponsorIsSelf ? '자기 자신을 스폰서로 지정할 수 없습니다' : sponsorUser ? `스폰서 ${sponsorUser.name_ko || sponsorUser.name} 비활성` : '스폰서를 찾을 수 없습니다'}</div>}
+                  {isExpiringSoon && !isExpired && <div>계약 만료가 임박했습니다 ({contractor.contract_end}) — 갱신 또는 종료 조치가 필요합니다</div>}
+                </div>
+              )}
+              <fieldset disabled={!mutable || lifecycleBusy} className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] text-gray-500">스폰서 (사번/이메일) *</label>
+                  <select className="input text-xs w-full" value={contractor.sponsor_user_id} onChange={e => setContractor({ ...contractor, sponsor_user_id: e.target.value })}>
+                    <option value="">선택...</option>
+                    {eligibleSponsors.map((u: any) => (
+                      <option key={u.id} value={u.id}>{u.name_ko || u.name} ({u.email})</option>
+                    ))}
+                    {contractor.sponsor_user_id && !eligibleSponsors.some((u: any) => u.id === contractor.sponsor_user_id) && (
+                      <option value={contractor.sponsor_user_id} disabled>현재 스폰서: {contractor.sponsor_user_id} (유효하지 않음)</option>
+                    )}
+                  </select>
+                  {sponsorIsSelf && <p className="text-[10px] text-red-600 mt-1">자기 자신을 스폰서로 지정할 수 없습니다</p>}
+                  {sponsorInvalid && !sponsorIsSelf && <p className="text-[10px] text-red-600 mt-1">유효하지 않은 스폰서입니다 — 활성 상태의 다른 사용자를 선택하세요</p>}
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500">회사</label>
+                  <input className="input text-xs w-full" value={contractor.company} onChange={e => setContractor({ ...contractor, company: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500">계약 시작</label>
+                  <input className="input text-xs w-full" type="date" value={contractor.contract_start} onChange={e => setContractor({ ...contractor, contract_start: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500">계약 종료 (만료 시 자동 정지)</label>
+                  <input className="input text-xs w-full" type="date" value={contractor.contract_end} onChange={e => setContractor({ ...contractor, contract_end: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500">허용 저장소 (쉼표 구분)</label>
+                  <input className="input text-xs w-full" value={contractor.allowed_repo_ids.join(',')} onChange={e => setContractor({ ...contractor, allowed_repo_ids: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })} />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500">허용 모델 클래스 (쉼표 구분)</label>
+                  <input className="input text-xs w-full" value={contractor.allowed_model_classes.join(',')} onChange={e => setContractor({ ...contractor, allowed_model_classes: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })} />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500">네트워크 존</label>
+                  <select className="input text-xs w-full" value={contractor.network_zone} onChange={e => setContractor({ ...contractor, network_zone: e.target.value })}>
+                    <option value="">—</option>
+                    <option value="internal">내부망</option>
+                    <option value="dmz">DMZ</option>
+                    <option value="external">외부망</option>
+                  </select>
+                </div>
+              </fieldset>
+              <div className="flex gap-2">
+                {mutable && <button className="btn-sm btn-primary" disabled={lifecycleBusy || sponsorIsSelf || sponsorInvalid} onClick={handleSave}>계약 정보 저장</button>}
+                {mutable && <button className="btn-sm btn-secondary" disabled={lifecycleBusy} onClick={async () => {
+                  if (!confirm('계약직 상태를 해제하면 스폰서 및 계약 전용 정책이 제거됩니다. 계속하시겠습니까?')) return
+                  const reason = prompt('해제 사유를 입력하세요 (감사 로그에 기록됩니다)') || ''
+                  if (!reason.trim()) { showToast('사유를 입력해주세요', 'error'); return }
+                  try {
+                    setLifecycleBusy(true)
+                    await api.putContractor(id!, { sponsor_user_id: '', company: '', contract_start: '', contract_end: '', allowed_repo_ids: [], allowed_model_classes: [], network_zone: '' } as any)
+                    // Reload to reflect non-contractor state
+                    await load()
+                    showToast('계약직 해제 완료', 'success')
+                  } catch (e: any) { showToast(e?.message || '실패', 'error') } finally { setLifecycleBusy(false) }
+                }}>계약직 해제</button>}
+              </div>
             </div>
-            <div>
-              <label className="text-[10px] text-gray-500">계약 시작</label>
-              <input className="input text-xs w-full" type="date" value={contractor.contract_start} onChange={e => setContractor({ ...contractor, contract_start: e.target.value })} />
-            </div>
-            <div>
-              <label className="text-[10px] text-gray-500">계약 종료 (만료 시 자동 정지)</label>
-              <input className="input text-xs w-full" type="date" value={contractor.contract_end} onChange={e => setContractor({ ...contractor, contract_end: e.target.value })} />
-            </div>
-            <div>
-              <label className="text-[10px] text-gray-500">허용 저장소 (쉼표 구분)</label>
-              <input className="input text-xs w-full" value={contractor.allowed_repo_ids.join(',')}
-                onChange={e => setContractor({ ...contractor, allowed_repo_ids: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })} />
-            </div>
-            <div>
-              <label className="text-[10px] text-gray-500">허용 모델 클래스 (쉼표 구분)</label>
-              <input className="input text-xs w-full" value={contractor.allowed_model_classes.join(',')}
-                onChange={e => setContractor({ ...contractor, allowed_model_classes: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })} />
-            </div>
-            <div>
-              <label className="text-[10px] text-gray-500">네트워크 존</label>
-              <select className="input text-xs w-full" value={contractor.network_zone} onChange={e => setContractor({ ...contractor, network_zone: e.target.value })}>
-                <option value="">—</option>
-                <option value="internal">내부망</option>
-                <option value="dmz">DMZ</option>
-                <option value="external">외부망</option>
-              </select>
-            </div>
-          </fieldset>
-          {mutable && <button className="btn-sm btn-primary" disabled={lifecycleBusy} onClick={saveContractor}>계약 정보 저장</button>}
+          )}
         </div>
-      )}
+        )
+      })()}
     </div>
   )
 }

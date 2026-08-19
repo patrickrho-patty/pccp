@@ -167,6 +167,8 @@ test('typed config summaries render Korean rows instead of raw JSON', () => {
     { key: 'require_approval', label: '승인 필요 도구', text: '적용' },
   ])
   assert.deepEqual(summarizeRuleConfig('tools', undefined), [])
+  // Arrays containing objects also get a typed summary — never raw JSON.
+  assert.equal(summarizeValue('data', 'redact_patterns', [{ pattern: '\\d{6}', label: '주민번호' }, { pattern: 'sk-' }]), '세부 설정 2개 항목')
 })
 
 test('epoch model refs parse from both arrays and JSON strings', () => {

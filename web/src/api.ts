@@ -497,7 +497,8 @@ export const api = {
     request<any>(`/api/communications/file-transfers/${id}/transition`, { method: 'POST', body: JSON.stringify({ action }) }),
 
   // SCM
-  repoHeatmap: () => request<any[]>('/api/scm/heatmaps'),
+  repoHeatmap: (repositoryId?: string) =>
+    request<any[]>(`/api/scm/heatmaps${repositoryId ? '?repository=' + encodeURIComponent(repositoryId) : ''}`),
 
   // Impact
   analyzeChange: (data: any) =>
@@ -618,6 +619,6 @@ export const api = {
 
   // Enterprise harness features (§33). expected_epoch is the rollout head
   // epoch the change was based on — the server rejects stale heads with 409.
-  updateEnterpriseFeature: (id: string, data: { enabled: boolean; enforced: boolean; config: string; expected_epoch: number }) =>
+  updateEnterpriseFeature: (id: string, data: { enabled: boolean; enforced: boolean; config: string; expected_epoch: number; reason: string }) =>
     request<any>(`/api/enterprise/features/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 };

@@ -120,7 +120,9 @@ export function summarizeValue(domain: string, key: string, value: any): string 
   if (typeof value === 'string') return value
   if (Array.isArray(value)) {
     if (value.length === 0) return domain === 'models' || key === 'allowed_models' ? '없음 — 전체 차단' : '없음'
-    return value.map(v => (typeof v === 'object' ? JSON.stringify(v) : `${v}`)).join(', ')
+    // Object elements get the typed item-count summary too — never raw JSON.
+    if (value.some(v => typeof v === 'object')) return `세부 설정 ${value.length}개 항목`
+    return value.map(v => `${v}`).join(', ')
   }
   return `세부 설정 ${Object.keys(value).length}개 항목`
 }
@@ -132,12 +134,7 @@ export function summarizeRuleConfig(domain: string, config: Record<string, any> 
 }
 
 function parseExceptionRuleIds(ex: ExceptionEntry): string[] {
-  try {
-    const ids = JSON.parse(ex.rule_ids || '[]')
-    return Array.isArray(ids) ? ids : []
-  } catch {
-    return []
-  }
+  return parseList(ex.rule_ids)
 }
 
 function toSourceRef(ref: RuleRef, registry: Map<string, RegistryRule>): SourceRef {

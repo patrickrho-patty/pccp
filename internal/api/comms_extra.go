@@ -301,21 +301,34 @@ func (s *Server) handleBroadcastAcks(w http.ResponseWriter, r *http.Request) {
 			exclusions = snap.Excluded
 		}
 	}
+	// scopeResolved mirrors snapshotResolved: a successfully resolved target
+	// scope is authoritative even when it yields zero eligible users — an
+	// all-suspended project roster must NOT fall through to "all active org
+	// users".
+	scopeResolved := false
 	if !snapshotResolved && bc.TargetType != "" {
 		if aud, err := resolveBroadcastAudience(s.db, orgID, bc.TargetType, bc.TargetID); err == nil {
+			scopeResolved = true
 			users = aud.Eligible
 			exclusions = aud.Excluded
 		}
 	}
-	if !snapshotResolved && users == nil {
+	if !snapshotResolved && !scopeResolved {
 		s.db.Where("organization_id = ? AND status = 'active'", orgID).Find(&users)
 	}
-	// Presence reachability for drill-down.
+	// Presence reachability for drill-down, scoped to the resolved
+	// recipients instead of the org's entire presence table.
 	onlineBy := map[string]string{}
-	var presenceRows []models.Presence
-	s.db.Where("organization_id = ?", orgID).Find(&presenceRows)
-	for _, p := range presenceRows {
-		onlineBy[p.UserID] = p.Status
+	if len(users) > 0 {
+		userIDs := make([]string, 0, len(users))
+		for _, u := range users {
+			userIDs = append(userIDs, u.ID)
+		}
+		var presenceRows []models.Presence
+		s.db.Where("organization_id = ? AND user_id IN ?", orgID, userIDs).Find(&presenceRows)
+		for _, p := range presenceRows {
+			onlineBy[p.UserID] = p.Status
+		}
 	}
 	expired := bc.Status == "expired"
 	if !expired && bc.ExpiresAt != "" {
@@ -334,14 +347,11 @@ func (s *Server) handleBroadcastAcks(w http.ResponseWriter, r *http.Request) {
 		Presence string `json:"presence"` // online, away, busy, offline
 	}
 	var recipients []recipientStatus
-	var pending []map[string]string
 	ackedCount := 0
 	for _, u := range users {
 		acked := ackedBy[u.ID]
 		if acked {
 			ackedCount++
-		} else {
-			pending = append(pending, map[string]string{"user_id": u.ID, "name": u.Name, "name_ko": u.NameKo, "email": u.Email})
 		}
 		presence := onlineBy[u.ID]
 		if presence == "" {
@@ -362,7 +372,6 @@ func (s *Server) handleBroadcastAcks(w http.ResponseWriter, r *http.Request) {
 		"expired":      expired,
 		"total_users":  len(users),
 		"acked":        ackedCount,
-		"pending":      pending,
 		"recipients":   recipients,
 		"excluded":     exclusions,
 		"ack_rate":     rate,

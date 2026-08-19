@@ -77,9 +77,9 @@ test('audienceSizeOf reads the frozen snapshot; null when absent or malformed', 
   assert.equal(audienceSizeOf({ audience: '{"foo":1}' }), null)
 })
 
-test('exclusionReasonKo maps suspended/offboarded to Korean labels', () => {
+test('exclusionReasonKo delegates to the canonical STATUS_KO labels', () => {
   assert.equal(exclusionReasonKo('suspended'), '정지')
-  assert.equal(exclusionReasonKo('offboarded'), '오프보딩')
+  assert.equal(exclusionReasonKo('offboarded'), '퇴사') // canonical STATUS_KO
 })
 
 const GATE_BASE = {

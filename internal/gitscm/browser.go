@@ -34,6 +34,12 @@ var clones = &cloneCache{dirs: map[string]string{}}
 // an attempt older than this is treated as failed and may be reclaimed.
 const syncStaleAfter = 15 * time.Minute
 
+// syncHeartbeatInterval is how often an in-flight sync refreshes
+// last_sync_attempt_at, so a legitimately running long clone never ages
+// past syncStaleAfter and gets hijacked by the stale reclaimer — only a
+// sync whose process died (heartbeat stopped) goes stale.
+const syncHeartbeatInterval = time.Minute
+
 // SyncRepository clones (or refreshes) the repository and records the
 // HEAD commit + sync status on the repo row. The provider is selected
 // by SCMProvider; the clone token comes from PCCP_SCM_TOKEN. Both the
@@ -57,6 +63,11 @@ func (s *Service) SyncRepository(ctx context.Context, repo *models.Repository) (
 	if claim.RowsAffected == 0 {
 		return "", fmt.Errorf("gitscm: sync already in progress for %s", repo.Name)
 	}
+	// Heartbeat the attempt timestamp for the duration of the sync so a
+	// long-running clone is not mistaken for an abandoned one.
+	done := make(chan struct{})
+	defer close(done)
+	go s.heartbeatSyncAttempt(repo.ID, syncHeartbeatInterval, done)
 	fail := func(err error) (string, error) {
 		s.db.Model(repo).Updates(map[string]interface{}{
 			"sync_status": "failed", "last_sync_attempt_at": attemptAt, "last_sync_error": err.Error(),
@@ -105,6 +116,23 @@ func (s *Service) SyncRepository(ctx context.Context, repo *models.Repository) (
 	clones.dirs[repo.ID] = workDir
 	clones.mu.Unlock()
 	return head, nil
+}
+
+// heartbeatSyncAttempt refreshes last_sync_attempt_at every interval until
+// done is closed. The stale-syncing reclaimer (syncStaleAfter) trusts this
+// column, so an actively heartbeating sync is never reclaimed mid-clone.
+func (s *Service) heartbeatSyncAttempt(repoID string, interval time.Duration, done <-chan struct{}) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			s.db.Model(&models.Repository{}).Where("id = ?", repoID).
+				Update("last_sync_attempt_at", time.Now().Format(time.RFC3339))
+		}
+	}
 }
 
 // TreeEntry is one directory entry in the file browser.

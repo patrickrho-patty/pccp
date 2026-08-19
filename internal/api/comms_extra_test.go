@@ -20,6 +20,7 @@ func commsTestServer(t *testing.T) (*Server, *gorm.DB) {
 	for _, m := range []interface{}{
 		&models.Organization{}, &models.User{}, &models.Conversation{}, &models.Message{},
 		&models.Presence{}, &models.FileTransfer{}, &models.Broadcast{}, &models.AuditEvent{},
+		&models.ProjectMember{},
 		&models.ServiceSigningKey{}, &models.SecurityRule{}, &models.PolicyEpoch{}, &models.CapabilityLease{},
 		&models.Harness{}, &models.Session{},
 	} {
@@ -163,7 +164,57 @@ func TestBroadcastAckDashboard(t *testing.T) {
 	rec = doJSON(t, srv, "GET", "/api/communications/broadcasts/"+bc.ID+"/acks", "", org.ID)
 	var dash map[string]interface{}
 	json.Unmarshal(rec.Body.Bytes(), &dash)
-	if dash["acked"].(float64) != 1 || dash["total_users"].(float64) != 2 || len(dash["pending"].([]interface{})) != 1 {
+	// pending is the acked=false subset of recipients — derived, not shipped.
+	recipients, _ := dash["recipients"].([]interface{})
+	if dash["acked"].(float64) != 1 || dash["total_users"].(float64) != 2 || len(recipients) != 2 {
 		t.Fatalf("ack dashboard wrong: %v", dash)
+	}
+	pendingCount := 0
+	for _, r := range recipients {
+		if !r.(map[string]interface{})["acked"].(bool) {
+			pendingCount++
+		}
+	}
+	if pendingCount != 1 {
+		t.Fatalf("expected 1 pending recipient, got %d: %v", pendingCount, dash)
+	}
+}
+
+// TestBroadcastAcksLegacyEmptyScopeDoesNotFallBackToOrg (Q2): a legacy
+// broadcast (no frozen snapshot) whose project scope resolves to ZERO
+// eligible users — an all-suspended roster — must report zero recipients,
+// not fall through to "all active org users".
+func TestBroadcastAcksLegacyEmptyScopeDoesNotFallBackToOrg(t *testing.T) {
+	srv, db := commsTestServer(t)
+	org := models.Organization{Name: "o", Slug: "obc2", Status: "active"}
+	db.Create(&org)
+	suspended := models.User{Email: "s@corp.kr", Name: "s", Status: "suspended"}
+	suspended.OrganizationID = org.ID
+	db.Create(&suspended)
+	active := models.User{Email: "a@corp.kr", Name: "a", Status: "active"}
+	active.OrganizationID = org.ID
+	db.Create(&active)
+	db.Create(&models.ProjectMember{
+		OrganizationID: org.ID, ProjectID: "p1", UserID: suspended.ID, Role: "member",
+	})
+	// Legacy broadcast: target scope recorded, no audience snapshot.
+	bc := models.Broadcast{
+		Title: "t", TargetType: "project", TargetID: "p1", Status: "active",
+	}
+	bc.OrganizationID = org.ID
+	db.Create(&bc)
+
+	rec := doJSON(t, srv, "GET", "/api/communications/broadcasts/"+bc.ID+"/acks", "", org.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("acks failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var dash map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &dash)
+	if dash["total_users"].(float64) != 0 {
+		t.Fatalf("all-suspended project roster must resolve to zero recipients, not the org: %v", dash)
+	}
+	excluded, _ := dash["excluded"].([]interface{})
+	if len(excluded) != 1 {
+		t.Fatalf("suspended roster member should be listed as excluded: %v", dash)
 	}
 }

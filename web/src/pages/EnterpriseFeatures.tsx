@@ -5,6 +5,7 @@ import { showToast } from '../components/Toast'
 import { Modal, ModalFooter } from '../components/Modal'
 import { useAuth } from '../hooks/useAuth'
 import { api } from '../api'
+import { formatShortTime } from '../utils/format'
 import {
   FEATURE_CATALOG, ADMIN_ROLES,
   parseGovernance, evaluateHarnesses, validateChange,
@@ -114,7 +115,7 @@ export default function EnterpriseFeatures() {
     Promise.all([
       fetch('/api/enterprise/features', { headers: h }).then(r => r.json()).catch(() => []),
       fetch('/api/enterprise/violations', { headers: h }).then(r => r.json()).catch(() => []),
-      fetch('/api/harnesses', { headers: h }).then(r => r.json()).catch(() => []),
+      api.listHarnesses().catch(() => []),
     ]).then(([f, v, hs]) => {
       setFeatures(Array.isArray(f) ? f : [])
       setViolations(Array.isArray(v) ? v : [])
@@ -173,7 +174,7 @@ export default function EnterpriseFeatures() {
     try {
       await api.updateEnterpriseFeature(f.id, {
         enabled: draft.target.enabled, enforced: draft.target.enforced,
-        config: result.config, expected_epoch: draft.expectedEpoch,
+        config: result.config, reason: draft.reason, expected_epoch: draft.expectedEpoch,
       })
     } catch (err) {
       const msg = err instanceof Error ? err.message : ''
@@ -197,13 +198,22 @@ export default function EnterpriseFeatures() {
     load()
   }
 
+  // Harness evals are computed once per real change input (feature/scope/
+  // harnesses) — not per reason-textarea keystroke — and shared between
+  // validation and the impact preview.
+  const draftEntry = draft ? FEATURE_CATALOG[draft.feature.feature_key] : undefined
+  const draftEvals = useMemo(() => {
+    if (!draft?.feature || !draft?.scope || !draftEntry) return []
+    return evaluateHarnesses(draftEntry, harnesses, draft.scope, Date.now())
+  }, [draft?.feature, draft?.scope, draftEntry, harnesses])
+
   const validation = useMemo(() => {
-    if (!draft) return null
+    if (!draft?.feature || !draft?.target || !draft?.scope) return null
     return validateChange({
       feature: draft.feature, features, harnesses,
-      target: draft.target, scope: draft.scope, role, now: Date.now(),
+      target: draft.target, scope: draft.scope, role, now: Date.now(), evals: draftEvals,
     })
-  }, [draft, features, harnesses, role])
+  }, [draft?.feature, draft?.target, draft?.scope, features, harnesses, role, draftEvals])
 
   if (loading) return <div className="text-gray-500">로딩 중...</div>
 
@@ -214,8 +224,6 @@ export default function EnterpriseFeatures() {
     violations: violations.filter(v => !v.resolved).length,
   }
 
-  const draftEntry = draft ? FEATURE_CATALOG[draft.feature.feature_key] : undefined
-  const draftEvals = draft && draftEntry ? evaluateHarnesses(draftEntry, harnesses, draft.scope, Date.now()) : []
   const draftWeakening = draft ? (draft.feature.enabled && !draft.target.enabled) || (draft.feature.enforced && !draft.target.enforced) : false
   const draftNeedsApproval = !!(draft && draftEntry?.mandatory && draftWeakening)
   const draftConfirmDisabled = !draft || !validation || validation.blockers.length > 0 || !draft.reason.trim() || (draftNeedsApproval && !draft.approved)
@@ -292,7 +300,7 @@ export default function EnterpriseFeatures() {
                         <div className="flex items-center justify-between mt-2">
                           <div className="flex items-center gap-2 text-xs">
                             {f.violation_count > 0 && <span className="text-red-500">⚠ {f.violation_count} 위반</span>}
-                            {f.last_reported_at && <span className="text-gray-400">마지막 보고: {f.last_reported_at.slice(0, 16)}</span>}
+                            {f.last_reported_at && <span className="text-gray-400">마지막 보고: {formatShortTime(f.last_reported_at)}</span>}
                           </div>
                           <div className="flex items-center gap-3">
                             <FeatureSwitch label="강제" checked={f.enforced} disabled={!isAdmin}
@@ -417,7 +425,7 @@ export default function EnterpriseFeatures() {
               <div className="grid grid-cols-3 gap-3 text-xs">
                 <div className="card py-2 px-3"><div className="text-gray-500">영향 하네스</div><div className="font-semibold">{scopeSummary(gov.scope, harnesses.length)}</div></div>
                 <div className="card py-2 px-3"><div className="text-gray-500">미해결 위반</div><div className="font-semibold text-red-600">{detailViolations.length}건 (누적 {detail.violation_count})</div></div>
-                <div className="card py-2 px-3"><div className="text-gray-500">마지막 보고</div><div className="font-semibold">{detail.last_reported_at ? detail.last_reported_at.slice(0, 16) : '없음'}</div></div>
+                <div className="card py-2 px-3"><div className="text-gray-500">마지막 보고</div><div className="font-semibold">{detail.last_reported_at ? formatShortTime(detail.last_reported_at) : '없음'}</div></div>
               </div>
 
               <div>

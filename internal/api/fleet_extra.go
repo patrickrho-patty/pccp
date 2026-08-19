@@ -505,8 +505,179 @@ func (s *Server) handleFleetApprovals(w http.ResponseWriter, r *http.Request) {
 		q = q.Where("decision = 'pending'")
 	}
 	var approvals []models.Approval
-	q.Order("created_at DESC").Limit(100).Find(&approvals)
-	writeJSON(w, http.StatusOK, approvals)
+	q.Order("created_at ASC").Limit(100).Find(&approvals)
+	writeJSON(w, http.StatusOK, s.enrichApprovals(orgID, approvals))
+}
+
+// enrichApprovals decorates pending Approval rows with the governed
+// decision-queue contract (PAT-1497). Fleet, Tools, and the dashboard
+// action center all consume this SAME typed shape so no surface infers
+// approval meaning from raw `tool_use`/`approval_type` strings. Every row
+// carries: requester + session/harness/project context, requested tool,
+// policy/risk, waiting age, expiry/SLA, current approver assignment, and
+// an exact evidence/detail route.
+func (s *Server) enrichApprovals(orgID string, approvals []models.Approval) []map[string]interface{} {
+	if len(approvals) == 0 {
+		return []map[string]interface{}{}
+	}
+	// One lookup pass for all joins: users, sessions, tools.
+	userIDs := make(map[string]bool)
+	sessionIDs := make(map[string]bool)
+	toolIDs := make(map[string]bool)
+	for _, a := range approvals {
+		if a.RequestedBy != "" {
+			userIDs[a.RequestedBy] = true
+		}
+		if a.SessionID != "" {
+			sessionIDs[a.SessionID] = true
+		}
+		if a.ActionID != "" {
+			toolIDs[a.ActionID] = true
+		}
+	}
+
+	names := map[string]string{}
+	if len(userIDs) > 0 {
+		ids := make([]string, 0, len(userIDs))
+		for id := range userIDs {
+			ids = append(ids, id)
+		}
+		var users []models.User
+		s.db.Where("id IN ?", ids).Find(&users)
+		for _, u := range users {
+			names[u.ID] = firstNonEmpty(u.NameKo, u.Name, u.Email, u.ID)
+		}
+	}
+
+	sessions := map[string]models.Session{}
+	if len(sessionIDs) > 0 {
+		ids := make([]string, 0, len(sessionIDs))
+		for id := range sessionIDs {
+			ids = append(ids, id)
+		}
+		var sess []models.Session
+		s.db.Where("session_id IN ?", ids).Find(&sess)
+		for _, su := range sess {
+			sessions[su.SessionID] = su
+		}
+	}
+
+	toolMeta := map[string]struct{ Name, Danger string }{}
+	if len(toolIDs) > 0 {
+		ids := make([]string, 0, len(toolIDs))
+		for id := range toolIDs {
+			ids = append(ids, id)
+		}
+		var tools []models.Tool
+		s.db.Where("id IN ?", ids).Find(&tools)
+		for _, t := range tools {
+			toolMeta[t.ID] = struct{ Name, Danger string }{t.Name, t.DangerLevel}
+		}
+	}
+
+	now := time.Now()
+	out := make([]map[string]interface{}, 0, len(approvals))
+	for _, a := range approvals {
+		reqName := names[a.RequestedBy]
+		if reqName == "" {
+			reqName = a.RequestedBy
+		}
+		sess := sessions[a.SessionID]
+		risk := toolMeta[a.ActionID].Danger
+		if risk == "" {
+			risk = approvalTypeRisk(a.ApprovalType)
+		}
+		waitingSec := int64(0)
+		if !a.CreatedAt.IsZero() {
+			waitingSec = int64(now.Sub(a.CreatedAt).Seconds())
+		}
+		expired := false
+		remainingSec := int64(0)
+		if a.ExpiresAt != "" {
+			if exp, err := time.Parse(time.RFC3339, a.ExpiresAt); err == nil {
+				remainingSec = int64(exp.Sub(now).Seconds())
+				expired = remainingSec <= 0
+			}
+		}
+		out = append(out, map[string]interface{}{
+			"id":                  a.ID,
+			"approval_type":       a.ApprovalType,
+			"approval_type_ko":    approvalTypeKo(a.ApprovalType),
+			"requested_by":        a.RequestedBy,
+			"requested_by_name":   reqName,
+			"harness_id":          sess.HarnessID,
+			"session_id":          a.SessionID,
+			"session_title":       sess.Title,
+			"project_id":          sess.ProjectID,
+			"repository_id":       sess.RepositoryID,
+			"action_id":           a.ActionID,
+			"tool_name":           toolMeta[a.ActionID].Name,
+			"risk":                risk,
+			"policy_rule":         approvalTypePolicy(a.ApprovalType),
+			"decision":            a.Decision,
+			"reviewer_id":         a.ReviewerID,
+			"security_reviewer_id": a.SecurityReviewerID,
+			"created_at":          a.CreatedAt.Format(time.RFC3339),
+			"waiting_age_seconds": waitingSec,
+			"expires_at":          a.ExpiresAt,
+			"expired":             expired,
+			"remaining_seconds":   remainingSec,
+			"detail_route":        approvalDetailRoute(a),
+		})
+	}
+	return out
+}
+
+// approvalTypeKo / approvalTypeRisk / approvalTypePolicy are the canonical
+// Korean labels, risk level, and governing policy rule per approval type —
+// the closest thing to a documented approval matrix for the presentation
+// contract, so the UI never has to decode `tool_use_...` itself.
+func approvalTypeKo(t string) string {
+	switch {
+	case strings.HasPrefix(t, "tool_"):
+		return "도구 실행 승인"
+	case strings.HasPrefix(t, "file_write"):
+		return "파일 작성 승인"
+	case strings.HasPrefix(t, "model_use"):
+		return "모델 사용 승인"
+	case strings.HasPrefix(t, "network"):
+		return "네트워크 승인"
+	default:
+		return "승인"
+	}
+}
+
+func approvalTypeRisk(t string) string {
+	switch {
+	case strings.HasPrefix(t, "tool_"):
+		return "medium"
+	case strings.HasPrefix(t, "network"):
+		return "high"
+	default:
+		return "low"
+	}
+}
+
+func approvalTypePolicy(t string) string {
+	switch {
+	case strings.HasPrefix(t, "tool_"):
+		return "tool_policy"
+	case strings.HasPrefix(t, "file_write"):
+		return "file_write_policy"
+	case strings.HasPrefix(t, "model_use"):
+		return "model_policy"
+	case strings.HasPrefix(t, "network"):
+		return "network_policy"
+	default:
+		return "approval_matrix"
+	}
+}
+
+func approvalDetailRoute(a models.Approval) string {
+	if a.SessionID != "" {
+		return "/sessions/" + a.SessionID
+	}
+	return "/tools?tab=approvals"
 }
 
 // handleFleetImpactPreview counts what a scoped lockdown would hit (A11).

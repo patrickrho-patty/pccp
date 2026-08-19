@@ -250,24 +250,70 @@ type RepositoryHeatmapData struct {
 	RiskScore        float64 `json:"risk_score"`
 }
 
-// GetRepositoryHeatmap returns sensitivity heatmap data for all repos in an org.
-func (s *Service) GetRepositoryHeatmap(orgID string) ([]RepositoryHeatmapData, error) {
+// repoCount is one grouped COUNT(*) row keyed by repository.
+type repoCount struct {
+	RepositoryID string `gorm:"column:repository_id"`
+	Count        int64  `gorm:"column:count"`
+}
+
+func toCountMap(rows []repoCount) map[string]int64 {
+	m := make(map[string]int64, len(rows))
+	for _, r := range rows {
+		m[r.RepositoryID] = r.Count
+	}
+	return m
+}
+
+// GetRepositoryHeatmap returns sensitivity heatmap data for repos in an
+// org (PRD §33.5). repositoryID, when set, scopes the result to that one
+// repository so the detail page fetches only its own row.
+func (s *Service) GetRepositoryHeatmap(orgID, repositoryID string) ([]RepositoryHeatmapData, error) {
+	repoQ := s.db.Where("organization_id = ?", orgID)
+	if repositoryID != "" {
+		repoQ = repoQ.Where("id = ?", repositoryID)
+	}
 	var repos []models.Repository
-	s.db.Where("organization_id = ?", orgID).Find(&repos)
+	if err := repoQ.Find(&repos).Error; err != nil {
+		return nil, fmt.Errorf("gitscm: heatmap repositories: %w", err)
+	}
 
-	var result []RepositoryHeatmapData
-	for _, repo := range repos {
-		var sessionCount, changeCount, findingCount int64
-		s.db.Model(&models.Session{}).Where("organization_id = ? AND repository_id = ?", orgID, repo.ID).Count(&sessionCount)
-		s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ?", orgID, repo.ID).Count(&changeCount)
-		// Scope findings to this repository through its sessions, mirroring
-		// the `repository` filter in handleSecurityFindings (PAT-1490), so
-		// the heatmap count reconciles with the repo's findings drill-down.
+	// Counts are grouped per repository — one query per dataset for the
+	// all-repos path, not per-repo COUNTs (E1). Findings scope to a
+	// repository through its sessions via the canonical subquery shared
+	// with handleSecurityFindings (PAT-1490), so the heatmap count
+	// reconciles with the repo's findings drill-down.
+	sessionCounts := map[string]int64{}
+	changeCounts := map[string]int64{}
+	findingCounts := map[string]int64{}
+	if repositoryID != "" {
+		var c int64
+		s.db.Model(&models.Session{}).Where("organization_id = ? AND repository_id = ?", orgID, repositoryID).Count(&c)
+		sessionCounts[repositoryID] = c
+		s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ?", orgID, repositoryID).Count(&c)
+		changeCounts[repositoryID] = c
 		s.db.Model(&models.SecurityFinding{}).
-			Where("organization_id = ? AND session_id IN (?)", orgID,
-				s.db.Model(&models.Session{}).Select("session_id").Where("organization_id = ? AND repository_id = ?", orgID, repo.ID)).
-			Count(&findingCount)
+			Where("organization_id = ? AND session_id IN (?)", orgID, models.RepositorySessionIDs(s.db, orgID, repositoryID)).
+			Count(&c)
+		findingCounts[repositoryID] = c
+	} else {
+		var sessionRows, changeRows, findingRows []repoCount
+		s.db.Model(&models.Session{}).Select("repository_id, COUNT(*) AS count").
+			Where("organization_id = ?", orgID).Group("repository_id").Scan(&sessionRows)
+		s.db.Model(&models.ChangeSet{}).Select("repository_id, COUNT(*) AS count").
+			Where("organization_id = ?", orgID).Group("repository_id").Scan(&changeRows)
+		s.db.Model(&models.SecurityFinding{}).
+			Select("sessions.repository_id AS repository_id, COUNT(*) AS count").
+			Joins("JOIN sessions ON sessions.session_id = security_findings.session_id AND sessions.organization_id = ?", orgID).
+			Where("security_findings.organization_id = ?", orgID).
+			Group("sessions.repository_id").Scan(&findingRows)
+		sessionCounts = toCountMap(sessionRows)
+		changeCounts = toCountMap(changeRows)
+		findingCounts = toCountMap(findingRows)
+	}
 
+	result := make([]RepositoryHeatmapData, 0, len(repos))
+	for _, repo := range repos {
+		findingCount := findingCounts[repo.ID]
 		riskScore := 0.0
 		switch repo.Sensitivity {
 		case "restricted":
@@ -287,8 +333,8 @@ func (s *Service) GetRepositoryHeatmap(orgID string) ([]RepositoryHeatmapData, e
 			RepositoryID:     repo.ID,
 			RepositoryName:   repo.Name,
 			Sensitivity:      repo.Sensitivity,
-			AISessions:       int(sessionCount),
-			ChangesMade:      int(changeCount),
+			AISessions:       int(sessionCounts[repo.ID]),
+			ChangesMade:      int(changeCounts[repo.ID]),
 			SecurityFindings: int(findingCount),
 			RiskScore:        riskScore,
 		})

@@ -9,6 +9,7 @@ import { formatRelative } from '../utils/format'
 export default function EndpointDetail() {
   const { id } = useParams<{ id: string }>()
   const [ep, setEp] = useState<any>(null)
+  const [modelPkg, setModelPkg] = useState<any>(null)
   const [loading, setLoading] = useState(true)
 
   const load = () => {
@@ -17,6 +18,18 @@ export default function EndpointDetail() {
       const e = (Array.isArray(d) ? d : []).find((x: any) => x.id === id || x.endpoint_id === id)
       setEp(e || null)
       setLoading(false)
+      if (e?.model_package_id) {
+        api.getModel(e.model_package_id).then((m: any) => {
+          setModelPkg(m || null)
+        }).catch(() => {
+          api.listModels().then((list: any[]) => {
+            const found = (Array.isArray(list) ? list : []).find((m: any) => m.package_id === e.model_package_id || m.id === e.model_package_id)
+            setModelPkg(found || null)
+          }).catch(() => setModelPkg(null))
+        })
+      } else {
+        setModelPkg(null)
+      }
     }).catch(() => setLoading(false))
   }
   useEffect(() => { load() }, [id])
@@ -36,12 +49,41 @@ export default function EndpointDetail() {
     <div>
       <Link to="/models" className="text-sm text-blue-600 hover:underline mb-4 inline-block">← 모델 목록</Link>
       <div className="card mb-6 flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold font-mono text-lg">{ep.endpoint_id}</h1>
-          <p className="text-xs text-gray-400 mt-1">모델: <Link to={`/models/${ep.model_package_id || ep.model_id}`} className="text-blue-600 hover:underline">{ep.model_id}</Link></p>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-2xl font-bold font-mono text-lg truncate" title={ep.endpoint_id}>{ep.endpoint_id}</h1>
+          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+            <span className="text-gray-500 shrink-0">모델:</span>
+            {ep.model_package_id ? (
+              modelPkg ? (
+                <>
+                  <Link
+                    to={`/models/${modelPkg.package_id}`}
+                    className="text-blue-600 hover:underline font-medium truncate max-w-[24rem]"
+                    title={modelPkg.name_ko || modelPkg.name || modelPkg.package_id}
+                    aria-label={`모델 ${modelPkg.name_ko || modelPkg.name || modelPkg.package_id}`}
+                  >
+                    {modelPkg.name_ko || modelPkg.name || modelPkg.package_id}
+                  </Link>
+                  <span className="text-gray-400 font-mono text-[11px] truncate" title={`${modelPkg.package_id} · ${modelPkg.version || '-'}`}>
+                    {modelPkg.package_id} · {modelPkg.version || '-'}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="text-gray-400" title="삭제되었거나 열람할 수 없습니다">모델을 확인할 수 없습니다</span>
+                  <span className="text-gray-400 font-mono text-[11px]">{ep.model_package_id}</span>
+                </>
+              )
+            ) : (
+              <span className="text-gray-400">모델 정보 없음</span>
+            )}
+          </div>
+          <div className="mt-1 flex items-center gap-2 text-xs">
+            <span className="text-gray-500">상태:</span>
+            <span className={statusBadge(ep.status)}>{ep.status || '-'}</span>
+          </div>
         </div>
-        <div className="flex gap-2 items-center shrink-0">
-          <span className={statusBadge(ep.status)}>{ep.status || '-'}</span>
+        <div className="flex gap-2 items-center shrink-0 ml-4">
           <span className="badge-blue">보증 {ep.assurance_level || 'L1'}</span>
         </div>
       </div>

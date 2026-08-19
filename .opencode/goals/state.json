@@ -553,6 +553,98 @@
       "lastCheckpoint": null,
       "skipNextTerminalCheck": false,
       "focused": true
+    },
+    {
+      "goalId": "f9e5597b-9216-4fb7-aa2e-75b5a300bf9f",
+      "runId": "9fffc966-afa4-4d4e-8ae6-edb4c994b923",
+      "condition": "please execute in the order that makes sense, and use the /fix-linear-issue in order to execute each and every one of the 10 above, and push through till the last part",
+      "successCriteria": "",
+      "constraints": "",
+      "mode": "normal",
+      "sessionID": "ses_fe46a538affedMBgQPQzseAJfE",
+      "turnCount": 0,
+      "startedAt": 1787171346788,
+      "pausedAt": 0,
+      "totalTokens": 313911,
+      "usage": {
+        "input": 313745,
+        "output": 6064,
+        "reasoning": 3899,
+        "cacheRead": 3648637,
+        "cacheWrite": 0,
+        "cost": 0.040664374,
+        "costKnown": true
+      },
+      "options": {
+        "maxTurns": 10,
+        "maxDurationMs": 900000,
+        "maxTokens": 200000,
+        "minDelayMs": 1500,
+        "maxRecentMessages": 50,
+        "noProgressTokenThreshold": 50,
+        "noProgressTurnsBeforePause": 2,
+        "noToolCallTurnsBeforePause": 2,
+        "budgetWrapupRatio": 0.8,
+        "warnTurnsRemaining": 3,
+        "warnDurationMsRemaining": 60000,
+        "warnTokensRemaining": 25000,
+        "maxPromptFailures": 3,
+        "resultRetentionMs": 604800000,
+        "maxStoredResults": 200
+      },
+      "lastStatus": "Auto-continue paused because a new human message arrived; the latest instruction wins. Run /goal resume to continue.",
+      "lastAssistantText": "",
+      "lastAssistantMessageID": "",
+      "lastContinueAt": 0,
+      "lastProgressAt": 1787171459361,
+      "noProgressTurns": 0,
+      "noToolCallTurns": 0,
+      "blockedReason": "",
+      "budgetWrapupSent": false,
+      "stopped": true,
+      "stopReason": "user intervention",
+      "promptFailures": 0,
+      "formatFailures": 0,
+      "executionContext": {
+        "agent": "build",
+        "model": {
+          "providerID": "opencode-go",
+          "modelID": "muse-spark-1.2-contributor"
+        },
+        "variant": "xhigh"
+      },
+      "continuationClaim": null,
+      "messageIDs": [
+        "msg_01bb69977001Aq4ywgViuPWK5P",
+        "msg_01bb6c00d001tttGcN2o8inCbJ",
+        "msg_01bb6c845001YK0HIMMJ4fKMo7",
+        "msg_01bb6d210001t5Ui132ZRWXkF1",
+        "msg_01bb6dc88001BRktfLkAspqvNh",
+        "msg_01bb70e7a001zwt7mhP5iFo9Pg",
+        "msg_01bb747fa001cfC3rN5C6LbKXf",
+        "msg_01bb75bb900130rs9rhUJRKRnf",
+        "msg_01bb76e0e001HCL5wEDkCmJqoH",
+        "msg_01bb782050011hAmaTOIysBdoY",
+        "msg_01bb7f308001HOsitfXn3jRFL6",
+        "msg_01bb80934001GjYALuCmAuEeq8",
+        "msg_01bb842cd001zAriEMkoJ03B0U"
+      ],
+      "history": [
+        {
+          "type": "set",
+          "detail": "Goal created with limits: 10 auto-continues, 900s, 200,000 context tokens.",
+          "timestamp": 1787171346788
+        },
+        {
+          "type": "paused",
+          "detail": "Paused immediately when a new human message arrived; latest instruction wins.",
+          "timestamp": 1787171346790
+        }
+      ],
+      "checkpoints": [],
+      "lastCheckpoint": null,
+      "skipNextTerminalCheck": false,
+      "focused": true
     }
   ],
   "results": [],
