@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { useParams, Link, useSearchParams } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
+import { useTabParam } from '../hooks/useTabParam'
 import { api } from '../api'
 import { StatCard } from '../components/StatCard'
 import { Modal, ModalFooter } from '../components/Modal'
@@ -16,16 +17,7 @@ export default function HarnessDetail() {
   const confirm = useConfirm()
   const [detail, setDetail] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [searchParams, setSearchParams] = useSearchParams()
-  const validTabs = new Set(['overview', 'sessions', 'security', 'audit'])
-  const rawTab = searchParams.get('tab')
-  const tab = (rawTab && validTabs.has(rawTab) ? rawTab : 'overview') as 'overview' | 'sessions' | 'security' | 'audit'
-  const setTab = (t: string) => setSearchParams(prev => {
-    const next = new URLSearchParams(prev)
-    if (t === 'overview') next.delete('tab')
-    else next.set('tab', t)
-    return next
-  }, { replace: true })
+  const [tab, setTab] = useTabParam('overview', ['overview', 'sessions', 'security', 'audit']) as [ 'overview' | 'sessions' | 'security' | 'audit', (t: string) => void ]
   const [revokeOpen, setRevokeOpen] = useState(false)
   const [revokeReason, setRevokeReason] = useState('')
 

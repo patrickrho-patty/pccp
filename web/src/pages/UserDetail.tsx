@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams, Link, useSearchParams } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import { api } from '../api'
 import { EntitySelect } from '../components/EntitySelect'
 import { FavoriteStar } from '../hooks/useFavorites'
@@ -8,6 +8,7 @@ import { formatUsageAmount, UsageReport } from '../components/UsageReport'
 import { useAuth } from '../hooks/useAuth'
 import { userActions, userActionSpec, applyUserLifecycle, canIssueEnrollment, lifecycleDenialLabel, STATUS_KO, STATUS_BADGE, UserLifecycleAction } from '../userLifecycle'
 import { detailRoute } from '../relationLinks'
+import { useTabParam } from '../hooks/useTabParam'
 
 // UserDetail (web/01 B4): /users/:id with tabs — Overview /
 // Entitlement / Sessions / Harnesses / Usage / Audit / Contractor.
@@ -29,16 +30,7 @@ const emptyContractor = () => ({
 export default function UserDetail() {
   const { id } = useParams<{ id: string }>()
   const { email: operatorEmail } = useAuth()
-  const [params, setParams] = useSearchParams()
-  const validTabs = new Set(['overview', 'entitlements', 'sessions', 'harnesses', 'usage', 'audit', 'contractor'])
-  const rawTab = params.get('tab')
-  const tab = rawTab && validTabs.has(rawTab) ? rawTab : 'overview'
-  const setTab = (t: string) => setParams(prev => {
-    const next = new URLSearchParams(prev)
-    if (t === 'overview') next.delete('tab')
-    else next.set('tab', t)
-    return next
-  }, { replace: true })
+  const [tab, setTab] = useTabParam('overview', ['overview', 'entitlements', 'sessions', 'harnesses', 'usage', 'audit', 'contractor']) as [string, (t: string) => void]
 
   const [user, setUser] = useState<any>(null)
   const [sessions, setSessions] = useState<any[]>([])
