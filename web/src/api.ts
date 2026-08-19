@@ -395,6 +395,17 @@ export const api = {
   trailsNeighbors: (sourceType: string, sourceId: string) =>
     request<any>(`/api/trails/nodes/${encodeURIComponent(sourceType)}/${encodeURIComponent(sourceId)}/neighbors`),
   trailsRebuild: () => request<any>('/api/trails/rebuild', { method: 'POST', body: '{}' }),
+
+  // PAT-1451: evidence-hardened admin search (no bulk export by design).
+  esSearch: (data: { query: string; domains?: string[]; session_id?: string }) =>
+    request<any>('/api/evidence-search/query', { method: 'POST', body: JSON.stringify(data) }),
+  esOpen: (domain: string, id: string) =>
+    request<any>(`/api/evidence-search/open/${encodeURIComponent(domain)}/${encodeURIComponent(id)}`),
+  esReveal: (data: { domain: string; source_id: string; reason: string }) =>
+    request<any>('/api/evidence-search/reveal', { method: 'POST', body: JSON.stringify(data) }),
+  esGrants: () => request<any[]>('/api/evidence-search/grants'),
+  esCreateGrant: (grant: any) => request<any>('/api/evidence-search/grants', { method: 'POST', body: JSON.stringify(grant) }),
+  esRevokeGrant: (id: number) => request<any>(`/api/evidence-search/grants/${id}/revoke`, { method: 'POST', body: '{}' }),
   getPolicyException: (id: string) => request<any>(`/api/policy/exceptions/${id}`),
   createPolicyException: (data: any) =>
     request<any>('/api/policy/exceptions', { method: 'POST', body: JSON.stringify(data) }),

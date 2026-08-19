@@ -549,6 +549,16 @@ func (s *Server) setupRouter() {
 			r.Get("/status", s.handleFleetStatus)
 		})
 
+		// Evidence-hardened admin search (PAT-1451) — no bulk export by design.
+		r.Route("/evidence-search", func(r chi.Router) {
+			r.Post("/query", s.handleESSearch)
+			r.Get("/open/{domain}/{id}", s.handleESOpen)
+			r.Post("/reveal", s.handleESReveal)
+			r.Get("/grants", s.handleESGrantsList)
+			r.Post("/grants", s.handleESGrantCreate)
+			r.Post("/grants/{id}/revoke", s.handleESGrantRevoke)
+		})
+
 		// Trails causal graph (PAT-1450) — no export endpoints by design.
 		r.Route("/trails", func(r chi.Router) {
 			r.Get("/overview", s.handleTrailsOverview)

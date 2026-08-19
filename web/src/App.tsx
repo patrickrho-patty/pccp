@@ -41,6 +41,7 @@ import NotificationRouting from './pages/NotificationRouting'
 import ReleaseCampaigns from './pages/ReleaseCampaigns'
 import ModelCampaigns from './pages/ModelCampaigns'
 import Trails from './pages/Trails'
+import EvidenceSearch from './pages/EvidenceSearch'
 import AccountPortal from './pages/AccountPortal'
 import LiveView from './pages/LiveView'
 import CodeExplorer from './pages/CodeExplorer'
@@ -122,6 +123,7 @@ function AppContent() {
           <Route path="/live" element={<LiveView />} />
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/trails" element={<Trails />} />
+          <Route path="/evidence-search" element={<EvidenceSearch />} />
           <Route path="/sessions/:id" element={<SessionDetail />} />
           <Route path="/sessions/:id/provenance" element={<Provenance />} />
           <Route path="/models" element={<ModelInfra />} />

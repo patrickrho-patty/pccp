@@ -141,6 +141,9 @@ func AllModels() []interface{} {
 		&PublicStatusSnapshot{},
 		&PublicStatusSubscriber{},
 		&PublicStatusNotification{},
+		// Evidence-hardened search (PAT-1451)
+		&EvidenceSearchGrant{},
+		&EvidenceSearchAudit{},
 		// Trails causal index (PAT-1450)
 		&TrailNode{},
 		&TrailEdge{},
