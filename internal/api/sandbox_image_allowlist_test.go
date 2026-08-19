@@ -11,25 +11,42 @@ import (
 
 func TestSandboxImageAllowlistCanonicalValidation(t *testing.T) {
 	cases := []struct {
-		name string
-		body string
-		ok   bool
+		name      string
+		body      string
+		ok        bool
+		errSubstr string
 	}{
-		{"good digest", `{"canonical":[{"repository":"patty/sandbox-base","digest_sha256":"` + strings.Repeat("a", 64) + `","signer":"patty-release","signature_ref":"sigstore://...","scan_status":"clean"}]}`, true},
-		{"bad digest length", `{"canonical":[{"repository":"r","digest_sha256":"deadbeef"}]}`, false},
-		{"bad digest non-hex", `{"canonical":[{"repository":"r","digest_sha256":"` + strings.Repeat("z", 64) + `"}]}`, false},
-		{"raw without expansion", `{"canonical":[{"repository":"r","is_raw":true,"original_ref":"r:*"}]}`, false},
-		{"raw with expansion", `{"canonical":[{"repository":"r","is_raw":true,"original_ref":"r:*","expanded_digests":"[\"` + strings.Repeat("b", 64) + `\"]"}]}`, true},
-		{"raw expansion not hex", `{"canonical":[{"repository":"r","is_raw":true,"original_ref":"r:*","expanded_digests":"[\"not-hex\"]"}]}`, false},
-		{"missing repository", `{"canonical":[{"digest_sha256":"` + strings.Repeat("c", 64) + `"}]}`, false},
+		{"good digest", `{"canonical":[{"repository":"patty/sandbox-base","digest_sha256":"` + strings.Repeat("a", 64) + `","signer":"patty-release","signature_ref":"sigstore://...","scan_status":"clean"}]}`, true, ""},
+		{"bad digest length", `{"canonical":[{"repository":"r","digest_sha256":"deadbeef"}]}`, false, "64-char hex sha256"},
+		{"bad digest non-hex", `{"canonical":[{"repository":"r","digest_sha256":"` + strings.Repeat("z", 64) + `"}]}`, false, "64-char hex sha256"},
+		{"raw without expansion", `{"canonical":[{"repository":"r","is_raw":true,"original_ref":"r:*"}]}`, false, "is_raw entries require"},
+		{"raw with expansion", `{"canonical":[{"repository":"r","is_raw":true,"original_ref":"r:*","expanded_digests":"[\"` + strings.Repeat("b", 64) + `\"]"}]}`, true, ""},
+		{"raw expansion not hex", `{"canonical":[{"repository":"r","is_raw":true,"original_ref":"r:*","expanded_digests":"[\"not-hex\"]"}]}`, false, "must be 64-char hex sha256"},
+		{"missing repository", `{"canonical":[{"digest_sha256":"` + strings.Repeat("c", 64) + `"}]}`, false, "repository required"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := json.Unmarshal([]byte(c.body), &struct {
+			var req struct {
 				Canonical []models.SandboxImage `json:"canonical"`
-			}{})
-			if err != nil {
+			}
+			if err := json.Unmarshal([]byte(c.body), &req); err != nil {
 				t.Fatalf("parse: %v", err)
+			}
+			if len(req.Canonical) != 1 {
+				t.Fatalf("expected 1 canonical entry, got %d", len(req.Canonical))
+			}
+			err := validateSandboxImage(&req.Canonical[0])
+			if c.ok {
+				if err != nil {
+					t.Fatalf("expected valid, got error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if c.errSubstr != "" && !strings.Contains(err.Error(), c.errSubstr) {
+					t.Fatalf("error %q should contain %q", err.Error(), c.errSubstr)
+				}
 			}
 		})
 	}

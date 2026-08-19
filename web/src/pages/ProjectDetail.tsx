@@ -10,6 +10,7 @@ import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
 import { formatUsageStateInteger, formatUsageAmount, UsageReport } from '../components/UsageReport'
 import { AllowedModelChips, normalizeAllowedModelItems } from '../allowedModels'
+import { sessionLifecycleLabel } from '../glossary'
 
 const ROLES = [
   { value: 'owner', label: '소유자 · Owner' },
@@ -231,7 +232,7 @@ export default function ProjectDetail() {
               {sessions.map((s: any) => (
                 <div key={s.id} className="flex items-center gap-3 text-sm p-2 bg-gray-50 rounded flex-wrap">
                   <Link to={`/sessions/${s.session_id || s.id}`} className="text-blue-600 hover:underline font-medium">{s.title || '제목 없음'}</Link>
-                  <span className={`text-xs ${s.status === 'active' ? 'text-green-600' : s.status === 'terminated' ? 'text-red-600' : 'text-gray-400'}`}>{s.status}</span>
+                  <span className={`text-xs ${s.status === 'active' ? 'text-green-600' : s.status === 'terminated' ? 'text-red-600' : 'text-gray-400'}`}>{sessionLifecycleLabel(s.status)}</span>
                   {s.model_class && <span className="text-xs text-gray-400">· {s.model_class}</span>}
                   <span className="text-xs text-gray-400 ml-auto">{formatRelative(s.opened_at)}</span>
                 </div>

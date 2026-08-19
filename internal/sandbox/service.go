@@ -449,13 +449,22 @@ func (s *Service) updateSandboxStatus(sb *Sandbox, status, timestamp string) {
 }
 
 // imageRepoPart strips an optional tag or digest, returning the repository
-// name ("patty/sandbox-base:latest" → "patty/sandbox-base").
+// portion of an image ref (everything up to the last "/").
+// Port-bearing refs like "myregistry.local:5000/patty/sandbox-base:latest"
+// must keep the registry port intact — the canonical reference is the
+// substring after the last "/", not after the first colon.
 func imageRepoPart(image string) string {
 	if at := strings.Index(image, "@"); at >= 0 {
 		image = image[:at]
 	}
-	if colon := strings.Index(image, ":"); colon >= 0 {
-		image = image[:colon]
+	// Only treat a colon as a tag separator if it appears after the
+	// last "/" (i.e. it's the port-or-tag in the repository segment,
+	// not the registry host:port).
+	slash := strings.LastIndex(image, "/")
+	if colon := strings.LastIndex(image, ":"); colon >= 0 {
+		if slash < 0 || colon > slash {
+			image = image[:colon]
+		}
 	}
 	return image
 }

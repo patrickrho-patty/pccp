@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -614,7 +615,7 @@ func (s *Server) handleFileTransferUpload(w http.ResponseWriter, r *http.Request
 		"storage_path":       path,
 		"file_hash":          hashHex,
 		"file_size":          int64(len(content)),
-		"file_type":          header.Filename[strings.LastIndex(header.Filename, ".")+1:],
+		"file_type":          fileExt(header.Filename),
 		"scan_status":        scanStatus,
 		"scan_findings_json": string(findingsJSON),
 		"status":             map[bool]string{true: "ready", false: "rejected"}[scanStatus == "clean"],
@@ -770,4 +771,15 @@ func (s *Server) sweepCommsRetention() int {
 func sanitizeName(name string) string {
 	replacer := strings.NewReplacer("/", "_", "\\", "_", "..", "_")
 	return replacer.Replace(name)
+}
+
+// fileExt returns the lowercased extension without the leading dot, or
+// the empty string if the filename has no extension. Uses
+// strings.LastIndex so filenames with multiple dots (e.g. "foo.tar.gz")
+// yield the final segment.
+func fileExt(name string) string {
+	if i := strings.LastIndex(name, "."); i >= 0 && i < len(name)-1 {
+		return strings.ToLower(name[i+1:])
+	}
+	return ""
 }

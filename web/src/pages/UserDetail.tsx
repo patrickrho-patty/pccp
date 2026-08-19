@@ -8,6 +8,7 @@ import { formatUsageAmount, UsageReport } from '../components/UsageReport'
 import { useAuth } from '../hooks/useAuth'
 import { userActions, userActionSpec, applyUserLifecycle, canIssueEnrollment, lifecycleDenialLabel, STATUS_KO, STATUS_BADGE, UserLifecycleAction } from '../userLifecycle'
 import { detailRoute } from '../relationLinks'
+import { sessionLifecycleLabel } from '../glossary'
 import { useTabParam } from '../hooks/useTabParam'
 
 // UserDetail (web/01 B4): /users/:id with tabs — Overview /
@@ -411,7 +412,7 @@ export default function UserDetail() {
               {sessions.map((s: any) => (
                 <Link key={s.id} to={detailRoute('session', s.session_id || s.id)} state={{ from: `/users/${id}?tab=sessions` }} className="flex justify-between text-[11px] border-b border-gray-50 py-1 hover:bg-gray-50 px-1">
                   <span className="text-gray-700">{s.title || s.session_id}</span>
-                  <span className="text-gray-400">{s.status} · {s.model_class || '—'}</span>
+                  <span className="text-gray-400">{sessionLifecycleLabel(s.status)} · {s.model_class || '—'}</span>
                 </Link>
               ))}
             </div>
