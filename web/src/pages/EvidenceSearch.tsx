@@ -30,8 +30,10 @@ export default function EvidenceSearch() {
   const [revealReason, setRevealReason] = useState('')
   const [revealed, setRevealed] = useState<any>(null)
 
-  const loadGrants = () => api.esGrants().then((d: Grant[]) => setGrants(Array.isArray(d) ? d : [])).catch(() => {})
-  useEffect(loadGrants, [])
+  const loadGrants = () => {
+    api.esGrants().then((d: Grant[]) => setGrants(Array.isArray(d) ? d : [])).catch(() => {})
+  }
+  useEffect(() => { loadGrants() }, [])
 
   const search = () => {
     if (!q.trim()) return
