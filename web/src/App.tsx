@@ -40,6 +40,7 @@ import StatusCenter from './pages/StatusCenter'
 import NotificationRouting from './pages/NotificationRouting'
 import ReleaseCampaigns from './pages/ReleaseCampaigns'
 import ModelCampaigns from './pages/ModelCampaigns'
+import Trails from './pages/Trails'
 import AccountPortal from './pages/AccountPortal'
 import LiveView from './pages/LiveView'
 import CodeExplorer from './pages/CodeExplorer'
@@ -120,6 +121,7 @@ function AppContent() {
           <Route path="/repositories/:id" element={<RepositoryDetail />} />
           <Route path="/live" element={<LiveView />} />
           <Route path="/sessions" element={<Sessions />} />
+          <Route path="/trails" element={<Trails />} />
           <Route path="/sessions/:id" element={<SessionDetail />} />
           <Route path="/sessions/:id/provenance" element={<Provenance />} />
           <Route path="/models" element={<ModelInfra />} />

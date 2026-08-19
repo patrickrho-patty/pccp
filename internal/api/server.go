@@ -549,6 +549,16 @@ func (s *Server) setupRouter() {
 			r.Get("/status", s.handleFleetStatus)
 		})
 
+		// Trails causal graph (PAT-1450) — no export endpoints by design.
+		r.Route("/trails", func(r chi.Router) {
+			r.Get("/overview", s.handleTrailsOverview)
+			r.Get("/graph", s.handleTrailsGraph)
+			r.Get("/nodes/{sourceType}/{sourceId}", s.handleTrailsNodeDetail)
+			r.Get("/nodes/{sourceType}/{sourceId}/neighbors", s.handleTrailsNeighbors)
+			r.Post("/path", s.handleTrailsPath)
+			r.Post("/rebuild", s.handleTrailsRebuild)
+		})
+
 		// Model distribution campaigns (PAT-1444)
 		r.Route("/models/distribution", func(r chi.Router) {
 			r.Post("/entitlements", s.handleMDEntitle)

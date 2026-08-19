@@ -385,6 +385,16 @@ export const api = {
   mdReconcile: () => request<any>('/api/models/distribution/reconcile-sweep', { method: 'POST', body: '{}' }),
   mdRecall: (data: { package_id: string; reason: string }) =>
     request<any>('/api/models/distribution/recall', { method: 'POST', body: JSON.stringify(data) }),
+
+  // PAT-1450: Trails causal graph (no export endpoints by design).
+  trailsOverview: () => request<any>('/api/trails/overview'),
+  trailsGraph: (scope: string, ref?: string) =>
+    request<any>(`/api/trails/graph?scope=${encodeURIComponent(scope)}${ref ? '&ref=' + encodeURIComponent(ref) : ''}`),
+  trailsNode: (sourceType: string, sourceId: string) =>
+    request<any>(`/api/trails/nodes/${encodeURIComponent(sourceType)}/${encodeURIComponent(sourceId)}`),
+  trailsNeighbors: (sourceType: string, sourceId: string) =>
+    request<any>(`/api/trails/nodes/${encodeURIComponent(sourceType)}/${encodeURIComponent(sourceId)}/neighbors`),
+  trailsRebuild: () => request<any>('/api/trails/rebuild', { method: 'POST', body: '{}' }),
   getPolicyException: (id: string) => request<any>(`/api/policy/exceptions/${id}`),
   createPolicyException: (data: any) =>
     request<any>('/api/policy/exceptions', { method: 'POST', body: JSON.stringify(data) }),

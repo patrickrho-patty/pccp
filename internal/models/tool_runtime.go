@@ -141,6 +141,10 @@ func AllModels() []interface{} {
 		&PublicStatusSnapshot{},
 		&PublicStatusSubscriber{},
 		&PublicStatusNotification{},
+		// Trails causal index (PAT-1450)
+		&TrailNode{},
+		&TrailEdge{},
+		&TrailViewerScope{},
 		// Model distribution campaigns (PAT-1444)
 		&ModelPackageEntitlement{},
 		&ModelDistributionCampaign{},
