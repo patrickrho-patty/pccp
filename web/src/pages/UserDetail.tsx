@@ -30,8 +30,15 @@ export default function UserDetail() {
   const { id } = useParams<{ id: string }>()
   const { email: operatorEmail } = useAuth()
   const [params, setParams] = useSearchParams()
-  const tab = params.get('tab') || 'overview'
-  const setTab = (t: string) => setParams(t === 'overview' ? {} : { tab: t })
+  const validTabs = new Set(['overview', 'entitlements', 'sessions', 'harnesses', 'usage', 'audit', 'contractor'])
+  const rawTab = params.get('tab')
+  const tab = rawTab && validTabs.has(rawTab) ? rawTab : 'overview'
+  const setTab = (t: string) => setParams(prev => {
+    const next = new URLSearchParams(prev)
+    if (t === 'overview') next.delete('tab')
+    else next.set('tab', t)
+    return next
+  }, { replace: true })
 
   const [user, setUser] = useState<any>(null)
   const [sessions, setSessions] = useState<any[]>([])
@@ -215,14 +222,16 @@ export default function UserDetail() {
 		finally { setLifecycleBusy(false) }
   }
 
-  const saveContractor = async () => {
+  const saveContractor = async (reason?: string) => {
     if (!id || lifecycleBusy) return
 		const targetID = id
 		setLifecycleBusy(true)
     try {
-			const updated = await api.putContractor(targetID, contractor)
+			const payload: any = { ...contractor }
+			if (reason) payload.transition_reason = reason
+			const updated = await api.putContractor(targetID, payload)
 			if (routeID.current === targetID) setUser(updated)
-      showToast('계약 정보 저장 완료', 'success')
+      showToast(reason ? '계약직 전환이 기록되었습니다' : '계약 정보 저장 완료', 'success')
 		} catch (e: any) { showToast(e?.message || '실패', 'error') }
 		finally { setLifecycleBusy(false) }
   }
@@ -496,10 +505,9 @@ export default function UserDetail() {
 
         const confirmTransition = async () => {
           if (!contractorReason.trim()) { showToast('전환 사유를 입력해주세요', 'error'); return }
+          const reason = contractorReason.trim()
           setContractorConfirmOpen(false)
-          // Include reason in audit via a temporary field that server ignores but audit captures via details
-          await saveContractor()
-          showToast('계약직 전환이 기록되었습니다', 'success')
+          await saveContractor(reason)
           setContractorReason('')
         }
 

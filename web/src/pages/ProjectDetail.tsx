@@ -31,8 +31,15 @@ export default function ProjectDetail() {
   const loadGeneration = useRef(0)
   const [loading, setLoading] = useState(true)
   const [searchParams, setSearchParams] = useSearchParams()
-  const tab = (searchParams.get('tab') as 'overview' | 'members' | 'sessions' | 'governance' | 'audit') || 'overview'
-  const setTab = (t: string) => setSearchParams(t === 'overview' ? {} : { tab: t })
+  const validTabs = new Set(['overview', 'members', 'sessions', 'governance', 'audit'])
+  const rawTab = searchParams.get('tab')
+  const tab = (rawTab && validTabs.has(rawTab) ? rawTab : 'overview') as 'overview' | 'members' | 'sessions' | 'governance' | 'audit'
+  const setTab = (t: string) => setSearchParams(prev => {
+    const next = new URLSearchParams(prev)
+    if (t === 'overview') next.delete('tab')
+    else next.set('tab', t)
+    return next
+  }, { replace: true })
   const [addMember, setAddMember] = useState(false)
   const [memberForm, setMemberForm] = useState({ user_id: '', role: 'member' })
   const [packTarget, setPackTarget] = useState(false)

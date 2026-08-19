@@ -92,7 +92,7 @@ export default function ModelDetail() {
         <div className="grid grid-cols-3 gap-2 mt-2 text-[11px]">
           <div><span className="text-gray-400">카탈로그:</span> <span className={packageState === 'published' ? 'text-green-600' : 'text-amber-600'}>{koreanState(packageState)}</span></div>
           <div><span className="text-gray-400">정책 허용:</span> <span className={isPolicyAllowed ? 'text-green-600' : 'text-red-600'}>{isPolicyAllowed ? '허용됨' : '허용 안 됨'}</span> {latestEpoch && <span className="text-gray-400">· {latestEpoch.epoch_id?.slice(0, 12)}</span>}</div>
-          <div><span className="text-gray-400">배포:</span> <span className={hasActiveEndpoint ? 'text-green-600' : 'text-gray-500'}>{hasActiveEndpoint ? `활성 ${endpoints.length}개` : '없음'}</span></div>
+          <div><span className="text-gray-400">배포:</span> <span className={hasActiveEndpoint ? 'text-green-600' : 'text-gray-500'}>{hasActiveEndpoint ? `활성 ${endpoints.filter((e: any) => e.status === 'active' || e.status === 'healthy').length}개` : '없음'}</span></div>
         </div>
       </div>
 

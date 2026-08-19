@@ -17,8 +17,15 @@ export default function HarnessDetail() {
   const [detail, setDetail] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [searchParams, setSearchParams] = useSearchParams()
-  const tab = (searchParams.get('tab') as 'overview' | 'sessions' | 'security' | 'audit') || 'overview'
-  const setTab = (t: string) => setSearchParams(t === 'overview' ? {} : { tab: t })
+  const validTabs = new Set(['overview', 'sessions', 'security', 'audit'])
+  const rawTab = searchParams.get('tab')
+  const tab = (rawTab && validTabs.has(rawTab) ? rawTab : 'overview') as 'overview' | 'sessions' | 'security' | 'audit'
+  const setTab = (t: string) => setSearchParams(prev => {
+    const next = new URLSearchParams(prev)
+    if (t === 'overview') next.delete('tab')
+    else next.set('tab', t)
+    return next
+  }, { replace: true })
   const [revokeOpen, setRevokeOpen] = useState(false)
   const [revokeReason, setRevokeReason] = useState('')
 
