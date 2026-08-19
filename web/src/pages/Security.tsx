@@ -451,7 +451,7 @@ export default function Security() {
       {tab === 'dashboard' && (
         <div>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 stat-grid mb-6">
-            <StatCard label="보안 점수" value={postureScore} accent={postureScore >= 80 ? 'green' : postureScore >= 50 ? 'yellow' : 'red'} />
+            <StatCard label="보안 점수 (0-100 · 80+ 안전/50-79 주의/0-49 위험)" value={postureScore} accent={postureScore >= 80 ? 'green' : postureScore >= 50 ? 'yellow' : 'red'} sub={`산출: 100 - 치명적×25 - 높음×10 - 미해결×5 · ${stats.total}개 발견 · ${new Date().toLocaleDateString('ko-KR') } 갱신`} to="/security" query="?tab=findings&status=open" />
             <StatCard label="치명적" value={stats.critical} accent="red" to="/security" query="?tab=findings&severity=critical" sub="클릭 → 필터된 발견" />
             <StatCard label="높음" value={stats.high} accent="orange" to="/security" query="?tab=findings&severity=high" />
             <StatCard label="중간" value={stats.medium} accent="yellow" to="/security" query="?tab=findings&severity=medium" />

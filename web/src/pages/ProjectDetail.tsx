@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { StatCard } from '../components/StatCard'
 import { EntitySelect } from '../components/EntitySelect'
@@ -30,7 +30,9 @@ export default function ProjectDetail() {
   const usageRequest = useRef<AbortController | null>(null)
   const loadGeneration = useRef(0)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'overview' | 'members' | 'sessions' | 'governance' | 'audit'>('overview')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tab = (searchParams.get('tab') as 'overview' | 'members' | 'sessions' | 'governance' | 'audit') || 'overview'
+  const setTab = (t: string) => setSearchParams(t === 'overview' ? {} : { tab: t })
   const [addMember, setAddMember] = useState(false)
   const [memberForm, setMemberForm] = useState({ user_id: '', role: 'member' })
   const [packTarget, setPackTarget] = useState(false)
@@ -155,7 +157,7 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      <div className="flex gap-1 mb-6 border-b border-gray-200 flex-wrap">
+      <div className="flex gap-1 mb-6 border-b border-gray-200 flex-wrap" role="tablist">
         {[
           { id: 'overview', label: '개요', en: 'Overview' },
           { id: 'members', label: '멤버', en: 'Members', count: members.length },
@@ -163,7 +165,7 @@ export default function ProjectDetail() {
           { id: 'governance', label: '거버넌스', en: 'Governance', count: pendingChanges.length },
           { id: 'audit', label: '감사', en: 'Audit', count: auditEvents.length },
         ].map(t => (
-          <button key={t.id} onClick={() => setTab(t.id as any)}
+          <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id as any)}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === t.id ? 'border-patty-600 text-patty-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
             {t.label} {t.count !== undefined && t.count > 0 && `(${t.count})`}
           </button>

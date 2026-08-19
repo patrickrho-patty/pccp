@@ -3,6 +3,10 @@ import { useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { Modal, ModalFooter } from '../components/Modal'
 import { showToast } from '../components/Toast'
+import {
+  taskState, dueAgeLabel, evidenceSourceKo, evidenceFreshnessLabel,
+  groupAssessmentRuns, parseControlResults,
+} from '../complianceView'
 
 // Compliance page (web/08 plan): REAL backend-fed assessment. No more
 // hardcoded "compliant" badges — every status comes from the evidence
@@ -33,8 +37,11 @@ export default function Compliance() {
   const [loading, setLoading] = useState(false)
   const [filter, setFilter] = useState('')
   const [evidenceOpen, setEvidenceOpen] = useState<any>(null)
+  const [evidenceDetail, setEvidenceDetail] = useState<any>(null)
+  const [snapshotOpen, setSnapshotOpen] = useState<any>(null) // PAT-1504 immutable assessment snapshot
   const [evForm, setEvForm] = useState({ control_id: '', title: '', description: '', source: 'manual', reference: '' })
   const [taskOpen, setTaskOpen] = useState<any>(null)
+  const [taskDetail, setTaskDetail] = useState<any>(null)
   const [taskForm, setTaskForm] = useState({ owner: '', due_date: '', sla: '30d', notes: '' })
   const [bulkOwner, setBulkOwner] = useState('')
   // PAT-1484: dashboard KPI "진행 중 컴플라이언스 개선 과제" deep-links here
@@ -156,6 +163,11 @@ export default function Compliance() {
   const taskByControl: Record<string, string> = {}
   remediations.forEach(t => { taskByControl[t.control_id] = t.status })
 
+  // PAT-1504: group repeated identical assessment runs into one row each,
+  // with a change summary vs the previous distinct run, and a drillable
+  // immutable snapshot (parseControlResults reads the persisted ResultsJSON).
+  const { grouped: groupedHistory, changedControls: groupedChanges } = groupAssessmentRuns(history)
+
   return (
     <div className="p-6 space-y-4 page-enter">
       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -241,16 +253,16 @@ export default function Compliance() {
         </div>
       )}
 
-      {/* Evidence vault (C1) */}
+      {/* Evidence vault (C1) — traceable workspace */}
       <div className="card p-4">
         <h3 className="text-xs font-bold mb-2">증거 보관소 · Evidence Vault ({evidence.length})</h3>
         {evidence.length === 0 ? <p className="text-[11px] text-gray-400">등록된 증거 없음</p> : (
           <div className="space-y-1">
             {evidence.slice(0, 20).map((e: any) => (
-              <div key={e.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
-                <span className="text-gray-700">{e.control_id} — {e.title} <span className="text-gray-400">({e.source})</span></span>
-                <span className="text-gray-400">{(e.collected_at || '').slice(0, 10)}</span>
-              </div>
+              <button key={e.id} onClick={() => setEvidenceDetail(e)} className="w-full flex justify-between text-[11px] border-b border-gray-50 py-1 hover:bg-blue-50/50 text-left">
+                <span className="text-blue-600 hover:underline">{e.control_id} — {e.title} <span className="text-gray-400">({e.source})</span> · <span className="text-gray-500">{e.reference || '참조 없음'}</span></span>
+                <span className="text-gray-400">{(e.collected_at || '').slice(0, 10)} · 상세 →</span>
+              </button>
             ))}
           </div>
         )}
@@ -274,34 +286,37 @@ export default function Compliance() {
         {sidebarTasks.length === 0 ? <p className="text-[11px] text-gray-400">{remediationScope ? '해당 범위의 등록된 과제 없음' : '등록된 과제 없음'}</p> : (
           <div className="space-y-1">
             {sidebarTasks.map((t: any) => (
-              <div key={t.id} className="flex justify-between items-center text-[11px] border-b border-gray-50 py-1">
-                <span className="text-gray-700">{t.control_id} — {t.owner || '담당자 미정'}</span>
+              <button key={t.id} onClick={() => setTaskDetail(t)} className="w-full flex justify-between items-center text-[11px] border-b border-gray-50 py-1 hover:bg-amber-50/50 text-left">
+                <span className="text-gray-700 font-medium">{t.control_id} — {t.owner || '담당자 미정'}</span>
                 <span className="text-gray-400">{t.sla || ''} · {t.due_date || ''}</span>
-                <select className="input text-[10px] py-0" value={t.status} onChange={e => updateTask(t.id, e.target.value)}>
-                  <option value="open">open</option>
-                  <option value="in_progress">in_progress</option>
-                  <option value="done">done</option>
-                </select>
-              </div>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${t.status === 'done' ? 'bg-green-50 text-green-700 border-green-200' : t.status === 'in_progress' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>{t.status}</span>
+                <span className="text-blue-600 ml-2">상세 →</span>
+              </button>
             ))}
           </div>
         )}
       </div>
 
-      {/* Assessment history (C3) */}
+      {/* Assessment history (C3) — grouped and drillable */}
       {history.length > 0 && (
         <div className="card p-4">
-          <h3 className="text-xs font-bold mb-2">평가 이력 · History</h3>
+          <h3 className="text-xs font-bold mb-2">평가 이력 · History ({history.length})</h3>
+          <p className="text-[10px] text-gray-400 mb-2">동일 결과의 반복 평가는 하나로 묶습니다(×N). 각 행을 펼치면 변경된 통제와 갭을 확인하고, 클릭하면 해당 시점의 불변 스냅샷을 엽니다.</p>
           <div className="space-y-1">
-            {history.slice(0, 10).map((h: any) => (
-              <div key={h.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
-                <span className="text-gray-700">{h.certification} · {h.scope}/{h.level}</span>
-                <span className={h.overall_status === 'compliant' ? 'text-green-600' : h.overall_status === 'gap' ? 'text-red-600' : 'text-yellow-600'}>
-                  {h.overall_status} ({h.open_gaps} 갭)
-                </span>
-                <span className="text-gray-400">{(h.assessed_at || '').slice(0, 16)}</span>
-              </div>
-            ))}
+            {groupedHistory.map((g: any) => {
+              const changed = groupedChanges[g.id] || []
+              return (
+                <button key={g.id} onClick={() => setSnapshotOpen(g)} className="w-full text-[11px] border-b border-gray-50 py-1 hover:bg-gray-50 text-left px-1">
+                  <div className="flex justify-between w-full">
+                    <span className="text-gray-700">{g.scope}/{g.level}<span className="text-gray-400"> · {g.assessedAt ? g.assessedAt.slice(0, 16).replace('T', ' ') : ''}</span>{g.count > 1 && <span className="text-[9px] px-1.5 ml-1 py-0.5 rounded-full bg-gray-100 text-gray-500">× {g.count}</span>}</span>
+                    <span className={g.overallStatus === 'compliant' ? 'text-green-600' : g.overallStatus === 'gap' ? 'text-red-600' : 'text-yellow-600'}>{g.overallStatus} ({g.openGaps} 갭) · 스냅샷 →</span>
+                  </div>
+                  {changed.length > 0 && (
+                    <div className="mt-0.5 text-[10px] text-amber-600">변경: {changed.join(', ')}</div>
+                  )}
+                </button>
+              )
+            })}
           </div>
         </div>
       )}
@@ -366,6 +381,41 @@ export default function Compliance() {
             <textarea className="input text-xs w-full" rows={2} value={taskForm.notes} onChange={e => setTaskForm({ ...taskForm, notes: e.target.value })} />
           </div>
         </div>
+      </Modal>
+
+      {/* Evidence detail drawer */}
+      <Modal open={!!evidenceDetail} title={`증거 상세 — ${evidenceDetail?.control_id || ''}`} onClose={() => setEvidenceDetail(null)} footer={<ModalFooter onCancel={() => setEvidenceDetail(null)} onConfirm={() => setEvidenceDetail(null)} confirmLabel="닫기" />}>
+        {evidenceDetail && (
+          <div className="space-y-2 text-xs">
+            <div><span className="text-gray-500">제목:</span> {evidenceDetail.title}</div>
+            <div><span className="text-gray-500">통제:</span> {evidenceDetail.control_id}</div>
+            <div><span className="text-gray-500">출처:</span> {evidenceDetail.source} · {evidenceDetail.reference || '참조 없음'}</div>
+            <div><span className="text-gray-500">수집일:</span> {(evidenceDetail.collected_at || '').slice(0, 16)}</div>
+            <div><span className="text-gray-500">설명:</span> {evidenceDetail.description || '설명 없음'}</div>
+            <div className="text-[10px] text-gray-400">증거 ID: {evidenceDetail.id} · 증거는 감사 로그와 연결되어 추적됩니다.</div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Remediation detail drawer */}
+      <Modal open={!!taskDetail} title={`개선 과제 상세 — ${taskDetail?.control_id || ''}`} onClose={() => setTaskDetail(null)} footer={<ModalFooter onCancel={() => setTaskDetail(null)} onConfirm={() => setTaskDetail(null)} confirmLabel="닫기" />}>
+        {taskDetail && (
+          <div className="space-y-2 text-xs">
+            <div><span className="text-gray-500">통제:</span> {taskDetail.control_id}</div>
+            <div><span className="text-gray-500">담당자:</span> {taskDetail.owner || '미정'}</div>
+            <div><span className="text-gray-500">상태:</span> <span className={`px-1.5 py-0.5 rounded border ${taskDetail.status === 'done' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-yellow-50 text-yellow-700 border-yellow-200'}`}>{taskDetail.status}</span></div>
+            <div><span className="text-gray-500">기한:</span> {taskDetail.due_date || '-'} · SLA {taskDetail.sla || '-'}</div>
+            <div><span className="text-gray-500">비고:</span> {taskDetail.notes || '비고 없음'}</div>
+            <div className="flex gap-2 mt-2">
+              <select className="input text-xs" value={taskDetail.status} onChange={e => { updateTask(taskDetail.id, e.target.value); setTaskDetail({ ...taskDetail, status: e.target.value }) }}>
+                <option value="open">open</option>
+                <option value="in_progress">in_progress</option>
+                <option value="done">done</option>
+              </select>
+            </div>
+            <div className="text-[10px] text-gray-400">과제 ID: {taskDetail.id} · 대시보드 카운트와 동일한 필터 계약을 사용합니다.</div>
+          </div>
+        )}
       </Modal>
     </div>
   )

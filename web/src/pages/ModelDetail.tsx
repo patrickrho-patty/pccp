@@ -54,9 +54,19 @@ export default function ModelDetail() {
   )
 	const packageState = modelPackageState(pkg)
 	const endpoints = allEndpoints.filter((endpoint: any) => endpoint.model_id === pkg.model_id || endpoint.model_package_id === pkg.package_id || endpoint.model_package_id === pkg.id)
+  const latestEpoch = epochs[0]
+  const isPolicyAllowed = !!(latestEpoch && Array.isArray(latestEpoch.allowed_models) && latestEpoch.allowed_models.includes(pkg.model_id))
+  const hasActiveEndpoint = endpoints.some((e: any) => e.status === 'active' || e.status === 'healthy')
+  const usability = (() => {
+    if (packageState !== 'published') return { label: '게시되지 않음', color: 'badge-yellow', reason: `패키지 상태가 ${packageState} 입니다 — 게시 후 정책 허용과 배포가 필요합니다`, blocking: '게시' }
+    if (!isPolicyAllowed) return { label: '정책 미허용', color: 'badge-red', reason: `최신 에포크 ${latestEpoch?.epoch_id?.slice(0, 12) || '-'} 에서 허용되지 않았습니다`, blocking: '정책 허용' }
+    if (!hasActiveEndpoint) return { label: '배포 없음', color: 'badge-yellow', reason: '활성 엔드포인트가 없습니다 — 배포 후 사용 가능합니다', blocking: '배포' }
+    return { label: '사용 가능', color: 'badge-green', reason: '게시·정책 허용·활성 엔드포인트가 모두 충족되었습니다', blocking: null }
+  })()
 
   const statusBadge = (s: string) =>
     s === 'published' ? 'badge-green' : s === 'recalled' ? 'badge-red' : 'badge-yellow'
+  const koreanState = (s: string) => s === 'published' ? '게시됨' : s === 'draft' ? '초안' : s === 'recalled' ? '리콜됨' : s === 'deprecated' ? '사용 중단' : s
 
   return (
     <div>
@@ -67,8 +77,22 @@ export default function ModelDetail() {
           <p className="text-xs text-gray-400 mt-1 font-mono">{pkg.model_id} · {pkg.package_id}</p>
         </div>
         <div className="flex gap-2 items-center shrink-0">
-          <span className={statusBadge(packageState)}>{packageState}</span>
+          <span className={statusBadge(packageState)}>{koreanState(packageState)}</span>
           <span className="badge-blue">{pkg.entitlement_class || 'standard'}</span>
+        </div>
+      </div>
+
+      <div className="card mb-4 border-l-4" style={{ borderLeftColor: usability.color === 'badge-green' ? '#22c55e' : usability.color === 'badge-red' ? '#ef4444' : '#eab308' }}>
+        <h3 className="text-sm font-semibold mb-2">종합 가용성 · Usability</h3>
+        <div className="flex items-center gap-2 mb-1">
+          <span className={usability.color}>{usability.label}</span>
+          {usability.blocking && <span className="text-[11px] text-gray-500">차단: {usability.blocking}</span>}
+        </div>
+        <p className="text-xs text-gray-500">{usability.reason}</p>
+        <div className="grid grid-cols-3 gap-2 mt-2 text-[11px]">
+          <div><span className="text-gray-400">카탈로그:</span> <span className={packageState === 'published' ? 'text-green-600' : 'text-amber-600'}>{koreanState(packageState)}</span></div>
+          <div><span className="text-gray-400">정책 허용:</span> <span className={isPolicyAllowed ? 'text-green-600' : 'text-red-600'}>{isPolicyAllowed ? '허용됨' : '허용 안 됨'}</span> {latestEpoch && <span className="text-gray-400">· {latestEpoch.epoch_id?.slice(0, 12)}</span>}</div>
+          <div><span className="text-gray-400">배포:</span> <span className={hasActiveEndpoint ? 'text-green-600' : 'text-gray-500'}>{hasActiveEndpoint ? `활성 ${endpoints.length}개` : '없음'}</span></div>
         </div>
       </div>
 

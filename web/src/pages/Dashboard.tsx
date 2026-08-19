@@ -102,24 +102,7 @@ export default function Dashboard() {
         </Link>
       </div>
 
-      {/* Recents hub (A7) */}
-      {(data?.recent_users?.length > 0 || data?.recent_projects?.length > 0) && (
-        <div className="card p-4 mb-4">
-          <h3 className="text-xs font-bold mb-2">최근 항목 · Recents</h3>
-          <div className="flex flex-wrap gap-2">
-            {(data?.recent_users || []).map((u: any) => (
-              <Link key={u.id} to={`/users/${u.id}`} className="text-[11px] px-2 py-1 rounded bg-gray-50 hover:bg-blue-50 text-gray-600">
-                👤 {u.name_ko || u.name}
-              </Link>
-            ))}
-            {(data?.recent_projects || []).map((p: any) => (
-              <Link key={p.id} to={`/projects/${p.id}`} className="text-[11px] px-2 py-1 rounded bg-gray-50 hover:bg-blue-50 text-gray-600">
-                📁 {p.name_ko || p.name}
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Recents removed per PAT-1486: ambiguous mixed-entity recents strip removed. Space reserved for actionable operational state. */}
 
       {/* Two column layout */}
       <div className="grid grid-cols-3 gap-4">
@@ -233,52 +216,41 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Governance brief — fields match /api/korean/governance-brief */}
-          {brief && (
-            <div className="card">
-              <h3 className="text-sm font-semibold mb-2">거버넌스 브리프</h3>
-              <div className="text-xs text-gray-500 space-y-1">
-                {brief.total_sessions !== undefined && (
-                  <div className="flex justify-between"><span>총 세션</span><span className="font-medium">{brief.total_sessions}</span></div>
-                )}
-                {brief.active_harnesses !== undefined && (
-                  <div className="flex justify-between"><span>활성 하네스</span><span className="font-medium">{brief.active_harnesses}</span></div>
-                )}
-                {brief.security_findings !== undefined && (
-                  <div className="flex justify-between">
-                    <div>
-                      <span>전체 보안 발견</span>
-                      <span className="block text-[10px] text-gray-400">모든 상태(해결 포함)</span>
-                    </div>
-                    <span className={`font-medium ${(brief.security_findings || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>{brief.security_findings}</span>
-                  </div>
-                )}
-                {brief.model_invocations !== undefined && (
-                  <div className="flex justify-between"><span>AI 추론</span><span className="font-medium">{brief.model_invocations}</span></div>
-                )}
-                {brief.code_changes !== undefined && (
-                  <div className="flex justify-between"><span>코드 변경</span><span className="font-medium">{brief.code_changes}</span></div>
-                )}
-                {brief.approval_rate !== undefined && (
-                  <div className="flex justify-between"><span>승인율</span><span className="font-medium">{(brief.approval_rate * 100).toFixed(0)}%</span></div>
-                )}
-                {brief.compliance_status && (
-                  <div className="flex justify-between"><span>컴플라이언스</span><span className="font-medium">{brief.compliance_status}</span></div>
-                )}
-              </div>
+          {/* Admin Action Center (PAT-1488) — ranked work queue, replaces governance brief */}
+          <div className="card border-l-4 border-l-amber-500">
+            <h3 className="text-sm font-semibold mb-2">조치 필요 · Action Center</h3>
+            <p className="text-[11px] text-gray-400 mb-2">우선순위와 영향도에 따라 정렬된 조치 큐 — 각 항목은 정확한 필터된 대기열로 연결됩니다.</p>
+            <div className="space-y-2">
+              <Link to="/security?tab=findings&severity=critical,high&status=unresolved" className="flex justify-between items-center p-2 bg-red-50 rounded hover:bg-red-100 border border-red-100">
+                <span className="text-xs font-medium text-red-700">미해결 심각·높음 보안 발견</span>
+                <span className="text-sm font-bold text-red-600">{findingCount}건 →</span>
+              </Link>
+              <Link to="/compliance?tab=remediation&status=unresolved" className="flex justify-between items-center p-2 bg-amber-50 rounded hover:bg-amber-100 border border-amber-100">
+                <span className="text-xs font-medium text-amber-700">진행 중 컴플라이언스 개선 과제</span>
+                <span className="text-sm font-bold text-amber-600">{data?.open_remediations ?? 0}건 →</span>
+              </Link>
+              <Link to="/harnesses?status=quarantined" className="flex justify-between items-center p-2 bg-gray-50 rounded hover:bg-gray-100 border border-gray-100">
+                <span className="text-xs text-gray-600">격리/비정상 하네스</span>
+                <span className="text-xs text-gray-500">{data?.quarantined_harnesses ?? 0}건 →</span>
+              </Link>
+              <Link to="/sessions?status=pending_review" className="flex justify-between items-center p-2 bg-gray-50 rounded hover:bg-gray-100 border border-gray-100">
+                <span className="text-xs text-gray-600">검토 필요 세션</span>
+                <span className="text-xs text-gray-500">{data?.pending_sessions ?? 0}건 →</span>
+              </Link>
             </div>
-          )}
+            {(findingCount === 0 && (data?.open_remediations ?? 0) === 0) && (
+              <p className="text-xs text-green-600 mt-3">✅ 조치 대기 항목이 없습니다 — {data?.dashboard_last_updated ? `마지막 확인 ${data.dashboard_last_updated.slice(0,16).replace('T',' ')}` : '최근 확인됨'}</p>
+            )}
+          </div>
 
-          {/* Quick links */}
+          {/* Operational Health — secondary, after Action Center (PAT-1488) */}
           <div className="card">
-            <h3 className="text-sm font-semibold mb-2">빠른 이동</h3>
-            <div className="grid grid-cols-2 gap-2">
-              <Link to="/sessions" className="text-xs text-center p-2 bg-gray-50 rounded hover:bg-blue-50">세션</Link>
-              <Link to="/harnesses" className="text-xs text-center p-2 bg-gray-50 rounded hover:bg-blue-50">하네스</Link>
-              <Link to="/security" className="text-xs text-center p-2 bg-gray-50 rounded hover:bg-blue-50">보안</Link>
-              <Link to="/audit" className="text-xs text-center p-2 bg-gray-50 rounded hover:bg-blue-50">감사</Link>
-              <Link to="/analytics" className="text-xs text-center p-2 bg-gray-50 rounded hover:bg-blue-50">분석</Link>
-              <Link to="/explorer" className="text-xs text-center p-2 bg-gray-50 rounded hover:bg-blue-50">프로바이던스</Link>
+            <h3 className="text-sm font-semibold mb-2">운영 상태 · Operational Health</h3>
+            <div className="text-xs text-gray-500 space-y-1">
+              <div className="flex justify-between"><span>활성 하네스</span><span className="font-medium">{brief?.active_harnesses ?? data?.harnesses ?? 0}</span></div>
+              <div className="flex justify-between"><span>활성 세션</span><span className="font-medium">{data?.active_session_count ?? 0}</span></div>
+              <div className="flex justify-between"><span>미해결 보안 발견</span><span className="font-medium text-red-600">{findingCount}</span></div>
+              <div className="text-[10px] text-gray-400 mt-1">지속 탐색은 좌측 내비게이션을 사용하세요 — 대시보드는 조치 큐에 집중합니다.</div>
             </div>
           </div>
         </div>

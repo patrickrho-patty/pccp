@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { StatCard } from '../components/StatCard'
 import { Modal, ModalFooter } from '../components/Modal'
@@ -16,7 +16,9 @@ export default function HarnessDetail() {
   const confirm = useConfirm()
   const [detail, setDetail] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'overview' | 'sessions' | 'security' | 'audit'>('overview')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tab = (searchParams.get('tab') as 'overview' | 'sessions' | 'security' | 'audit') || 'overview'
+  const setTab = (t: string) => setSearchParams(t === 'overview' ? {} : { tab: t })
   const [revokeOpen, setRevokeOpen] = useState(false)
   const [revokeReason, setRevokeReason] = useState('')
 
@@ -90,14 +92,14 @@ export default function HarnessDetail() {
         <StatCard label="하트비트" value={health.dimensions.find(d => d.key === 'heartbeat')!.icon} accent={health.dimensions.find(d => d.key === 'heartbeat')!.state === 'warning' ? 'orange' : health.dimensions.find(d => d.key === 'heartbeat')!.state === 'attention' ? 'yellow' : 'green'} sub={h.last_heartbeat?.slice(0, 16).replace('T', ' ')} />
       </div>
 
-      <div className="flex gap-1 mb-6 border-b border-gray-200">
+      <div className="flex gap-1 mb-6 border-b border-gray-200" role="tablist">
         {[
           { id: 'overview', label: '개요', en: 'Overview' },
           { id: 'sessions', label: '세션', en: 'Sessions', count: sessions.length },
           { id: 'security', label: '보안', en: 'Security' },
           { id: 'audit', label: '감사', en: 'Audit', count: auditEvents.length },
         ].map(t => (
-          <button key={t.id} onClick={() => setTab(t.id as any)}
+          <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id as any)}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === t.id ? 'border-patty-600 text-patty-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
             {t.label} {t.count !== undefined && t.count > 0 && `(${t.count})`}
           </button>
