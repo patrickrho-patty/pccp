@@ -18,7 +18,7 @@ import { allowedSessionActions, SESSION_STATUS_META } from '../sessionState'
 // Canonical state definitions live in sessionState.ts (PAT-1496) — the
 // same vocabulary Live uses.
 const STATUS_META = SESSION_STATUS_META
-const sessionFilterKeys = ['status', 'user', 'project', 'model', 'harness_id', 'range'] as const
+const sessionFilterKeys = ['status', 'user', 'project', 'model', 'harness_id', 'repository', 'range'] as const
 
 export default function Sessions() {
   const { favorites, sortPinnedFirst } = useFavorites('sessions')

@@ -7,6 +7,7 @@ import { showToast } from '../components/Toast'
 import { formatUsageAmount, UsageReport } from '../components/UsageReport'
 import { useAuth } from '../hooks/useAuth'
 import { userActions, userActionSpec, applyUserLifecycle, canIssueEnrollment, lifecycleDenialLabel, STATUS_KO, STATUS_BADGE, UserLifecycleAction } from '../userLifecycle'
+import { detailRoute } from '../relationLinks'
 
 // UserDetail (web/01 B4): /users/:id with tabs — Overview /
 // Entitlement / Sessions / Harnesses / Usage / Audit / Contractor.
@@ -402,7 +403,7 @@ export default function UserDetail() {
           {sessions.length === 0 ? <p className="text-[11px] text-gray-400">세션 없음</p> : (
             <div className="space-y-1">
               {sessions.map((s: any) => (
-                <Link key={s.id} to={`/sessions`} className="flex justify-between text-[11px] border-b border-gray-50 py-1 hover:bg-gray-50 px-1">
+                <Link key={s.id} to={detailRoute('session', s.session_id || s.id)} state={{ from: `/users/${id}?tab=sessions` }} className="flex justify-between text-[11px] border-b border-gray-50 py-1 hover:bg-gray-50 px-1">
                   <span className="text-gray-700">{s.title || s.session_id}</span>
                   <span className="text-gray-400">{s.status} · {s.model_class || '—'}</span>
                 </Link>

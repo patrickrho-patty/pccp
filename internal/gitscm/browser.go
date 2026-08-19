@@ -30,14 +30,28 @@ var clones = &cloneCache{dirs: map[string]string{}}
 
 // SyncRepository clones (or refreshes) the repository and records the
 // HEAD commit + sync status on the repo row. The provider is selected
-// by SCMProvider; the clone token comes from PCCP_SCM_TOKEN.
+// by SCMProvider; the clone token comes from PCCP_SCM_TOKEN. Both the
+// latest attempt (attempt_at/head/error) and the last success are
+// persisted so the UI can reconcile list and detail state (PAT-1493).
 func (s *Service) SyncRepository(ctx context.Context, repo *models.Repository) (head string, err error) {
 	if repo.CloneURL == "" {
 		return "", fmt.Errorf("gitscm: repository %s has no clone_url", repo.Name)
 	}
+	// Idempotence: refuse a second clone while one is already running.
+	var current models.Repository
+	if s.db.First(&current, "id = ?", repo.ID).Error == nil && current.SyncStatus == "syncing" {
+		return "", fmt.Errorf("gitscm: sync already in progress for %s", repo.Name)
+	}
+	attemptAt := time.Now().Format(time.RFC3339)
+	fail := func(err error) (string, error) {
+		s.db.Model(repo).Updates(map[string]interface{}{
+			"sync_status": "failed", "last_sync_attempt_at": attemptAt, "last_sync_error": err.Error(),
+		})
+		return "", err
+	}
 	workDir, err := os.MkdirTemp("", scmWorkRoot+"-"+repo.ID+"-")
 	if err != nil {
-		return "", fmt.Errorf("gitscm: workdir: %w", err)
+		return fail(fmt.Errorf("gitscm: workdir: %w", err))
 	}
 	defer func() {
 		if err != nil {
@@ -53,15 +67,13 @@ func (s *Service) SyncRepository(ctx context.Context, repo *models.Repository) (
 		ref = "main"
 	}
 	prov := providerFor(repo.SCMProvider)
-	s.db.Model(repo).Updates(map[string]interface{}{"sync_status": "syncing"})
+	s.db.Model(repo).Updates(map[string]interface{}{"sync_status": "syncing", "last_sync_attempt_at": attemptAt})
 	if err := prov.Clone(ctx, repo.CloneURL, ref, workDir); err != nil {
-		s.db.Model(repo).Updates(map[string]interface{}{"sync_status": "failed"})
-		return "", fmt.Errorf("gitscm: clone %s: %w", repo.Name, err)
+		return fail(fmt.Errorf("gitscm: clone %s: %w", repo.Name, err))
 	}
 	head, err = prov.Head(workDir)
 	if err != nil {
-		s.db.Model(repo).Updates(map[string]interface{}{"sync_status": "failed"})
-		return "", fmt.Errorf("gitscm: head %s: %w", repo.Name, err)
+		return fail(fmt.Errorf("gitscm: head %s: %w", repo.Name, err))
 	}
 	commitAt := lastCommitTime(workDir)
 	now := time.Now().Format(time.RFC3339)
@@ -69,6 +81,8 @@ func (s *Service) SyncRepository(ctx context.Context, repo *models.Repository) (
 		"sync_status":    "synced",
 		"last_sync_at":   now,
 		"last_commit_at": commitAt,
+		"last_sync_head": head,
+		"last_sync_error": "",
 	})
 	// Evict the previous clone and register the fresh one.
 	clones.mu.Lock()
@@ -94,10 +108,8 @@ type TreeEntry struct {
 var ErrNotSynced = fmt.Errorf("gitscm: repository not synced yet — run sync first")
 
 func (s *Service) ListTree(repoID, path string) ([]TreeEntry, error) {
-	clones.mu.RLock()
-	dir, ok := clones.dirs[repoID]
-	clones.mu.RUnlock()
-	if !ok || dir == "" {
+	dir := cloneDir(repoID)
+	if dir == "" {
 		return nil, ErrNotSynced
 	}
 	full := filepath.Join(dir, filepath.Clean("/"+path))
@@ -119,10 +131,8 @@ func (s *Service) ListTree(repoID, path string) ([]TreeEntry, error) {
 
 // ReadFile returns the content of a synced file.
 func (s *Service) ReadFile(repoID, path string) ([]byte, error) {
-	clones.mu.RLock()
-	dir, ok := clones.dirs[repoID]
-	clones.mu.RUnlock()
-	if !ok || dir == "" {
+	dir := cloneDir(repoID)
+	if dir == "" {
 		return nil, ErrNotSynced
 	}
 	full := filepath.Join(dir, filepath.Clean("/"+path))
@@ -134,9 +144,42 @@ func (s *Service) ReadFile(repoID, path string) ([]byte, error) {
 
 // IsSynced reports whether a synced clone exists for the repo.
 func (s *Service) IsSynced(repoID string) bool {
+	return cloneDir(repoID) != ""
+}
+
+// cloneDir resolves the repo's synced clone workdir. On a cache miss it
+// restores the newest surviving clone from the OS temp dir so a server
+// restart does not strand rows marked synced (PAT-1493).
+func cloneDir(repoID string) string {
 	clones.mu.RLock()
-	defer clones.mu.RUnlock()
-	return clones.dirs[repoID] != ""
+	dir := clones.dirs[repoID]
+	clones.mu.RUnlock()
+	if dir != "" {
+		return dir
+	}
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), scmWorkRoot+"-"+repoID+"-*"))
+	if err != nil || len(matches) == 0 {
+		return ""
+	}
+	// Prefer the most recently modified clone directory.
+	best := ""
+	var bestMod time.Time
+	for _, m := range matches {
+		info, err := os.Stat(m)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		if best == "" || info.ModTime().After(bestMod) {
+			best, bestMod = m, info.ModTime()
+		}
+	}
+	if best == "" {
+		return ""
+	}
+	clones.mu.Lock()
+	clones.dirs[repoID] = best
+	clones.mu.Unlock()
+	return best
 }
 
 // IngestWebhook processes an SCM webhook push event (repositories

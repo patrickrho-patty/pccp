@@ -131,6 +131,15 @@ func mustBilling(db interface{}) *billing.Service {
 
 // setupAdditionalRoutes adds routes for the additional services.
 func (s *Server) setupAdditionalRoutes(r chi.Router, ext *AdditionalServices) {
+	// Sandbox detail + lifecycle recovery (PAT-1513) — additive to the
+	// sandbox block in server.go; registered flat because chi panics on a
+	// second Route()/Mount for the same path. The param route would
+	// otherwise shadow the mounted static GET below it, so the static
+	// route is re-registered at this level where it wins by priority.
+	r.Get("/sandboxes/image-allowlist", s.handleSandboxImageAllowlist)
+	r.Get("/sandboxes/{id}", s.handleGetSandboxDetail)
+	r.Post("/sandboxes/{id}/retry", s.handleRetrySandbox)
+
 	// MCP Governance
 	r.Route("/mcp", func(r chi.Router) {
 		r.Get("/servers", s.wrapMCPList(ext))
@@ -904,6 +913,7 @@ func (s *Server) wrapProjectToolAllowlist(ext *AdditionalServices) http.HandlerF
 			var req struct {
 				ToolNames []string `json:"tool_names"`
 				GrantedBy string   `json:"granted_by"`
+				Reason    string   `json:"reason"` // PAT-1509: governed allowlist changes carry the admin's reason
 			}
 			if err := decodeJSON(r, &req); err != nil {
 				writeError(w, http.StatusBadRequest, "invalid request body")
@@ -913,6 +923,17 @@ func (s *Server) wrapProjectToolAllowlist(ext *AdditionalServices) http.HandlerF
 				writeError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
+			s.db.Create(&models.AuditEvent{
+				OrganizationID: orgID,
+				EventType:      "cp.tools.allowlist_replaced",
+				ActorType:      "admin",
+				Action:         "set_project_tool_allowlist",
+				ResourceType:   "project",
+				ResourceID:     projectID,
+				Details:        fmt.Sprintf("tool_names: %v, granted_by: %s, reason: %s", req.ToolNames, req.GrantedBy, req.Reason),
+				Result:         "success",
+				OccurredAt:     time.Now().Format(time.RFC3339),
+			})
 			writeJSON(w, http.StatusOK, map[string]string{"status": "allowlist_replaced"})
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -1003,6 +1024,7 @@ func (s *Server) wrapToolsUpdate(ext *AdditionalServices) http.HandlerFunc {
 			DangerLevel      *string `json:"danger_level,omitempty"`
 			RequiresApproval *bool   `json:"requires_approval,omitempty"`
 			Status           *string `json:"status,omitempty"`
+			Reason           *string `json:"reason,omitempty"` // PAT-1509: governed changes carry the admin's reason
 		}
 		if err := decodeJSON(r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
@@ -1014,6 +1036,10 @@ func (s *Server) wrapToolsUpdate(ext *AdditionalServices) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		reason := ""
+		if req.Reason != nil {
+			reason = *req.Reason
+		}
 		s.db.Create(&models.AuditEvent{
 			OrganizationID: orgID,
 			EventType:      "cp.tools.updated",
@@ -1021,7 +1047,7 @@ func (s *Server) wrapToolsUpdate(ext *AdditionalServices) http.HandlerFunc {
 			Action:         "update_tool",
 			ResourceType:   "tool",
 			ResourceID:     tool.ID,
-			Details:        fmt.Sprintf("tool: %s, requires_approval: %t, status: %s", tool.Name, tool.RequiresApproval, tool.Status),
+			Details:        fmt.Sprintf("tool: %s, requires_approval: %t, status: %s, reason: %s", tool.Name, tool.RequiresApproval, tool.Status, reason),
 			Result:         "success",
 			OccurredAt:     time.Now().Format(time.RFC3339),
 		})

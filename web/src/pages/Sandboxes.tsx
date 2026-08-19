@@ -5,23 +5,16 @@ import { Modal, ModalFooter } from '../components/Modal'
 import EmptyState from '../components/EmptyState'
 import { showToast } from '../components/Toast'
 import { useFavorites, FavoriteStar } from '../hooks/useFavorites'
+import { SANDBOX_STATUS_META, sandboxActions, sandboxStatusMeta } from '../sandboxLifecycle'
 
 // Sandboxes page (web/15 plan): governed isolated runtime control.
 // Provisioning is REAL per-mode (docker/microvm/local/remote) with an
 // honest status: "running" only when the runtime accepted the
 // container; otherwise "defined" (definition persisted, not running).
+// Row actions come from the shared lifecycle state machine
+// (sandboxLifecycle.ts, PAT-1513) so only state-valid actions appear.
 
 const MODE_KO: Record<string, string> = { container: '컨테이너', microvm: '마이크로VM', remote: '원격', local: '로컬' }
-const STATUS_KO: Record<string, string> = {
-  pending: '대기', defined: '정의됨 (런타임 미연결)', running: '실행 중', destroyed: '파괴됨', failed: '실패',
-}
-const STATUS_BADGE: Record<string, string> = {
-  pending: 'bg-gray-100 text-gray-500 border-gray-200',
-  defined: 'bg-yellow-50 text-yellow-700 border-yellow-200',
-  running: 'bg-green-50 text-green-700 border-green-200',
-  destroyed: 'bg-gray-100 text-gray-400 border-gray-200',
-  failed: 'bg-red-50 text-red-700 border-red-200',
-}
 const NETWORK_KO: Record<string, string> = { none: '차단', restricted: '제한', host: '호스트' }
 
 export default function Sandboxes() {
@@ -79,6 +72,14 @@ export default function Sandboxes() {
     } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
 
+  const retry = async (sb: any) => {
+    try {
+      const res = await api.retrySandbox(sb.id)
+      showToast(res.status === 'running' ? '프로비저닝 재시도 — 실행 중' : `재시도 완료 — 상태: ${sandboxStatusMeta(res.status).ko}`, 'info')
+      load()
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
   const saveAllowlist = async () => {
     const images = allowlistText.split('\n').map(s => s.trim()).filter(Boolean)
     try {
@@ -116,7 +117,7 @@ export default function Sandboxes() {
         </select>
         <select className="input text-xs w-36" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
           <option value="">전체 상태</option>
-          {Object.entries(STATUS_KO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          {Object.entries(SANDBOX_STATUS_META).map(([k, v]) => <option key={k} value={k}>{v.ko}</option>)}
         </select>
       </div>
 
@@ -128,7 +129,7 @@ export default function Sandboxes() {
             <div className="flex items-center gap-2 min-w-0">
               <FavoriteStar entity="sandboxes" id={s.id} />
               <div className="min-w-0">
-                <div className="text-xs font-semibold font-mono truncate">{s.id?.slice(0, 14)}</div>
+                <Link to={`/sandboxes/${s.id}`} className="text-xs font-semibold font-mono truncate text-blue-600 hover:underline block">{s.id?.slice(0, 14)}</Link>
                 <div className="text-[10px] text-gray-400">
                   {MODE_KO[s.mode] || s.mode} · {s.base_image} · CPU {s.cpu_limit || '—'} · {s.memory_limit_mb || 0}MB · 네트워크 {NETWORK_KO[s.network_policy] || s.network_policy}
                 </div>
@@ -138,13 +139,18 @@ export default function Sandboxes() {
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <span className={`text-[10px] px-2 py-0.5 rounded-full border ${STATUS_BADGE[s.status] || ''}`}>
-                {STATUS_KO[s.status] || s.status}
+              <span className={`text-[10px] px-2 py-0.5 rounded-full border ${sandboxStatusMeta(s.status).badge}`}>
+                {sandboxStatusMeta(s.status).ko}
               </span>
-              <button className="btn-xs-secondary" onClick={() => snapshot(s)}>스냅샷</button>
-              {s.status !== 'destroyed' && (
-                <button className="btn-xs-danger" onClick={() => setDestroyTarget(s)}>파괴</button>
-              )}
+              {/* Only state-valid actions render; the detail page explains
+                  why the rest are unavailable (PAT-1513). */}
+              {sandboxActions(s).filter(a => a.enabled).map(a => (
+                <button key={a.id}
+                  className={a.danger ? 'btn-xs-danger' : 'btn-xs-secondary'}
+                  onClick={() => a.id === 'destroy' ? setDestroyTarget(s) : a.id === 'snapshot' ? snapshot(s) : retry(s)}>
+                  {a.ko}
+                </button>
+              ))}
             </div>
           </div>
         ))}

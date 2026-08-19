@@ -90,7 +90,7 @@ export default function Security() {
   const [findingDetail, setFindingDetail] = useState<any>(null)
   const [editingRule, setEditingRule] = useState<Rule | null>(null)
   const [ruleBefore, setRuleBefore] = useState<Rule | null>(null)
-  const [findingFilters, setFindingFilters] = useState({ severity: '', status: '', type: '', from: '', to: '' })
+  const [findingFilters, setFindingFilters] = useState({ severity: '', status: '', type: '', from: '', to: '', repository: '' })
   const [selectedFindings, setSelectedFindings] = useState<Set<string>>(new Set())
   const [suppressTarget, setSuppressTarget] = useState<Finding | null>(null)
   const [suppressForm, setSuppressForm] = useState({ reason: '', days: 30 })
@@ -171,6 +171,7 @@ export default function Security() {
     if (findingFilters.type) params.finding_type = findingFilters.type
     if (findingFilters.from) params.from = findingFilters.from
     if (findingFilters.to) params.to = findingFilters.to
+    if (findingFilters.repository) params.repository = findingFilters.repository
     api.securityFindings(params).then((d: any) => {
       const list = Array.isArray(d) ? d : (d?.data || [])
       setFindings(list)
@@ -217,7 +218,8 @@ export default function Security() {
     if (urlTab) setTab(urlTab as any)
     const urlSeverity = params.get('severity')
     const urlStatus = params.get('status')
-    if (urlSeverity || urlStatus) setFindingFilters(f => ({ ...f, severity: urlSeverity || '', status: urlStatus || '' }))
+    const urlRepository = params.get('repository')
+    if (urlSeverity || urlStatus || urlRepository) setFindingFilters(f => ({ ...f, severity: urlSeverity || '', status: urlStatus || '', repository: urlRepository || '' }))
   }, [])
 
   useEffect(() => {
@@ -662,15 +664,16 @@ export default function Security() {
           {/* PAT-1484: visible active-scope banner so the dashboard-KPI deep
               link is self-describing and can be cleared. Shown whenever a
               severity/status scope is active, not just from a KPI landing. */}
-          {(findingFilters.severity || findingFilters.status) && (
+          {(findingFilters.severity || findingFilters.status || findingFilters.repository) && (
             <div className="flex items-center justify-between gap-2 mb-3 p-2 bg-gray-50 border border-gray-200 rounded-lg">
               <span className="text-xs text-gray-600">
                 활성 범위: {findingFilters.severity ? `심각도 ${findingFilters.severity.split(',').join(', ')}` : '모든 심각도'}
                 {findingFilters.status ? (findingFilters.status === 'unresolved' ? ' · 미해결(해결 제외)' : ` · 상태 ${findingFilters.status}`) : ''}
+                {findingFilters.repository ? ' · 저장소 범위' : ''}
                 {' '}· {findingTotal}건
               </span>
               <button
-                onClick={() => { setFindingFilters({ severity: '', status: '', type: '', from: '', to: '' }); setSelectedFindings(new Set()) }}
+                onClick={() => { setFindingFilters({ severity: '', status: '', type: '', from: '', to: '', repository: '' }); setSelectedFindings(new Set()) }}
                 className="btn-sm btn-secondary text-xs text-gray-500"
                 aria-label="필터 초기화">
                 필터 초기화 ✕

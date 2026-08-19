@@ -42,6 +42,7 @@ import CodeExplorer from './pages/CodeExplorer'
 import Analytics from './pages/Analytics'
 import Communications from './pages/Communications'
 import Sandboxes from './pages/Sandboxes'
+import SandboxDetail from './pages/SandboxDetail'
 import EnterpriseFeatures from './pages/EnterpriseFeatures'
 
 export default function App() {
@@ -129,6 +130,7 @@ function AppContent() {
           <Route path="/tools" element={<Tools />} />
           <Route path="/communications" element={<Communications />} />
           <Route path="/sandboxes" element={<Sandboxes />} />
+          <Route path="/sandboxes/:id" element={<SandboxDetail />} />
           <Route path="/enterprise" element={<EnterpriseFeatures />} />
           <Route path="/audit" element={<Audit />} />
         </>)}

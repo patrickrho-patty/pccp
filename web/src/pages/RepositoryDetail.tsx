@@ -5,14 +5,16 @@ import { StatCard } from '../components/StatCard'
 import { Modal, ModalFooter } from '../components/Modal'
 import { formatRelative } from '../utils/format'
 import { showToast } from '../components/Toast'
+import { resolveRepoSync, classifySyncError, treeViewState, SyncDataset } from '../repoSync'
+import { detailRoute, scopedListRoute } from '../relationLinks'
 
 function authHeaders(): Record<string, string> { const token = sessionStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }
 
 // RepositoryDetail (repositories C3) — file browser, branches +
 // protection, baselines, sensitivity heatmap, sessions, findings, and
 // the webhook surface.
-export default function RepositoryDetail() {
-  const { id } = useParams<{ id: string }>()
+export default function RepositoryDetail() {  const { id: paramId } = useParams<{ id: string }>()
+  const id = paramId || ''
   const [repo, setRepo] = useState<any>(null)
   const [branches, setBranches] = useState<any[]>([])
   const [baselines, setBaselines] = useState<any[]>([])
@@ -24,15 +26,17 @@ export default function RepositoryDetail() {
   const [fileContent, setFileContent] = useState<string | null>(null)
   const [filePath, setFilePath] = useState('')
   const [syncing, setSyncing] = useState(false)
-  const [notSynced, setNotSynced] = useState(false)
+  const [treeLoading, setTreeLoading] = useState(true)
+  const [treeError, setTreeError] = useState<string | null>(null)
+  const [datasetErrors, setDatasetErrors] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
 
   const loadRepo = () => {
     if (!id) return
     api.getRepository(id).then(setRepo).catch(() => setRepo(null)).finally(() => setLoading(false))
-    api.repoBranches(id).then(d => setBranches(Array.isArray(d) ? d : [])).catch(() => {})
-    api.repoBaselines(id).then(d => setBaselines(Array.isArray(d) ? d : [])).catch(() => {})
-    api.repoHeatmap().then(d => setHeatmaps((Array.isArray(d) ? d : []).filter((h: any) => h.repository_id === id))).catch(() => {})
+    api.repoBranches(id).then(d => { setBranches(Array.isArray(d) ? d : []); setDatasetErrors(e => ({ ...e, branches: '' })) }).catch((err: any) => setDatasetErrors(e => ({ ...e, branches: err?.message || 'load failed' })))
+    api.repoBaselines(id).then(d => { setBaselines(Array.isArray(d) ? d : []); setDatasetErrors(e => ({ ...e, baselines: '' })) }).catch((err: any) => setDatasetErrors(e => ({ ...e, baselines: err?.message || 'load failed' })))
+    api.repoHeatmap().then(d => { setHeatmaps((Array.isArray(d) ? d : []).filter((h: any) => h.repository_id === id)); setDatasetErrors(e => ({ ...e, heatmap: '' })) }).catch((err: any) => setDatasetErrors(e => ({ ...e, heatmap: err?.message || 'load failed' })))
     api.listSessions().then((d: any[]) => setSessions((Array.isArray(d) ? d : []).filter((s: any) => s.repository_id === id))).catch(() => {})
     api.securityFindings().then((d: any) => setFindings((Array.isArray(d) ? d : []).filter((f: any) => sessions.some((s: any) => s.session_id === f.session_id)))).catch(() => {})
   }
@@ -40,9 +44,10 @@ export default function RepositoryDetail() {
 
   const loadTree = (path: string) => {
     setTreePath(path)
+    setTreeLoading(true)
     api.repoTree(id!, path)
-      .then(d => { setTree(Array.isArray(d) ? d : []); setNotSynced(false) })
-      .catch(() => setNotSynced(true))
+      .then(d => { setTree(Array.isArray(d) ? d : []); setTreeError(null); setTreeLoading(false) })
+      .catch((err: any) => { setTree([]); setTreeError(err?.message || 'unknown'); setTreeLoading(false) })
   }
   useEffect(() => { if (id && repo) loadTree('') }, [id, repo?.id])
 
@@ -54,14 +59,14 @@ export default function RepositoryDetail() {
   }
 
   const handleSync = async () => {
+    if (syncing) return // idempotence: no duplicate jobs
     setSyncing(true)
     try {
       const res: any = await api.syncRepository(id!)
       showToast(`동기화 완료 · HEAD ${res.head?.slice(0, 8)}`, 'success')
-      setNotSynced(false)
       loadTree('')
       loadRepo()
-    } catch (err: any) { showToast('동기화 실패: ' + err.message, 'error') }
+    } catch (err: any) { showToast('동기화 실패: ' + err.message, 'error'); loadRepo() }
     finally { setSyncing(false) }
   }
 
@@ -74,7 +79,23 @@ export default function RepositoryDetail() {
   )
 
   const heat = heatmaps[0]
+  // Heatmap API returns risk_score (0..1); heat_score/level/findings_count
+  // never existed, which produced the unexplained "민감도 점수: -" (PAT-1493).
+  const heatScore = heat && heat.risk_score != null ? Math.round(heat.risk_score * 100) : null
   const activeSessions = sessions.filter((s: any) => s.status === 'active')
+
+  // Canonical sync status (PAT-1493) — same object shape as the list page,
+  // plus per-dataset availability probed on this page.
+  const treeUnavailableReason = treeError ? classifySyncError(treeError).label : undefined
+  const datasets: SyncDataset[] = [
+    { key: 'files', label: '파일 스냅샷', available: !treeError, reason: treeUnavailableReason },
+    { key: 'branches', label: '브랜치', available: !datasetErrors.branches, reason: datasetErrors.branches ? '브랜치 정보를 불러올 수 없습니다' : undefined },
+    { key: 'baselines', label: '베이스라인', available: !datasetErrors.baselines, reason: datasetErrors.baselines ? '베이스라인 정보를 불러올 수 없습니다' : undefined },
+    { key: 'heatmap', label: '민감도 열지도', available: !datasetErrors.heatmap, reason: datasetErrors.heatmap ? '열지도 데이터를 불러올 수 없습니다' : undefined },
+  ]
+  const sync = resolveRepoSync(repo, { datasets })
+  const treeView = treeViewState(treeLoading, tree, treeError, treePath)
+  const fmtTime = (v?: string | null) => v ? v.slice(0, 16).replace('T', ' ') : '-'
 
   return (
     <div>
@@ -91,11 +112,40 @@ export default function RepositoryDetail() {
         </div>
       </div>
 
+      {/* Canonical sync status (PAT-1493) — list and detail agree on phase and timestamps */}
+      <div className="card mb-6">
+        <div className="flex items-center gap-3 mb-2 flex-wrap">
+          <h3 className="text-sm font-semibold">🔄 동기화 상태</h3>
+          <span className={sync.badgeClass}>{sync.phaseLabel}</span>
+          {sync.sourceRevision && <span className="text-xs text-gray-400 font-mono">리비전 {sync.sourceRevision.slice(0, 10)}</span>}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs text-gray-500">
+          <div>마지막 성공: {fmtTime(sync.lastSuccessAt)}</div>
+          <div>
+            최근 시도: {fmtTime(sync.lastAttemptAt)}
+            {sync.lastAttemptResult && ` · ${{ success: '성공', failed: '실패', running: '진행 중', queued: '대기 중' }[sync.lastAttemptResult]}`}
+          </div>
+          <div>소스 기준 커밋: {fmtTime(repo.last_commit_at)}</div>
+        </div>
+        {sync.lastError && (
+          <div className="mt-2 text-xs text-red-600">
+            {classifySyncError(sync.lastError).label} <span className="text-gray-400 font-mono">({sync.lastError})</span>
+          </div>
+        )}
+        <div className="mt-2 flex flex-wrap gap-2">
+          {datasets.map(d => (
+            <span key={d.key} title={d.reason || ''} className={`text-[10px] px-2 py-0.5 rounded-full border ${d.available ? 'border-green-200 bg-green-50 text-green-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+              {d.label} {d.available ? '사용 가능' : `사용 불가${d.reason ? ` — ${d.reason}` : ''}`}
+            </span>
+          ))}
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 stat-grid mb-6">
         <StatCard label="브랜치" value={branches.length} accent="blue" />
         <StatCard label="베이스라인" value={baselines.length} accent="green" />
-        <StatCard label="활성 세션" value={activeSessions.length} accent="purple" to="/sessions" />
-        <StatCard label="보안 발견" value={findings.length} accent="red" to="/security" />
+        <StatCard label="활성 세션" value={activeSessions.length} accent="purple" to={scopedListRoute('sessions', { parent: { entity: 'repository', id }, status: 'active' })} sub="활성 세션 목록" />
+        <StatCard label="보안 발견" value={findings.length} accent="red" to={scopedListRoute('security', { parent: { entity: 'repository', id }, tab: 'findings' })} sub="저장소 발견 목록" />
         <StatCard label="민감도" value={repo.sensitivity || 'internal'} accent={repo.sensitivity === 'restricted' || repo.sensitivity === 'confidential' ? 'red' : 'yellow'} />
       </div>
 
@@ -105,18 +155,26 @@ export default function RepositoryDetail() {
           <h3 className="text-sm font-semibold">📂 파일 브라우저 · File Browser</h3>
           <span className="text-xs text-gray-400 font-mono">/{treePath}</span>
         </div>
-        {notSynced ? (
+        {treeView.state === 'loading' ? (
+          <div className="p-8 space-y-3 animate-pulse"><div className="h-4 bg-gray-100 rounded w-3/4" /><div className="h-4 bg-gray-100 rounded w-1/2" /></div>
+        ) : treeView.state === 'unavailable' ? (
           <div className="text-center py-8">
-            <p className="text-sm text-gray-500 mb-2">아직 동기화되지 않았습니다</p>
-            <button onClick={handleSync} className="btn-primary text-sm">🔄 지금 동기화</button>
+            <p className="text-sm text-gray-500 mb-1">동기화 데이터를 사용할 수 없습니다</p>
+            <p className="text-xs text-gray-400 mb-3">{treeView.error.label}</p>
+            <button onClick={handleSync} disabled={syncing} className="btn-primary text-sm">{syncing ? '동기화 중...' : '🔄 지금 동기화'}</button>
           </div>
+        ) : treeView.state === 'empty' ? (
+          <p className="text-xs text-gray-400 px-3 py-6 text-center">
+            {treeView.scope === 'repository'
+              ? '빈 저장소입니다 — 스냅샷에 커밋된 파일이 없습니다'
+              : '빈 폴더입니다 — 이 경로에 파일이 없습니다'}
+          </p>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="border border-gray-100 rounded-lg max-h-80 overflow-y-auto">
               {treePath !== '' && (
                 <button onClick={() => loadTree(treePath.split('/').slice(0, -1).join('/'))} className="w-full text-left text-xs text-blue-600 hover:bg-gray-50 px-3 py-2 border-b border-gray-50">⬆ 상위 폴더</button>
               )}
-              {tree.length === 0 && <p className="text-xs text-gray-400 px-3 py-2">빈 폴더</p>}
               {tree.map((e: any) => (
                 <button key={e.path} onClick={() => e.dir ? loadTree(e.path) : openFile(e.path)}
                   className="w-full flex items-center gap-2 text-left text-xs px-3 py-2 hover:bg-gray-50 border-b border-gray-50 last:border-0">
@@ -173,20 +231,30 @@ export default function RepositoryDetail() {
       {/* Sensitivity heatmap (§33.5) */}
       <div className="card mb-4">
         <h3 className="text-sm font-semibold mb-3">🔥 민감도 열지도 · Sensitivity Heatmap (§33.5)</h3>
-        {heat ? (
+        {datasetErrors.heatmap ? (
+          <p className="text-xs text-gray-400">열지도 데이터 사용 불가 — {datasetErrors.heatmap}</p>
+        ) : heat ? (
           <div className="space-y-2">
             <div className="flex items-center gap-3">
               <div className="flex-1">
-                <div className="text-xs text-gray-500 mb-1">민감도 점수: {heat.heat_score ?? '-'}</div>
-                <div className="h-2 bg-gray-100 rounded overflow-hidden">
-                  <div className={`h-full ${(heat.heat_score || 0) >= 70 ? 'bg-red-500' : (heat.heat_score || 0) >= 40 ? 'bg-yellow-500' : 'bg-green-500'}`} style={{ width: `${Math.min(heat.heat_score || 0, 100)}%` }} />
-                </div>
+                {heatScore !== null ? (
+                  <>
+                    <div className="text-xs text-gray-500 mb-1">민감도 점수: {heatScore} / 100</div>
+                    <div className="h-2 bg-gray-100 rounded overflow-hidden">
+                      <div className={`h-full ${heatScore >= 70 ? 'bg-red-500' : heatScore >= 40 ? 'bg-yellow-500' : 'bg-green-500'}`} style={{ width: `${Math.min(heatScore, 100)}%` }} />
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-xs text-gray-500 mb-1">민감도 점수 산정 불가 — 위험 점수가 계산되지 않았습니다</div>
+                )}
               </div>
-              <span className={`badge-${(heat.heat_score || 0) >= 70 ? 'red' : (heat.heat_score || 0) >= 40 ? 'yellow' : 'green'}`}>{heat.level || repo.sensitivity}</span>
+              <span className={`badge-${heatScore !== null && heatScore >= 70 ? 'red' : heatScore !== null && heatScore >= 40 ? 'yellow' : 'green'}`}>{heat.sensitivity || repo.sensitivity}</span>
             </div>
-            {heat.findings_count !== undefined && <div className="text-xs text-gray-500">발견: {heat.findings_count}건</div>}
+            <div className="text-xs text-gray-400">
+              산정 출처: 저장소 민감도({heat.sensitivity || repo.sensitivity}) 기본 점수 + 보안 발견 {heat.security_findings ?? 0}건 · AI 세션 {heat.ai_sessions ?? 0} · 조회 시점 실시간 산정
+            </div>
           </div>
-        ) : <p className="text-xs text-gray-400">열지도 데이터 없음 — 보안 발견이 기록되면 채워집니다</p>}
+        ) : <p className="text-xs text-gray-400">열지도 데이터 없음 — 저장소가 열지도 집계에 포함되지 않았습니다</p>}
       </div>
 
       {/* Sessions + findings */}

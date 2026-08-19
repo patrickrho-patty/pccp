@@ -468,6 +468,7 @@ func (s *Server) setupRouter() {
 			r.Get("/presence", s.handleGetPresence)
 			r.Post("/presence", s.handleUpdatePresence)
 			r.Post("/broadcasts", s.handleSendBroadcast)
+			r.Post("/broadcasts/send", s.handleSendBroadcastGoverned)
 			r.Get("/broadcasts", s.handleListBroadcasts)
 			r.Get("/broadcasts/{id}/acks", s.handleBroadcastAcks)
 			r.Post("/broadcasts/{id}/ack", s.handleBroadcastAck)
@@ -2482,6 +2483,9 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		if v := r.URL.Query().Get("project"); v != "" {
 			q = q.Where("project_id = ?", v)
+		}
+		if v := r.URL.Query().Get("repository"); v != "" {
+			q = q.Where("repository_id = ?", v)
 		}
 		if v := r.URL.Query().Get("range"); v != "" {
 			switch v {
@@ -5563,14 +5567,20 @@ func (s *Server) securityFindingScope(q *gorm.DB, severity, status string) *gorm
 func (s *Server) handleSecurityFindings(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
 	q := s.db.Model(&models.SecurityFinding{}).Where("organization_id = ?", orgID)
-	// Server-side filters (security UX5/UX12): severity (comma-list),
-	// status (or "unresolved" token), type, date range — via the shared
-	// scope contract so the list reconciles with dashboard KPI counts.
+	// Server-side filters (security UX5/UX12 + PAT-1490): severity
+	// (comma-list), status (or "unresolved" token), type, repository,
+	// date range — via the shared scope contract so the list reconciles
+	// with dashboard KPI counts and relationship drill-downs.
 	q = s.securityFindingScope(q, r.URL.Query().Get("severity"), r.URL.Query().Get("status"))
 	for _, key := range []string{"finding_type"} {
 		if v := r.URL.Query().Get(key); v != "" {
 			q = q.Where(key+" = ?", v)
 		}
+	}
+	// PAT-1490: scope findings to a repository by joining through its
+	// sessions, so a repo's "보안 발견" count drills to the identical list.
+	if repo := r.URL.Query().Get("repository"); repo != "" {
+		q = q.Where("session_id IN (?)", s.db.Model(&models.Session{}).Select("session_id").Where("organization_id = ? AND repository_id = ?", orgID, repo))
 	}
 	if v := r.URL.Query().Get("from"); v != "" {
 		q = q.Where("occurred_at >= ?", v)

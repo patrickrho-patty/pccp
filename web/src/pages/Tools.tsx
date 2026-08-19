@@ -5,11 +5,17 @@ import { Modal, ModalFooter } from '../components/Modal'
 import EmptyState from '../components/EmptyState'
 import { showToast } from '../components/Toast'
 import { useFavorites, FavoriteStar } from '../hooks/useFavorites'
+import {
+  assessAllowlistImpact, assessGateChange, effectiveAllowlist,
+  summarizeRisk, isStaleBase,
+} from '../toolGovernance'
 
 // Tools page (web/14 plan): the Tool Registry — governance metadata
 // that the relay enforces on the live path (A). Includes the approvals
 // queue (B), MCP cross-link (C), classification presets + wizard (D),
 // seed feedback (UX2), per-project allowlist (feature 7).
+// PAT-1509: approval-gate and allowlist changes go through a draft diff
+// + impact preview with reason/confirmation instead of silent toggles.
 
 const DANGER_KO: Record<string, string> = { low: '낮음', medium: '중간', high: '높음', critical: '심각' }
 const DANGER_BADGE: Record<string, string> = {
@@ -45,6 +51,16 @@ export default function Tools() {
   const [form, setForm] = useState({ name: '', name_ko: '', category: 'read', tool_class: 'read', danger_level: 'low', requires_approval: false })
   const [filterCat, setFilterCat] = useState('')
   const [filterDanger, setFilterDanger] = useState('')
+  // PAT-1509 governed-change state
+  const [detailTool, setDetailTool] = useState<any | null>(null)
+  const [detailProjects, setDetailProjects] = useState<any[] | null>(null)
+  const [gateTarget, setGateTarget] = useState<any | null>(null)
+  const [gateReason, setGateReason] = useState('')
+  const [gateConfirm, setGateConfirm] = useState(false)
+  const [savedNames, setSavedNames] = useState<string[]>([]) // allowlist base snapshot (diff 기준)
+  const [allowPreview, setAllowPreview] = useState<any | null>(null)
+  const [allowReason, setAllowReason] = useState('')
+  const [allowConfirm, setAllowConfirm] = useState(false)
 
   const load = () => {
     api.listTools().then((d: any[]) => {
@@ -59,8 +75,12 @@ export default function Tools() {
   useEffect(() => { load() }, [])
 
   const loadAllowlist = (projectId: string) => {
-    if (!projectId) { setAllowlist([]); return }
-    api.getProjectToolAllowlist(projectId).then((d: any[]) => setAllowlist(Array.isArray(d) ? d : [])).catch(() => setAllowlist([]))
+    if (!projectId) { setAllowlist([]); setSavedNames([]); return }
+    api.getProjectToolAllowlist(projectId).then((d: any[]) => {
+      const rows = Array.isArray(d) ? d : []
+      setAllowlist(rows)
+      setSavedNames(rows.map((r: any) => r.tool_name))
+    }).catch(() => { setAllowlist([]); setSavedNames([]) })
   }
 
   const seed = async () => {
@@ -85,11 +105,31 @@ export default function Tools() {
     } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
 
-  const toggleApproval = async (t: any) => {
+  // 승인 게이트 변경은 즉시 토글이 아니라 diff/사유/확인을 거친다 (PAT-1509).
+  const openGate = (t: any) => { setGateTarget(t); setGateReason(''); setGateConfirm(false) }
+
+  const confirmGate = async () => {
+    if (!gateTarget) return
+    const change = assessGateChange(gateTarget, !gateTarget.requires_approval)
+    if (!gateReason.trim()) { showToast('변경 사유를 입력하세요 (감사 기록에 남습니다)', 'error'); return }
+    if (change.highRisk && !gateConfirm) { showToast('고위험 도구의 게이트 해제는 확인 체크가 필요합니다', 'error'); return }
     try {
-      await api.updateTool(t.id, { requires_approval: !t.requires_approval })
+      await api.updateTool(gateTarget.id, { requires_approval: change.to, reason: gateReason.trim() })
+      showToast('승인 정책 변경 완료 — 감사 기록되며 다음 호출부터 적용됩니다', 'success')
+      setGateTarget(null)
       load()
     } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
+  // 도구 상세: 한글 capability/위험 근거/임대 클래스/다이제스트 + 프로젝트별 허용 상태.
+  const openDetail = (t: any) => {
+    setDetailTool(t)
+    setDetailProjects(null)
+    Promise.all(projects.map((p: any) =>
+      api.getProjectToolAllowlist(p.id)
+        .then((rows: any[]) => ({ project: p, rows: Array.isArray(rows) ? rows : [] as any[] }))
+        .catch(() => ({ project: p, rows: null as any }))
+    )).then(setDetailProjects)
   }
 
   const decide = async (a: any, decision: string) => {
@@ -100,15 +140,34 @@ export default function Tools() {
     } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
 
-  const saveAllowlist = async () => {
-    if (!selectedProject) {
-      showToast('프로젝트를 선택하세요', 'error')
-      return
-    }
-    const names = allToolNames.filter(n => allowlist.some((r: any) => r.tool_name === n))
+  const draftNames = allToolNames.filter(n => allowlist.some((r: any) => r.tool_name === n))
+
+  // 허용 목록 저장은 초안 diff + 영향 미리보기 모달을 먼저 연다 (PAT-1509).
+  const openAllowPreview = () => {
+    if (!selectedProject) { showToast('프로젝트를 선택하세요', 'error'); return }
+    const impact = assessAllowlistImpact(savedNames, draftNames, tools)
+    if (!impact.hasChanges) { showToast('변경 사항이 없습니다', 'info'); return }
+    setAllowReason(''); setAllowConfirm(false)
+    setAllowPreview(impact)
+  }
+
+  const confirmAllowSave = async () => {
+    if (!allowPreview) return
+    if (!allowReason.trim()) { showToast('변경 사유를 입력하세요 (감사 기록에 남습니다)', 'error'); return }
+    if (allowPreview.weakening && !allowConfirm) { showToast('보호가 약화되는 변경은 확인 체크가 필요합니다', 'error'); return }
     try {
-      await api.setProjectToolAllowlist(selectedProject, names)
-      showToast('허용 목록 저장 완료', 'success')
+      // 동시 편집 감지: 확인 시점에 재조회해 diff 기준 스냅샷과 비교한다.
+      const latest = await api.getProjectToolAllowlist(selectedProject)
+      const latestNames = (Array.isArray(latest) ? latest : []).map((r: any) => r.tool_name)
+      if (isStaleBase(savedNames, latestNames)) {
+        showToast('다른 관리자가 목록을 변경했습니다 — 최신 상태를 다시 불러옵니다', 'error')
+        setAllowPreview(null)
+        loadAllowlist(selectedProject)
+        return
+      }
+      await api.setProjectToolAllowlist(selectedProject, draftNames, allowReason.trim())
+      showToast('허용 목록 저장 완료 — 감사 기록되며 다음 도구 호출부터 적용됩니다', 'success')
+      setAllowPreview(null)
       loadAllowlist(selectedProject)
     } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
@@ -170,7 +229,10 @@ export default function Tools() {
                 <div className="flex items-center gap-2 min-w-0">
                   <FavoriteStar entity="tools" id={t.id} />
                   <div className="min-w-0">
-                    <div className="text-xs font-semibold truncate">{t.name_ko || t.name} <span className="text-gray-400 font-mono font-normal">({t.name})</span></div>
+                    <button className="text-xs font-semibold truncate hover:text-blue-600" onClick={() => openDetail(t)}
+                      title="상세 보기 — capability·위험·임대·프로젝트 허용 상태">
+                      {t.name_ko || t.name} <span className="text-gray-400 font-mono font-normal">({t.name})</span>
+                    </button>
                     <div className="text-[10px] text-gray-400">{t.category} · class {t.tool_class}</div>
                   </div>
                 </div>
@@ -180,7 +242,7 @@ export default function Tools() {
                     {DANGER_KO[t.danger_level] || t.danger_level}
                   </span>
                   <button className={`text-[10px] px-2 py-0.5 rounded-full border ${t.requires_approval ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}
-                    onClick={() => toggleApproval(t)} title="승인 필요 토글 (감사 기록됨)">
+                    onClick={() => openGate(t)} title="승인 정책 변경 — diff·사유·확인 후 감사 기록됨">
                     {t.requires_approval ? '승인 필요' : '자동 허용'}
                   </button>
                 </div>
@@ -219,16 +281,39 @@ export default function Tools() {
           </select>
           {selectedProject && (
             <>
+              {/* 현재 유효 정책 배너 — 로컬 체크박스 초안이 아니라 저장된 상태 기준 */}
+              {(() => {
+                const eff = effectiveAllowlist(savedNames, tools)
+                return (
+                  <div className={`text-[11px] px-3 py-2 rounded-lg border ${eff.mode === 'unset' ? 'bg-yellow-50 text-yellow-800 border-yellow-200' : 'bg-blue-50 text-blue-800 border-blue-200'}`}>
+                    <span className="font-semibold">현재 유효 정책:</span> {eff.label}
+                    {eff.unknown.length > 0 && (
+                      <span className="block text-red-600 mt-0.5">레지스트리에 없는 도구가 목록에 남아 있습니다: {eff.unknown.join(', ')}</span>
+                    )}
+                  </div>
+                )
+              })()}
+              {/* 초안 위험 요약 */}
+              <div className="text-[10px] text-gray-500">
+                선택 {draftNames.length}개 — {Object.entries(summarizeRisk(draftNames, tools)).map(([k, v]) =>
+                  `${DANGER_KO[k] || '미등록'} ${v}`).join(' · ') || '없음'}
+              </div>
               <div className="space-y-1">
-                {allToolNames.map(name => (
-                  <label key={name} className="flex items-center gap-2 text-xs">
-                    <input type="checkbox" checked={allowlist.some((r: any) => r.tool_name === name)}
-                      onChange={() => toggleAllowlistTool(name)} />
-                    <span className="font-mono">{name}</span>
+                {tools.map((t: any) => (
+                  <label key={t.name} className="flex items-center gap-2 text-xs">
+                    <input type="checkbox" checked={allowlist.some((r: any) => r.tool_name === t.name)}
+                      onChange={() => toggleAllowlistTool(t.name)} />
+                    <span className="font-mono">{t.name}</span>
+                    <span className="text-gray-500">{t.name_ko || ''}</span>
+                    <span className={`text-[10px] px-1.5 rounded-full border ${DANGER_BADGE[t.danger_level] || ''}`}
+                      title={DANGER_HELP[t.danger_level] || ''}>
+                      {DANGER_KO[t.danger_level] || t.danger_level}
+                    </span>
+                    {t.requires_approval && <span className="text-[10px] text-amber-600">승인 필요</span>}
                   </label>
                 ))}
               </div>
-              <button className="btn-sm btn-primary" onClick={saveAllowlist}>허용 목록 저장</button>
+              <button className="btn-sm btn-primary" onClick={openAllowPreview}>허용 목록 저장 (영향 검토)</button>
             </>
           )}
         </div>
@@ -270,6 +355,135 @@ export default function Tools() {
             호출 시 리뷰어 승인 필요
           </label>
         </div>
+      </Modal>
+
+      {/* 도구 상세 (PAT-1509) — 한글 capability/효과, 위험 근거, 필요 임대 클래스, 상태, 다이제스트, 프로젝트별 허용 상태 */}
+      <Modal open={!!detailTool} title={`도구 상세 — ${detailTool?.name_ko || detailTool?.name || ''}`}
+        subtitle={detailTool?.name} onClose={() => setDetailTool(null)} size="lg">
+        {detailTool && (
+          <div className="space-y-3 text-xs">
+            <div className="grid grid-cols-2 gap-2">
+              <div><span className="text-gray-400">카테고리</span><div>{detailTool.category}</div></div>
+              <div><span className="text-gray-400">필요 임대 클래스</span><div className="font-mono">{detailTool.tool_class}</div></div>
+              <div>
+                <span className="text-gray-400">위험도</span>
+                <div className="flex items-center gap-2">
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full border ${DANGER_BADGE[detailTool.danger_level] || ''}`}>
+                    {DANGER_KO[detailTool.danger_level] || detailTool.danger_level}
+                  </span>
+                  <span className="text-[10px] text-gray-500">{DANGER_HELP[detailTool.danger_level] || ''}</span>
+                </div>
+              </div>
+              <div><span className="text-gray-400">승인 정책</span><div>{detailTool.requires_approval ? '호출 시 리뷰어 승인 필요' : '자동 허용'}</div></div>
+              <div><span className="text-gray-400">상태</span><div>{detailTool.status === 'active' ? '활성' : detailTool.status}</div></div>
+              <div><span className="text-gray-400">무결성 다이제스트</span><div className="font-mono break-all">{detailTool.signature || '미고정 (런타임 다이제스트 검증 없음)'}</div></div>
+            </div>
+            <div>
+              <div className="text-gray-400 mb-1">프로젝트별 허용 상태</div>
+              {detailProjects === null && <p className="text-[11px] text-gray-400">조회 중...</p>}
+              {detailProjects !== null && detailProjects.length === 0 && <p className="text-[11px] text-gray-400">프로젝트 없음</p>}
+              <div className="space-y-1">
+                {(detailProjects || []).map((r: any) => {
+                  const onList = r.rows !== null && r.rows.some((x: any) => x.tool_name === detailTool.name)
+                  const state = r.rows === null ? '조회 실패 (권한 제한/오프라인)'
+                    : r.rows.length === 0 ? '허용 목록 미설정 — 기본 허용'
+                    : onList ? '허용 목록에 포함' : '허용 목록에 없음 — 차단'
+                  return (
+                    <div key={r.project.id} className="flex items-center justify-between border rounded-lg px-2 py-1 text-[11px]">
+                      <span>{r.project.name_ko || r.project.name}</span>
+                      <span className={r.rows === null ? 'text-red-600' : onList || r.rows.length === 0 ? 'text-green-600' : 'text-gray-500'}>{state}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* 승인 정책 변경 — 초안 diff + 영향 확인 (PAT-1509) */}
+      <Modal open={!!gateTarget} title="승인 정책 변경 — 영향 확인" subtitle={gateTarget?.name}
+        onClose={() => setGateTarget(null)}
+        footer={<ModalFooter onCancel={() => setGateTarget(null)} onConfirm={confirmGate}
+          confirmLabel="변경 적용" danger={!!gateTarget && assessGateChange(gateTarget, !gateTarget.requires_approval).weakening} />}>
+        {gateTarget && (() => {
+          const change = assessGateChange(gateTarget, !gateTarget.requires_approval)
+          return (
+            <div className="space-y-3 text-xs">
+              <div className="border rounded-lg p-3 space-y-1">
+                <div className="text-[10px] text-gray-400 font-semibold">변경 diff</div>
+                <div>현재: <span className="font-semibold">{change.from ? '승인 필요' : '자동 허용'}</span> → 변경 후: <span className="font-semibold">{change.to ? '승인 필요' : '자동 허용'}</span></div>
+              </div>
+              {change.weakening && (
+                <div className={`text-[11px] px-3 py-2 rounded-lg border ${change.highRisk ? 'bg-red-50 text-red-700 border-red-200' : 'bg-yellow-50 text-yellow-800 border-yellow-200'}`}>
+                  {change.highRisk
+                    ? '보호 약화 경고: high/critical 도구의 승인 게이트를 해제하면 리뷰 없이 즉시 호출됩니다.'
+                    : '보호 약화: 승인 없이 호출 가능해집니다.'}
+                </div>
+              )}
+              <div>
+                <label className="text-[10px] text-gray-500">변경 사유 (필수 — 감사 기록에 남습니다)</label>
+                <input className="input text-xs w-full" value={gateReason} onChange={e => setGateReason(e.target.value)}
+                  placeholder="예: 긴급 장애 대응 / 보안 검토 완료" />
+              </div>
+              {change.highRisk && (
+                <label className="flex items-center gap-2 text-xs text-gray-700">
+                  <input type="checkbox" checked={gateConfirm} onChange={e => setGateConfirm(e.target.checked)} />
+                  고위험 도구의 승인 게이트 해제 영향을 확인했습니다
+                </label>
+              )}
+            </div>
+          )
+        })()}
+      </Modal>
+
+      {/* 허용 목록 저장 — 초안 diff + 영향 미리보기 (PAT-1509) */}
+      <Modal open={!!allowPreview} title="허용 목록 변경 — 영향 미리보기"
+        subtitle={projects.find((p: any) => p.id === selectedProject)?.name_ko || projects.find((p: any) => p.id === selectedProject)?.name}
+        onClose={() => setAllowPreview(null)}
+        footer={<ModalFooter onCancel={() => setAllowPreview(null)} onConfirm={confirmAllowSave}
+          confirmLabel="저장" danger={!!allowPreview?.weakening} />}>
+        {allowPreview && (
+          <div className="space-y-3 text-xs">
+            {allowPreview.becomesUnset && (
+              <div className="text-[11px] px-3 py-2 rounded-lg border bg-red-50 text-red-700 border-red-200">
+                보호 약화 경고: 목록이 비워지면 "미설정"으로 되돌아가 등록된 모든 도구가 허용됩니다.
+              </div>
+            )}
+            {allowPreview.addedHighRisk.length > 0 && (
+              <div className="text-[11px] px-3 py-2 rounded-lg border bg-red-50 text-red-700 border-red-200">
+                고위험 capability 추가: {allowPreview.addedHighRisk.join(', ')} — high/critical 도구가 이 프로젝트에서 호출 가능해집니다.
+              </div>
+            )}
+            {allowPreview.unknown.length > 0 && (
+              <div className="text-[11px] px-3 py-2 rounded-lg border bg-yellow-50 text-yellow-800 border-yellow-200">
+                레지스트리에 없는 도구가 포함되어 있습니다: {allowPreview.unknown.join(', ')}
+              </div>
+            )}
+            <div className="border rounded-lg p-3 space-y-1">
+              <div className="text-[10px] text-gray-400 font-semibold">변경 diff (현재 저장본 기준)</div>
+              <div>추가 ({allowPreview.diff.added.length}): {allowPreview.diff.added.join(', ') || '없음'}</div>
+              <div>삭제 ({allowPreview.diff.removed.length}): {allowPreview.diff.removed.join(', ') || '없음'}
+                {allowPreview.removedGated.length > 0 && <span className="text-amber-600"> — 승인 게이트 도구 포함: {allowPreview.removedGated.join(', ')}</span>}
+              </div>
+              <div>유지 ({allowPreview.diff.kept.length})</div>
+            </div>
+            <p className="text-[10px] text-gray-400">
+              전파: 저장 즉시 감사 기록되며, 실행 중인 세션/하네스는 다음 도구 호출 시점부터 새 목록이 강제됩니다 (릴레이 요청 시점 검사).
+            </p>
+            <div>
+              <label className="text-[10px] text-gray-500">변경 사유 (필수 — 감사 기록에 남습니다)</label>
+              <input className="input text-xs w-full" value={allowReason} onChange={e => setAllowReason(e.target.value)}
+                placeholder="예: 보안 검토 완료 / 프로젝트 범위 조정" />
+            </div>
+            {allowPreview.weakening && (
+              <label className="flex items-center gap-2 text-xs text-gray-700">
+                <input type="checkbox" checked={allowConfirm} onChange={e => setAllowConfirm(e.target.checked)} />
+                보호가 약화되는 변경의 영향을 확인했습니다
+              </label>
+            )}
+          </div>
+        )}
       </Modal>
     </div>
   )

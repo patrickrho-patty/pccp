@@ -263,7 +263,11 @@ func (s *Server) handleMessageLink(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "linked"})
 }
 
-// handleBroadcastAcks returns the ack dashboard for a broadcast (B5).
+// handleBroadcastAcks returns the delivery/ack dashboard for a broadcast
+// (B5, PAT-1510). Recipients come from the audience frozen at send time;
+// legacy broadcasts without a snapshot fall back to resolving the target
+// scope, then to all active org users. Each recipient is traceable with
+// its ack and presence state.
 func (s *Server) handleBroadcastAcks(w http.ResponseWriter, r *http.Request) {
 	broadcastID := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
@@ -280,16 +284,66 @@ func (s *Server) handleBroadcastAcks(w http.ResponseWriter, r *http.Request) {
 	for _, a := range ackedIDs {
 		ackedBy[a] = true
 	}
+	// Audience resolution: frozen snapshot > target scope > legacy fallback.
 	var users []models.User
-	s.db.Where("organization_id = ? AND status = 'active'", orgID).Find(&users)
+	var exclusions []audienceExclusion
+	if bc.AudienceJSON != "" {
+		var snap broadcastAudienceSnapshot
+		if json.Unmarshal([]byte(bc.AudienceJSON), &snap) == nil && len(snap.EligibleIDs) > 0 {
+			s.db.Where("organization_id = ? AND id IN ?", orgID, snap.EligibleIDs).Find(&users)
+			exclusions = snap.Excluded
+		}
+	}
+	if users == nil && bc.TargetType != "" {
+		if aud, err := resolveBroadcastAudience(s.db, orgID, bc.TargetType, bc.TargetID); err == nil {
+			users = aud.Eligible
+			exclusions = aud.Excluded
+		}
+	}
+	if users == nil {
+		s.db.Where("organization_id = ? AND status = 'active'", orgID).Find(&users)
+	}
+	// Presence reachability for drill-down.
+	onlineBy := map[string]string{}
+	var presenceRows []models.Presence
+	s.db.Where("organization_id = ?", orgID).Find(&presenceRows)
+	for _, p := range presenceRows {
+		onlineBy[p.UserID] = p.Status
+	}
+	expired := bc.Status == "expired"
+	if !expired && bc.ExpiresAt != "" {
+		// The timestamp column can round-trip empty values as a zero-time
+		// string; only a parseable, past timestamp counts as expired.
+		if ts, err := time.Parse(time.RFC3339, bc.ExpiresAt); err == nil && !ts.IsZero() {
+			expired = time.Now().After(ts)
+		}
+	}
+	type recipientStatus struct {
+		UserID   string `json:"user_id"`
+		Name     string `json:"name"`
+		NameKo   string `json:"name_ko"`
+		Email    string `json:"email"`
+		Acked    bool   `json:"acked"`
+		Presence string `json:"presence"` // online, away, busy, offline
+	}
+	var recipients []recipientStatus
 	var pending []map[string]string
 	ackedCount := 0
 	for _, u := range users {
-		if ackedBy[u.ID] {
+		acked := ackedBy[u.ID]
+		if acked {
 			ackedCount++
 		} else {
 			pending = append(pending, map[string]string{"user_id": u.ID, "name": u.Name, "name_ko": u.NameKo, "email": u.Email})
 		}
+		presence := onlineBy[u.ID]
+		if presence == "" {
+			presence = "offline"
+		}
+		recipients = append(recipients, recipientStatus{
+			UserID: u.ID, Name: u.Name, NameKo: u.NameKo, Email: u.Email,
+			Acked: acked, Presence: presence,
+		})
 	}
 	rate := 0.0
 	if len(users) > 0 {
@@ -298,9 +352,12 @@ func (s *Server) handleBroadcastAcks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"broadcast_id": broadcastID,
 		"requires_ack": bc.RequiresAck,
+		"expired":      expired,
 		"total_users":  len(users),
 		"acked":        ackedCount,
 		"pending":      pending,
+		"recipients":   recipients,
+		"excluded":     exclusions,
 		"ack_rate":     rate,
 	})
 }

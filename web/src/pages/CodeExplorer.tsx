@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../api'
 import EmptyState from '../components/EmptyState'
 import { showToast } from '../components/Toast'
+import { classifySyncError } from '../repoSync'
 
 const ATTRIBUTION_KO: Record<string, string> = {
   AI_GENERATED: 'AI 생성', AI_THEN_HUMAN_EDITED: 'AI 후 사람 수정',
@@ -30,9 +31,24 @@ export default function CodeExplorer() {
   const [blast, setBlast] = useState<any>(null)
   const [tab, setTab] = useState<'attribution' | 'spans' | 'files'>('attribution')
   const [treeErr, setTreeErr] = useState('')
+  const [syncing, setSyncing] = useState(false)
+
+  const selectedRepoRow = repos.find((r: any) => r.id === selectedRepo)
+
+  // Sync recovery action (PAT-1493) — reachable from the error state itself.
+  const handleSync = async () => {
+    if (!selectedRepo || syncing) return
+    setSyncing(true)
+    try {
+      await api.syncRepository(selectedRepo)
+      showToast('동기화 완료', 'success')
+      loadTree(selectedRepo, treePath)
+    } catch (e: any) { showToast('동기화 실패: ' + (e?.message || ''), 'error') }
+    finally { setSyncing(false) }
+  }
 
   useEffect(() => {
-    api.listRepositories().then((d: any[]) => {
+    api.listRepositories().then((d: any) => {
       const list = Array.isArray(d) ? d : (d?.data || [])
       setRepos(list)
       if (list.length && !selectedRepo) setSelectedRepo(list[0].id)
@@ -91,6 +107,23 @@ export default function CodeExplorer() {
           {repos.map((r: any) => <option key={r.id} value={r.id}>{r.name || r.full_name}</option>)}
         </select>
       </div>
+
+      {treeErr && (
+        <div className="card p-3 border border-amber-200 bg-amber-50 flex items-center justify-between gap-2 flex-wrap">
+          <div className="text-[11px] text-amber-700">
+            파일 스냅샷 사용 불가 — {classifySyncError(treeErr).label}
+            {attribution.length > 0 && (
+              <span className="block text-amber-600 mt-0.5">
+                귀속 데이터는 마지막 동기화({selectedRepoRow?.last_sync_at ? selectedRepoRow.last_sync_at.slice(0, 16).replace('T', ' ') : '기록 없음'}) 기준이며 현재 소스와 다를 수 있습니다.
+              </span>
+            )}
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button className="btn-sm btn-primary" onClick={handleSync} disabled={syncing}>{syncing ? '동기화 중...' : '🔄 지금 동기화'}</button>
+            {selectedRepo && <Link className="btn-sm btn-secondary" to={`/repositories/${selectedRepo}`}>저장소 상세 →</Link>}
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-1 border-b border-gray-200">
         {[
@@ -165,7 +198,6 @@ export default function CodeExplorer() {
       {tab === 'files' && (
         <div className="space-y-2">
           <div className="text-[11px] text-gray-500 font-mono">/{treePath || ''}</div>
-          {treeErr && <p className="text-[11px] text-amber-600">{treeErr}</p>}
           <div className="space-y-1">
             {tree.map((entry: any) => (
               <div key={entry.path || entry.name} className="flex items-center justify-between text-[11px] border-b border-gray-50 py-1">

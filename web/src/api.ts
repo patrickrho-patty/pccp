@@ -442,6 +442,10 @@ export const api = {
   listBroadcasts: () => request<any[]>('/api/communications/broadcasts'),
   sendBroadcast: (data: any) =>
     request<any>('/api/communications/broadcasts', { method: 'POST', body: JSON.stringify(data) }),
+  // PAT-1510: governed send — explicit audience scope, frozen snapshot,
+  // idempotent via client_token, critical/emergency confirmation reason.
+  sendBroadcastGoverned: (data: any) =>
+    request<any>('/api/communications/broadcasts/send', { method: 'POST', body: JSON.stringify(data) }),
   broadcastAcks: (id: string) => request<any>(`/api/communications/broadcasts/${id}/acks`),
   ackBroadcast: (id: string, userId: string) =>
     request<any>(`/api/communications/broadcasts/${id}/ack`, { method: 'POST', body: JSON.stringify({ user_id: userId }) }),
@@ -478,12 +482,16 @@ export const api = {
     request<any>(`/api/sandboxes/${id}/destroy`, { method: 'POST' }),
   snapshotSandbox: (id: string) =>
     request<any>(`/api/sandboxes/${id}/snapshot`, { method: 'POST' }),
+  // Sandbox detail + lifecycle recovery (PAT-1513)
+  getSandboxDetail: (id: string) => request<any>(`/api/sandboxes/${id}`),
+  retrySandbox: (id: string) =>
+    request<any>(`/api/sandboxes/${id}/retry`, { method: 'POST' }),
   getSandboxImageAllowlist: () => request<{ images: string[]; enforced: boolean }>('/api/sandboxes/image-allowlist'),
   setSandboxImageAllowlist: (images: string[]) =>
     request<any>('/api/sandboxes/image-allowlist', { method: 'PUT', body: JSON.stringify({ images }) }),
 
-  setProjectToolAllowlist: (projectId: string, toolNames: string[]) =>
-    request<any>(`/api/projects/${projectId}/tool-allowlist`, { method: 'PUT', body: JSON.stringify({ tool_names: toolNames, granted_by: 'admin' }) }),
+  setProjectToolAllowlist: (projectId: string, toolNames: string[], reason?: string) =>
+    request<any>(`/api/projects/${projectId}/tool-allowlist`, { method: 'PUT', body: JSON.stringify({ tool_names: toolNames, granted_by: 'admin', reason: reason || '' }) }),
 
   transitionFileTransfer: (id: string, action: string) =>
     request<any>(`/api/communications/file-transfers/${id}/transition`, { method: 'POST', body: JSON.stringify({ action }) }),

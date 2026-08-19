@@ -8,6 +8,7 @@ import EmptyState from '../components/EmptyState'
 import { formatRelative } from '../utils/format'
 import { useConfirm } from '../components/useConfirm'
 import { showToast } from '../components/Toast'
+import { buildSourceTrace, buildScopePath, summarizeRuleConfig, parseModelRefs, ackSummary } from '../effectivePolicyView'
 
 const DOMAIN_INFO: Record<string, { name: string; nameEn: string; icon: string; desc: string }> = {
   models: { name: '모델 접근 정책', nameEn: 'Model Access', icon: '◆', desc: '조직/부서/프로젝트별 허용 모델 제어' },
@@ -61,6 +62,7 @@ export default function Policy() {
   const [exceptionForm, setExceptionForm] = useState({ scope: 'project', scope_id: '', scopeName: '', reason: '', rule_ids: [] as string[] })
   const [templateEdit, setTemplateEdit] = useState<any>(null)
   const [templateForm, setTemplateForm] = useState({ name: '', nameEn: '', desc: '', config: '{}', version: '1' })
+  const [ruleDetail, setRuleDetail] = useState<any>(null)
 
   const reloadRules = () => api.listPolicyRules().then(data => setRules(Array.isArray(data) ? data : []))
   const reloadAll = () => {
@@ -93,6 +95,11 @@ export default function Policy() {
   const activeEpoch = epochs.find(e => e.status === 'active')
   const draftCount = rules.filter(r => r.status === 'draft').length
   const enforcedCount = rules.filter(r => r.status === 'approved' && r.enabled).length
+
+  // Source trace for the effective policy panel (PAT-1505): one typed DTO
+  // per domain key with winner/overridden sources and exception state.
+  const effTraces = useMemo(() => buildSourceTrace(effective, rules, exceptions), [effective, rules, exceptions])
+  const effScopePath = useMemo(() => buildScopePath(effective), [effective])
 
   // Build a rule from a template (dedupe by template_id + scope — UX15).
   const addRuleFromTemplate = (template: any, scope = 'org', scopeId = '', scopeName = '전체 조직') => {
@@ -282,14 +289,47 @@ export default function Policy() {
               <EntitySelect entity="repository" value={effRepo} onChange={setEffRepo} noneLabel="저장소: 전체" />
             </div>
             {effective ? (
-              <div className="text-xs space-y-1">
-                {effective.allowed_models && (
-                  <div>허용 모델: <span className="font-mono">{effective.allowed_models.join(', ') || '(없음 — 전체 차단)'}</span></div>
+              <div className="text-xs space-y-3">
+                {effScopePath.length > 0 && (
+                  <div className="flex items-center gap-1 flex-wrap text-[11px] text-gray-500">
+                    <span className="font-semibold text-gray-600">적용 경로:</span>
+                    {effScopePath.map((p, i) => (
+                      <span key={p} className="flex items-center gap-1">
+                        <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">{p}</span>
+                        {i < effScopePath.length - 1 && <span className="text-gray-300">→</span>}
+                      </span>
+                    ))}
+                    <span className="text-gray-400 ml-1">· 적용 규칙 {effective.rules?.length || 0}개</span>
+                  </div>
                 )}
-                {Object.keys(effective).filter(k => k !== 'rules' && k !== 'allowed_models').map(k => (
-                  <div key={k}>{DOMAIN_INFO[k]?.nameEn || k}: <span className="font-mono">{JSON.stringify(effective[k]).slice(0, 160)}</span></div>
-                ))}
-                <div className="text-gray-400 mt-1">적용 규칙: {effective.rules?.length || 0}개</div>
+                {effTraces.length === 0 ? (
+                  <p className="text-gray-400">이 계층에 적용되는 규칙이 없습니다</p>
+                ) : (
+                  effTraces.map(t => (
+                    <div key={`${t.domain}:${t.key}`} className="bg-gray-50 rounded p-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-gray-700">{t.domainName} · {t.keyLabel}</span>
+                        <span className={t.state === 'exception' ? 'badge-yellow' : t.state === 'deleted_source' ? 'badge-red' : t.state === 'overridden' ? 'badge-blue' : 'badge-gray'}>{t.stateLabel}</span>
+                        {t.conflict && <span className="badge-red">동일 계층 충돌</span>}
+                      </div>
+                      <div className="mt-1 text-gray-800">{t.summary}</div>
+                      {t.winner && (
+                        <div className="text-[11px] text-gray-500 mt-1">
+                          출처: {t.winner.scopeLabel}{t.winner.scopeName ? ` · ${t.winner.scopeName}` : ''} · {t.winner.name}
+                          {t.winner.templateId && <span className="text-gray-400"> · 템플릿 {t.winner.templateId}</span>}
+                          {t.winner.effectiveAt && <span className="text-gray-400"> · 시행 {formatRelative(t.winner.effectiveAt)}</span>}
+                          {' '}<button onClick={() => setRuleDetail(rules.find(r => r.id === t.winner!.ruleId) || { id: t.winner!.ruleId, name: t.winner!.name, domain: t.domain, scope: t.winner!.scope, scopeName: t.winner!.scopeName })} className="text-blue-600 hover:underline">규칙 상세</button>
+                        </div>
+                      )}
+                      {t.overridden.length > 0 && (
+                        <div className="text-[11px] text-gray-400 mt-0.5">재정의된 상위: {t.overridden.map(o => `${o.scopeLabel}${o.scopeName ? ` · ${o.scopeName}` : ''}(${o.name})`).join(', ')}</div>
+                      )}
+                      {t.exception && (
+                        <div className="text-[11px] text-yellow-600 mt-0.5">예외 승인됨: {t.exception.scopeName}{t.exception.reason ? ` — ${t.exception.reason}` : ''}</div>
+                      )}
+                    </div>
+                  ))
+                )}
               </div>
             ) : <p className="text-xs text-gray-400">로딩 중...</p>}
           </div>
@@ -420,7 +460,7 @@ export default function Policy() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-medium">{r.name}</span>
-                        <span className="text-xs text-gray-400">{r.nameEn}</span>
+                        {r.nameEn && r.nameEn !== r.name && <span className="text-xs text-gray-400">{r.nameEn}</span>}
                         {r.status === 'draft' && <span className="badge-yellow text-[10px]">승인 대기 · Draft</span>}
                         {enforced && <span className="badge-green text-[10px]">시행 중 · Enforced</span>}
                         {r.status === 'approved' && !r.enabled && <span className="badge-gray text-[10px]">비활성 · Off</span>}
@@ -438,10 +478,13 @@ export default function Policy() {
                       </div>
                     ) : (
                       <button onClick={() => toggleRule(r)}
+                        aria-label={`${r.name} ${r.enabled ? '비활성화' : '활성화'}`}
+                        title={r.enabled ? '비활성화' : '활성화'}
                         className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-shrink-0 ${r.enabled ? 'bg-patty-600' : 'bg-gray-300'}`}>
                         <span className={`inline-block h-3 w-3 rounded-full bg-white transition-transform ${r.enabled ? 'translate-x-5' : 'translate-x-1'}`} />
                       </button>
                     )}
+                    <button onClick={() => setRuleDetail(r)} className="text-xs text-blue-600 hover:underline flex-shrink-0">상세</button>
                     <button onClick={() => deleteRule(r)} className="text-xs text-red-600 hover:underline flex-shrink-0">삭제</button>
                   </div>
                 )
@@ -503,7 +546,7 @@ export default function Policy() {
           ) : (
             <table className="w-full overflow-x-auto block">
               <thead><tr className="border-b border-gray-200 text-left text-xs text-gray-500">
-                <th className="pb-3">#</th><th className="pb-3">에포크 ID</th><th className="pb-3">전환 모드</th><th className="pb-3">허용 모델</th><th className="pb-3">Ack</th><th className="pb-3">상태</th><th className="pb-3">생성일</th><th className="pb-3">작업</th>
+                <th className="pb-3">#</th><th className="pb-3">에포크 ID</th><th className="pb-3">전환 모드</th><th className="pb-3">허용 모델</th><th className="pb-3">사용자 확인</th><th className="pb-3">상태</th><th className="pb-3">생성일</th><th className="pb-3">작업</th>
               </tr></thead>
               <tbody>
                 {epochs.map((e, i) => (
@@ -511,8 +554,14 @@ export default function Policy() {
                     <td className="py-3 text-xs font-semibold">{e.epoch_number}</td>
                     <td className="py-3 font-mono text-xs">{e.epoch_id?.slice(0, 24)}</td>
                     <td className="py-3 text-xs"><span className="badge-gray">{e.transition_mode || 'immediate'}</span></td>
-                    <td className="py-3 text-xs text-gray-500 max-w-[220px] truncate">{Array.isArray(e.allowed_models) ? e.allowed_models.join(', ') : e.allowed_models || '-'}</td>
-                    <td className="py-3 text-xs">{e.requires_ack ? <span className="badge-yellow">필요</span> : <span className="text-gray-400">-</span>}</td>
+                    <td className="py-3 text-xs text-gray-500 max-w-[220px]">
+                      {(() => { const ids = parseModelRefs(e.allowed_models); return ids.length === 0 ? <span className="text-gray-400">-</span> : (
+                        <span className="flex flex-wrap gap-x-2 gap-y-0.5">
+                          {ids.map(id => <Link key={id} to={`/models/${id}`} className="text-blue-600 hover:underline">{id}</Link>)}
+                        </span>
+                      ) })()}
+                    </td>
+                    <td className="py-3 text-xs">{e.requires_ack ? <span className="badge-yellow">확인 필요</span> : <span className="text-gray-400">-</span>}</td>
                     <td className="py-3 text-xs">{e.status === 'active' ? <span className="badge-green">활성</span> : <span className="badge-gray">{e.status}</span>}</td>
                     <td className="py-3 text-xs text-gray-400">{formatRelative(e.created_at || e.effective_at)}</td>
                     <td className="py-3 text-xs">
@@ -520,9 +569,9 @@ export default function Policy() {
                         {i < epochs.length - 1 && (
                           <button onClick={() => openDiff(e.epoch_id, epochs[i + 1].epoch_id)} className="text-blue-600 hover:underline">diff</button>
                         )}
-                        <button onClick={() => openAcks(e)} className="text-blue-600 hover:underline">ack 현황</button>
+                        <button onClick={() => openAcks(e)} className="text-blue-600 hover:underline">확인 현황</button>
                         {e.status === 'active' && !e.requires_ack && (
-                          <button onClick={() => requireAck(e)} className="text-yellow-600 hover:underline">ack 요구</button>
+                          <button onClick={() => requireAck(e)} className="text-yellow-600 hover:underline">확인 요구</button>
                         )}
                       </div>
                     </td>
@@ -659,7 +708,16 @@ export default function Policy() {
       {/* Ack campaign modal */}
       <Modal open={!!acksModal} title="확인 캠페인 현황 · Acknowledgements" subtitle={`에포크 #${acksModal?.epoch_number}`} onClose={() => setAcksModal(null)} size="lg"
         footer={<ModalFooter onCancel={() => setAcksModal(null)} onConfirm={() => setAcksModal(null)} confirmLabel="닫기" />}>
-        {acks.length === 0 ? <p className="text-xs text-gray-400">사용자 없음</p> : (
+        {acks.length === 0 ? <p className="text-xs text-gray-400">사용자 없음</p> : (() => {
+          const s = ackSummary(acks)
+          return (
+          <div>
+            <div className="flex items-center gap-3 text-xs mb-3 flex-wrap">
+              <span className="text-gray-600">대상 사용자 <span className="font-semibold">{s.required}명</span></span>
+              <span className="text-green-600">확인 <span className="font-semibold">{s.acknowledged}명</span></span>
+              <span className="text-yellow-600">미확인 <span className="font-semibold">{s.pending}명</span></span>
+              {s.pending > 0 && acksModal?.requires_ack && <span className="text-gray-400">· 미확인 사용자의 새 세션이 차단됩니다</span>}
+            </div>
           <div className="space-y-1 max-h-72 overflow-y-auto">
             {acks.map(a => (
               <div key={a.user_id} className="flex items-center gap-3 text-xs p-2 bg-gray-50 rounded">
@@ -669,6 +727,45 @@ export default function Policy() {
                 {a.acked_at && <span className="text-gray-400">{formatRelative(a.acked_at)}</span>}
               </div>
             ))}
+          </div>
+          </div>
+          )
+        })()}
+      </Modal>
+
+      {/* Rule detail modal (PAT-1505) — typed Korean summary, no raw JSON */}
+      <Modal open={!!ruleDetail} title="정책 규칙 상세 · Rule Detail" subtitle={ruleDetail?.id} onClose={() => setRuleDetail(null)} size="md"
+        footer={<ModalFooter onCancel={() => setRuleDetail(null)} onConfirm={() => setRuleDetail(null)} confirmLabel="닫기" />}>
+        {ruleDetail && (
+          <div className="text-xs space-y-3">
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium">{ruleDetail.name}</span>
+                {ruleDetail.nameEn && ruleDetail.nameEn !== ruleDetail.name && <span className="text-gray-400">{ruleDetail.nameEn}</span>}
+                {ruleDetail.status === 'draft' && <span className="badge-yellow text-[10px]">승인 대기</span>}
+                {ruleDetail.status === 'approved' && ruleDetail.enabled && <span className="badge-green text-[10px]">시행 중</span>}
+                {ruleDetail.status === 'approved' && !ruleDetail.enabled && <span className="badge-gray text-[10px]">비활성</span>}
+              </div>
+              {ruleDetail.desc && <p className="text-gray-500 mt-1">{ruleDetail.desc}</p>}
+            </div>
+            <div className="text-gray-500">
+              영역: {DOMAIN_INFO[ruleDetail.domain]?.name || ruleDetail.domain} · 범위: {ruleDetail.scopeName || '전체 조직'}
+              {ruleDetail.template_id && <span> · 템플릿 {ruleDetail.template_id}</span>}
+              {ruleDetail.updated_at && <span> · 시행 {formatRelative(ruleDetail.updated_at)}</span>}
+            </div>
+            <div className="bg-gray-50 rounded p-3 space-y-1">
+              {summarizeRuleConfig(ruleDetail.domain, ruleDetail.config).length === 0 ? (
+                <p className="text-gray-400">설정이 없거나 원본 규칙이 삭제되었습니다</p>
+              ) : (
+                summarizeRuleConfig(ruleDetail.domain, ruleDetail.config).map(row => (
+                  <div key={row.key} className="flex gap-2">
+                    <span className="text-gray-500 shrink-0">{row.label}:</span>
+                    <span className="text-gray-800">{row.text}</span>
+                  </div>
+                ))
+              )}
+            </div>
+            {activeEpoch && <div className="text-gray-400">현재 에포크 #{activeEpoch.epoch_number}에 포함</div>}
           </div>
         )}
       </Modal>

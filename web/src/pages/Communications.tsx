@@ -6,6 +6,14 @@ import { Modal, ModalFooter } from '../components/Modal'
 import EmptyState from '../components/EmptyState'
 import { showToast } from '../components/Toast'
 import { useFavorites, FavoriteStar } from '../hooks/useFavorites'
+import {
+  LARGE_AUDIENCE_THRESHOLD,
+  broadcastSendBlockers,
+  mergeReachability,
+  renderBroadcastText,
+  resolveAudiencePreview,
+} from '../broadcastAudience'
+import type { BroadcastScopeType } from '../broadcastAudience'
 
 // Communications hub (web/13 plan): real-time SSE (A1), threading/
 // mentions/reactions/read receipts (B1/B2), AI-context linking (B4),
@@ -18,6 +26,15 @@ const SEVERITY_BADGE: Record<string, string> = {
   warning: 'bg-yellow-50 text-yellow-700 border-yellow-200',
   critical: 'bg-orange-50 text-orange-700 border-orange-200',
   emergency: 'bg-red-50 text-red-700 border-red-200',
+}
+
+// PAT-1510: governed broadcast composer — explicit audience scope,
+// preview, confirmation gates. Scope types map to backend target types.
+const SCOPE_KO: Record<string, string> = { org: '조직 전체', project: '프로젝트', user: '특정 사용자' }
+const BC_FORM_INIT = {
+  severity: 'info', title: '', title_ko: '', body: '', body_ko: '', requires_ack: false,
+  scope_type: '' as BroadcastScopeType, target_id: '', expires_at: '',
+  confirm_reason: '', allow_empty: false, confirm_large: false,
 }
 
 const TABS = [
@@ -42,7 +59,11 @@ export default function Communications() {
   const [dmUser, setDmUser] = useState('')
   const [newConvTitle, setNewConvTitle] = useState('')
   const [broadcastOpen, setBroadcastOpen] = useState(false)
-  const [bcForm, setBcForm] = useState({ severity: 'info', title: '', title_ko: '', body: '', body_ko: '', requires_ack: false })
+  const [bcForm, setBcForm] = useState(BC_FORM_INIT)
+  // Audience preview inputs: org users, project roster, idempotency token.
+  const [bcUsers, setBcUsers] = useState<any[]>([])
+  const [bcMemberIds, setBcMemberIds] = useState<Set<string> | null>(null)
+  const [bcClientToken, setBcClientToken] = useState('')
   const [ackTarget, setAckTarget] = useState<any>(null)
   const [ackDash, setAckDash] = useState<any>(null)
   const [transferOpen, setTransferOpen] = useState(false)
@@ -188,15 +209,50 @@ export default function Communications() {
     } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
 
+  // PAT-1510: open the composer with a fresh idempotency token and load
+  // the audience data (users; project roster loads on scope selection).
+  const openBroadcast = () => {
+    setBcForm(BC_FORM_INIT)
+    setBcMemberIds(null)
+    setBcClientToken(crypto.randomUUID())
+    api.listUsers().then((d: any[]) => setBcUsers(Array.isArray(d) ? d : [])).catch(() => setBcUsers([]))
+    setBroadcastOpen(true)
+  }
+
+  // Project scope needs the roster to resolve the audience client-side.
+  useEffect(() => {
+    if (bcForm.scope_type !== 'project' || !bcForm.target_id) { setBcMemberIds(null); return }
+    api.listProjectMembers(bcForm.target_id)
+      .then((d: any[]) => setBcMemberIds(new Set((Array.isArray(d) ? d : []).map((m: any) => m.user_id).filter(Boolean))))
+      .catch(() => setBcMemberIds(new Set()))
+  }, [bcForm.scope_type, bcForm.target_id])
+
+  const bcScope = { type: bcForm.scope_type, targetId: bcForm.target_id }
+  const bcPreview = resolveAudiencePreview(bcUsers, bcScope, bcMemberIds)
+  const bcReach = mergeReachability(bcPreview.eligible, presence)
+  const bcBlockers = broadcastSendBlockers({
+    title: bcForm.title, scope: bcScope, eligibleCount: bcPreview.eligible.length,
+    severity: bcForm.severity, confirmReason: bcForm.confirm_reason,
+    allowEmpty: bcForm.allow_empty, confirmLarge: bcForm.confirm_large,
+  })
+
   const sendBroadcast = async () => {
-    if (!bcForm.title.trim()) {
-      showToast('제목이 필요합니다', 'error')
+    const blockers = bcBlockers
+    if (blockers.length > 0) {
+      showToast(blockers[0], 'error')
       return
     }
     try {
-      await api.sendBroadcast(bcForm)
+      await api.sendBroadcastGoverned({
+        severity: bcForm.severity, title: bcForm.title, title_ko: bcForm.title_ko,
+        body: bcForm.body, body_ko: bcForm.body_ko, requires_ack: bcForm.requires_ack,
+        target_type: bcForm.scope_type, target_id: bcForm.target_id,
+        expires_at: bcForm.expires_at ? new Date(bcForm.expires_at).toISOString() : '',
+        confirm_reason: bcForm.confirm_reason, allow_empty: bcForm.allow_empty,
+        client_token: bcClientToken,
+      })
       setBroadcastOpen(false)
-      setBcForm({ severity: 'info', title: '', title_ko: '', body: '', body_ko: '', requires_ack: false })
+      setBcForm(BC_FORM_INIT)
       loadAll()
       showToast('방송 전송 완료', 'success')
     } catch (e: any) { showToast(e?.message || '실패', 'error') }
@@ -297,7 +353,7 @@ export default function Communications() {
         </div>
         <div className="flex gap-2 shrink-0 flex-wrap">
           <button className="btn-sm btn-primary" onClick={() => setNewConvOpen(true)}>+ 새 대화</button>
-          <button className="btn-sm btn-secondary" onClick={() => setBroadcastOpen(true)}>방송 보내기</button>
+          <button className="btn-sm btn-secondary" onClick={openBroadcast}>방송 보내기</button>
           <button className="btn-sm btn-secondary" onClick={() => setTransferOpen(true)}>파일 전송</button>
         </div>
       </div>
@@ -392,17 +448,32 @@ export default function Communications() {
       {tab === 'broadcast' && (
         <div className="card p-4 space-y-2">
           {broadcasts.length === 0 && <p className="text-[11px] text-gray-400">방송 없음</p>}
-          {broadcasts.map((b: any) => (
+          {broadcasts.map((b: any) => {
+            // Audience snapshot frozen at send time (PAT-1510) drives the
+            // recipient count; absent for legacy broadcasts.
+            let audienceCount: number | null = null
+            if (b.audience) {
+              try { audienceCount = (JSON.parse(b.audience).eligible_ids || []).length } catch { audienceCount = null }
+            }
+            const expired = b.status === 'expired' || (b.expires_at && new Date(b.expires_at).getTime() < Date.now())
+            return (
             <div key={b.id} className="border rounded-lg p-2 flex items-start justify-between gap-2">
               <div>
                 <span className={`text-[10px] px-2 py-0.5 rounded-full border ${SEVERITY_BADGE[b.severity] || ''}`}>{SEVERITY_KO[b.severity] || b.severity}</span>
-                <div className="text-xs font-semibold mt-1">{b.title_ko || b.title}</div>
-                <div className="text-[11px] text-gray-500">{b.body_ko || b.body}</div>
+                {expired && <span className="text-[10px] px-2 py-0.5 rounded-full border bg-gray-50 text-gray-500 border-gray-200 ml-1">만료됨</span>}
+                <div className="text-xs font-semibold mt-1">{renderBroadcastText(b, 'ko-KR').title}</div>
+                <div className="text-[11px] text-gray-500">{renderBroadcastText(b, 'ko-KR').body}</div>
+                <div className="text-[10px] text-gray-400 mt-0.5">
+                  대상: {SCOPE_KO[b.target_type] || b.target_type || '전체'}
+                  {audienceCount !== null && ` · 수신 ${audienceCount}명`}
+                  {b.expires_at && ` · 만료 ${String(b.expires_at).slice(0, 16)}`}
+                </div>
                 {b.requires_ack && <div className="text-[10px] text-amber-600 mt-0.5">확인 필요 · ack {b.ack_count || 0}</div>}
               </div>
               <button className="btn-xs-secondary" onClick={() => showAcks(b)}>확인 현황</button>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
@@ -467,36 +538,143 @@ export default function Communications() {
         </div>
       </Modal>
 
-      {/* Broadcast composer */}
-      <Modal open={broadcastOpen} title="방송 보내기" onClose={() => setBroadcastOpen(false)}
-        footer={<ModalFooter onCancel={() => setBroadcastOpen(false)} onConfirm={sendBroadcast} confirmLabel="전송" />}>
+      {/* Broadcast composer (PAT-1510): explicit audience scope + impact
+          preview + confirmation gates before send. */}
+      <Modal open={broadcastOpen} title="방송 보내기" onClose={() => setBroadcastOpen(false)} size="lg"
+        footer={<ModalFooter onCancel={() => setBroadcastOpen(false)} onConfirm={sendBroadcast} confirmLabel="전송" disabled={bcBlockers.length > 0} />}>
         <div className="space-y-2">
-          <select className="input text-xs w-full" value={bcForm.severity} onChange={e => setBcForm({ ...bcForm, severity: e.target.value })}>
-            {Object.entries(SEVERITY_KO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-gray-500">심각도</label>
+              <select className="input text-xs w-full" value={bcForm.severity} onChange={e => setBcForm({ ...bcForm, severity: e.target.value })}>
+                {Object.entries(SEVERITY_KO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-500">수신 대상 범위 (필수)</label>
+              <select className="input text-xs w-full" value={bcForm.scope_type}
+                onChange={e => setBcForm({ ...bcForm, scope_type: e.target.value as BroadcastScopeType, target_id: '' })}>
+                <option value="">선택...</option>
+                {Object.entries(SCOPE_KO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </div>
+          </div>
+          {bcForm.scope_type === 'project' && (
+            <div>
+              <label className="text-[10px] text-gray-500">프로젝트</label>
+              <EntitySelect entity="project" value={bcForm.target_id} onChange={v => setBcForm({ ...bcForm, target_id: v })} />
+            </div>
+          )}
+          {bcForm.scope_type === 'user' && (
+            <div>
+              <label className="text-[10px] text-gray-500">사용자</label>
+              <EntitySelect entity="user" value={bcForm.target_id} onChange={v => setBcForm({ ...bcForm, target_id: v })} />
+            </div>
+          )}
           <input className="input text-xs w-full" placeholder="제목" value={bcForm.title} onChange={e => setBcForm({ ...bcForm, title: e.target.value })} />
           <input className="input text-xs w-full" placeholder="제목 (KO)" value={bcForm.title_ko} onChange={e => setBcForm({ ...bcForm, title_ko: e.target.value })} />
           <textarea className="input text-xs w-full" rows={2} placeholder="본문" value={bcForm.body} onChange={e => setBcForm({ ...bcForm, body: e.target.value })} />
           <textarea className="input text-xs w-full" rows={2} placeholder="본문 (KO)" value={bcForm.body_ko} onChange={e => setBcForm({ ...bcForm, body_ko: e.target.value })} />
+          <div>
+            <label className="text-[10px] text-gray-500">만료 시각 (선택)</label>
+            <input type="datetime-local" className="input text-xs w-full" value={bcForm.expires_at} onChange={e => setBcForm({ ...bcForm, expires_at: e.target.value })} />
+          </div>
           <label className="flex items-center gap-2 text-xs text-gray-600">
             <input type="checkbox" checked={bcForm.requires_ack} onChange={e => setBcForm({ ...bcForm, requires_ack: e.target.checked })} />
             확인(ack) 필수
           </label>
+          {(bcForm.severity === 'critical' || bcForm.severity === 'emergency') && (
+            <div>
+              <label className="text-[10px] text-red-500">심각/긴급 전송 사유 (필수, 감사 로그 기록)</label>
+              <input className="input text-xs w-full" placeholder="예: 긴급 보안 패치 적용" value={bcForm.confirm_reason} onChange={e => setBcForm({ ...bcForm, confirm_reason: e.target.value })} />
+            </div>
+          )}
+
+          {/* Impact preview: who receives it, through which channel, and
+              how the message renders — frozen server-side at send time. */}
+          <div className="border rounded-lg p-2 bg-gray-50 space-y-1">
+            <div className="text-[10px] font-semibold text-gray-500">전송 미리보기</div>
+            {!bcForm.scope_type ? (
+              <p className="text-[11px] text-gray-400">수신 대상 범위를 선택하면 대상이 계산됩니다</p>
+            ) : (
+              <>
+                <div className="text-[11px] text-gray-700">
+                  수신 <span className="font-semibold">{bcPreview.eligible.length}명</span>
+                  {bcPreview.excluded.length > 0 && <span className="text-gray-400"> · 제외 {bcPreview.excluded.length}명 (정지/오프보딩)</span>}
+                  <span className="text-gray-400"> · 온라인 {bcReach.online} · 오프라인 {bcReach.offline}</span>
+                </div>
+                {bcPreview.eligible.length > 0 && (
+                  <div className="text-[10px] text-gray-500">
+                    수신자: {bcPreview.eligible.slice(0, 5).map(u => u.name_ko || u.name || u.email).join(', ')}
+                    {bcPreview.eligible.length > 5 && ` 외 ${bcPreview.eligible.length - 5}명`}
+                  </div>
+                )}
+                {bcPreview.excluded.length > 0 && (
+                  <div className="text-[10px] text-gray-400">
+                    제외: {bcPreview.excluded.slice(0, 5).map(e => `${e.user.name_ko || e.user.name || e.user.email} (${e.reason === 'suspended' ? '정지' : '오프보딩'})`).join(', ')}
+                    {bcPreview.excluded.length > 5 && ` 외 ${bcPreview.excluded.length - 5}명`}
+                  </div>
+                )}
+                <div className="text-[10px] text-gray-500 border-t border-gray-200 pt-1 mt-1">
+                  수신자 화면: <span className={`px-1.5 py-0.5 rounded-full border ${SEVERITY_BADGE[bcForm.severity] || ''}`}>{SEVERITY_KO[bcForm.severity]}</span>
+                  {' '}<span className="font-semibold">{renderBroadcastText(bcForm, 'ko-KR').title || '(제목 없음)'}</span>
+                  {' — '}{renderBroadcastText(bcForm, 'ko-KR').body || '(본문 없음)'}
+                  {bcForm.requires_ack && <span className="text-amber-600"> · 확인(ack) 필수</span>}
+                  {bcForm.expires_at && <span> · 만료 {bcForm.expires_at.replace('T', ' ')}</span>}
+                </div>
+                {bcPreview.eligible.length === 0 && (
+                  <label className="flex items-center gap-2 text-[11px] text-red-600">
+                    <input type="checkbox" checked={bcForm.allow_empty} onChange={e => setBcForm({ ...bcForm, allow_empty: e.target.checked })} />
+                    수신 대상 0명 — 그래도 전송함을 확인합니다
+                  </label>
+                )}
+                {bcPreview.eligible.length > LARGE_AUDIENCE_THRESHOLD && (
+                  <label className="flex items-center gap-2 text-[11px] text-amber-700">
+                    <input type="checkbox" checked={bcForm.confirm_large} onChange={e => setBcForm({ ...bcForm, confirm_large: e.target.checked })} />
+                    대규모 대상({bcPreview.eligible.length}명) 전송을 확인합니다
+                  </label>
+                )}
+              </>
+            )}
+          </div>
+          {bcBlockers.length > 0 && (
+            <ul className="text-[10px] text-red-600 list-disc pl-4 space-y-0.5">
+              {bcBlockers.map(b => <li key={b}>{b}</li>)}
+            </ul>
+          )}
         </div>
       </Modal>
 
-      {/* Ack dashboard (B5) */}
-      <Modal open={!!ackTarget} title={`확인 현황 — ${ackTarget?.title || ''}`}
+      {/* Delivery/ack dashboard (B5, PAT-1510): exact frozen recipients
+          with ack + reachability state, exclusions, expired flag. */}
+      <Modal open={!!ackTarget} title={`확인 현황 — ${ackTarget?.title_ko || ackTarget?.title || ''}`}
         onClose={() => setAckTarget(null)}
         footer={<ModalFooter onCancel={() => setAckTarget(null)} onConfirm={() => setAckTarget(null)} confirmLabel="닫기" />}>
         {ackDash ? (
           <div className="space-y-2 text-xs">
+            {ackDash.expired && <div className="text-[10px] text-gray-500 bg-gray-50 rounded px-2 py-1">만료된 방송입니다</div>}
             <div>확인률: {Math.round((ackDash.ack_rate || 0) * 100)}% ({ackDash.acked}/{ackDash.total_users})</div>
-            <div className="max-h-48 overflow-auto space-y-1">
-              {(ackDash.pending || []).map((p: any) => (
-                <div key={p.user_id} className="text-gray-600">{p.name_ko || p.name} ({p.email})</div>
+            <div className="max-h-56 overflow-auto space-y-1">
+              {(ackDash.recipients || []).map((p: any) => (
+                <div key={p.user_id} className="flex items-center justify-between text-gray-600 border-b border-gray-50 py-0.5">
+                  <span>{p.name_ko || p.name} ({p.email})</span>
+                  <span className="flex items-center gap-1 text-[10px]">
+                    <span className={p.presence === 'online' ? 'text-green-600' : 'text-gray-400'}>
+                      {p.presence === 'online' ? '온라인' : '오프라인'}
+                    </span>
+                    <span className={p.acked ? 'text-blue-600 font-semibold' : 'text-amber-600'}>
+                      {p.acked ? '확인 완료' : '확인 대기'}
+                    </span>
+                  </span>
+                </div>
               ))}
+              {(ackDash.recipients || []).length === 0 && <p className="text-gray-400">수신 대상 없음</p>}
             </div>
+            {(ackDash.excluded || []).length > 0 && (
+              <div className="text-[10px] text-gray-400">
+                제외됨: {ackDash.excluded.map((e: any) => `${e.name_ko || e.name || e.email} (${e.reason === 'suspended' ? '정지' : '오프보딩'})`).join(', ')}
+              </div>
+            )}
           </div>
         ) : <p className="text-xs text-gray-400">로딩...</p>}
       </Modal>

@@ -99,6 +99,11 @@ type Broadcast struct {
 	SentBy   string `gorm:"type:varchar(64)" json:"sent_by"`
 	AckCount int    `json:"ack_count"`
 	AcksJSON string `gorm:"type:text" json:"acks,omitempty"` // JSON array of user IDs who acknowledged
+	// Governed send (PAT-1510): the audience resolved at send time is frozen
+	// so delivery/ack reporting stays reproducible; ClientToken makes
+	// retries idempotent.
+	AudienceJSON string `gorm:"type:text" json:"audience,omitempty"` // JSON {eligible_ids, excluded, resolved_at}
+	ClientToken  string `gorm:"type:varchar(64);index" json:"client_token,omitempty"`
 }
 
 // UsageRecord tracks billable usage (PRD §29).

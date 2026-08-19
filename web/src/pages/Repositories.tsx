@@ -11,6 +11,7 @@ import EmptyState from '../components/EmptyState'
 import { exportCSV } from '../utils/csv'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
+import { resolveRepoSync } from '../repoSync'
 
 const PAGE_SIZE = 25
 
@@ -28,6 +29,7 @@ export default function Repositories() {
   const [baselineForm, setBaselineForm] = useState({ branch: '', commit_sha: '', commit_message: '', author_name: '', author_email: '' })
   const { favorites, sortPinnedFirst } = useFavorites('repositories')
   const [selectedRepos, setSelectedRepos] = useState<Set<string>>(new Set())
+  const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set())
   const [form, setForm] = useState({ name: '', slug: '', project_id: '', scm_provider: 'github', clone_url: '', default_branch: 'main', sensitivity: 'internal' })
 
   const table = useServerTable<any>((q) =>
@@ -77,12 +79,15 @@ export default function Repositories() {
   }
 
   const handleSync = async (r: any) => {
+    if (syncingIds.has(r.id)) return // idempotence: no duplicate jobs
+    setSyncingIds(prev => new Set(prev).add(r.id))
     showToast('동기화 시작...', 'info')
     try {
       const res: any = await api.syncRepository(r.id)
       showToast(`동기화 완료 · HEAD ${res.head?.slice(0, 8)}`, 'success')
       table.reload()
     } catch (err: any) { showToast('동기화 실패: ' + err.message, 'error') }
+    finally { setSyncingIds(prev => { const n = new Set(prev); n.delete(r.id); return n }) }
   }
 
   const copyText = (text: string) => {
@@ -126,8 +131,9 @@ export default function Repositories() {
   }
 
   const scmIcon: Record<string, string> = { github: '🐙', gitlab: '🦊', bitbucket: '🪣', gitea: '🍵', git: '📦' }
-  const syncBadge = (s: string) => s === 'synced' ? 'badge-green' : s === 'failed' ? 'badge-red' : s === 'syncing' ? 'badge-yellow' : 'badge-gray'
-  const syncLabel = (s: string) => ({ synced: '동기화됨', failed: '실패', syncing: '동기화 중', never: '미동기화' } as any)[s] || (s || '미동기화')
+  // Canonical sync state (PAT-1493) — one object shared with the detail page.
+  const syncOf = (r: any) => resolveRepoSync(r)
+  const fmtTime = (v?: string | null) => v ? v.slice(0, 16).replace('T', ' ') : '-'
 
   const columns: Column<any>[] = [
     {
@@ -143,7 +149,7 @@ export default function Repositories() {
         <div className="flex items-center gap-2">
           <span className="text-lg">{scmIcon[r.scm_provider] || '📦'}</span>
           <div>
-            <div className="font-medium text-sm"><Link to={`/repositories/${r.id}`} className="text-blue-600 hover:underline">{r.name}</Link> <span className={syncBadge(r.sync_status)}>{syncLabel(r.sync_status)}</span></div>
+            <div className="font-medium text-sm"><Link to={`/repositories/${r.id}`} className="text-blue-600 hover:underline">{r.name}</Link> <span className={syncOf(r).badgeClass}>{syncOf(r).phaseLabel}</span></div>
             {r.clone_url && <div className="text-xs text-gray-400 font-mono truncate max-w-xs">{r.clone_url} <button className="text-gray-400 hover:text-blue-600" onClick={e => { e.stopPropagation(); copyText(r.clone_url) }} title="복사">⧉</button></div>}
           </div>
         </div>
@@ -167,13 +173,13 @@ export default function Repositories() {
     },
     {
       key: 'last', header: '마지막 동기화', cardLabel: '마지막 동기화',
-      render: (r) => <span className="text-xs text-gray-400">{r.last_sync_at ? r.last_sync_at.slice(0, 16).replace('T', ' ') : '-'}</span>,
+      render: (r) => <span className="text-xs text-gray-400">{fmtTime(syncOf(r).lastSuccessAt)}</span>,
     },
     {
       key: 'actions', header: '작업', cardLabel: '작업',
       render: (r) => (
         <div className="flex gap-2 flex-wrap" onClick={e => e.stopPropagation()}>
-          <button onClick={() => handleSync(r)} className="text-xs text-green-600 hover:underline">동기화</button>
+          <button onClick={() => handleSync(r)} disabled={syncingIds.has(r.id)} className="text-xs text-green-600 hover:underline disabled:text-gray-400 disabled:no-underline">{syncingIds.has(r.id) ? '동기화 중...' : '동기화'}</button>
           <button onClick={() => handleEdit(r)} className="btn-link">편집</button>
           <button onClick={() => openBranchProtection(r)} className="text-xs text-yellow-600 hover:underline">브랜치 보호</button>
           <button onClick={() => { setBaselineRepo(r); setBaselineForm({ branch: r.default_branch || 'main', commit_sha: '', commit_message: '', author_name: '', author_email: '' }) }} className="btn-link">베이스라인</button>
@@ -193,7 +199,10 @@ export default function Repositories() {
           <div>슬러그: {r.slug || '-'}</div>
           <div>Clone URL: {r.clone_url || '-'}</div>
           <div>기본 브랜치: <span className="font-mono">{r.default_branch || 'main'}</span></div>
-          <div>동기화: {syncLabel(r.sync_status)}{r.last_commit_at && ` · 커밋 ${r.last_commit_at.slice(0, 16).replace('T', ' ')}`}</div>
+          <div>동기화: {syncOf(r).phaseLabel}{r.last_commit_at && ` · 커밋 ${r.last_commit_at.slice(0, 16).replace('T', ' ')}`}</div>
+          <div>마지막 성공: {fmtTime(syncOf(r).lastSuccessAt)}</div>
+          {syncOf(r).sourceRevision && <div>소스 리비전: <span className="font-mono">{syncOf(r).sourceRevision!.slice(0, 10)}</span></div>}
+          {syncOf(r).lastError && <div className="text-red-500">최근 실패: {syncOf(r).lastError}</div>}
           <div>생성일: {r.created_at?.slice(0, 10)}</div>
         </div>
       </div>
@@ -360,4 +369,4 @@ export default function Repositories() {
   )
 }
 
-function authHeaders() { const token = sessionStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }
+function authHeaders(): Record<string, string> { const token = sessionStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }

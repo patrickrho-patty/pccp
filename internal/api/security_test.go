@@ -366,3 +366,51 @@ func TestDashboardFindingKPIScopeReconcilesWithList(t *testing.T) {
 		t.Fatalf("severity-only filter count = %d, want 2 (c1,c2)", len(list))
 	}
 }
+
+// PAT-1490 contract: repository "보안 발견" count drills to a findings list
+// scoped by the repository (via sessions) — the list filters by the same
+// parent scope so the destination reconciles with the source count.
+func TestRepositoryScopedFindingsAndSessions(t *testing.T) {
+	srv, db := securityTestServer(t)
+	org := models.Organization{Name: "o", Slug: "o-repo", Status: "active"}
+	db.Create(&org)
+	repo := models.Repository{AuditBase: models.AuditBase{OrganizationID: org.ID}, Name: "pay", FullName: "o/pay", Status: "active", DefaultBranch: "main"}
+	db.Create(&repo)
+	// sessions on this repo (one per status) + one on another repo
+	db.Create(&models.Session{AuditBase: models.AuditBase{OrganizationID: org.ID}, SessionID: "ses_r1", RepositoryID: repo.ID, UserID: "u1", HarnessID: "h1", Status: "active", Title: "refund"})
+	db.Create(&models.Session{AuditBase: models.AuditBase{OrganizationID: org.ID}, SessionID: "ses_r2", RepositoryID: repo.ID, UserID: "u1", HarnessID: "h1", Status: "closed", Title: "old"})
+	db.Create(&models.Session{AuditBase: models.AuditBase{OrganizationID: org.ID}, SessionID: "ses_other", RepositoryID: "repo-other", UserID: "u1", HarnessID: "h1", Status: "active", Title: "x"})
+	db.Create(&models.SecurityFinding{OrganizationID: org.ID, FindingType: "secret", Severity: "high", Title: "repo finding", Status: "open", SessionID: "ses_r1", OccurredAt: "2026-01-01T00:00:00Z"})
+	db.Create(&models.SecurityFinding{OrganizationID: org.ID, FindingType: "secret", Severity: "high", Title: "old finding", Status: "open", SessionID: "ses_r2", OccurredAt: "2026-01-01T00:00:00Z"})
+	db.Create(&models.SecurityFinding{OrganizationID: org.ID, FindingType: "secret", Severity: "high", Title: "other repo", Status: "open", SessionID: "ses_other", OccurredAt: "2026-01-01T00:00:00Z"})
+
+	// Scoped findings: only the two session of THIS repo, not the other repo.
+	rec := doJSON(t, srv, "GET", "/api/security/findings?repository="+repo.ID, "", org.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("scoped findings failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var list []models.SecurityFinding
+	json.Unmarshal(rec.Body.Bytes(), &list)
+	if len(list) != 2 {
+		t.Fatalf("repo-scoped findings = %d, want 2 (repo finding + old finding)", len(list))
+	}
+	for _, f := range list {
+		if f.SessionID == "ses_other" {
+			t.Fatalf("repo scope leaked other-repo finding %q", f.Title)
+		}
+	}
+
+	// Scoped sessions: active ones on THIS repo only (status=active&repository).
+	rec = doJSON(t, srv, "GET", "/api/sessions?status=active&repository="+repo.ID+"&page=1&size=25", "", org.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("scoped sessions failed: %d", rec.Code)
+	}
+	var paged struct {
+		Data  []models.Session `json:"data"`
+		Total int64            `json:"total"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &paged)
+	if len(paged.Data) != 1 || paged.Data[0].SessionID != "ses_r1" {
+		t.Fatalf("repo+active sessions = %d (want 1, ses_r1)", len(paged.Data))
+	}
+}
