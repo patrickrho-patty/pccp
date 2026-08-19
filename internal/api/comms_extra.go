@@ -232,6 +232,7 @@ func (s *Server) handleMessageDelete(w http.ResponseWriter, r *http.Request) {
 	msgID := chi.URLParam(r, "id")
 	var req struct {
 		DeletedBy string `json:"deleted_by"`
+		Reason    string `json:"reason"` // PAT-1512: moderation reason (audited)
 	}
 	_ = decodeJSON(r, &req)
 	var msg models.Message
@@ -249,6 +250,20 @@ func (s *Server) handleMessageDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.db.Model(&msg).Update("deleted_by", req.DeletedBy)
+	// PAT-1512: moderation deletes are audited with the reason so the
+	// evidence trail survives the content removal.
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		EventType:      "cp.comms.message_deleted",
+		ActorType:      "admin",
+		ActorID:        req.DeletedBy,
+		Action:         "delete_message",
+		ResourceType:   "message",
+		ResourceID:     msgID,
+		Details:        fmt.Sprintf(`{"reason":"%s"}`, req.Reason),
+		Result:         "success",
+		OccurredAt:     time.Now().Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
@@ -216,5 +217,36 @@ func TestBroadcastAcksLegacyEmptyScopeDoesNotFallBackToOrg(t *testing.T) {
 	excluded, _ := dash["excluded"].([]interface{})
 	if len(excluded) != 1 {
 		t.Fatalf("suspended roster member should be listed as excluded: %v", dash)
+	}
+}
+
+// PAT-1512 contract: deleting a message with a moderation reason records an
+// audit event so the evidence trail survives content removal.
+func TestCommsDeleteMessageAuditsReasonPAT1512(t *testing.T) {
+	srv, db := commsTestServer(t)
+	org := models.Organization{Name: "o", Slug: "oc12", Status: "active"}
+	db.Create(&org)
+	conv := models.Conversation{AuditBase: models.AuditBase{Base: models.Base{ID: models.GenerateID("conv")}, OrganizationID: org.ID}, Type: "channel", Title: "레거시"}
+	db.Create(&conv)
+	msg := models.Message{Base: models.Base{ID: models.GenerateID("msg")}, ConversationID: conv.ID, SenderID: "usr_demo_park", Content: "삭제 대상"}
+	db.Create(&msg)
+
+	rec := doJSON(t, srv, "DELETE", "/api/communications/messages/"+msg.ID, `{"deleted_by":"operator","reason":"정책 위반 중재 삭제"}`, org.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete failed: %d %s", rec.Code, rec.Body.String())
+	}
+	// message marked deleted_by
+	var after models.Message
+	db.First(&after, "id = ?", msg.ID)
+	if after.DeletedBy != "operator" {
+		t.Fatalf("deleted_by = %q", after.DeletedBy)
+	}
+	// audit event recorded with the reason
+	var ev models.AuditEvent
+	if err := db.Where("event_type = ? AND resource_id = ?", "cp.comms.message_deleted", msg.ID).First(&ev).Error; err != nil {
+		t.Fatalf("audit event missing: %v", err)
+	}
+	if ev.Details == "" || !strings.Contains(ev.Details, "정책 위반 중재 삭제") {
+		t.Fatalf("audit details missing reason: %q", ev.Details)
 	}
 }

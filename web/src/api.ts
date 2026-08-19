@@ -457,8 +457,8 @@ export const api = {
     request<any>(`/api/communications/conversations/${convId}/messages`, { method: 'POST', body: JSON.stringify(data) }),
   editMessage: (id: string, content: string) =>
     request<any>(`/api/communications/messages/${id}`, { method: 'PUT', body: JSON.stringify({ content }) }),
-  deleteMessage: (id: string, deletedBy: string) =>
-    request<any>(`/api/communications/messages/${id}`, { method: 'DELETE', body: JSON.stringify({ deleted_by: deletedBy }) }),
+  deleteMessage: (id: string, deletedBy: string, reason = '') =>
+    request<any>(`/api/communications/messages/${id}`, { method: 'DELETE', body: JSON.stringify({ deleted_by: deletedBy, reason }) }),
   reactMessage: (id: string, emoji: string, userId: string) =>
     request<any>(`/api/communications/messages/${id}/react`, { method: 'POST', body: JSON.stringify({ emoji, user_id: userId }) }),
   readMessage: (id: string, userId: string) =>

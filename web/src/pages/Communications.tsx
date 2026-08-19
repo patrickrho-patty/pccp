@@ -17,6 +17,10 @@ import {
 } from '../broadcastAudience'
 import type { BroadcastScopeType } from '../broadcastAudience'
 import { formatShortTime, formatBytes } from '../utils/format'
+import {
+  buildIdentityContext, resolveActor, readReceiptLabel, editDeleteDecision,
+  freshnessLabel, IdentityContext,
+} from '../identityView'
 
 // Communications hub (web/13 plan): real-time SSE (A1), threading/
 // mentions/reactions/read receipts (B1/B2), AI-context linking (B4),
@@ -89,6 +93,11 @@ export default function Communications() {
   const [editingMsg, setEditingMsg] = useState<any>(null)
   const [editText, setEditText] = useState('')
   const [unread, setUnread] = useState<Set<string>>(new Set())
+  // PAT-1512: user/harness identity context for resolving authors, presence,
+  // read receipts, and edit/delete ownership across all comm surfaces.
+  const [users, setUsers] = useState<any[]>([])
+  const [identityCtx, setIdentityCtx] = useState<IdentityContext>({ usersById: {}, harnessesById: {} })
+  useEffect(() => { setIdentityCtx(buildIdentityContext(users)) }, [users])
 
   const loadAll = () => {
     api.listConversations().then((d: any[]) => setConversations(Array.isArray(d) ? d : [])).catch(() => {})
@@ -98,6 +107,7 @@ export default function Communications() {
     ).catch(() => {})
     api.listFileTransfers().then((d: any[]) => setTransfers(Array.isArray(d) ? d : [])).catch(() => {})
     api.getPresence().then((d: any[]) => setPresence(Array.isArray(d) ? d : [])).catch(() => {})
+    api.listUsers().then((d: any[]) => { const arr = Array.isArray(d) ? d : []; setUsers(arr); setBcUsers(arr) }).catch(() => {})
   }
   useEffect(() => { loadAll() }, [])
 
@@ -192,6 +202,20 @@ export default function Communications() {
   const delMessage = async (msg: any) => {
     try {
       await api.deleteMessage(msg.id, 'operator')
+      if (activeConv) loadMessages(activeConv)
+    } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
+  // PAT-1512: moderation delete requires a reason + confirm (audited).
+  const [delTarget, setDelTarget] = useState<any>(null)
+  const [delReason, setDelReason] = useState('')
+  const confirmDelete = async () => {
+    if (!delTarget) return
+    if (!delReason.trim()) { showToast('중재 삭제 사유가 필요합니다', 'error'); return }
+    try {
+      await api.deleteMessage(delTarget.id, 'operator', delReason.trim())
+      showToast('삭제 완료 (감사 기록)', 'success')
+      setDelTarget(null); setDelReason('')
       if (activeConv) loadMessages(activeConv)
     } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
@@ -466,6 +490,8 @@ export default function Communications() {
                     const mentions: string[] = m._mentions || []
                     const readBy: string[] = m._readBy || []
                     const isCommand = m.content_type === 'command'
+                    const author = resolveActor(m.sender_id, m.sender_type, identityCtx)
+                    const decision = editDeleteDecision(m, { id: 'operator', isAdmin: true })
                     return (
                       <div key={m.id} className={`text-xs ${isCommand ? 'border-l-2 border-red-400 bg-red-50/50 p-2 rounded' : ''}`}
                         onClick={() => markRead(m)}>
@@ -473,10 +499,15 @@ export default function Communications() {
                           <div className="text-[10px] text-gray-400 ml-4">↳ 답글</div>
                         )}
                         <div className="flex items-start gap-2">
-                          <span className="font-semibold text-gray-700">{m.sender_type === 'system' ? '시스템' : m.sender_id}</span>
+                          {author.route ? (
+                            <Link to={author.route} className="font-semibold text-gray-700 hover:text-blue-600 hover:underline" title={author.raw}>{author.label}</Link>
+                          ) : (
+                            <span className={`font-semibold ${author.tombstone ? 'text-gray-400 line-through' : 'text-gray-700'}`}>{author.label}</span>
+                          )}
+                          {author.role && author.role !== '사용자' && <span className="text-[9px] px-1 rounded bg-gray-100 text-gray-500">{author.role}</span>}
                           <span className="text-gray-500 flex-1 whitespace-pre-wrap">{m.content}</span>
-                          {m.edited && <span className="text-[9px] text-gray-400">(수정됨)</span>}
-                          {readBy.length > 0 && <span className="text-[9px] text-gray-400">읽음 {readBy.length}</span>}
+                          {m.edited && <span className="text-[9px] text-gray-400" title={decision.reason}>(수정됨)</span>}
+                          {readBy.length > 0 && <span className="text-[9px] text-gray-400" title={readReceiptLabel(readBy, identityCtx)}>읽음 {readBy.length}</span>}
                         </div>
                         {mentions.length > 0 && <div className="text-[10px] text-blue-600">@{mentions.join(', @')}</div>}
                         {m.linked_session_id && (
@@ -492,8 +523,8 @@ export default function Communications() {
                           ))}
                           <button className="px-1 rounded hover:bg-gray-100 text-gray-500" onClick={() => react(m, '👍')}>👍</button>
                           <button className="px-1 rounded hover:bg-gray-100 text-gray-500" onClick={() => { setReplyTo(m); setText('') }}>답글</button>
-                          <button className="px-1 rounded hover:bg-gray-100 text-gray-500" onClick={() => { setEditingMsg(m); setEditText(m.content) }}>수정</button>
-                          <button className="px-1 rounded hover:bg-gray-100 text-gray-500" onClick={() => delMessage(m)}>삭제</button>
+                          {decision.canEdit && <button className="px-1 rounded hover:bg-gray-100 text-gray-500" onClick={() => { setEditingMsg(m); setEditText(m.content) }}>수정</button>}
+                          {decision.canDelete && <button className="px-1 rounded hover:bg-gray-100 text-gray-500" title={decision.moderation ? '관리자 중재 — 사유·확인·감사 필요' : ''} onClick={() => { if (decision.moderation) { setDelTarget(m); setDelReason('') } else delMessage(m) }}>삭제</button>}
                           <button className="px-1 rounded hover:bg-gray-100 text-gray-500" onClick={() => { setLinkTarget(m); setLinkSessionId('') }}>링크</button>
                         </div>
                       </div>
@@ -579,16 +610,21 @@ export default function Communications() {
 
       {tab === 'presence' && (
         <div className="card p-4 space-y-1">
+          <p className="text-[10px] text-gray-400 mb-1">접속 상태는 신선도와 소스 기준으로 표시됩니다 — 삭제/오프라인 사용자는 톰스톤 처리됩니다.</p>
           {presence.length === 0 && <p className="text-[11px] text-gray-400">접속 기록 없음</p>}
-          {presence.map((p: any) => (
-            <div key={p.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
-              <span className="text-gray-700">
-                <span className={`inline-block w-2 h-2 rounded-full mr-1 ${p.status === 'online' ? 'bg-green-500' : p.status === 'away' ? 'bg-yellow-400' : 'bg-gray-300'}`} />
-                {p.user_id}
-              </span>
-              <span className="text-gray-400">{p.activity || p.status} · 최근 {(p.last_active_at || '').slice(0, 16)}</span>
-            </div>
-          ))}
+          {presence.map((p: any) => {
+            const who = resolveActor(p.user_id, p.actor_type, identityCtx)
+            return (
+              <div key={p.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+                <span className="text-gray-700">
+                  <span className={`inline-block w-2 h-2 rounded-full mr-1 ${p.status === 'online' ? 'bg-green-500' : p.status === 'away' ? 'bg-yellow-400' : 'bg-gray-300'}`} />
+                  {who.route ? <Link to={who.route} className="hover:text-blue-600 hover:underline">{who.label}</Link> : <span className={who.tombstone ? 'text-gray-400 line-through' : ''}>{who.label}</span>}
+                  {who.role && who.role !== '사용자' && <span className="text-[9px] px-1 ml-1 rounded bg-gray-100 text-gray-500">{who.role}</span>}
+                </span>
+                <span className="text-gray-400">{p.activity || p.status} · {freshnessLabel(p.last_active_at)} ({(p.last_active_at || '').slice(0, 16)})</span>
+              </div>
+            )
+          })}
         </div>
       )}
 
@@ -816,6 +852,16 @@ export default function Communications() {
         onClose={() => setEditingMsg(null)}
         footer={<ModalFooter onCancel={() => setEditingMsg(null)} onConfirm={saveEdit} confirmLabel="저장" />}>
         <textarea className="input text-xs w-full" rows={3} value={editText} onChange={e => setEditText(e.target.value)} />
+      </Modal>
+
+      {/* Moderation delete confirm (PAT-1512): reason required, audited */}
+      <Modal open={!!delTarget} title="메시지 중재 삭제" size="sm"
+        onClose={() => { setDelTarget(null); setDelReason('') }}
+        footer={<ModalFooter onCancel={() => { setDelTarget(null); setDelReason('') }} onConfirm={confirmDelete} confirmLabel="삭제 확정" danger />}>
+        <div className="space-y-2 text-xs">
+          <p className="text-gray-500">작성자 메시지가 아닌 중재 삭제입니다. 사유를 입력하면 감사 로그에 기록됩니다.</p>
+          <textarea className="input text-xs w-full" rows={2} placeholder="중재 삭제 사유 (필수)" value={delReason} onChange={e => setDelReason(e.target.value)} />
+        </div>
       </Modal>
     </div>
   )
