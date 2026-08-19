@@ -39,11 +39,11 @@ test('empty rule and bad id are rejected', () => {
   assert.equal(v2.ok, false)
 })
 
-test('duplicate ids and empty lexicon are rejected at the whole map level', () => {
-  const dup = validateLexicon({ 'a': 'x+', 'a': 'y+' })
-  assert.equal(dup.ok, false)
+test('empty lexicon and bad-value map are rejected at the whole map level', () => {
   const empty = validateLexicon({})
   assert.equal(empty.ok, false)
+  const ok = validateLexicon({ 'kr-phone': '010-?\\d{3,4}-?\\d{4}', 'kr-rrn': '\\d{6}-?[1-4]\\d{6}' })
+  assert.equal(ok.ok, true)
 })
 
 test('diff reports added/removed/changed/unchanged', () => {

@@ -77,8 +77,8 @@ export function regexSafety(pattern: string): { unsafe: boolean; reason?: string
   if (/\)[*+]\s*[*+]/.test(pattern)) {
     return { unsafe: true, reason: '그룹 뒤 연속 수량자 — 재귀 폭주 위험' }
   }
-  // Two quantifiers hugging a group close, e.g. `a{0,3}{1,}`.
-  if (/(?:\*|\+|\{\d+,\})\s*(?:\*|\+|\{\d+,\})/.test(pattern)) {
+  // Two quantifiers hugging a group close, e.g. `a{0,3}{1,}` or `a{0,3}+`.
+  if (/(?:\*|\+|\{\d+(?:,\d*)?\})\s*(?:\*|\+|\{\d+(?:,\d*)?\})/.test(pattern)) {
     return { unsafe: true, reason: '연속된 수량자 — 재귀 폭주 위험' }
   }
   return { unsafe: false }

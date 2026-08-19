@@ -109,6 +109,13 @@ export default function Security() {
   const [rotateEnable, setRotateEnable] = useState(false)
   const [lexicon, setLexicon] = useState<any>(null)
   const [lexiconForm, setLexiconForm] = useState('')
+  // PAT-1508: structured, validated, versioned lexicon editor state.
+  const [lexDraft, setLexDraft] = useState<Record<string, string>>({}) // rule_id → pattern map being edited
+  const [lexAdvanced, setLexAdvanced] = useState(false) // raw JSON source editor (explicit mode)
+  const [lexPublish, setLexPublish] = useState<any>(null) // pending publish: {diff, validated} for confirm
+  const [lexPreviewId, setLexPreviewId] = useState<string>('') // rule open for detection preview
+  const [lexErrors, setLexErrors] = useState<Record<string, string[]>>({}) // per-id validation errors
+  const [lexWarnings, setLexWarnings] = useState<Record<string, string[]>>({}) // per-id warnings
   const [sessionPick, setSessionPick] = useState('')
   const [sessions, setSessions] = useState<any[]>([])
   const [projects, setProjects] = useState<any[]>([])
@@ -205,7 +212,16 @@ export default function Security() {
 			setAlertCursor(page.nextCursor)
 		}).catch((err: any) => showToast(err.message || '알림 라우트를 불러오지 못했습니다', 'error'))
 	}
-  const loadLexicon = () => api.securityLexicon().then(d => { setLexicon(d); setLexiconForm(JSON.stringify(d?.patterns || {}, null, 2)) }).catch(() => {})
+  const loadLexicon = () => api.securityLexicon().then(d => {
+    setLexicon(d)
+    const patterns: Record<string, string> = {}
+    for (const [id, val] of Object.entries(d?.patterns || {})) {
+      patterns[id] = typeof val === 'string' ? val : (val as any)?.pattern || ''
+    }
+    setLexDraft(patterns)
+    setLexiconForm(JSON.stringify(d?.patterns || {}, null, 2))
+    setLexErrors({}); setLexWarnings({})
+  }).catch(() => {})
 
   useEffect(() => {
     // Drill-down deep links (00 A5 + PAT-1484): /security?tab=findings&
@@ -406,11 +422,45 @@ export default function Security() {
     } catch (err: any) { showToast(err.message, 'error') }
   }
 
+  // PAT-1508: structured rule-row validation — recomputed per edit.
+  const computeLexValidation = (draft: Record<string, string>) => {
+    const errors: Record<string, string[]> = {}
+    const warnings: Record<string, string[]> = {}
+    for (const [id, pattern] of Object.entries(draft)) {
+      const v = validateRule({ id, pattern })
+      errors[id] = v.errors
+      warnings[id] = v.warnings
+    }
+    setLexErrors(errors); setLexWarnings(warnings)
+    return validateLexicon(draft)
+  }
+
+  // Stage a publish: validate, diff vs the active version, then confirm.
+  const stageLexiconPublish = () => {
+    const v = computeLexValidation(lexDraft)
+    if (!v.ok) { showToast(`발행 불가: ${v.errors[0]}`, 'error'); return }
+    const before: Record<string, string> = {}
+    for (const [id, val] of Object.entries(lexicon?.patterns || {})) {
+      before[id] = typeof val === 'string' ? val : (val as any)?.pattern || ''
+    }
+    const diff = diffLexicon(before, lexDraft)
+    if (diff.added.length === 0 && diff.removed.length === 0 && diff.changed.length === 0) {
+      showToast('변경된 규칙이 없습니다', 'info')
+      return
+    }
+    setLexPublish({ diff, before, after: lexDraft })
+  }
+
   const publishLexicon = async () => {
     try {
-      const patterns = JSON.parse(lexiconForm)
+      if (!lexPublish) return
+      const patterns: Record<string, string | { pattern: string }> = {}
+      for (const [id, pat] of Object.entries(lexPublish.after)) {
+        patterns[id] = { pattern: pat }
+      }
       await api.updateSecurityLexicon({ version: String(Date.now()), patterns })
       showToast('렉시콘 버전 발행됨', 'success')
+      setLexPublish(null)
       loadLexicon()
     } catch (err: any) { showToast('발행 실패: ' + err.message, 'error') }
   }
@@ -862,12 +912,103 @@ export default function Security() {
           <div className="card">
             <h3 className="text-lg font-semibold mb-2">한국 PII 렉시콘 · Lexicon (§16.3)</h3>
             <p className="text-xs text-gray-400 mb-3">
-              현재 버전: <span className="font-semibold">{lexicon?.version || 'builtin'}</span> — 조직별 패턴 오버라이드가 탐지기에 반영됩니다. rule_id → 정규식 맵을 편집하세요.
+              현재 버전: <span className="font-semibold">{lexicon?.version || 'builtin'}</span> — 규칙 단위로 편집하면 즉시 구문/안전성 검증과 탐지 미리보기를 확인할 수 있습니다. 일반 편집에는 JSON 이스케이프가 필요하지 않습니다.
             </p>
-            <textarea className="input font-mono text-xs mb-3" rows={10} value={lexiconForm} onChange={e => setLexiconForm(e.target.value)} />
+
+            {/* Structured rule rows (PAT-1508) */}
+            {Object.keys(lexDraft).length === 0 ? (
+              <p className="text-[11px] text-gray-400">렉시콘이 비어 있습니다 — 아래에서 규칙을 추가하세요.</p>
+            ) : (
+              <div className="space-y-2 mb-3">
+                {Object.entries(lexDraft).map(([id, pattern]) => {
+                  const errs = lexErrors[id] || []
+                  const warns = lexWarnings[id] || []
+                  const open = lexPreviewId === id
+                  const preview = open ? previewRule({ id, pattern }, DEMO_SAMPLES) : null
+                  return (
+                    <div key={id} className={`border rounded-lg p-2 ${errs.length ? 'border-red-200' : 'border-gray-100'}`}>
+                      <div className="flex items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono font-semibold">{id}</span>
+                            {errs.length > 0
+                              ? <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">오류</span>
+                              : warns.length > 0
+                                ? <span className="text-[9px] px-1.5 py-0.5 rounded bg-yellow-50 text-yellow-700 border border-yellow-200">경고</span>
+                                : <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200">유효</span>}
+                          </div>
+                          <input
+                            className={`input font-mono text-xs mt-1 w-full ${errs.length ? 'border-red-300' : ''}`}
+                            value={pattern}
+                            aria-label={`${id} 규칙 패턴`}
+                            onChange={e => setLexDraft(d => ({ ...d, [id]: e.target.value }))}
+                            placeholder="정규식 패턴 (예: SEC-[0-9]{6})"
+                          />
+                          {errs.length > 0 && <p className="text-[10px] text-red-600 mt-0.5">{errs.join(' · ')}</p>}
+                          {warns.length > 0 && errs.length === 0 && <p className="text-[10px] text-yellow-600 mt-0.5">{warns.join(' · ')}</p>}
+                        </div>
+                        <div className="flex flex-col items-end gap-1 shrink-0">
+                          <button className="text-[10px] text-blue-600 hover:underline" onClick={() => setLexPreviewId(open ? '' : id)}>
+                            {open ? '미리보기 접기' : '탐지 미리보기'}
+                          </button>
+                          <button className="text-[10px] text-red-500 hover:underline" onClick={() => {
+                            const next = { ...lexDraft }; delete next[id]; setLexDraft(next)
+                          }}>규칙 삭제</button>
+                        </div>
+                      </div>
+                      {open && preview && (
+                        <div className="mt-2 pl-1 space-y-0.5">
+                          {preview.map((p, i) => (
+                            <div key={i} className="flex items-center gap-2 text-[10px]">
+                              <span className={p.matched ? 'text-green-600' : 'text-gray-400'}>{p.matched ? '✓' : '–'}</span>
+                              <span className="text-gray-500 flex-1 truncate">{DEMO_SAMPLES[i]?.label || p.input}</span>
+                              {p.matched && <span className="text-gray-400">{p.count}건</span>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            <div className="flex items-center gap-2 mb-2">
+              <button className="btn-sm btn-secondary" onClick={() => {
+                const next = { ...lexDraft }
+                next['kr-custom-' + Date.now()] = ''
+                setLexDraft(next)
+              }}>+ 규칙 추가</button>
+              <label className="text-[10px] text-gray-400 flex items-center gap-1">
+                <input type="checkbox" checked={lexAdvanced} onChange={e => setLexAdvanced(e.target.checked)} />
+                고급: 원시 JSON 소스 모드
+              </label>
+            </div>
+
+            {lexAdvanced && (
+              <textarea className="input font-mono text-xs mb-3 w-full" rows={6} value={lexiconForm} onChange={e => {
+                setLexiconForm(e.target.value)
+                const parsed = parseLexiconPayload(e.target.value)
+                if (parsed.ok) setLexDraft(parsed.patterns)
+              }} aria-label="렉시콘 원시 JSON" />
+            )}
+
+            {lexPublish && (
+              <div className="border border-amber-200 bg-amber-50 rounded-lg p-3 mb-3 text-[11px]">
+                <div className="font-semibold text-amber-800 mb-1">발행 확인 — 변경 사항 ({lexPublish.diff.added.length + lexPublish.diff.changed.length + lexPublish.diff.removed.length}건)</div>
+                {lexPublish.diff.added.map(id => <div key={'add' + id}>+ 추가 <span className="font-mono">{id}</span></div>)}
+                {lexPublish.diff.changed.map(id => <div key={'chg' + id}>~ 변경 <span className="font-mono">{id}</span></div>)}
+                {lexPublish.diff.removed.map(id => <div key={'del' + id}>− 삭제 <span className="font-mono">{id}</span></div>)}
+                <div className="text-[10px] text-amber-700 mt-1">발행된 버전은 불변이며 감사 로그에 기록됩니다. 이전 버전은 롤백에 사용할 수 있습니다.</div>
+              </div>
+            )}
             <div className="flex gap-2 shrink-0 flex-wrap">
-              <button onClick={publishLexicon} className="btn-primary text-sm">새 버전 발행</button>
-              <button onClick={() => setLexiconForm(JSON.stringify({}, null, 2))} className="btn-sm btn-secondary">초기화</button>
+              <button onClick={lexPublish ? publishLexicon : stageLexiconPublish} className={lexPublish ? 'btn-primary text-sm' : 'btn-primary text-sm'}>
+                {lexPublish ? '발행 확정' : '새 버전 발행 (검증·diff 확인)'}
+              </button>
+              {lexPublish && (
+                <button onClick={() => setLexPublish(null)} className="btn-sm btn-secondary">취소</button>
+              )}
+              <button onClick={() => loadLexicon()} className="btn-sm btn-secondary">초기화</button>
             </div>
           </div>
         </div>

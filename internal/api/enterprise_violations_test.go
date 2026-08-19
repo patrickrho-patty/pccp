@@ -17,20 +17,20 @@ func TestEnterpriseViolationResolveRequiresDispositionAndReason(t *testing.T) {
 	db.Create(&v)
 
 	// Missing disposition
-	rec := doJSON(t, srv, "PUT", "/api/enterprise/violations/"+v.ID,
-		`{"disposition_reason":"r"}`, org.ID)
+	rec := doSessionJSONWithPermissions(t, srv, http.MethodPut, "/api/enterprise/violations/"+v.ID,
+		`{"disposition_reason":"r"}`, org.ID, "admin")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for missing disposition, got %d", rec.Code)
 	}
 	// Missing reason
-	rec = doJSON(t, srv, "PUT", "/api/enterprise/violations/"+v.ID,
-		`{"disposition":"fixed"}`, org.ID)
+	rec = doSessionJSONWithPermissions(t, srv, http.MethodPut, "/api/enterprise/violations/"+v.ID,
+		`{"disposition":"fixed"}`, org.ID, "admin")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for missing reason, got %d", rec.Code)
 	}
 	// Bogus disposition
-	rec = doJSON(t, srv, "PUT", "/api/enterprise/violations/"+v.ID,
-		`{"disposition":"banana","disposition_reason":"r"}`, org.ID)
+	rec = doSessionJSONWithPermissions(t, srv, http.MethodPut, "/api/enterprise/violations/"+v.ID,
+		`{"disposition":"banana","disposition_reason":"r"}`, org.ID, "admin")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for bogus disposition, got %d", rec.Code)
 	}
@@ -46,7 +46,7 @@ func TestEnterpriseViolationResolveHappyPaths(t *testing.T) {
 		{"fixed", `{"disposition":"fixed","disposition_reason":"patched","evidence":[{"type":"pr","ref":"https://x"}],"owner_id":"u1"}`, "fixed", ""},
 		{"false_positive", `{"disposition":"false_positive","disposition_reason":"misclassified","owner_id":"sec"}`, "false_positive", ""},
 		{"duplicate", `{"disposition":"duplicate","disposition_reason":"already #2","owner_id":"sec"}`, "duplicate", ""},
-		{"risk_accepted", `{"disposition":"risk_accepted","disposition_reason":"compensating control deployed","expires_at":"2026-12-31T00:00:00Z"}`, "risk_accepted", "2026-12-31T00:00:00Z"},
+		{"risk_accepted", `{"disposition":"risk_accepted","disposition_reason":"compensating control deployed","expires_at":"2030-12-31T00:00:00Z"}`, "risk_accepted", "2030-12-31T00:00:00Z"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -55,7 +55,8 @@ func TestEnterpriseViolationResolveHappyPaths(t *testing.T) {
 			db.Create(&org)
 			v := models.EnterpriseFeatureViolation{OrganizationID: org.ID, FeatureKey: "network_egress", Severity: "high"}
 			db.Create(&v)
-			rec := doJSON(t, srv, "PUT", "/api/enterprise/violations/"+v.ID, c.body, org.ID)
+			rec := doSessionJSONWithPermissions(t, srv, http.MethodPut, "/api/enterprise/violations/"+v.ID,
+				c.body, org.ID, "admin")
 			if rec.Code != http.StatusOK {
 				t.Fatalf("resolve failed: %d %s", rec.Code, rec.Body.String())
 			}
@@ -88,8 +89,8 @@ func TestEnterpriseViolationRiskAcceptedRequiresExpiry(t *testing.T) {
 	db.Create(&org)
 	v := models.EnterpriseFeatureViolation{OrganizationID: org.ID, FeatureKey: "f", Severity: "high"}
 	db.Create(&v)
-	rec := doJSON(t, srv, "PUT", "/api/enterprise/violations/"+v.ID,
-		`{"disposition":"risk_accepted","disposition_reason":"compensating"}`, org.ID)
+	rec := doSessionJSONWithPermissions(t, srv, http.MethodPut, "/api/enterprise/violations/"+v.ID,
+		`{"disposition":"risk_accepted","disposition_reason":"compensating"}`, org.ID, "admin")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 risk_accepted without expiry, got %d", rec.Code)
 	}
@@ -105,7 +106,8 @@ func TestEnterpriseViolationListCountsByFeature(t *testing.T) {
 	db.Create(&models.EnterpriseFeatureViolation{OrganizationID: org.ID, FeatureKey: "f1", Severity: "high"})
 	db.Create(&models.EnterpriseFeatureViolation{OrganizationID: org.ID, FeatureKey: "f1", Severity: "high"})
 	db.Create(&models.EnterpriseFeatureViolation{OrganizationID: org.ID, FeatureKey: "f2", Severity: "low", Resolved: true})
-	rec := doJSON(t, srv, "GET", "/api/enterprise/violations?counts=true", "", org.ID)
+	rec := doSessionJSONWithPermissions(t, srv, http.MethodGet, "/api/enterprise/violations?counts=true",
+		"", org.ID, "admin")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("counts failed: %d", rec.Code)
 	}
