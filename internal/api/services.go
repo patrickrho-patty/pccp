@@ -950,29 +950,14 @@ func (s *Server) wrapToolsPendingApprovals(ext *AdditionalServices) http.Handler
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		// Enrich each row with the tool name for display; the Approval
-		// row itself carries only a tool reference.
-		tools, _ := ext.Tools.ListTools(orgID)
-		nameByID := make(map[string]string, len(tools))
-		for _, t := range tools {
-			nameByID[t.ID] = t.Name
-		}
-		out := make([]map[string]interface{}, 0, len(approvals))
+		// PAT-1497: Tools and Fleet consume the SAME typed approval-presentation
+		// contract (enrichApprovals) so neither surface infers meaning from raw
+		// tool_use strings and the dashboard action center can rely on one shape.
+		var rows []models.Approval
 		for _, a := range approvals {
-			toolName := strings.TrimSuffix(a.ApprovalType, "_approval")
-			if n, ok := nameByID[a.ActionID]; ok {
-				toolName = n
-			}
-			out = append(out, map[string]interface{}{
-				"id":            a.ID,
-				"action_id":     a.ActionID,
-				"approval_type": a.ApprovalType,
-				"decision":      a.Decision,
-				"tool_name":     toolName,
-				"created_at":    a.CreatedAt,
-			})
+			rows = append(rows, a)
 		}
-		writeJSON(w, http.StatusOK, out)
+		writeJSON(w, http.StatusOK, s.enrichApprovals(orgID, rows))
 	}
 }
 

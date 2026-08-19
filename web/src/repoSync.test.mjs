@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { resolveRepoSync, classifySyncError, treeViewState, SYNC_PHASE_LABELS } from './repoSync.ts'
+import { resolveRepoSync, classifySyncError, treeViewState, SYNC_PHASE_LABELS, ATTEMPT_RESULT_LABELS } from './repoSync.ts'
 
 const NOW = Date.parse('2026-08-18T12:00:00Z')
 const fresh = '2026-08-18T10:00:00Z'
@@ -101,6 +101,16 @@ test('phase labels cover every canonical phase', () => {
   for (const phase of ['never', 'queued', 'running', 'current', 'stale', 'partial', 'failed']) {
     assert.ok(SYNC_PHASE_LABELS[phase], phase)
   }
+})
+
+test('attempt result labels cover every result and match phase wording', () => {
+  for (const result of ['success', 'failed', 'running', 'queued']) {
+    assert.ok(ATTEMPT_RESULT_LABELS[result], result)
+  }
+  // running/queued reuse the phase labels so the detail page wording can
+  // never drift from the sync status card (R7).
+  assert.equal(ATTEMPT_RESULT_LABELS.running, SYNC_PHASE_LABELS.running)
+  assert.equal(ATTEMPT_RESULT_LABELS.queued, SYNC_PHASE_LABELS.queued)
 })
 
 test('classifySyncError covers credential failure, rate limit, deleted branch, unsupported SCM', () => {

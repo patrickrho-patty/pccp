@@ -9,6 +9,7 @@ import {
   assessAllowlistImpact, assessGateChange, effectiveAllowlist,
   summarizeRisk, isStaleBase,
 } from '../toolGovernance'
+import { approvalView, rankApprovals } from '../approvalView'
 
 // Tools page (web/14 plan): the Tool Registry — governance metadata
 // that the relay enforces on the live path (A). Includes the approvals
@@ -261,20 +262,34 @@ export default function Tools() {
 
       {tab === 'approvals' && (
         <div className="card p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] text-gray-500">대기 중 승인 — 긴급순: 만료 · 위험도 · 대기 시간</p>
+            <span className="text-[10px] text-gray-400">총 {approvals.length}건</span>
+          </div>
           {approvals.length === 0 && <p className="text-[11px] text-gray-400">대기 중 승인 요청 없음</p>}
-          {approvals.map((a: any) => (
-            <div key={a.id} className="border rounded-lg p-2 flex items-center justify-between gap-2 text-[11px]">
-              <div>
-                <span className="font-semibold">{a.approval_type}</span>
-                <span className="text-gray-400 ml-2">세션 {a.session_id?.slice(0, 12) || '—'}</span>
-                <div className="text-[10px] text-gray-400">요청자 {a.requested_by || '—'} · {(a.created_at || '').slice(0, 16)}</div>
+          {rankApprovals(approvals).map((a: any) => {
+            const v = approvalView(a)
+            return (
+              <div key={a.id} className="border rounded-lg p-2 flex items-center justify-between gap-2 text-[11px]">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold">{v.title}</span>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full border ${v.expired ? 'bg-red-50 text-red-700 border-red-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                      {v.expired ? '만료' : `대기 ${v.ageLabel}`}
+                    </span>
+                    {v.expiresLabel && <span className="text-[9px] text-gray-400">{v.expiresLabel}</span>}
+                  </div>
+                  <div className="text-[10px] text-gray-400 mt-0.5">
+                    요청자 {v.requestedBy}{v.harnessId ? ` · 하네스 ${v.harnessId}` : ''}{v.sessionTitle ? ` · 세션 ${v.sessionTitle}` : ''} · {(a.created_at || '').slice(0, 16)}
+                  </div>
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <button className="text-[10px] px-2 py-1 rounded bg-green-50 text-green-600" onClick={() => decide(a, 'approved')}>승인</button>
+                  <button className="text-[10px] px-2 py-1 rounded bg-red-50 text-red-600" onClick={() => decide(a, 'denied')}>거절</button>
+                </div>
               </div>
-              <div className="flex gap-1">
-                <button className="text-[10px] px-2 py-1 rounded bg-green-50 text-green-600" onClick={() => decide(a, 'approved')}>승인</button>
-                <button className="text-[10px] px-2 py-1 rounded bg-red-50 text-red-600" onClick={() => decide(a, 'rejected')}>거절</button>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 

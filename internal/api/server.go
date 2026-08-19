@@ -2261,8 +2261,10 @@ func (s *Server) handleListRepoBaselines(w http.ResponseWriter, r *http.Request)
 // browser.
 func (s *Server) handleSyncRepository(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	// Org-scoped lookup: a repo from another tenant is indistinguishable
+	// from a missing one (no cross-tenant trigger or existence oracle).
 	var repo models.Repository
-	if err := s.db.First(&repo, "id = ?", id).Error; err != nil {
+	if err := s.db.Where("organization_id = ? AND id = ?", getOrgID(r), id).First(&repo).Error; err != nil {
 		writeError(w, http.StatusNotFound, "저장소를 찾을 수 없습니다")
 		return
 	}
@@ -2272,6 +2274,11 @@ func (s *Server) handleSyncRepository(w http.ResponseWriter, r *http.Request) {
 	}
 	head, err := s.gitscm.SyncRepository(r.Context(), &repo)
 	if err != nil {
+		// A live sync holds the claim: 409, matching handleRepoTree.
+		if strings.Contains(err.Error(), "already in progress") {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -3977,7 +3984,10 @@ func (s *Server) handleFleetAction(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRepositoryHeatmap(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
-	heatmap, err := s.gitscm.GetRepositoryHeatmap(orgID)
+	// `repository` scopes the response to that repo's single row so the
+	// repository detail page does not fetch the org-wide map and filter
+	// client-side (E1).
+	heatmap, err := s.gitscm.GetRepositoryHeatmap(orgID, r.URL.Query().Get("repository"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -5657,7 +5667,7 @@ func (s *Server) handleSecurityFindings(w http.ResponseWriter, r *http.Request) 
 	// PAT-1490: scope findings to a repository by joining through its
 	// sessions, so a repo's "보안 발견" count drills to the identical list.
 	if repo := r.URL.Query().Get("repository"); repo != "" {
-		q = q.Where("session_id IN (?)", s.db.Model(&models.Session{}).Select("session_id").Where("organization_id = ? AND repository_id = ?", orgID, repo))
+		q = q.Where("session_id IN (?)", models.RepositorySessionIDs(s.db, orgID, repo))
 	}
 	if v := r.URL.Query().Get("from"); v != "" {
 		q = q.Where("occurred_at >= ?", v)
@@ -7343,6 +7353,11 @@ func enterpriseRolePrivileged(role string) bool {
 	return role == "super_admin" || role == "security_admin"
 }
 
+// enterpriseRoleAdmin mirrors ADMIN_ROLES in web/src/enterpriseFeatures.ts.
+func enterpriseRoleAdmin(role string) bool {
+	return enterpriseRolePrivileged(role) || role == "admin" || role == "owner"
+}
+
 // enterpriseConfigHeadEpoch reads the head (max) rollout epoch from the
 // feature's governance config JSON; 0 for empty or invalid configs.
 func enterpriseConfigHeadEpoch(config string) int {
@@ -7366,14 +7381,27 @@ func enterpriseConfigHeadEpoch(config string) int {
 func (s *Server) handleUpdateEnterpriseFeature(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
 	id := chi.URLParam(r, "id")
+	// Feature mutations are admin-only for every feature, not just
+	// patty-mandatory ones.
+	if !enterpriseRoleAdmin(getRole(r)) {
+		writeError(w, http.StatusForbidden, "admin_role_required")
+		return
+	}
 	var req struct {
 		Enabled       bool   `json:"enabled"`
 		Enforced      bool   `json:"enforced"`
 		Config        string `json:"config"`
+		Reason        string `json:"reason"`
 		ExpectedEpoch *int   `json:"expected_epoch"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	// The UI promises every change is audit-logged with a reason, so the
+	// server enforces it rather than trusting the client.
+	if strings.TrimSpace(req.Reason) == "" {
+		writeError(w, http.StatusBadRequest, "reason_required")
 		return
 	}
 	// Org-scoped lookup: another tenant's feature id is indistinguishable
@@ -7395,8 +7423,41 @@ func (s *Server) handleUpdateEnterpriseFeature(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusConflict, "epoch_conflict")
 		return
 	}
-	s.db.Model(&models.EnterpriseHarnessFeature{}).Where("id = ? AND organization_id = ?", id, orgID).
-		Updates(map[string]interface{}{"enabled": req.Enabled, "enforced": req.Enforced, "config": req.Config})
+	// True CAS: the state the decision was based on is folded into the
+	// UPDATE's WHERE clause, so a concurrent write between our read and this
+	// update matches zero rows instead of clobbering.
+	query := s.db.Model(&models.EnterpriseHarnessFeature{}).Where("id = ? AND organization_id = ?", id, orgID)
+	if req.ExpectedEpoch != nil {
+		query = query.Where("enabled = ? AND enforced = ? AND config = ?", feature.Enabled, feature.Enforced, feature.Config)
+	}
+	res := query.Updates(map[string]interface{}{"enabled": req.Enabled, "enforced": req.Enforced, "config": req.Config})
+	if res.Error != nil {
+		writeError(w, http.StatusInternalServerError, "update failed")
+		return
+	}
+	if res.RowsAffected == 0 {
+		writeError(w, http.StatusConflict, "epoch_conflict")
+		return
+	}
+	details, _ := json.Marshal(map[string]interface{}{
+		"feature_key": feature.FeatureKey,
+		"enabled":     req.Enabled,
+		"enforced":    req.Enforced,
+		"reason":      strings.TrimSpace(req.Reason),
+		"head_epoch":  enterpriseConfigHeadEpoch(req.Config),
+	})
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID,
+		ActorID:        getActorID(r),
+		ActorType:      "user",
+		EventType:      "enterprise.feature_updated",
+		Action:         "update_enterprise_feature",
+		ResourceType:   "enterprise_feature",
+		ResourceID:     id,
+		Result:         "success",
+		Details:        string(details),
+		OccurredAt:     time.Now().UTC().Format(time.RFC3339Nano),
+	})
 	s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&feature)
 	writeJSON(w, http.StatusOK, feature)
 }

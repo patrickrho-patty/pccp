@@ -151,6 +151,35 @@ func TestSyncRepositoryReclaimsStaleSyncing(t *testing.T) {
 	}
 }
 
+func TestSyncHeartbeatKeepsAttemptFresh(t *testing.T) {
+	svc, db := browserTestService(t)
+	// A running sync whose claim is 10 minutes old: inside the stale
+	// window, so without the heartbeat a second sync could hijack it.
+	repo := models.Repository{
+		Name:              "r",
+		CloneURL:          makeRepo(t),
+		DefaultBranch:     "main",
+		SyncStatus:        "syncing",
+		LastSyncAttemptAt: time.Now().Add(-10 * time.Minute).Format(time.RFC3339),
+	}
+	db.Create(&repo)
+
+	done := make(chan struct{})
+	go svc.heartbeatSyncAttempt(repo.ID, 20*time.Millisecond, done)
+	defer close(done)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var got models.Repository
+		db.First(&got, "id = ?", repo.ID)
+		if got.LastSyncAttemptAt > repo.LastSyncAttemptAt {
+			return // heartbeat refreshed the attempt timestamp
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("heartbeat did not refresh last_sync_attempt_at")
+}
+
 func TestListTreeRestoresCloneAfterCacheLoss(t *testing.T) {
 	svc, db := browserTestService(t)
 	repo := models.Repository{

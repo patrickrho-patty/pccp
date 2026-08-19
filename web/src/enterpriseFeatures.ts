@@ -252,6 +252,7 @@ export function validateChange(args: {
   scope: Scope
   role: string
   now: number
+  evals?: HarnessEval[] // precomputed, so callers can share one evaluation with buildPreview
 }): ChangeValidation {
   const { feature, features, harnesses, target, scope, role, now } = args
   const blockers: string[] = []
@@ -294,7 +295,7 @@ export function validateChange(args: {
       blockers.push('하네스 지정 범위를 선택했지만 대상 하네스가 없습니다.')
     }
   }
-  const evals = evaluateHarnesses(entry, harnesses, scope, now)
+  const evals = args.evals ?? evaluateHarnesses(entry, harnesses, scope, now)
   const incompatible = evals.filter(e => e.online && !e.compatible)
   const offline = evals.filter(e => !e.online)
   if (target.enforced && incompatible.length > 0) {
