@@ -93,8 +93,8 @@ export function groupAssessmentRuns(runs: any[]): { grouped: AssessmentRun[]; ch
   const seen: Record<string, AssessmentRun> = {}
   const order: string[] = []
   for (const r of runs || []) {
-    const resultsHash = typeof r.results === 'string' ? String(r.results).slice(0, 512) : JSON.stringify(r.results || '').slice(0, 512)
-    const key = [r.certification || '', r.scope || '', r.level || '', r.overall_status || '', resultsHash].join('|')
+    const resultsStr = typeof r.results === 'string' ? String(r.results) : JSON.stringify(r.results || '')
+    const key = [r.certification || '', r.scope || '', r.level || '', r.overall_status || '', resultsStr].join('|')
     const existing = seen[key]
     if (existing) {
       existing.count = (existing.count || 1) + 1
