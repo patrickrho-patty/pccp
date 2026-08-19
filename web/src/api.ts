@@ -313,6 +313,26 @@ export const api = {
     request<any>(`/api/policy/templates/${id}`, { method: 'DELETE' }),
   // Policy exceptions (PAT-1506 evidence-backed approval flow)
   listPolicyExceptions: (ranked = false) => request<any[]>(`/api/policy/exceptions${ranked ? '?ranked=true' : ''}`),
+
+  // PAT-1439: public status page operator surface.
+  psComponents: () => request<any[]>('/api/publicstatus/components'),
+  psActivateComponent: (id: string, active: boolean) =>
+    request<any>(`/api/publicstatus/components/${id}/activate`, { method: 'PUT', body: JSON.stringify({ active }) }),
+  psIngestObservations: (observations: any[]) =>
+    request<any>('/api/publicstatus/observations', { method: 'POST', body: JSON.stringify(observations) }),
+  psOverride: (id: string, data: { color: string; reason: string; expires_at?: string; false_positive_ack?: boolean }) =>
+    request<any>(`/api/publicstatus/components/${id}/override`, { method: 'POST', body: JSON.stringify(data) }),
+  psIncidents: () => request<any[]>('/api/publicstatus/incidents'),
+  psCreateIncident: (data: { title_ko: string; components: string[]; impact: string; major?: boolean; maintenance?: boolean }) =>
+    request<any>('/api/publicstatus/incidents', { method: 'POST', body: JSON.stringify(data) }),
+  psUpdateIncident: (id: number, patch: { state?: string; publish?: boolean; major?: boolean }) =>
+    request<any>(`/api/publicstatus/incidents/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
+  psPostIncidentUpdate: (id: number, data: { body_ko: string; is_correction?: boolean }) =>
+    request<any>(`/api/publicstatus/incidents/${id}/updates`, { method: 'POST', body: JSON.stringify(data) }),
+  psRollups: (componentId: string) => request<any>(`/api/publicstatus/components/${componentId}/rollups`),
+  psRebuildRollups: (componentId: string) =>
+    request<any>(`/api/publicstatus/components/${componentId}/rollups/rebuild`, { method: 'POST', body: '{}' }),
+  psPublishSnapshot: () => request<any>('/api/publicstatus/snapshot/publish', { method: 'POST', body: '{}' }),
   getPolicyException: (id: string) => request<any>(`/api/policy/exceptions/${id}`),
   createPolicyException: (data: any) =>
     request<any>('/api/policy/exceptions', { method: 'POST', body: JSON.stringify(data) }),

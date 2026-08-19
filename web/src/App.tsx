@@ -36,6 +36,7 @@ import SREConsole from './pages/SREConsole'
 import ModelInfra from './pages/ModelInfra'
 import SubscriberManagement from './pages/SubscriberManagement'
 import ServiceCommandCenter from './pages/ServiceCommandCenter'
+import StatusCenter from './pages/StatusCenter'
 import AccountPortal from './pages/AccountPortal'
 import LiveView from './pages/LiveView'
 import CodeExplorer from './pages/CodeExplorer'
@@ -88,6 +89,7 @@ function AppContent() {
         {/* Patty Ops routes */}
         {profile === 'patty_ops' && (<>
           <Route path="/sre" element={<SREConsole />} />
+          <Route path="/status" element={<StatusCenter />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/fleet" element={<Fleet />} />
 		  <Route path="/live" element={<LiveView />} />

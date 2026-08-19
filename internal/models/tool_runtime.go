@@ -132,6 +132,15 @@ func AllModels() []interface{} {
 		&CredentialRevocationRecord{},
 		&SandboxRecord{},
 		&EffectRecordRow{},
+		// Public status page (PAT-1439)
+		&PublicStatusComponent{},
+		&PublicStatusObservation{},
+		&PublicIncident{},
+		&PublicIncidentUpdate{},
+		&PublicStatusDailyRollup{},
+		&PublicStatusSnapshot{},
+		&PublicStatusSubscriber{},
+		&PublicStatusNotification{},
 		// Provenance
 		&ActionEnvelope{},
 		&ChangeSet{},

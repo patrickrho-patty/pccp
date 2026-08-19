@@ -270,6 +270,18 @@ func (s *Server) setupRouter() {
 		r.Handle("/scim/v2/*", s.wrapSSOSCIM(ext))
 	}
 
+	// Public status page (PAT-1439): unauthenticated read-only status
+	// API + anonymous subscriptions. Must never require console auth and
+	// keeps serving the last valid snapshot when evaluation stopped.
+	r.Route("/api/public/status", func(r chi.Router) {
+		r.Get("/", s.handlePublicStatusGet)
+		r.Get("/incidents/{slug}", s.handlePublicIncidentGet)
+		r.Get("/feed.atom", s.handlePublicStatusFeed)
+		r.Post("/subscribers", s.handlePublicSubscriberCreate)
+		r.Get("/subscribers/verify", s.handlePublicSubscriberVerify)
+		r.Get("/subscribers/unsubscribe", s.handlePublicSubscriberUnsubscribe)
+	})
+
 	// Authenticated API routes
 	r.Route("/api", func(r chi.Router) {
 		r.Use(s.authMiddleware)
@@ -535,6 +547,22 @@ func (s *Server) setupRouter() {
 			r.Get("/approvals", s.handleFleetApprovals)
 			r.Get("/impact", s.handleFleetImpactPreview)
 			r.Get("/status", s.handleFleetStatus)
+		})
+
+		// Public status page operator surface (PAT-1439)
+		r.Route("/publicstatus", func(r chi.Router) {
+			r.Get("/components", s.handlePSComponentsList)
+			r.Put("/components/{id}/activate", s.handlePSComponentActivate)
+			r.Post("/observations", s.handlePSObservationIngest)
+			r.Post("/components/{id}/override", s.handlePSOverride)
+			r.Get("/incidents", s.handlePSIncidentsList)
+			r.Post("/incidents", s.handlePSIncidentCreate)
+			r.Put("/incidents/{id}", s.handlePSIncidentUpdate)
+			r.Post("/incidents/{id}/updates", s.handlePSIncidentPostUpdate)
+			r.Post("/components/{id}/rollups/rebuild", s.handlePSRollupsRebuild)
+			r.Get("/components/{id}/rollups", s.handlePSRollupsList)
+			r.Post("/snapshot/publish", s.handlePSSnapshotPublish)
+			r.Post("/notify/dispatch", s.handlePSNotifyDispatch)
 		})
 
 		// Git/SCM
