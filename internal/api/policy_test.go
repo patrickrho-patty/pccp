@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -293,6 +294,16 @@ func TestPolicyExceptionMarketplaceFlow(t *testing.T) {
 		t.Fatalf("exception should start pending: %s", ex.Status)
 	}
 	rec = doJSON(t, srv, "POST", "/api/policy/exceptions/"+ex.ID+"/decide", `{"approve":true,"decided_by":"sec-admin","reason":"ok"}`, org.ID)
+	if rec.Code == http.StatusForbidden {
+		// The decide gate requires admin claims (enterpriseRoleAdmin);
+		// doJSON attaches org-only claims, so replay with admin claims.
+		req := httptest.NewRequest("POST", "/api/policy/exceptions/"+ex.ID+"/decide", strings.NewReader(`{"approve":true,"decided_by":"sec-admin","reason":"ok"}`))
+		req = req.WithContext(contextWithClaims(req.Context(), &identity.Claims{OrganizationID: org.ID, Role: "admin"}))
+		req.Header.Set("Content-Type", "application/json")
+		rec2 := httptest.NewRecorder()
+		srv.router.ServeHTTP(rec2, req)
+		rec = rec2
+	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("decide failed: %d", rec.Code)
 	}
