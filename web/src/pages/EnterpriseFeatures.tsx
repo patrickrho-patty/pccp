@@ -98,6 +98,12 @@ export default function EnterpriseFeatures() {
   const [loading, setLoading] = useState(true)
   const [detail, setDetail] = useState<Feature | null>(null)
   const [draft, setDraft] = useState<ChangeDraft | null>(null)
+  // PAT-1516: violation resolution modal — replaces window.prompt for
+  // a real, accessible, evidence-backed disposition flow.
+  const [resolveTarget, setResolveTarget] = useState<Violation | null>(null)
+  const [resolveForm, setResolveForm] = useState<{ disposition: string; reason: string; expires_at: string }>({
+    disposition: 'fixed', reason: '', expires_at: '',
+  })
 
   const isAdmin = ADMIN_ROLES.includes(role)
 
@@ -193,27 +199,39 @@ export default function EnterpriseFeatures() {
     load()
   }
 
-  // PAT-1516: violation resolution is evidence-backed (PAT-1516). The
-// disposition, reason, and (for risk_accepted) expiry are required
-// so the resolution is documented, auditable, and bounded.
-const resolveViolation = async (id: string) => {
-  const disposition = window.prompt('결론 (fixed | false_positive | risk_accepted | duplicate | suppressed):', 'fixed')
-  if (!disposition) return
-  if (!['fixed', 'false_positive', 'risk_accepted', 'duplicate', 'suppressed'].includes(disposition)) {
-    showToast('유효하지 않은 결론', 'error'); return
+  // PAT-1516: violation resolution is evidence-backed. Disposition, reason,
+// and (for risk_accepted) expiry are required — the modal enforces all
+// three before the admin can submit.
+const openResolveModal = (v: Violation) => {
+  setResolveTarget(v)
+  // Default expiry for risk_accepted: 7 days out, so the form has a
+  // sensible starting value the admin can edit.
+  const sevenDays = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString().slice(0, 16)
+  setResolveForm({ disposition: 'fixed', reason: '', expires_at: sevenDays })
+}
+
+const submitResolve = async () => {
+  if (!resolveTarget) return
+  if (!resolveForm.reason.trim()) {
+    showToast('결론 사유는 필수입니다', 'error'); return
   }
-  const reason = window.prompt('결론 사유 (필수 — 감사 로그):', '')
-  if (!reason || !reason.trim()) return
-  const payload: any = { disposition, disposition_reason: reason.trim(), evidence: [], owner_id: '' }
-  if (disposition === 'risk_accepted') {
-    const until = window.prompt('위험 수락 만료 (ISO8601, 예: 2026-12-31T00:00:00Z):', new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString())
-    if (!until) return
-    payload.expires_at = until
+  const payload: any = {
+    disposition: resolveForm.disposition,
+    disposition_reason: resolveForm.reason.trim(),
+    evidence: [],
+    owner_id: '',
+  }
+  if (resolveForm.disposition === 'risk_accepted') {
+    if (!resolveForm.expires_at) { showToast('risk_accepted는 만료시각 필수', 'error'); return }
+    payload.expires_at = new Date(resolveForm.expires_at).toISOString()
   }
   try {
-    const resp = await fetch(`/api/enterprise/violations/${id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(payload) })
+    const resp = await fetch(`/api/enterprise/violations/${resolveTarget.id}`, {
+      method: 'PUT', headers: authHeaders(), body: JSON.stringify(payload),
+    })
     if (!resp.ok) { showToast((await resp.json()).error || '실패', 'error'); return }
-    showToast(`위반 결론 기록됨 (${disposition})`, 'success')
+    showToast(`위반 결론 기록됨 (${resolveForm.disposition})`, 'success')
+    setResolveTarget(null)
     load()
   } catch (e: any) { showToast(e?.message || '실패', 'error') }
 }
@@ -367,7 +385,7 @@ const resolveViolation = async (id: string) => {
                     <td className="py-3 text-sm">{v.description_ko || v.description}</td>
                     <td className="py-3 text-xs font-mono"><Link to="/harnesses" className="text-blue-600 hover:underline">{v.harness_id?.slice(0, 15)}</Link></td>
                     <td className="py-3 text-xs text-gray-400">{v.occurred_at?.slice(0, 19)}</td>
-                    <td className="py-3"><button onClick={() => resolveViolation(v.id)} className="text-xs text-green-600 hover:underline">해결</button></td>
+                    <td className="py-3"><button onClick={() => openResolveModal(v)} className="text-xs text-green-600 hover:underline">결론 기록</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -611,6 +629,51 @@ const resolveViolation = async (id: string) => {
             )}
           </div>
         )}
+      </Modal>
+
+      {/* PAT-1516: violation resolution modal — evidence-backed disposition
+          with reason + (for risk_accepted) expiry. Replaces the previous
+          window.prompt chain. */}
+      <Modal open={!!resolveTarget} title={`위반 결론 기록 — ${resolveTarget?.feature_key || ''}`}
+        onClose={() => setResolveTarget(null)}
+        footer={<ModalFooter onCancel={() => setResolveTarget(null)} onConfirm={submitResolve} confirmLabel="결론 기록" danger={resolveForm.disposition === 'risk_accepted'} />}>
+        <div className="space-y-2 text-xs">
+          {resolveTarget && (
+            <div className="border rounded-lg p-2 bg-gray-50 space-y-0.5 text-[11px]">
+              <div>기능: <span className="font-semibold">{resolveTarget.feature_key}</span></div>
+              <div>심각도: <span className="font-semibold">{resolveTarget.severity}</span></div>
+              <div>하네스: {resolveTarget.harness_id || '-'}</div>
+              <div>설명: {resolveTarget.description_ko || resolveTarget.description || '-'}</div>
+            </div>
+          )}
+          <div>
+            <label htmlFor="resolve-disposition" className="text-[10px] text-gray-500 block mb-1">결론 (disposition)</label>
+            <select id="resolve-disposition" className="input text-xs w-full"
+              value={resolveForm.disposition}
+              onChange={e => setResolveForm({ ...resolveForm, disposition: e.target.value })}>
+              <option value="fixed">fixed · 해결됨 (수정/패치)</option>
+              <option value="false_positive">false_positive · 오탐</option>
+              <option value="risk_accepted">risk_accepted · 위험 수락 (만료시각 필수)</option>
+              <option value="duplicate">duplicate · 중복</option>
+              <option value="suppressed">suppressed · 정책상 무시</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="resolve-reason" className="text-[10px] text-gray-500 block mb-1">결론 사유 (필수 — 감사 로그)</label>
+            <textarea id="resolve-reason" rows={2} className="input text-xs w-full"
+              value={resolveForm.reason}
+              onChange={e => setResolveForm({ ...resolveForm, reason: e.target.value })}
+              placeholder="예: PR #1234 머지로 해결됨 — 컴파일러 업그레이드 패치 포함" />
+          </div>
+          {resolveForm.disposition === 'risk_accepted' && (
+            <div>
+              <label htmlFor="resolve-expires" className="text-[10px] text-gray-500 block mb-1">위험 수락 만료 (필수)</label>
+              <input id="resolve-expires" type="datetime-local" className="input text-xs w-full"
+                value={resolveForm.expires_at}
+                onChange={e => setResolveForm({ ...resolveForm, expires_at: e.target.value })} />
+            </div>
+          )}
+        </div>
       </Modal>
     </div>
   )

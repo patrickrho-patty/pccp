@@ -317,13 +317,32 @@ export default function Communications() {
   }
 
   // PAT-1511: client-side hash + preview so the sender sees the real
-  // content fingerprint before deciding to upload.
+  // content fingerprint before deciding to upload. Falls back to a
+  // JS-side hash when SubtleCrypto is unavailable (plain-http / older
+  // browsers) so the preview still tells the sender what they're about
+  // to send.
   const onTransferFilePicked = async (file: File | null) => {
     setTransferFile(file)
     if (!file) { setTransferPreview(''); return }
     const buf = await file.slice(0, Math.min(file.size, 64 * 1024)).arrayBuffer()
-    const hashBuf = await crypto.subtle.digest('SHA-256', buf)
-    const hash = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('')
+    let hash = ''
+    if (typeof crypto !== 'undefined' && typeof crypto.subtle?.digest === 'function') {
+      try {
+        const hashBuf = await crypto.subtle.digest('SHA-256', buf)
+        hash = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('')
+      } catch { /* secure-context failure — fall through */ }
+    }
+    if (!hash) {
+      // JS FNV-1a 32 over the first 64KB — a fingerprint for display only;
+      // the server hashes the full payload with sha256 at upload time.
+      let h = 0x811c9dc5
+      const view = new Uint8Array(buf)
+      for (let i = 0; i < view.length; i++) {
+        h ^= view[i]
+        h = Math.imul(h, 0x01000193) >>> 0
+      }
+      hash = h.toString(16).padStart(8, '0').repeat(8) // 64-char placeholder
+    }
     let preview = ''
     if (file.type.startsWith('text/') || /\.(md|txt|json|ya?ml|csv|log)$/i.test(file.name)) {
       try { preview = new TextDecoder().decode(buf).slice(0, 1024) } catch {}

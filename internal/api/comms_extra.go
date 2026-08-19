@@ -549,8 +549,7 @@ func (s *Server) handleFileTransferDownload(w http.ResponseWriter, r *http.Reque
 	// PAT-1511 delivery evidence: stamp downloaded_at + bump counter
 	// + audit event so admins can audit exfiltration paths.
 	now := time.Now().Format(time.RFC3339)
-	actor := ""
-	if a, ok := r.Context().Value("actor_id").(string); ok { actor = a }
+	actor := getOperatorEmail(r)
 	s.db.Model(&transfer).Updates(map[string]interface{}{
 		"downloaded_at": now,
 		"download_count": gorm.Expr("download_count + 1"),
@@ -584,8 +583,7 @@ func (s *Server) handleFileTransferTransition(w http.ResponseWriter, r *http.Req
 		return
 	}
 	now := time.Now().Format(time.RFC3339)
-	actor := ""
-	if a, ok := r.Context().Value("actor_id").(string); ok { actor = a }
+	actor := getOperatorEmail(r)
 	switch req.Action {
 	case "accept":
 		if transfer.Status == "ready" {

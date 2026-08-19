@@ -436,113 +436,122 @@ type ExceptionDecision struct {
 // and a new policy epoch is published. Denials short-circuit and the
 // exception is finalized. Conditions are appended to the existing list.
 // expired/revoked rows are rejected.
+//
+// The read + duplicate-check + write happens inside one DB transaction
+// so two concurrent decisions can't both pass the same-role guard.
 func (s *Service) DecideException(orgID, exceptionID string, d ExceptionDecision) (*models.PolicyException, error) {
-	var ex models.PolicyException
-	if s.db.First(&ex, "id = ? AND organization_id = ?", exceptionID, orgID).Error != nil {
-		return nil, fmt.Errorf("policy: exception not found")
-	}
-	if ex.Status == "expired" || ex.Status == "revoked" {
-		return nil, fmt.Errorf("policy: exception %s", ex.Status)
-	}
-	if ex.Status != "pending" && ex.Status != "approved" {
-		return nil, fmt.Errorf("policy: exception already %s", ex.Status)
-	}
 	if d.Reason == "" {
 		return nil, fmt.Errorf("policy: decision reason required")
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	if ex.ExpiresAt != "" && now > ex.ExpiresAt {
-		// approver tried to act on an already-expired exception
-		s.db.Model(&ex).Update("status", "expired")
-		return nil, fmt.Errorf("policy: exception expired")
-	}
-	var approvers []map[string]string
-	if ex.ApproversJSON != "" {
-		_ = json.Unmarshal([]byte(ex.ApproversJSON), &approvers)
-	}
-	// Record this approver's vote; reject duplicate votes from the same role.
-	for _, a := range approvers {
-		if a["role"] == d.DecidedByRole {
-			return nil, fmt.Errorf("policy: role %s already voted", d.DecidedByRole)
+	var result *models.PolicyException
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var ex models.PolicyException
+		if err := tx.First(&ex, "id = ? AND organization_id = ?", exceptionID, orgID).Error; err != nil {
+			return fmt.Errorf("policy: exception not found")
 		}
-	}
-	approvers = append(approvers, map[string]string{
-		"role":  d.DecidedByRole,
-		"user":  d.DecidedBy,
-		"at":    now,
-		"vote":  boolStr(d.Approve),
-		"reason": d.Reason,
-	})
-	if !d.Approve {
-		// any denial finalizes as denied
+		if ex.Status == "expired" || ex.Status == "revoked" {
+			return fmt.Errorf("policy: exception %s", ex.Status)
+		}
+		if ex.Status != "pending" && ex.Status != "approved" {
+			return fmt.Errorf("policy: exception already %s", ex.Status)
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		if ex.ExpiresAt != "" && now > ex.ExpiresAt {
+			// approver tried to act on an already-expired exception
+			tx.Model(&ex).Update("status", "expired")
+			return fmt.Errorf("policy: exception expired")
+		}
+		var approvers []map[string]string
+		if ex.ApproversJSON != "" {
+			_ = json.Unmarshal([]byte(ex.ApproversJSON), &approvers)
+		}
+		for _, a := range approvers {
+			if a["role"] == d.DecidedByRole {
+				return fmt.Errorf("policy: role %s already voted", d.DecidedByRole)
+			}
+		}
+		approvers = append(approvers, map[string]string{
+			"role":   d.DecidedByRole,
+			"user":   d.DecidedBy,
+			"at":     now,
+			"vote":   boolStr(d.Approve),
+			"reason": d.Reason,
+		})
+		if !d.Approve {
+			appJSON, _ := json.Marshal(approvers)
+			ex.Status = "denied"
+			ex.DecidedBy = d.DecidedBy
+			ex.DecisionReason = d.Reason
+			ex.DecidedAt = now
+			ex.ApproversJSON = string(appJSON)
+			if len(d.Conditions) > 0 {
+				var existing []map[string]string
+				if ex.ConditionsJSON != "" { _ = json.Unmarshal([]byte(ex.ConditionsJSON), &existing) }
+				existing = append(existing, d.Conditions...)
+				cj, _ := json.Marshal(existing)
+				ex.ConditionsJSON = string(cj)
+			}
+			if err := tx.Save(&ex).Error; err != nil { return err }
+			s.recordAudit(orgID, "cp.policy.exception_decided", "admin", "policy_exception", ex.ID,
+				fmt.Sprintf(`{"status":"denied","by":%q,"role":%q,"reason":%q}`, d.DecidedBy, d.DecidedByRole, d.Reason))
+			result = &ex
+			return nil
+		}
+		var existing []map[string]string
+		if ex.ConditionsJSON != "" { _ = json.Unmarshal([]byte(ex.ConditionsJSON), &existing) }
+		if len(d.Conditions) > 0 {
+			existing = append(existing, d.Conditions...)
+		}
+		cj, _ := json.Marshal(existing)
+		ex.ConditionsJSON = string(cj)
+
+		required := splitCSV(ex.RequiredApproverRoles)
+		approved := []string{}
+		for _, a := range approvers {
+			if a["vote"] == "true" { approved = append(approved, a["role"]) }
+		}
+		allApproved := true
+		for _, r := range required {
+			found := false
+			for _, x := range approved { if x == r { found = true; break } }
+			if !found { allApproved = false; break }
+		}
 		appJSON, _ := json.Marshal(approvers)
-		ex.Status = "denied"
+		ex.ApproversJSON = string(appJSON)
+		if !allApproved {
+			ex.DecidedAt = now
+			if err := tx.Save(&ex).Error; err != nil { return err }
+			s.recordAudit(orgID, "cp.policy.exception_partial_approval", "admin", "policy_exception", ex.ID,
+				fmt.Sprintf(`{"role":%q,"approved":%v}`, d.DecidedByRole, true))
+			result = &ex
+			return nil
+		}
+		ex.Status = "approved"
 		ex.DecidedBy = d.DecidedBy
 		ex.DecisionReason = d.Reason
 		ex.DecidedAt = now
-		ex.ApproversJSON = string(appJSON)
-		if len(d.Conditions) > 0 {
-			var existing []map[string]string
-			if ex.ConditionsJSON != "" { _ = json.Unmarshal([]byte(ex.ConditionsJSON), &existing) }
-			existing = append(existing, d.Conditions...)
-			cj, _ := json.Marshal(existing)
-			ex.ConditionsJSON = string(cj)
+		if d.PublishNewEpoch {
+			epoch := &models.PolicyEpoch{
+				OrganizationID: orgID,
+				EpochID:        dari.GenerateID("epoch"),
+				EngineVersion:  "exception",
+				TransitionMode: "immediate",
+				EffectiveAt:    now,
+				Status:         "active",
+			}
+			if err := tx.Create(epoch).Error; err != nil { return err }
+			ex.PublishedEpochID = epoch.EpochID
 		}
-		s.db.Save(&ex)
+		if err := tx.Save(&ex).Error; err != nil { return err }
 		s.recordAudit(orgID, "cp.policy.exception_decided", "admin", "policy_exception", ex.ID,
-			fmt.Sprintf(`{"status":"denied","by":%q,"role":%q,"reason":%q}`, d.DecidedBy, d.DecidedByRole, d.Reason))
-		return &ex, nil
+			fmt.Sprintf(`{"status":"approved","by":%q,"epoch_id":%q}`, d.DecidedBy, ex.PublishedEpochID))
+		result = &ex
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	// approval path: append conditions
-	var existing []map[string]string
-	if ex.ConditionsJSON != "" { _ = json.Unmarshal([]byte(ex.ConditionsJSON), &existing) }
-	if len(d.Conditions) > 0 {
-		existing = append(existing, d.Conditions...)
-	}
-	cj, _ := json.Marshal(existing)
-	ex.ConditionsJSON = string(cj)
-
-	required := splitCSV(ex.RequiredApproverRoles)
-	approved := []string{}
-	for _, a := range approvers {
-		if a["vote"] == "true" { approved = append(approved, a["role"]) }
-	}
-	allApproved := true
-	for _, r := range required {
-		found := false
-		for _, x := range approved { if x == r { found = true; break } }
-		if !found { allApproved = false; break }
-	}
-	appJSON, _ := json.Marshal(approvers)
-	ex.ApproversJSON = string(appJSON)
-	if !allApproved {
-		// partial approval — keep pending but record the approver
-		ex.DecidedAt = now
-		s.db.Save(&ex)
-		s.recordAudit(orgID, "cp.policy.exception_partial_approval", "admin", "policy_exception", ex.ID,
-			fmt.Sprintf(`{"role":%q,"approved":%v}`, d.DecidedByRole, true))
-		return &ex, nil
-	}
-	ex.Status = "approved"
-	ex.DecidedBy = d.DecidedBy
-	ex.DecisionReason = d.Reason
-	ex.DecidedAt = now
-	if d.PublishNewEpoch {
-		epoch := &models.PolicyEpoch{
-			OrganizationID: orgID,
-			EpochID:        dari.GenerateID("epoch"),
-			EngineVersion:  "exception",
-			TransitionMode: "immediate",
-			EffectiveAt:    now,
-			Status:         "active",
-		}
-		s.db.Create(epoch)
-		ex.PublishedEpochID = epoch.EpochID
-	}
-	s.db.Save(&ex)
-	s.recordAudit(orgID, "cp.policy.exception_decided", "admin", "policy_exception", ex.ID,
-		fmt.Sprintf(`{"status":"approved","by":%q,"epoch_id":%q}`, d.DecidedBy, ex.PublishedEpochID))
-	return &ex, nil
+	return result, nil
 }
 
 // RevokeException cancels an approved exception (manual override).

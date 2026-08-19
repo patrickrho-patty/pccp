@@ -7564,8 +7564,7 @@ func (s *Server) handleResolveViolation(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "risk_accepted requires expires_at (accepted-risk window)")
 		return
 	}
-	actor := ""
-	if a, ok := r.Context().Value("actor_id").(string); ok { actor = a }
+	actor := getOperatorEmail(r)
 	evJSON, _ := json.Marshal(req.Evidence)
 	expires := req.ExpiresAt
 	// Treat empty/zero expiry as cleared (matches the existing comms
