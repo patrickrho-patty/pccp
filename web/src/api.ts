@@ -1,5 +1,28 @@
 const API_BASE = '';
 
+// PAT-1514: shared SandboxImage canonical-entry shape (digest-based
+// sandbox image allowlist).
+export interface SandboxImageEntry {
+  id?: string
+  repository: string
+  digest_sha256?: string
+  original_ref?: string
+  is_raw?: boolean
+  expanded_digests?: string // JSON array of digests when is_raw=true
+  signer?: string
+  signature_ref?: string
+  provenance_ref?: string
+  sbom_ref?: string
+  scan_status?: 'pending' | 'clean' | 'vulnerable' | 'failed' | string
+  scan_summary?: string
+  classification?: string
+  approved_by?: string
+  approved_at?: string
+  approved_reason?: string
+  status?: string
+  version?: string
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const token = sessionStorage.getItem('pccp_token');
   const headers: Record<string, string> = {
@@ -492,9 +515,13 @@ export const api = {
   getSandboxDetail: (id: string) => request<any>(`/api/sandboxes/${id}`),
   retrySandbox: (id: string) =>
     request<any>(`/api/sandboxes/${id}/retry`, { method: 'POST' }),
-  getSandboxImageAllowlist: () => request<{ images: string[]; enforced: boolean }>('/api/sandboxes/image-allowlist'),
-  setSandboxImageAllowlist: (images: string[]) =>
-    request<any>('/api/sandboxes/image-allowlist', { method: 'PUT', body: JSON.stringify({ images }) }),
+  // PAT-1514: allowlist supports both legacy raw strings and canonical
+// digest-based SandboxImage entries.
+  getSandboxImageAllowlist: () =>
+    request<{ images: string[]; canonical?: SandboxImageEntry[]; enforced: boolean }>(
+      '/api/sandboxes/image-allowlist'),
+  setSandboxImageAllowlist: (payload: { images: string[]; canonical?: SandboxImageEntry[] }) =>
+    request<any>('/api/sandboxes/image-allowlist', { method: 'PUT', body: JSON.stringify(payload) }),
 
   setProjectToolAllowlist: (projectId: string, toolNames: string[], reason?: string) =>
     request<any>(`/api/projects/${projectId}/tool-allowlist`, { method: 'PUT', body: JSON.stringify({ tool_names: toolNames, granted_by: 'admin', reason: reason || '' }) }),

@@ -47,6 +47,12 @@ func TestSandboxImageAllowlistExpansionEnforced(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("canonical PUT failed: %d %s", rec.Code, rec.Body.String())
 	}
+	// Debug: confirm the canonical row landed.
+	var dbg []models.SandboxImage
+	db.Where("organization_id = ?", org.ID).Find(&dbg)
+	if len(dbg) != 1 {
+		t.Fatalf("expected 1 canonical row, got %d (DB: %+v)", len(dbg), dbg)
+	}
 	// image matching the raw expansion's digest
 	img := "patty/sandbox-base@" + goodDigest
 	if !imageAllowlistedForOrg(org.ID, img, srv) {

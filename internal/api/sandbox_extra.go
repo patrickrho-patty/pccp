@@ -54,15 +54,15 @@ func (s *Server) handleSandboxImageAllowlist(w http.ResponseWriter, r *http.Requ
 		// existing then re-insert. Each entry is validated; raw entries
 		// require expanded_digests; digest entries require a valid
 		// sha256 digest.
-		for _, e := range req.Canonical {
-			if err := validateSandboxImage(&e); err != nil {
+		for i := range req.Canonical {
+			if err := validateSandboxImage(&req.Canonical[i]); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			e.OrganizationID = orgID
-			e.Status = "approved"
-			if e.ApprovedAt == "" {
-				e.ApprovedAt = time.Now().UTC().Format(time.RFC3339)
+			req.Canonical[i].OrganizationID = orgID
+			req.Canonical[i].Status = "approved"
+			if req.Canonical[i].ApprovedAt == "" {
+				req.Canonical[i].ApprovedAt = time.Now().UTC().Format(time.RFC3339)
 			}
 		}
 		s.db.Where("organization_id = ?", orgID).Delete(&models.SandboxImage{})

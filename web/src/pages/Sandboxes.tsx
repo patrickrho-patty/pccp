@@ -17,7 +17,8 @@ import { MODE_KO, NETWORK_KO, SANDBOX_STATUS_META, sandboxActions, sandboxStatus
 export default function Sandboxes() {
   const { favorites, sortPinnedFirst } = useFavorites('sandboxes')
   const [sandboxes, setSandboxes] = useState<any[]>([])
-  const [allowlist, setAllowlist] = useState<{ images: string[]; enforced: boolean }>({ images: [], enforced: false })
+  const [allowlist, setAllowlist] = useState<{ images: string[]; canonical?: any[]; enforced: boolean }>({ images: [], canonical: [], enforced: false })
+  const [canonicalForm, setCanonicalForm] = useState({ repository: '', digest_sha256: '', signer: '', scan_status: 'clean' })
   const [formOpen, setFormOpen] = useState(false)
   const [allowlistOpen, setAllowlistOpen] = useState(false)
   const [allowlistText, setAllowlistText] = useState('')
@@ -80,11 +81,38 @@ export default function Sandboxes() {
   const saveAllowlist = async () => {
     const images = allowlistText.split('\n').map(s => s.trim()).filter(Boolean)
     try {
-      await api.setSandboxImageAllowlist(images)
-      showToast(images.length ? `이미지 허용 목록 저장 (${images.length}개) — 이제 목록 외 이미지는 거부됩니다` : '허용 목록 해제 — 모든 이미지 허용', 'success')
+      await api.setSandboxImageAllowlist({ images, canonical: allowlist.canonical || [] })
+      showToast(images.length || (allowlist.canonical || []).length
+        ? `이미지 허용 목록 저장 (legacy ${images.length}, 정식 ${(allowlist.canonical || []).length}) — 목록 외 이미지는 거부됩니다`
+        : '허용 목록 해제 — 모든 이미지 허용', 'success')
       setAllowlistOpen(false)
       load()
     } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
+  // PAT-1514: validate a 64-char sha256 digest client-side so users get
+  // immediate feedback (the server enforces the same pattern in
+  // validateSandboxImage).
+  const addCanonicalEntry = () => {
+    const digest = canonicalForm.digest_sha256.trim()
+    if (!/^[a-f0-9]{64}$/.test(digest)) {
+      showToast('digest_sha256는 64자 hex (sha256) 여야 합니다', 'error')
+      return
+    }
+    if (!canonicalForm.repository.trim()) {
+      showToast('repository는 필수입니다', 'error')
+      return
+    }
+    const entry: any = {
+      repository: canonicalForm.repository.trim(),
+      digest_sha256: digest,
+      signer: canonicalForm.signer.trim() || undefined,
+      scan_status: canonicalForm.scan_status,
+      classification: 'internal',
+      status: 'approved',
+    }
+    setAllowlist({ ...allowlist, canonical: [...(allowlist.canonical || []), entry] })
+    setCanonicalForm({ repository: '', digest_sha256: '', signer: '', scan_status: 'clean' })
   }
 
   const filtered = sandboxes.filter(s =>
@@ -211,9 +239,40 @@ export default function Sandboxes() {
       <Modal open={allowlistOpen} title="이미지 허용 목록 (§31.1)"
         onClose={() => setAllowlistOpen(false)}
         footer={<ModalFooter onCancel={() => setAllowlistOpen(false)} onConfirm={saveAllowlist} confirmLabel="저장" />}>
-        <div className="space-y-2">
-          <p className="text-[11px] text-gray-500">줄당 하나의 이미지 ref. 목록이 비어 있지 않으면 목록 외 이미지는 생성 시 거부됩니다 (fail-closed).</p>
+        <div className="space-y-3 text-xs">
+          <p className="text-[11px] text-gray-500">줄당 하나의 이미지 ref (legacy). 목록이 비어 있지 않으면 목록 외 이미지는 생성 시 거부됩니다 (fail-closed).</p>
           <textarea className="input text-xs w-full font-mono" rows={6} value={allowlistText} onChange={e => setAllowlistText(e.target.value)} />
+          {/* PAT-1514: canonical (digest-based) entries are the recommended
+              source of trust. Tags/wildcards are accepted only with an
+              explicit expanded_digests list so enforcement never silently
+              expands scope. */}
+          <div className="border-t pt-2">
+            <p className="text-[11px] text-gray-500 mb-2">정식 이미지 (digest 기반 — 권장). sha256 64자 hex 필수.</p>
+            <div className="grid grid-cols-2 gap-1">
+              <input className="input text-xs" placeholder="repository (e.g. patty/sandbox-base)" value={canonicalForm.repository} onChange={e => setCanonicalForm({ ...canonicalForm, repository: e.target.value })} />
+              <input className="input text-xs font-mono" placeholder="digest_sha256 (64 hex)" value={canonicalForm.digest_sha256} onChange={e => setCanonicalForm({ ...canonicalForm, digest_sha256: e.target.value })} />
+              <input className="input text-xs" placeholder="signer (선택)" value={canonicalForm.signer} onChange={e => setCanonicalForm({ ...canonicalForm, signer: e.target.value })} />
+              <select className="input text-xs" value={canonicalForm.scan_status} onChange={e => setCanonicalForm({ ...canonicalForm, scan_status: e.target.value })}>
+                <option value="clean">clean</option>
+                <option value="pending">pending</option>
+                <option value="vulnerable">vulnerable</option>
+                <option value="failed">failed</option>
+              </select>
+            </div>
+            <button className="btn-sm btn-secondary mt-2" onClick={addCanonicalEntry} type="button">정식 이미지 추가</button>
+            {(allowlist.canonical || []).length > 0 && (
+              <ul className="text-[10px] mt-2 space-y-1">
+                {(allowlist.canonical || []).map((e, i) => (
+                  <li key={i} className="font-mono bg-gray-50 p-2 rounded border border-gray-200">
+                    {e.repository}{e.digest_sha256 ? `@sha256:${e.digest_sha256.slice(0, 12)}…` : ''}
+                    {e.is_raw && <span className="ml-1 text-amber-600">(raw tag/wildcard — {e.expanded_digests})</span>}
+                    {e.signer && <span className="ml-1 text-gray-500">signer: {e.signer}</span>}
+                    {e.scan_status && <span className="ml-1 text-gray-500">scan: {e.scan_status}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       </Modal>
     </div>
