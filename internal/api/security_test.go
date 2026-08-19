@@ -27,7 +27,7 @@ func securityTestServer(t *testing.T) (*Server, *gorm.DB) {
 		&models.PIILexicon{}, &models.AuditEvent{}, &models.ServiceSigningKey{},
 		&models.PromptExchange{}, &models.UsageRecord{}, &models.ModelPackage{}, &models.InferenceEndpoint{},
 		&models.OrgSetting{}, &models.BillingFXRate{}, &models.SandboxRecord{},
-		&models.SecurityLockdown{},
+		&models.SecurityLockdown{}, &models.Approval{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
 			t.Fatal(err)
@@ -466,5 +466,34 @@ func TestDashboardMetricDictionaryReconcilesPAT1487(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &list)
 	if len(list) != 4 {
 		t.Fatalf("unresolved list count = %d, want 4 (reconcile with card)", len(list))
+	}
+}
+
+// PAT-1488 contract: the admin action center backs every group with a real
+// server-side count using the same scope contract as its destination queue —
+// quarantined harnesses and pending approvals reconcile with their lists, and
+// no group is ever manufactured from a status the model cannot provide.
+func TestDashboardActionCenterMetricsReconcilePAT1488(t *testing.T) {
+	srv, db := securityTestServer(t)
+	org := models.Organization{Name: "o", Slug: "o-ac", Status: "active"}
+	db.Create(&org)
+	// quarantined harness (counted) vs active (not counted)
+	db.Create(&models.Harness{OrganizationID: org.ID, HarnessID: "hrn_q1", Status: "quarantined"})
+	db.Create(&models.Harness{OrganizationID: org.ID, HarnessID: "hrn_a1", Status: "active"})
+	// pending approvals (counted) vs decided (not counted)
+	db.Create(&models.Approval{OrganizationID: org.ID, ApprovalType: "tool_use_bash", Decision: "pending"})
+	db.Create(&models.Approval{OrganizationID: org.ID, ApprovalType: "tool_use_bash", Decision: "approved"})
+
+	rec := doJSON(t, srv, "GET", "/api/dashboard", "", org.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard failed: %d", rec.Code)
+	}
+	var dash map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &dash)
+	if got := int(dash["quarantined_harnesses"].(float64)); got != 1 {
+		t.Fatalf("quarantined_harnesses = %d, want 1", got)
+	}
+	if got := int(dash["pending_approvals"].(float64)); got != 1 {
+		t.Fatalf("pending_approvals = %d, want 1", got)
 	}
 }

@@ -6981,6 +6981,18 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	s.db.Model(&models.ComplianceRemediation{}).
 		Where("organization_id = ? AND status != 'done'", orgID).Count(&openRemediations)
 	dash["open_remediations"] = openRemediations
+	// PAT-1488: admin action-center metrics. Every group the action center
+	// renders must be backed by a real server-side count so the card never
+	// manufactures alerts the data model cannot support, and each count uses
+	// the same scope contract as its destination list (fleet approval queue,
+	// harness quarantine list), so card ↔ list reconcile.
+	var quarantinedHarnesses, pendingApprovals int64
+	s.db.Model(&models.Harness{}).
+		Where("organization_id = ? AND status = 'quarantined'", orgID).Count(&quarantinedHarnesses)
+	s.db.Model(&models.Approval{}).
+		Where("organization_id = ? AND decision = 'pending'", orgID).Count(&pendingApprovals)
+	dash["quarantined_harnesses"] = quarantinedHarnesses
+	dash["pending_approvals"] = pendingApprovals
 
 	// Recents (A7): recently updated entities for the object hub.
 	var recentUsers []models.User

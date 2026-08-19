@@ -37,12 +37,11 @@ const SCOPE_KO: Record<string, string> = { org: '조직 전체', project: '프�
 // Presence states render with their actual Korean label (away/busy are
 // still reachable per mergeReachability, not offline).
 const PRESENCE_KO: Record<string, string> = { online: '온라인', away: '자리비움', busy: '바쁨', offline: '오프라인' }
-// crypto.randomUUID throws in non-secure contexts — fall back to a
-// timestamp+random token so the composer still gets an idempotency key.
-const newClientToken = (): string =>
-  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `bc-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+// crypto.randomUUID throws in non-secure contexts — shared idempotency-key
+// helper lives in web/src/utils/id.ts (handles the fallback uniformly so
+// broadcasts and fleet bulk actions cannot drift apart).
+import { newIdempotencyKey } from '../utils/id'
+const newClientToken = (): string => newIdempotencyKey()
 const BC_FORM_INIT = {
   severity: 'info', title: '', title_ko: '', body: '', body_ko: '', requires_ack: false,
   scope_type: '' as BroadcastScopeType, target_id: '', expires_at: '',

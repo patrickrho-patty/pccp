@@ -223,22 +223,22 @@ export default function Dashboard() {
             <div className="space-y-2">
               <Link to="/security?tab=findings&severity=critical,high&status=unresolved" className="flex justify-between items-center p-2 bg-red-50 rounded hover:bg-red-100 border border-red-100">
                 <span className="text-xs font-medium text-red-700">미해결 심각·높음 보안 발견</span>
-                <span className="text-sm font-bold text-red-600">{findingCount}건 →</span>
+                <span className="text-sm font-bold text-red-600">{data?.open_critical_findings ?? findingCount}건 →</span>
               </Link>
               <Link to="/compliance?tab=remediation&status=unresolved" className="flex justify-between items-center p-2 bg-amber-50 rounded hover:bg-amber-100 border border-amber-100">
                 <span className="text-xs font-medium text-amber-700">진행 중 컴플라이언스 개선 과제</span>
                 <span className="text-sm font-bold text-amber-600">{data?.open_remediations ?? 0}건 →</span>
               </Link>
-              <Link to="/harnesses?status=quarantined" className="flex justify-between items-center p-2 bg-gray-50 rounded hover:bg-gray-100 border border-gray-100">
+              <Link to="/fleet" className="flex justify-between items-center p-2 bg-gray-50 rounded hover:bg-gray-100 border border-gray-100">
                 <span className="text-xs text-gray-600">격리/비정상 하네스</span>
                 <span className="text-xs text-gray-500">{data?.quarantined_harnesses ?? 0}건 →</span>
               </Link>
-              <Link to="/sessions?status=pending_review" className="flex justify-between items-center p-2 bg-gray-50 rounded hover:bg-gray-100 border border-gray-100">
-                <span className="text-xs text-gray-600">검토 필요 세션</span>
-                <span className="text-xs text-gray-500">{data?.pending_sessions ?? 0}건 →</span>
+              <Link to="/tools?tab=approvals" className="flex justify-between items-center p-2 bg-gray-50 rounded hover:bg-gray-100 border border-gray-100">
+                <span className="text-xs text-gray-600">대기 중 승인 요청</span>
+                <span className="text-xs text-gray-500">{data?.pending_approvals ?? 0}건 →</span>
               </Link>
             </div>
-            {(findingCount === 0 && (data?.open_remediations ?? 0) === 0) && (
+            {((data?.open_critical_findings ?? 0) === 0 && (data?.open_remediations ?? 0) === 0 && (data?.quarantined_harnesses ?? 0) === 0 && (data?.pending_approvals ?? 0) === 0) && (
               <p className="text-xs text-green-600 mt-3">✅ 조치 대기 항목이 없습니다 — {data?.dashboard_last_updated ? `마지막 확인 ${data.dashboard_last_updated.slice(0,16).replace('T',' ')}` : '최근 확인됨'}</p>
             )}
           </div>

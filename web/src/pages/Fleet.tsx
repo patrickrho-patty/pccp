@@ -9,6 +9,7 @@ import { ResponsiveTable, Column } from '../components/ResponsiveTable'
 import { showToast } from '../components/Toast'
 import { deriveHarnessHealth, riskLabelKo, healthMeta } from '../harnessHealth'
 import { approvalView, rankApprovals } from '../approvalView'
+import { newIdempotencyKey } from '../utils/id'
 
 // Fleet page (web/09 plan): live fleet operations — containment happens
 // here. Server-side inventory query (A12), bulk actions (A5), 2-step
@@ -137,7 +138,7 @@ export default function Fleet() {
     }
 		const signature = JSON.stringify({ action: bulkAction, reason: reason.trim(), harness_ids: [...selectedIds].sort() })
 		if (!bulkAttempt.current || bulkAttempt.current.signature !== signature) {
-			bulkAttempt.current = { signature, key: crypto.randomUUID() }
+			bulkAttempt.current = { signature, key: newIdempotencyKey() }
 		}
     try {
 			const res = await api.fleetBulkAction([...selectedIds], bulkAction, reason, bulkAttempt.current.key)
