@@ -141,6 +141,12 @@ func AllModels() []interface{} {
 		&PublicStatusSnapshot{},
 		&PublicStatusSubscriber{},
 		&PublicStatusNotification{},
+		// Public cloud schedules (PAT-1437)
+		&CloudSchedule{},
+		&ScheduleOccurrence{},
+		&AccountCapability{},
+		&CapabilityConnection{},
+		&ScheduleDelegation{},
 		// Read-only SCM lineage observation (PAT-1453)
 		&SCMProviderConnection{},
 		&ObservedRepositoryEvent{},

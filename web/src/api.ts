@@ -415,6 +415,16 @@ export const api = {
   lgBindAttribution: (attr: any) => request<any>('/api/scm/observation/attribution', { method: 'POST', body: JSON.stringify(attr) }),
   lgLineage: () => request<any>('/api/scm/observation/lineage'),
   lgReconcile: () => request<any>('/api/scm/observation/reconcile', { method: 'POST', body: '{}' }),
+
+  // PAT-1437: public cloud schedules.
+  csSchedules: () => request<any[]>('/api/schedules/'),
+  csCreate: (sched: any) => request<any>('/api/schedules/', { method: 'POST', body: JSON.stringify(sched) }),
+  csMutate: (id: number, action: string) =>
+    request<any>(`/api/schedules/${id}/mutate`, { method: 'POST', body: JSON.stringify({ action }) }),
+  csDispatch: () => request<any>('/api/schedules/dispatch-sweep', { method: 'POST', body: '{}' }),
+  csCapabilities: () => request<any[]>('/api/schedules/capabilities'),
+  csConnect: (capabilityId: string) =>
+    request<any>('/api/schedules/capabilities/connect', { method: 'POST', body: JSON.stringify({ capability_id: capabilityId, initiated_from: 'web' }) }),
   getPolicyException: (id: string) => request<any>(`/api/policy/exceptions/${id}`),
   createPolicyException: (data: any) =>
     request<any>('/api/policy/exceptions', { method: 'POST', body: JSON.stringify(data) }),

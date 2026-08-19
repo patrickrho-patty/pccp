@@ -549,6 +549,18 @@ func (s *Server) setupRouter() {
 			r.Get("/status", s.handleFleetStatus)
 		})
 
+		// Public cloud schedules (PAT-1437) — public-build capability.
+		r.Route("/schedules", func(r chi.Router) {
+			r.Post("/", s.handleCSCreate)
+			r.Get("/", s.handleCSList)
+			r.Post("/{id}/mutate", s.handleCSMutate)
+			r.Post("/dispatch-sweep", s.handleCSDispatchSweep)
+			r.Post("/report", s.handleCSReport)
+			r.Get("/capabilities", s.handleCSCapabilitiesList)
+			r.Post("/capabilities/connect", s.handleCSConnectFlow)
+			r.Post("/delegations", s.handleCSDelegation)
+		})
+
 		// Read-only SCM lineage observation (PAT-1453) — webhook is
 		// signature-verified per provider; no provider-side mutations exist.
 		r.Route("/scm/observation", func(r chi.Router) {
