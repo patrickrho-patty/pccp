@@ -35,11 +35,26 @@ type EnterpriseFeatureViolation struct {
 	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
 	HarnessID      string `gorm:"type:varchar(64);index" json:"harness_id"`
 	SessionID      string `gorm:"type:varchar(64);index" json:"session_id,omitempty"`
+	ProjectID      string `gorm:"type:varchar(64);index" json:"project_id,omitempty"`
+	RepositoryID   string `gorm:"type:varchar(64);index" json:"repository_id,omitempty"`
 	FeatureKey     string `gorm:"type:varchar(64);not null;index" json:"feature_key"`
+	PolicyRef      string `gorm:"type:varchar(64);index" json:"policy_ref,omitempty"` // violated policy/rule id
+	EpochRef       string `gorm:"type:varchar(64);index" json:"epoch_ref,omitempty"`
 	Severity       string `gorm:"type:varchar(16);not null" json:"severity"` // warning, high, critical
 	Description    string `gorm:"type:text" json:"description"`
 	DescriptionKo  string `gorm:"type:text" json:"description_ko,omitempty"`
 	Resolved       bool   `gorm:"default:false" json:"resolved"`
+	// Investigation workflow (PAT-1516): disposition, owner, reason,
+	// evidence JSON, and an expiry for risk-accepted resolutions so
+	// accepted-risk windows do not stay open forever.
+	Disposition    string `gorm:"type:varchar(32)" json:"disposition,omitempty"` // fixed, false_positive, risk_accepted, duplicate, suppressed
+	DispositionReason string `gorm:"type:text" json:"disposition_reason,omitempty"`
+	EvidenceJSON   string `gorm:"type:text" json:"evidence,omitempty"` // [{type,ref,title}]
+	OwnerID        string `gorm:"type:varchar(64);index" json:"owner_id,omitempty"`
+	ResolvedBy     string `gorm:"type:varchar(64)" json:"resolved_by,omitempty"`
+	ResolvedAt     string `gorm:"type:timestamp" json:"resolved_at,omitempty"`
+	ExpiresAt      string `gorm:"type:timestamp;index" json:"expires_at,omitempty"` // for risk_accepted
+	RecurrenceCount int   `gorm:"default:0" json:"recurrence_count"`
 	OccurredAt     string `gorm:"type:timestamp" json:"occurred_at"`
 }
 

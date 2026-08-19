@@ -193,10 +193,30 @@ export default function EnterpriseFeatures() {
     load()
   }
 
-  const resolveViolation = async (id: string) => {
-    await fetch(`/api/enterprise/violations/${id}`, { method: 'PUT', headers: authHeaders() })
-    load()
+  // PAT-1516: violation resolution is evidence-backed (PAT-1516). The
+// disposition, reason, and (for risk_accepted) expiry are required
+// so the resolution is documented, auditable, and bounded.
+const resolveViolation = async (id: string) => {
+  const disposition = window.prompt('결론 (fixed | false_positive | risk_accepted | duplicate | suppressed):', 'fixed')
+  if (!disposition) return
+  if (!['fixed', 'false_positive', 'risk_accepted', 'duplicate', 'suppressed'].includes(disposition)) {
+    showToast('유효하지 않은 결론', 'error'); return
   }
+  const reason = window.prompt('결론 사유 (필수 — 감사 로그):', '')
+  if (!reason || !reason.trim()) return
+  const payload: any = { disposition, disposition_reason: reason.trim(), evidence: [], owner_id: '' }
+  if (disposition === 'risk_accepted') {
+    const until = window.prompt('위험 수락 만료 (ISO8601, 예: 2026-12-31T00:00:00Z):', new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString())
+    if (!until) return
+    payload.expires_at = until
+  }
+  try {
+    const resp = await fetch(`/api/enterprise/violations/${id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(payload) })
+    if (!resp.ok) { showToast((await resp.json()).error || '실패', 'error'); return }
+    showToast(`위반 결론 기록됨 (${disposition})`, 'success')
+    load()
+  } catch (e: any) { showToast(e?.message || '실패', 'error') }
+}
 
   // Harness evals are computed once per real change input (feature/scope/
   // harnesses) — not per reason-textarea keystroke — and shared between

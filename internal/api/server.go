@@ -587,6 +587,7 @@ func (s *Server) setupRouter() {
 			r.Get("/features", s.handleListEnterpriseFeatures)
 			r.Put("/features/{id}", s.handleUpdateEnterpriseFeature)
 			r.Get("/violations", s.handleListEnterpriseViolations)
+			r.Get("/violations/{id}", s.handleGetEnterpriseViolation)
 			r.Put("/violations/{id}", s.handleResolveViolation)
 			r.Post("/features/seed", s.handleSeedEnterpriseFeatures)
 			// D2 change-control review queue: pending connector
@@ -7499,15 +7500,108 @@ func (s *Server) handleUpdateEnterpriseFeature(w http.ResponseWriter, r *http.Re
 
 func (s *Server) handleListEnterpriseViolations(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
+	// PAT-1516: counts per feature for dashboard reconciliation.
+	if r.URL.Query().Get("counts") == "true" {
+		type row struct {
+		FeatureKey string `json:"feature_key"`
+		Open       int    `json:"open"`
+		Resolved   int    `json:"resolved"`
+	}
+		var rows []row
+		s.db.Model(&models.EnterpriseFeatureViolation{}).
+			Select("feature_key, SUM(CASE WHEN resolved = 0 THEN 1 ELSE 0 END) as open, SUM(CASE WHEN resolved = 1 THEN 1 ELSE 0 END) as resolved").
+			Where("organization_id = ?", orgID).
+			Group("feature_key").Scan(&rows)
+		writeJSON(w, http.StatusOK, rows)
+		return
+	}
 	var violations []models.EnterpriseFeatureViolation
 	s.db.Where("organization_id = ? AND resolved = false", orgID).Order("occurred_at DESC").Limit(100).Find(&violations)
 	writeJSON(w, http.StatusOK, violations)
 }
 
+// handleGetEnterpriseViolation returns the detail record with all
+// linked entities (PAT-1516).
+func (s *Server) handleGetEnterpriseViolation(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orgID := getOrgID(r)
+	var v models.EnterpriseFeatureViolation
+	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&v).Error; err != nil {
+		writeError(w, http.StatusNotFound, "위반 사항을 찾을 수 없습니다")
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
+// handleResolveViolation requires a disposition + reason + RBAC; for
+// risk_accepted the caller must supply an expiry so accepted-risk
+// windows do not stay open forever (PAT-1516).
 func (s *Server) handleResolveViolation(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	s.db.Model(&models.EnterpriseFeatureViolation{}).Where("id = ?", id).Update("resolved", true)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "resolved"})
+	orgID := getOrgID(r)
+	var req struct {
+		Disposition        string              `json:"disposition"`        // fixed | false_positive | risk_accepted | duplicate | suppressed
+		DispositionReason  string              `json:"disposition_reason"` // required
+		Evidence           []map[string]string `json:"evidence"`
+		OwnerID            string              `json:"owner_id"`
+		ExpiresAt          string              `json:"expires_at"` // required when disposition=risk_accepted
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	switch req.Disposition {
+	case "fixed", "false_positive", "risk_accepted", "duplicate", "suppressed":
+	default:
+		writeError(w, http.StatusBadRequest, "disposition must be fixed|false_positive|risk_accepted|duplicate|suppressed")
+		return
+	}
+	if req.DispositionReason == "" {
+		writeError(w, http.StatusBadRequest, "disposition_reason required")
+		return
+	}
+	if req.Disposition == "risk_accepted" && req.ExpiresAt == "" {
+		writeError(w, http.StatusBadRequest, "risk_accepted requires expires_at (accepted-risk window)")
+		return
+	}
+	actor := ""
+	if a, ok := r.Context().Value("actor_id").(string); ok { actor = a }
+	evJSON, _ := json.Marshal(req.Evidence)
+	expires := req.ExpiresAt
+	// Treat empty/zero expiry as cleared (matches the existing comms
+	// pattern: gorm's zero time isn't NULL but is meaningless).
+	if expires == "0001-01-01T00:00:00Z" {
+		expires = ""
+	}
+	updates := map[string]interface{}{
+		"resolved":           true,
+		"disposition":        req.Disposition,
+		"disposition_reason": req.DispositionReason,
+		"evidence_json":      string(evJSON),
+		"owner_id":           req.OwnerID,
+		"resolved_by":        actor,
+		"resolved_at":        time.Now().UTC().Format(time.RFC3339),
+		"expires_at":         expires,
+	}
+	res := s.db.Model(&models.EnterpriseFeatureViolation{}).
+		Where("id = ? AND organization_id = ?", id, orgID).
+		Updates(updates)
+	if res.Error != nil {
+		writeError(w, http.StatusInternalServerError, res.Error.Error())
+		return
+	}
+	if res.RowsAffected == 0 {
+		writeError(w, http.StatusNotFound, "위반 사항을 찾을 수 없습니다")
+		return
+	}
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID, EventType: "cp.enterprise.violation_resolved",
+		ActorID: actor, ActorType: "user",
+		ResourceType: "enterprise_violation", ResourceID: id,
+		Action: "resolve", Result: "success",
+		Details: string(evJSON), OccurredAt: updates["resolved_at"].(string),
+	})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "resolved", "disposition": req.Disposition})
 }
 
 func (s *Server) handleSeedEnterpriseFeatures(w http.ResponseWriter, r *http.Request) {

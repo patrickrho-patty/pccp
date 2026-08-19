@@ -22,6 +22,7 @@ func toolsSandboxTestServer(t *testing.T) (*Server, *gorm.DB) {
 		&models.Project{}, &models.ProjectToolAllowlist{}, &models.AuditEvent{},
 		&models.ServiceSigningKey{}, &models.OrgSetting{}, &models.SandboxRecord{},
 		&models.Session{}, &models.CapabilityLease{}, &models.Harness{},
+		&models.EnterpriseFeatureViolation{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
 			t.Fatal(err)
