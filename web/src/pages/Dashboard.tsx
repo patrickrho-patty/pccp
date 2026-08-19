@@ -60,6 +60,15 @@ export default function Dashboard() {
         </div>
       ) : null}
 
+      {/* Dashboard freshness + stale state (PAT-1487): one last-updated time
+          for repeated metrics; when stale, the panel says so instead of
+          implying contradictory fresh numbers. */}
+      <div className="flex items-center gap-2 mb-3 text-[10px] text-gray-400">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500" aria-hidden="true" />
+        마지막 갱신 {data?.dashboard_last_updated ? ` · ${data.dashboard_last_updated.slice(0, 19).replace('T', ' ')}` : '(미수집)'}
+        {data?.dashboard_stale && <span className="text-red-500">· 지연됨 (stale)</span>}
+      </div>
+
       {/* Stat cards */}
       <div className="grid grid-cols-4 gap-3 mb-6">
         {stats.map(s => (
@@ -207,8 +216,11 @@ export default function Dashboard() {
             </div>
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">미해결 발견</span>
-                <Link to="/security" className={`font-bold hover:underline ${findingCount > 0 ? 'text-red-600' : 'text-green-600'}`}>{findingCount}</Link>
+                <div>
+                  <span className="text-gray-500">미해결 발견</span>
+                  <span className="block text-[10px] text-gray-400">모든 심각도 · 해결 제외</span>
+                </div>
+                <Link to="/security?tab=findings&status=unresolved" className={`font-bold hover:underline ${(data?.unresolved_findings ?? findingCount) > 0 ? 'text-red-600' : 'text-green-600'}`}>{data?.unresolved_findings ?? findingCount}</Link>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">활성 하네스</span>
@@ -216,7 +228,7 @@ export default function Dashboard() {
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">활성 세션</span>
-				<Link to="/sessions" className="font-bold text-blue-600 hover:underline">{data?.active_session_count ?? 0}</Link>
+				<Link to="/sessions?status=active" className="font-bold text-blue-600 hover:underline">{data?.active_session_count ?? 0}</Link>
               </div>
             </div>
           </div>
@@ -233,7 +245,13 @@ export default function Dashboard() {
                   <div className="flex justify-between"><span>활성 하네스</span><span className="font-medium">{brief.active_harnesses}</span></div>
                 )}
                 {brief.security_findings !== undefined && (
-                  <div className="flex justify-between"><span>보안 발견</span><span className={`font-medium ${(brief.security_findings || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>{brief.security_findings}</span></div>
+                  <div className="flex justify-between">
+                    <div>
+                      <span>전체 보안 발견</span>
+                      <span className="block text-[10px] text-gray-400">모든 상태(해결 포함)</span>
+                    </div>
+                    <span className={`font-medium ${(brief.security_findings || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>{brief.security_findings}</span>
+                  </div>
                 )}
                 {brief.model_invocations !== undefined && (
                   <div className="flex justify-between"><span>AI 추론</span><span className="font-medium">{brief.model_invocations}</span></div>

@@ -357,6 +357,16 @@ func (s *Service) GenerateGovernanceBrief(orgID string) (*GovernanceBrief, error
 		WeekOf:         time.Now().Format("2006-01-02"),
 	}
 
+	// PAT-1487: canonical metric dictionary — repeated counts share one
+	// definition so the dashboard and the brief never silently disagree:
+	//   - SecurityFindings = ALL findings (any severity/status). The dashboard
+	//     labels this "전체 보안 발견 (모든 상태)" to distinguish it from the
+	//     unresolved metrics it also shows (open_critical_findings /
+	//     unresolved_findings from handleDashboard). Same entity, same tenant
+	//     scope, different status filter — labelled, not equal.
+	//   - ActiveHarnesses = status IN (active,enrolled).
+	//   - TotalSessions = every session row.
+	//   - ModelInvocations = ai.inference action envelopes.
 	var sessionCount, harnessCount, findingCount, actionCount int64
 	s.db.Model(&models.Session{}).Where("organization_id = ?", orgID).Count(&sessionCount)
 	s.db.Model(&models.Harness{}).Where("organization_id = ? AND status IN ('active','enrolled')", orgID).Count(&harnessCount)

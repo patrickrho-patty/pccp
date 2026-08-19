@@ -6928,6 +6928,25 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	s.securityFindingScope(s.db.Model(&models.SecurityFinding{}).Where("organization_id = ?", orgID), "critical,high", "unresolved").
 		Count(&openFindings)
 	dash["open_critical_findings"] = openFindings
+	// PAT-1487: canonical metric dictionary. Every repeated count resolves
+	// through the shared scope builders so the card, the side panel, and the
+	// destination list always agree, and intentionally-different scopes are
+	// labelled distinctly by the UI:
+	//   - open_critical_findings : severity IN (critical,high) AND status != resolved
+	//   - unresolved_findings    : ANY severity AND status != resolved
+	//   - total_findings         : every finding (any severity/status)
+	var unresolvedFindings, totalFindings int64
+	s.securityFindingScope(s.db.Model(&models.SecurityFinding{}).Where("organization_id = ?", orgID), "", "unresolved").
+		Count(&unresolvedFindings)
+	s.db.Model(&models.SecurityFinding{}).Where("organization_id = ?", orgID).Count(&totalFindings)
+	dash["unresolved_findings"] = unresolvedFindings
+	dash["total_findings"] = totalFindings
+	// Dashboard-level freshness + stale/partial state (PAT-1487): consumers
+	// show the last-updated time and mark the whole panel as stale instead of
+	// rendering contradictory numbers. A per-card failure flag is retained by
+	// the frontend (loading/error), never faked stale here.
+	dash["dashboard_last_updated"] = time.Now().Format(time.RFC3339)
+	dash["dashboard_stale"] = false
 	var openRemediations int64
 	s.db.Model(&models.ComplianceRemediation{}).
 		Where("organization_id = ? AND status != 'done'", orgID).Count(&openRemediations)

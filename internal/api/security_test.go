@@ -414,3 +414,57 @@ func TestRepositoryScopedFindingsAndSessions(t *testing.T) {
 		t.Fatalf("repo+active sessions = %d (want 1, ses_r1)", len(paged.Data))
 	}
 }
+
+// PAT-1487 contract: the dashboard metric dictionary resolves every repeated
+// security-finding count through the SAME canonical scope contracts as the
+// destination lists, and intentionally-different scopes carry distinct
+// canonical keys. A fixture must produce reconcilable card ↔ list counts.
+func TestDashboardMetricDictionaryReconcilesPAT1487(t *testing.T) {
+	srv, db := securityTestServer(t)
+	org := models.Organization{Name: "o", Slug: "o-met", Status: "active"}
+	db.Create(&org)
+	seed := []models.SecurityFinding{
+		{OrganizationID: org.ID, FindingType: "secret", Severity: "critical", Title: "c1", Status: "open", OccurredAt: "2026-01-01T00:00:00Z"},
+		{OrganizationID: org.ID, FindingType: "secret", Severity: "high", Title: "h1", Status: "investigating", OccurredAt: "2026-01-01T00:00:01Z"},
+		{OrganizationID: org.ID, FindingType: "secret", Severity: "critical", Title: "c2", Status: "resolved", OccurredAt: "2026-01-01T00:00:02Z"},
+		{OrganizationID: org.ID, FindingType: "secret", Severity: "medium", Title: "m1", Status: "open", OccurredAt: "2026-01-01T00:00:03Z"},
+		{OrganizationID: org.ID, FindingType: "secret", Severity: "high", Title: "h2", Status: "suppressed", OccurredAt: "2026-01-01T00:00:04Z"},
+	}
+	for _, f := range seed {
+		db.Create(&f)
+	}
+
+	rec := doJSON(t, srv, "GET", "/api/dashboard", "", org.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard failed: %d", rec.Code)
+	}
+	var dash map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &dash)
+
+	// open_critical_findings = severity IN (critical,high) AND status != resolved → c1, h1, h2
+	if got := int(dash["open_critical_findings"].(float64)); got != 3 {
+		t.Fatalf("open_critical_findings = %d, want 3", got)
+	}
+	// unresolved_findings = any severity AND status != resolved → c1, h1, m1, h2
+	if got := int(dash["unresolved_findings"].(float64)); got != 4 {
+		t.Fatalf("unresolved_findings = %d, want 4", got)
+	}
+	// total_findings = all → 5
+	if got := int(dash["total_findings"].(float64)); got != 5 {
+		t.Fatalf("total_findings = %d, want 5", got)
+	}
+	if _, ok := dash["dashboard_last_updated"]; !ok {
+		t.Fatalf("dashboard_last_updated missing")
+	}
+
+	// Count/equivalence: the scoped list for the unresolved metric matches the
+	// dashboard unresolved_findings count exactly.
+	rec = doJSON(t, srv, "GET", "/api/security/findings?status=unresolved", "", org.ID)
+	json.Unmarshal(rec.Body.Bytes(), &seed)
+	// reuse slice; list is a raw array (non-paged) — recompute length
+	var list []models.SecurityFinding
+	json.Unmarshal(rec.Body.Bytes(), &list)
+	if len(list) != 4 {
+		t.Fatalf("unresolved list count = %d, want 4 (reconcile with card)", len(list))
+	}
+}
