@@ -177,9 +177,18 @@ func (s *Service) AddRemediation(orgID, cert, controlID, owner, dueDate, sla, no
 }
 
 // ListRemediations returns gap tasks for a certification.
-func (s *Service) ListRemediations(orgID, cert string, status string) ([]models.ComplianceRemediation, error) {
+func (s *Service) ListRemediations(orgID, cert, status string) ([]models.ComplianceRemediation, error) {
 	q := s.db.Where("organization_id = ? AND certification = ?", orgID, cert)
-	if status != "" {
+	// Status filter accepts the reserved token "unresolved" (PAT-1484):
+	// any remediation still open for action (status != done), which is the
+	// same predicate the dashboard "진행 중 컴플라이언스 개선 과제" KPI
+	// counts, so the destination list reconciles with the card count.
+	switch status {
+	case "unresolved":
+		q = q.Where("status != ?", "done")
+	case "":
+		// no status filter
+	default:
 		q = q.Where("status = ?", status)
 	}
 	var tasks []models.ComplianceRemediation

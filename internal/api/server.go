@@ -5524,12 +5524,50 @@ func (s *Server) handleDeleteRuleOverride(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
+// splitCSV splits a comma-separated filter value, trimming whitespace and
+// dropping empties so "critical,high" / "critical, high" collapse to
+// [critical high]. Used by the canonical security scope contract.
+func splitCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// securityFindingScope applies the canonical security-findings filter/count
+// contract (PAT-1484). Dashboard KPI cards, dashboard drill-down links, and
+// the findings list all derive from this same builder so a card's count always
+// equals the destination list's matching count for the identical scope — the
+// UI never duplicates filtering logic.
+//
+// severity accepts a comma-separated list (e.g. "critical,high" → IN).
+// status accepts a single value or the reserved token "unresolved", which
+// means status != 'resolved' (a finding remains on the radar once it is no
+// longer open for action), matching the dashboard remediation/risk KPI.
+func (s *Server) securityFindingScope(q *gorm.DB, severity, status string) *gorm.DB {
+	if sev := splitCSV(severity); len(sev) > 0 {
+		q = q.Where("severity IN ?", sev)
+	}
+	if status == "unresolved" {
+		q = q.Where("status != ?", "resolved")
+	} else if strings.TrimSpace(status) != "" {
+		q = q.Where("status = ?", status)
+	}
+	return q
+}
+
 func (s *Server) handleSecurityFindings(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
 	q := s.db.Model(&models.SecurityFinding{}).Where("organization_id = ?", orgID)
-	// Server-side filters (security UX5/UX12): severity, status, type,
-	// date range.
-	for _, key := range []string{"severity", "status", "finding_type"} {
+	// Server-side filters (security UX5/UX12): severity (comma-list),
+	// status (or "unresolved" token), type, date range — via the shared
+	// scope contract so the list reconciles with dashboard KPI counts.
+	q = s.securityFindingScope(q, r.URL.Query().Get("severity"), r.URL.Query().Get("status"))
+	for _, key := range []string{"finding_type"} {
 		if v := r.URL.Query().Get(key); v != "" {
 			q = q.Where(key+" = ?", v)
 		}
@@ -6796,9 +6834,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	// Active incidents (A5): security findings with severity critical/
 	// high + open remediation tasks are surfaced for the ops view.
+	// PAT-1484: the KPI count resolves through the SAME canonical scope
+	// contract as the destination list (/security?tab=findings&
+	// severity=critical,high&status=unresolved) so card ↔ list reconcile.
 	var openFindings int64
-	s.db.Model(&models.SecurityFinding{}).
-		Where("organization_id = ? AND severity IN ('critical','high') AND status != 'resolved'", orgID).
+	s.securityFindingScope(s.db.Model(&models.SecurityFinding{}).Where("organization_id = ?", orgID), "critical,high", "unresolved").
 		Count(&openFindings)
 	dash["open_critical_findings"] = openFindings
 	var openRemediations int64

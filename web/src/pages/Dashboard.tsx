@@ -70,15 +70,17 @@ export default function Dashboard() {
 	    <div><div className="text-[10px] text-gray-400">원장 상태</div><div className={`text-sm font-semibold ${usageError ? 'text-red-700' : !usage || usage.record_count === 0 ? 'text-gray-500' : usage.reconciled ? 'text-green-700' : 'text-red-700'}`}>{usageError ? '권한 또는 조회 오류' : !usage ? '확인 불가' : usage.record_count === 0 ? '수집 내역 없음' : usage.reconciled ? `대사 완료 · ${usage.record_count.toLocaleString()}건` : `확인 필요 · ${usage.record_count.toLocaleString()}건`}</div><div className="text-[10px] text-blue-600 mt-1">원장 상세 보기 →</div></div>
 	  </Link>
 
-      {/* Incidents + gaps (A5) */}
+      {/* Incidents + gaps (A5) — PAT-1484: each KPI opens the exact pre-filtered
+          work queue its label implies. Counts come from the shared backend
+          scope contract so the destination list reconciles with the card. */}
       <div className="grid grid-cols-2 gap-3 mb-4">
-        <Link to="/security" className="card py-3 px-5 hover:shadow-md transition-shadow">
+        <Link to="/security?tab=findings&severity=critical,high&status=unresolved" className="card py-3 px-5 hover:shadow-md transition-shadow focus:outline-none focus:ring-2 focus:ring-red-400" aria-label="미해결 심각·높음 보안 발견 목록 열기 (열린 목록으로 이동)">
           <div className="text-sm font-semibold text-red-600">{data?.open_critical_findings ?? findingCount}</div>
-          <div className="text-xs text-gray-500">미해결 심각/높음 보안 발견 · Open Critical Findings</div>
+          <div className="text-xs text-gray-500">미해결 심각·높음 보안 발견</div>
         </Link>
-        <Link to="/compliance" className="card py-3 px-5 hover:shadow-md transition-shadow">
+        <Link to="/compliance?tab=remediation&status=unresolved" className="card py-3 px-5 hover:shadow-md transition-shadow focus:outline-none focus:ring-2 focus:ring-amber-400" aria-label="진행 중 컴플라이언스 개선 과제 목록 열기 (열린 과제로 이동)">
           <div className="text-sm font-semibold text-amber-600">{data?.open_remediations ?? 0}</div>
-          <div className="text-xs text-gray-500">진행 중 컴플라이언스 개선 과제 · Open Remediations</div>
+          <div className="text-xs text-gray-500">진행 중 컴플라이언스 개선 과제</div>
         </Link>
       </div>
 

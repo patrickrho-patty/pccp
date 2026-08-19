@@ -242,9 +242,19 @@ func (s *Service) attemptProvision(sandbox *Sandbox) provisionOutcome {
 }
 
 // DestroySandbox destroys a sandbox and generates destruction evidence (PRD §31.2).
+// Destroy is admitted in every non-terminal state (see lifecycle.go) and is
+// idempotent on the terminal state: re-destroying an already destroyed
+// sandbox returns the existing record with its original evidence instead of
+// minting a new one.
 func (s *Service) DestroySandbox(sandboxID string) (*Sandbox, error) {
 	sandbox, err := s.GetSandbox(sandboxID)
 	if err != nil {
+		return nil, err
+	}
+	if sandbox.Status == "destroyed" {
+		return sandbox, nil
+	}
+	if err := requireAction(sandbox.Status, ActionDestroy); err != nil {
 		return nil, err
 	}
 
@@ -273,9 +283,15 @@ func (s *Service) DestroySandbox(sandboxID string) (*Sandbox, error) {
 }
 
 // ForensicSnapshot creates a forensic snapshot of a sandbox.
+// A snapshot captures live runtime state, so the lifecycle state machine
+// (lifecycle.go) admits it only while the sandbox is actually running (or
+// paused); a defined/destroyed/failed sandbox has nothing to capture.
 func (s *Service) ForensicSnapshot(sandboxID string) (string, error) {
 	sandbox, err := s.GetSandbox(sandboxID)
 	if err != nil {
+		return "", err
+	}
+	if err := requireAction(sandbox.Status, ActionSnapshot); err != nil {
 		return "", err
 	}
 	snapshotID := dari.GenerateID("snapshot")
@@ -296,6 +312,33 @@ func (s *Service) ForensicSnapshot(sandboxID string) (string, error) {
 	s.db.Create(auditEvent)
 
 	return snapshotID, nil
+}
+
+// RetryProvision re-attempts provisioning for a sandbox whose runtime was
+// unreachable (defined) or faulted (failed) — the explicit recovery path
+// for those states. The lifecycle state machine rejects retry in any
+// other state.
+func (s *Service) RetryProvision(sandboxID string) (*Sandbox, error) {
+	sandbox, err := s.GetSandbox(sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireAction(sandbox.Status, ActionRetry); err != nil {
+		return nil, err
+	}
+	if outcome := s.attemptProvision(sandbox); outcome.provisioned {
+		sandbox.Status = "running"
+		sandbox.StartedAt = outcome.startedAt
+		sandbox.RuntimeProvider = outcome.provider
+		s.updateSandboxStatus(sandbox.ID, "running", sandbox.StartedAt)
+	} else {
+		// Runtime still unreachable — stay defined with the fresh probe
+		// detail so operators can see the recovery attempt happened.
+		sandbox.Status = "defined"
+		sandbox.RuntimeProvider = "none (" + outcome.detail + ")"
+		s.updateSandboxStatus(sandbox.ID, "defined", "")
+	}
+	return sandbox, nil
 }
 
 // ListSandboxes returns all sandboxes for an organization.

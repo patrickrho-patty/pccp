@@ -49,3 +49,4 @@ pccp-relay
 
 # Nested git worktrees
 .worktrees/
+.run/

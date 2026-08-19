@@ -143,3 +143,42 @@ func TestComplianceAssessmentPersistsAndExports(t *testing.T) {
 		t.Fatalf("csv export malformed")
 	}
 }
+
+// PAT-1484 contract: the dashboard "진행 중 컴플라이언스 개선 과제" KPI must open a
+// remediation scope where status != done (reserved "unresolved" token), matching
+// the backend open_remediations count through the shared contract.
+func TestComplianceRemediationUnresolvedScope(t *testing.T) {
+	srv, db := complianceTestServer(t)
+	org := models.Organization{Name: "o", Slug: "o-comp", Status: "active"}
+	db.Create(&org)
+
+	for i, st := range []string{"open", "in_progress", "done", "open"} {
+		db.Create(&models.ComplianceRemediation{
+			OrganizationID: org.ID, Certification: "CSAP", ControlID: "c-" + string(rune('a'+i)),
+			Status: st, Owner: "u",
+		})
+	}
+
+	// Reserved "unresolved" token: status != done → 3 rows.
+	rec := doJSON(t, srv, "GET", "/api/compliance/remediations?certification=CSAP&status=unresolved", "", org.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("scoped remediations failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var tasks []models.ComplianceRemediation
+	json.Unmarshal(rec.Body.Bytes(), &tasks)
+	if len(tasks) != 3 {
+		t.Fatalf("unresolved scope = %d, want 3", len(tasks))
+	}
+	for _, tt := range tasks {
+		if tt.Status == "done" {
+			t.Fatalf("unresolved scope leaked done task %s", tt.ControlID)
+		}
+	}
+
+	// Ordinary status filter still works as before.
+	rec = doJSON(t, srv, "GET", "/api/compliance/remediations?certification=CSAP&status=done", "", org.ID)
+	json.Unmarshal(rec.Body.Bytes(), &tasks)
+	if len(tasks) != 1 {
+		t.Fatalf("done scope = %d, want 1", len(tasks))
+	}
+}

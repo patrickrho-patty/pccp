@@ -296,3 +296,73 @@ func TestRuleOverrideEndpoints(t *testing.T) {
 		t.Fatalf("override must be reverted, got %+v", overrides)
 	}
 }
+
+// PAT-1484 contract: the dashboard "미해결 심각·높음 보안 발견" KPI must open a
+// findings list scoped to severity in (critical,high) AND status != resolved,
+// and the two must reconcile (card count == destination list count) through the
+// shared canonical scope builder.
+func TestDashboardFindingKPIScopeReconcilesWithList(t *testing.T) {
+	srv, db := securityTestServer(t)
+	org := models.Organization{Name: "o", Slug: "o-kpi", Status: "active"}
+	db.Create(&org)
+
+	seed := []models.SecurityFinding{
+		{OrganizationID: org.ID, FindingType: "secret", Severity: "critical", Title: "c1", Status: "open",       OccurredAt: "2026-01-01T00:00:00Z"},
+		{OrganizationID: org.ID, FindingType: "secret", Severity: "high",    Title: "h1", Status: "investigating", OccurredAt: "2026-01-01T00:00:01Z"},
+		{OrganizationID: org.ID, FindingType: "secret", Severity: "critical", Title: "c2", Status: "resolved",    OccurredAt: "2026-01-01T00:00:02Z"}, // excluded: resolved
+		{OrganizationID: org.ID, FindingType: "secret", Severity: "medium",  Title: "m1", Status: "open",       OccurredAt: "2026-01-01T00:00:03Z"}, // excluded: not critical/high
+		{OrganizationID: org.ID, FindingType: "secret", Severity: "high",    Title: "h2", Status: "suppressed",  OccurredAt: "2026-01-01T00:00:04Z"}, // included: != resolved
+	}
+	for _, f := range seed {
+		db.Create(&f)
+	}
+
+	// Destination list: /api/security/findings?severity=critical,high&status=unresolved
+	rec := doJSON(t, srv, "GET", "/api/security/findings?severity=critical,high&status=unresolved", "", org.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("scoped list failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var list []models.SecurityFinding
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list) != 3 {
+		t.Fatalf("scoped list count = %d, want 3 (c1, h1, h2)", len(list))
+	}
+	seen := map[string]bool{}
+	for _, f := range list {
+		seen[f.Title] = true
+		if f.Severity != "critical" && f.Severity != "high" {
+			t.Fatalf("list leaked severity %q for %s", f.Severity, f.Title)
+		}
+		if f.Status == "resolved" {
+			t.Fatalf("list leaked resolved finding %s", f.Title)
+		}
+	}
+	for _, want := range []string{"c1", "h1", "h2"} {
+		if !seen[want] {
+			t.Fatalf("scoped list missing %q", want)
+		}
+	}
+
+	// Dashboard KPI: open_critical_findings must equal the scoped list count.
+	rec = doJSON(t, srv, "GET", "/api/dashboard", "", org.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard failed: %d", rec.Code)
+	}
+	var dash map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &dash); err != nil {
+		t.Fatalf("decode dashboard: %v", err)
+	}
+	kpi, _ := dash["open_critical_findings"].(float64)
+	if int(kpi) != 3 {
+		t.Fatalf("dashboard open_critical_findings = %v, want 3 (reconcile with list)", kpi)
+	}
+
+	// Clear (no status filter) returns all findings regardless.
+	rec = doJSON(t, srv, "GET", "/api/security/findings?severity=critical", "", org.ID)
+	json.Unmarshal(rec.Body.Bytes(), &list)
+	if len(list) != 2 {
+		t.Fatalf("severity-only filter count = %d, want 2 (c1,c2)", len(list))
+	}
+}

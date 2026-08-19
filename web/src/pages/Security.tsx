@@ -207,7 +207,11 @@ export default function Security() {
   const loadLexicon = () => api.securityLexicon().then(d => { setLexicon(d); setLexiconForm(JSON.stringify(d?.patterns || {}, null, 2)) }).catch(() => {})
 
   useEffect(() => {
-    // Drill-down deep links (00 A5): /security?tab=findings&severity=...
+    // Drill-down deep links (00 A5 + PAT-1484): /security?tab=findings&
+    // severity=critical,high&status=unresolved — the scoped work queue a
+    // dashboard KPI opens. severity may be comma-separated; status may be
+    // the reserved "unresolved" token (matches backend scope contract so
+    // the destination list reconciles with the dashboard KPI count).
     const params = new URLSearchParams(window.location.search)
     const urlTab = params.get('tab')
     if (urlTab) setTab(urlTab as any)
@@ -652,6 +656,25 @@ export default function Security() {
               <button onClick={() => bulkFindings('resolved')} className="btn-sm btn-secondary">일괄 해결</button>
               <button onClick={() => bulkFindings('false_positive')} className="btn-sm btn-secondary">일괄 오탐 처리</button>
               <button onClick={() => setSelectedFindings(new Set())} className="btn-sm btn-secondary">취소</button>
+            </div>
+          )}
+
+          {/* PAT-1484: visible active-scope banner so the dashboard-KPI deep
+              link is self-describing and can be cleared. Shown whenever a
+              severity/status scope is active, not just from a KPI landing. */}
+          {(findingFilters.severity || findingFilters.status) && (
+            <div className="flex items-center justify-between gap-2 mb-3 p-2 bg-gray-50 border border-gray-200 rounded-lg">
+              <span className="text-xs text-gray-600">
+                활성 범위: {findingFilters.severity ? `심각도 ${findingFilters.severity.split(',').join(', ')}` : '모든 심각도'}
+                {findingFilters.status ? (findingFilters.status === 'unresolved' ? ' · 미해결(해결 제외)' : ` · 상태 ${findingFilters.status}`) : ''}
+                {' '}· {findingTotal}건
+              </span>
+              <button
+                onClick={() => { setFindingFilters({ severity: '', status: '', type: '', from: '', to: '' }); setSelectedFindings(new Set()) }}
+                className="btn-sm btn-secondary text-xs text-gray-500"
+                aria-label="필터 초기화">
+                필터 초기화 ✕
+              </button>
             </div>
           )}
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { Modal, ModalFooter } from '../components/Modal'
 import { showToast } from '../components/Toast'
@@ -36,6 +37,15 @@ export default function Compliance() {
   const [taskOpen, setTaskOpen] = useState<any>(null)
   const [taskForm, setTaskForm] = useState({ owner: '', due_date: '', sla: '30d', notes: '' })
   const [bulkOwner, setBulkOwner] = useState('')
+  // PAT-1484: dashboard KPI "진행 중 컴플라이언스 개선 과제" deep-links here
+  // as /compliance?tab=remediation&status=unresolved so the page shows only
+  // unresolved remediations (status != done), matching the KPI's count via
+  // the shared backend scope contract.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const remedFilter = searchParams.get('status') || ''
+  const remediationScope = remedFilter === 'unresolved' ? ((t: any) => t.status !== 'done') : remedFilter ? ((t: any) => t.status === remedFilter) : null
+  const remediationScopeLabel = remedFilter === 'unresolved' ? '진행 중 과제' : remedFilter ? `상태 ${remedFilter}` : ''
+  const sidebarTasks = remediationScope ? (remediations || []).filter(remediationScope) : (remediations || [])
 
   const loadMeta = () => {
     api.complianceMeta().then(d => {
@@ -246,12 +256,24 @@ export default function Compliance() {
         )}
       </div>
 
-      {/* Remediation tracking (C2) */}
+      {/* Remediation tracking (C2) — PAT-1484: honors the dashboard KPI
+          deep link /compliance?tab=remediation&status=unresolved by showing
+          only the scoped remediations, with a visible count and clear. */}
       <div className="card p-4">
-        <h3 className="text-xs font-bold mb-2">개선 과제 · Remediation ({remediations.length})</h3>
-        {remediations.length === 0 ? <p className="text-[11px] text-gray-400">등록된 과제 없음</p> : (
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-xs font-bold">개선 과제 · Remediation ({sidebarTasks.length})</h3>
+          {remediationScope && (
+            <button
+              onClick={() => setSearchParams({})}
+              className="text-[11px] text-gray-500 hover:text-gray-700 hover:underline"
+              aria-label="개선 과제 필터 초기화">
+              {remediationScopeLabel} · {sidebarTasks.length}건 · 필터 초기화 ✕
+            </button>
+          )}
+        </div>
+        {sidebarTasks.length === 0 ? <p className="text-[11px] text-gray-400">{remediationScope ? '해당 범위의 등록된 과제 없음' : '등록된 과제 없음'}</p> : (
           <div className="space-y-1">
-            {remediations.map((t: any) => (
+            {sidebarTasks.map((t: any) => (
               <div key={t.id} className="flex justify-between items-center text-[11px] border-b border-gray-50 py-1">
                 <span className="text-gray-700">{t.control_id} — {t.owner || '담당자 미정'}</span>
                 <span className="text-gray-400">{t.sla || ''} · {t.due_date || ''}</span>
