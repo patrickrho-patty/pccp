@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { sandboxActions, sandboxStatusMeta, sandboxRuntimeConnected } from './sandboxLifecycle.ts'
+import { sandboxActions, sandboxActionsFor, sandboxStatusMeta, sandboxRuntimeConnected } from './sandboxLifecycle.ts'
 
 const enabled = (sb) => sandboxActions(sb).filter(a => a.enabled).map(a => a.id)
 
@@ -58,4 +58,17 @@ test('runtime provider honesty: none (...) means not connected', () => {
   assert.equal(sandboxRuntimeConnected({ runtime_provider: 'none (no container runtime reachable)' }), false)
   assert.equal(sandboxRuntimeConnected({ runtime_provider: '' }), false)
   assert.equal(sandboxRuntimeConnected({}), false)
+})
+
+test('detail page actions follow the server valid_actions, mirror supplies labels/reasons', () => {
+  // The server list is authoritative even when it disagrees with the
+  // client mirror table.
+  const actions = sandboxActionsFor(['destroy'])
+  assert.deepEqual(actions.filter(a => a.enabled).map(a => a.id), ['destroy'])
+  const snapshot = actions.find(a => a.id === 'snapshot')
+  assert.equal(snapshot.enabled, false)
+  assert.ok(snapshot.reason, 'disabled action must carry the mirror reason')
+  assert.equal(actions.find(a => a.id === 'destroy').danger, true)
+  // Empty/missing server list fails closed.
+  assert.deepEqual(sandboxActionsFor([]).filter(a => a.enabled), [])
 })

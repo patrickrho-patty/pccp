@@ -154,6 +154,19 @@ func TestBroadcastGovernedIdempotencyAndSnapshot(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("duplicate broadcast rows: %d", count)
 	}
+	// The partial unique index enforces idempotency at the DB level: a
+	// second insert with the same non-empty token fails outright, while
+	// legacy rows with an empty token are unaffected.
+	dup := models.Broadcast{Severity: "info", Title: "dup", ClientToken: "tok-1"}
+	dup.OrganizationID = org.ID
+	if err := srv.db.Create(&dup).Error; err == nil {
+		t.Fatal("duplicate client_token insert bypassed the unique index")
+	}
+	legacy := models.Broadcast{Severity: "info", Title: "legacy"}
+	legacy.OrganizationID = org.ID
+	if err := srv.db.Create(&legacy).Error; err != nil {
+		t.Fatalf("empty client_token insert blocked: %v", err)
+	}
 }
 
 func TestBroadcastAcksTrackFrozenAudience(t *testing.T) {

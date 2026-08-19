@@ -5,7 +5,7 @@ import { Modal, ModalFooter } from '../components/Modal'
 import EmptyState from '../components/EmptyState'
 import { showToast } from '../components/Toast'
 import { useFavorites, FavoriteStar } from '../hooks/useFavorites'
-import { SANDBOX_STATUS_META, sandboxActions, sandboxStatusMeta } from '../sandboxLifecycle'
+import { MODE_KO, NETWORK_KO, SANDBOX_STATUS_META, sandboxActions, sandboxStatusMeta } from '../sandboxLifecycle'
 
 // Sandboxes page (web/15 plan): governed isolated runtime control.
 // Provisioning is REAL per-mode (docker/microvm/local/remote) with an
@@ -13,9 +13,6 @@ import { SANDBOX_STATUS_META, sandboxActions, sandboxStatusMeta } from '../sandb
 // container; otherwise "defined" (definition persisted, not running).
 // Row actions come from the shared lifecycle state machine
 // (sandboxLifecycle.ts, PAT-1513) so only state-valid actions appear.
-
-const MODE_KO: Record<string, string> = { container: '컨테이너', microvm: '마이크로VM', remote: '원격', local: '로컬' }
-const NETWORK_KO: Record<string, string> = { none: '차단', restricted: '제한', host: '호스트' }
 
 export default function Sandboxes() {
   const { favorites, sortPinnedFirst } = useFavorites('sandboxes')

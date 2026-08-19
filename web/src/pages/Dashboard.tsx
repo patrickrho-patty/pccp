@@ -3,6 +3,13 @@ import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { formatRelative } from '../utils/format'
 import { formatUsageStateInteger, formatUsageAmount, UsageReportData } from '../components/UsageReport'
+import { auditEventView, groupAuditBursts, outcomeMeta, OutcomeKind } from '../evidenceView'
+
+// safeParse best-effort parses JSON payload strings for the technical-detail area.
+function safeParse(v: unknown): unknown {
+  if (typeof v !== 'string') return v
+  try { return JSON.parse(v) } catch { return v }
+}
 
 export default function Dashboard() {
   const [data, setData] = useState<any>(null)
@@ -12,6 +19,8 @@ export default function Dashboard() {
   const [findingCount, setFindingCount] = useState(0)
 	const [usage, setUsage] = useState<UsageReportData | null>(null)
   const [usageError, setUsageError] = useState(false)
+  const [feedExpanded, setFeedExpanded] = useState<Set<number>>(new Set()) // burst rows opened
+  const [feedRaw, setFeedRaw] = useState<Set<string>>(new Set()) // events with raw technical detail open
 
   useEffect(() => {
     let active = true
@@ -111,18 +120,74 @@ export default function Dashboard() {
             <h3 className="text-sm font-semibold">최근 활동 · Recent Activity</h3>
             <Link to="/audit" className="btn-link">전체 보기 →</Link>
           </div>
+          <div className="flex flex-wrap gap-2 mb-2 text-[10px] text-gray-500" role="list" aria-label="활동 상태 범례">
+            {(['success', 'warning', 'danger', 'info', 'unknown'] as OutcomeKind[]).map(k => {
+              const m = outcomeMeta(k)
+              return <span key={k} role="listitem" className="inline-flex items-center gap-1"><span className={m.color}>{m.icon}</span> {k === 'success' ? '성공' : k === 'warning' ? '경고' : k === 'danger' ? '위험/거부' : k === 'info' ? '정보' : '미기록'}</span>
+            })}
+          </div>
           {data?.recent_activity && data.recent_activity.length > 0 ? (
             <div className="space-y-1">
-              {data.recent_activity.slice(0, 12).map((a: any, i: number) => {
-                const icon = a.action?.includes('security') || a.action?.includes('denied') ? '🔴'
-                  : a.action?.includes('enroll') || a.action?.includes('create') ? '🟢'
-                  : a.action?.includes('revoke') || a.action?.includes('recall') ? '🟡' : '🔵'
+              {((() => {
+                const { rows } = groupAuditBursts(data.recent_activity || [])
+                return rows.slice(0, 12)
+              })()).map((g: any, i: number) => {
+                const v = auditEventView(g)
+                const isBurst = (g.count || 1) > 1
+                const burstOpen = feedExpanded.has(i)
+                const rawKey = g.id || String(g.chain_seq) || `${g.event_type}-${g.occurred_at}`
+                const rawOpen = feedRaw.has(rawKey)
                 return (
-                  <div key={i} className="flex items-center gap-3 text-sm py-2 border-b border-gray-50 last:border-0">
-                    <span>{icon}</span>
-                    <span className="font-medium w-40 truncate">{a.action || a.event_type}</span>
-                    <span className="text-xs text-gray-400 truncate flex-1">{a.resource_type || a.details?.slice(0, 40)}</span>
-                    <span className="text-xs text-gray-400">{formatRelative(a.occurred_at)}</span>
+                  <div key={rawKey} className="text-sm py-2 border-b border-gray-50 last:border-0">
+                    <div className="flex items-center gap-3">
+                      <span className="text-base shrink-0">{v.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border ${v.color}`}>{v.icon} <span>{v.outcome}</span></span>
+                          <span className="text-xs text-gray-500">{v.categoryLabelKo}</span>
+                        </div>
+                        <p className="font-medium truncate text-[13px] text-gray-800">{v.title}</p>
+                        <p className="text-[10px] text-gray-400">
+                          {v.actorLabel}{v.resourceLabel ? ` · ${v.resourceLabel}` : ''}
+                          {g.occurred_at ? ` · ${g.occurred_at.slice(0, 16).replace('T', ' ')} (${formatRelative(g.occurred_at)})` : ''}
+                        </p>
+                      </div>
+                      <span className="flex flex-col items-end gap-1 shrink-0">
+                        <button className="text-[10px] text-gray-400 hover:text-gray-600" onClick={() => setFeedRaw(prev => { const n = new Set(prev); if (n.has(rawKey)) n.delete(rawKey); else n.add(rawKey); return n })}>
+                          {rawOpen ? '기술 상세 ▲' : '기술 상세 ▼'}
+                        </button>
+                        {isBurst && (
+                          <button className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600" onClick={() => setFeedExpanded(prev => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n })} aria-expanded={burstOpen}>
+                            {burstOpen ? `접기 (${g.count})` : `× ${g.count}`}
+                          </button>
+                        )}
+                        {v.route && (
+                          <Link to={v.route} className="text-[10px] text-blue-600 hover:underline">관련 기록 →</Link>
+                        )}
+                      </span>
+                    </div>
+                    {rawOpen && (
+                      <pre className="mt-1 ml-7 text-[10px] font-mono bg-gray-50 p-2 rounded overflow-x-auto whitespace-pre-wrap">
+                        {JSON.stringify({ id: g.id, event_type: g.event_type, actor_type: g.actor_type, actor_id: g.actor_id, action: g.action, resource_type: g.resource_type, resource_id: g.resource_id, result: g.result, digest: g.event_digest, chain_seq: g.chain_seq, details: safeParse(g.details) }, null, 2)}
+                      </pre>
+                    )}
+                    {isBurst && burstOpen && (
+                      <div className="mt-1 ml-7 space-y-0.5 border-l-2 border-gray-100 pl-3">
+                        {g.items.map((ev: any, j: number) => {
+                          const sub = auditEventView(ev)
+                          const subKey = ev.id || `${ev.event_type}-${j}`
+                          const subRawOpen = feedRaw.has(subKey)
+                          return (
+                            <div key={subKey} className="flex items-center gap-2 text-[10px] text-gray-500">
+                              <span className="text-gray-400">{ev.occurred_at?.slice(0, 16).replace('T', ' ') || ''}</span>
+                              <span className="flex-1 truncate text-gray-600">{sub.title}</span>
+                              {sub.route ? <Link to={sub.route} className="text-blue-500 hover:underline">→</Link> :
+                                <button className="text-gray-400" onClick={() => setFeedRaw(prev => { const n = new Set(prev); if (n.has(subKey)) n.delete(subKey); else n.add(subKey); return n })}>{subRawOpen ? '▲' : '▼'}</button>}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 )
               })}

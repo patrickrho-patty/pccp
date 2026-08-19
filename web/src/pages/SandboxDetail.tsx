@@ -3,17 +3,16 @@ import { Link, useParams } from 'react-router-dom'
 import { api } from '../api'
 import { Modal, ModalFooter } from '../components/Modal'
 import { showToast } from '../components/Toast'
-import { formatRelative } from '../utils/format'
-import { sandboxActions, sandboxStatusMeta, sandboxRuntimeConnected } from '../sandboxLifecycle'
+import { formatRelative, formatShortTime } from '../utils/format'
+import { MODE_KO, NETWORK_KO, sandboxActionsFor, sandboxStatusMeta, sandboxRuntimeConnected } from '../sandboxLifecycle'
 
 // SandboxDetail (PAT-1513) — canonical inspectable sandbox view:
 // lifecycle, runtime/provider, owning session/user/harness, image digest,
 // network/resource policy, timestamps, snapshot history, audit evidence,
-// and lifecycle actions derived from the shared state machine
-// (web/src/sandboxLifecycle.ts mirroring internal/sandbox/lifecycle.go).
-
-const MODE_KO: Record<string, string> = { container: '컨테이너', microvm: '마이크로VM', remote: '원격', local: '로컬' }
-const NETWORK_KO: Record<string, string> = { none: '차단', restricted: '제한', host: '호스트' }
+// and lifecycle actions. Actions derive from the server-returned
+// valid_actions (internal/sandbox/lifecycle.go is authoritative); the
+// client mirror in web/src/sandboxLifecycle.ts supplies only labels and
+// disabled reasons.
 
 export default function SandboxDetail() {
   const { id } = useParams<{ id: string }>()
@@ -36,7 +35,9 @@ export default function SandboxDetail() {
 
   const sb = detail.sandbox
   const meta = sandboxStatusMeta(sb.status)
-  const actions = sandboxActions(sb)
+  // Server-admitted actions are authoritative; the mirror supplies labels
+  // and disabled reasons only.
+  const actions = sandboxActionsFor(detail.valid_actions || [])
   const connected = sandboxRuntimeConnected(sb)
   const session = detail.session
   const user = detail.user
@@ -90,7 +91,7 @@ export default function SandboxDetail() {
           <div className="space-y-1 text-sm">
             <div><span className="text-gray-500">모드:</span> {MODE_KO[sb.mode] || sb.mode}</div>
             <div><span className="text-gray-500">프로바이더:</span> <span className="font-mono text-xs">{sb.runtime_provider || '-'}</span></div>
-            <div><span className="text-gray-500">생성:</span> {formatRelative(detail.created_at)} <span className="text-xs text-gray-400">{detail.created_at?.slice(0, 16).replace('T', ' ')}</span></div>
+            <div><span className="text-gray-500">생성:</span> {formatRelative(detail.created_at)} <span className="text-xs text-gray-400">{formatShortTime(detail.created_at)}</span></div>
             <div><span className="text-gray-500">시작:</span> {detail.started_at ? formatRelative(detail.started_at) : '-'}</div>
             <div><span className="text-gray-500">파괴:</span> {detail.destroyed_at ? formatRelative(detail.destroyed_at) : '-'}</div>
             {detail.destroy_evidence && <div><span className="text-gray-500">파괴 증거:</span> <span className="font-mono text-xs">{detail.destroy_evidence}</span></div>}
