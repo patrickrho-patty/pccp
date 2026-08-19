@@ -56,9 +56,10 @@ export default function Trails() {
   const [typeFilter, setTypeFilter] = useState<Record<string, boolean>>({})
   const [listMode, setListMode] = useState(false)
 
-  const loadOverview = () =>
+  const loadOverview = () => {
     api.trailsOverview().then(setOverview).catch((e: any) => showToast(e.message))
-  useEffect(loadOverview, [])
+  }
+  useEffect(() => { loadOverview() }, [])
 
   const enterScope = (kind: string, ref: string, label: string) => {
     setScope({ kind, ref, label })
