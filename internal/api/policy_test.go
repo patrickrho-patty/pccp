@@ -283,7 +283,7 @@ func TestPolicyExceptionMarketplaceFlow(t *testing.T) {
 	srv, db := policyTestServer(t)
 	org := models.Organization{Name: "o", Slug: "o6", Status: "active"}
 	db.Create(&org)
-	rec := doJSON(t, srv, "POST", "/api/policy/exceptions", `{"scope":"project","scope_id":"p1","scopeName":"결제 서비스","reason":"레거시 테스트 필요","rule_ids":["r1"],"requested_by":"admin"}`, org.ID)
+	rec := doJSON(t, srv, "POST", "/api/policy/exceptions", `{"scope":"project","scope_id":"p1","scopeName":"결제 서비스","reason":"레거시 테스트 필요","rule_ids":["r1"],"requested_by":"admin","justification_ko":"레거시 결제 모듈 임시 허용","expires_at":"2027-01-01T00:00:00Z"}`, org.ID)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("exception create failed: %d %s", rec.Code, rec.Body.String())
 	}

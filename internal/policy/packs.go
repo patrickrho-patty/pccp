@@ -3,8 +3,11 @@ package policy
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
+	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/gorm"
 )
@@ -293,52 +296,287 @@ func (s *Service) HasAcked(orgID, epochID, userID string) bool {
 	return count > 0
 }
 
-// --- Exceptions (policy C5, §33.8) ---
+// --- Exceptions (policy C5, §33.8) — evidence-backed approval (PAT-1506) ---
 
-// ListExceptions lists the org's exception marketplace.
+// ListExceptions lists the org's exception marketplace, expiring
+// approved-but-past-expiry rows on read (the row stays for the audit
+// trail; status flips to "expired" and active=false).
 func (s *Service) ListExceptions(orgID string) ([]models.PolicyException, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	s.sweepExpiredExceptions(orgID, now)
 	var exceptions []models.PolicyException
 	s.db.Where("organization_id = ?", orgID).Order("created_at DESC").Find(&exceptions)
 	return exceptions, nil
 }
 
-// CreateException files a scoped exception request.
-func (s *Service) CreateException(orgID, scope, scopeID, scopeName, reason, requestedBy string, ruleIDs []string) (*models.PolicyException, error) {
-	idsJSON, _ := json.Marshal(ruleIDs)
+// ListExceptionsRanked returns pending exceptions sorted by severity
+// (high first) then by age (oldest first) so the approver queue is
+// prioritized. Approved/denied/expired are returned at the bottom.
+func (s *Service) ListExceptionsRanked(orgID string) ([]models.PolicyException, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	s.sweepExpiredExceptions(orgID, now)
+	var exceptions []models.PolicyException
+	s.db.Where("organization_id = ?", orgID).Find(&exceptions)
+	rankSeverity := func(sev string) int {
+		switch sev {
+		case "high": return 0
+		case "medium": return 1
+		case "low": return 2
+		default: return 1
+		}
+	}
+	sort.SliceStable(exceptions, func(i, j int) bool {
+		pi := exceptions[i].Status == "pending"
+		pj := exceptions[j].Status == "pending"
+		if pi != pj { return pi }
+		if pi && pj {
+			if rankSeverity(exceptions[i].SeverityLabel) != rankSeverity(exceptions[j].SeverityLabel) {
+				return rankSeverity(exceptions[i].SeverityLabel) < rankSeverity(exceptions[j].SeverityLabel)
+			}
+			return exceptions[i].CreatedAt.Before(exceptions[j].CreatedAt)
+		}
+		return exceptions[i].CreatedAt.After(exceptions[j].CreatedAt)
+	})
+	return exceptions, nil
+}
+
+// GetException returns a single exception scoped to the org (cross-tenant
+// callers get not-found, matching the detail-handler convention).
+func (s *Service) GetException(orgID, exceptionID string) (*models.PolicyException, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	s.sweepExpiredExceptions(orgID, now)
+	var ex models.PolicyException
+	if err := s.db.First(&ex, "id = ? AND organization_id = ?", exceptionID, orgID).Error; err != nil {
+		return nil, err
+	}
+	return &ex, nil
+}
+
+// sweepExpiredExceptions flips status=approved to status=expired for any
+// approved rows whose ExpiresAt is in the past. Idempotent.
+func (s *Service) sweepExpiredExceptions(orgID, now string) {
+	s.db.Model(&models.PolicyException{}).
+		Where("organization_id = ? AND status = 'approved' AND expires_at IS NOT NULL AND expires_at <> '' AND expires_at < ?", orgID, now).
+		Update("status", "expired")
+}
+
+// ExceptionInput is the evidence-backed payload for creating an exception
+// request (PAT-1506). Time-bounded validity, justification, evidence,
+// compensating controls, and rule-diff fields are all required so the
+// approver never sees a summary-only row.
+type ExceptionInput struct {
+	Scope, ScopeID, ScopeName, RequestedBy, Reason string
+	RuleIDs                                            []string
+	JustificationKo                                    string
+	Evidence                                           []map[string]string
+	CompensatingControls                                string
+	ResourceDestination                                 string
+	SeverityLabel                                       string
+	CurrentRuleValues                                   []map[string]string
+	ProposedRuleValues                                  []map[string]string
+	Conditions                                          []map[string]string
+	RequestedStart                                      string
+	ExpiresAt                                           string
+	RequiredApproverRoles                               []string
+}
+
+// CreateException files a scoped, evidence-backed exception request.
+func (s *Service) CreateException(orgID string, in ExceptionInput) (*models.PolicyException, error) {
+	if in.Scope == "" || in.ScopeID == "" || in.Reason == "" || in.RequestedBy == "" || len(in.RuleIDs) == 0 {
+		return nil, fmt.Errorf("policy: scope, scope_id, reason, requested_by, rule_ids required")
+	}
+	if in.ExpiresAt == "" {
+		return nil, fmt.Errorf("policy: expires_at required (time-bounded exception)")
+	}
+	if in.JustificationKo == "" {
+		return nil, fmt.Errorf("policy: justification_ko required")
+	}
+	idsJSON, _ := json.Marshal(in.RuleIDs)
+	evJSON, _ := json.Marshal(in.Evidence)
+	curJSON, _ := json.Marshal(in.CurrentRuleValues)
+	proJSON, _ := json.Marshal(in.ProposedRuleValues)
+	condJSON, _ := json.Marshal(in.Conditions)
+	reqRoles := strings.Join(in.RequiredApproverRoles, ",")
 	ex := &models.PolicyException{
-		OrganizationID: orgID, Scope: scope, ScopeID: scopeID, ScopeName: scopeName,
-		RuleIDsJSON: string(idsJSON), Reason: reason, RequestedBy: requestedBy,
+		OrganizationID: orgID,
+		Scope: in.Scope, ScopeID: in.ScopeID, ScopeName: in.ScopeName,
+		RuleIDsJSON: string(idsJSON), RequestedBy: in.RequestedBy, Reason: in.Reason,
 		Status: "pending",
+		JustificationKo: in.JustificationKo, EvidenceJSON: string(evJSON),
+		CompensatingControls: in.CompensatingControls,
+		ResourceDestination:  in.ResourceDestination,
+		SeverityLabel:        in.SeverityLabel,
+		CurrentRuleValuesJSON: string(curJSON), ProposedRuleValuesJSON: string(proJSON),
+		ConditionsJSON:        string(condJSON),
+		RequestedStart: in.RequestedStart, ExpiresAt: in.ExpiresAt,
+		RequiredApproverRoles: reqRoles,
 	}
 	if err := s.db.Create(ex).Error; err != nil {
 		return nil, fmt.Errorf("policy: create exception: %w", err)
 	}
 	s.recordAudit(orgID, "cp.policy.exception_requested", "admin", "policy_exception", ex.ID,
-		fmt.Sprintf(`{"scope":"%s","rules":%s}`, scope, string(idsJSON)))
+		fmt.Sprintf(`{"scope":"%s","rules":%s,"severity":"%s","expires_at":"%s"}`, in.Scope, string(idsJSON), in.SeverityLabel, in.ExpiresAt))
 	return ex, nil
 }
 
-// DecideException approves or denies an exception request.
-func (s *Service) DecideException(orgID, exceptionID string, approve bool, decidedBy, reason string) (*models.PolicyException, error) {
+// ExceptionDecision captures an approver's vote on a multi-party chain.
+// Each approver role must supply a reason; the request is approved only
+// when every required role has voted approve.
+type ExceptionDecision struct {
+	Approve         bool
+	DecidedBy       string
+	DecidedByRole   string
+	Reason          string
+	Conditions      []map[string]string
+	PublishNewEpoch bool
+}
+
+// DecideException records one approver's vote. When the required
+// approver roles have all voted approve, the exception becomes active
+// and a new policy epoch is published. Denials short-circuit and the
+// exception is finalized. Conditions are appended to the existing list.
+// expired/revoked rows are rejected.
+func (s *Service) DecideException(orgID, exceptionID string, d ExceptionDecision) (*models.PolicyException, error) {
 	var ex models.PolicyException
 	if s.db.First(&ex, "id = ? AND organization_id = ?", exceptionID, orgID).Error != nil {
 		return nil, fmt.Errorf("policy: exception not found")
 	}
-	if ex.Status != "pending" {
-		return nil, fmt.Errorf("policy: exception already decided")
+	if ex.Status == "expired" || ex.Status == "revoked" {
+		return nil, fmt.Errorf("policy: exception %s", ex.Status)
 	}
-	status := "approved"
-	if !approve {
-		status = "denied"
+	if ex.Status != "pending" && ex.Status != "approved" {
+		return nil, fmt.Errorf("policy: exception already %s", ex.Status)
 	}
-	ex.Status = status
-	ex.DecidedBy = decidedBy
-	ex.DecisionReason = reason
-	ex.DecidedAt = time.Now().Format(time.RFC3339)
+	if d.Reason == "" {
+		return nil, fmt.Errorf("policy: decision reason required")
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if ex.ExpiresAt != "" && now > ex.ExpiresAt {
+		// approver tried to act on an already-expired exception
+		s.db.Model(&ex).Update("status", "expired")
+		return nil, fmt.Errorf("policy: exception expired")
+	}
+	var approvers []map[string]string
+	if ex.ApproversJSON != "" {
+		_ = json.Unmarshal([]byte(ex.ApproversJSON), &approvers)
+	}
+	// Record this approver's vote; reject duplicate votes from the same role.
+	for _, a := range approvers {
+		if a["role"] == d.DecidedByRole {
+			return nil, fmt.Errorf("policy: role %s already voted", d.DecidedByRole)
+		}
+	}
+	approvers = append(approvers, map[string]string{
+		"role":  d.DecidedByRole,
+		"user":  d.DecidedBy,
+		"at":    now,
+		"vote":  boolStr(d.Approve),
+		"reason": d.Reason,
+	})
+	if !d.Approve {
+		// any denial finalizes as denied
+		appJSON, _ := json.Marshal(approvers)
+		ex.Status = "denied"
+		ex.DecidedBy = d.DecidedBy
+		ex.DecisionReason = d.Reason
+		ex.DecidedAt = now
+		ex.ApproversJSON = string(appJSON)
+		if len(d.Conditions) > 0 {
+			var existing []map[string]string
+			if ex.ConditionsJSON != "" { _ = json.Unmarshal([]byte(ex.ConditionsJSON), &existing) }
+			existing = append(existing, d.Conditions...)
+			cj, _ := json.Marshal(existing)
+			ex.ConditionsJSON = string(cj)
+		}
+		s.db.Save(&ex)
+		s.recordAudit(orgID, "cp.policy.exception_decided", "admin", "policy_exception", ex.ID,
+			fmt.Sprintf(`{"status":"denied","by":%q,"role":%q,"reason":%q}`, d.DecidedBy, d.DecidedByRole, d.Reason))
+		return &ex, nil
+	}
+	// approval path: append conditions
+	var existing []map[string]string
+	if ex.ConditionsJSON != "" { _ = json.Unmarshal([]byte(ex.ConditionsJSON), &existing) }
+	if len(d.Conditions) > 0 {
+		existing = append(existing, d.Conditions...)
+	}
+	cj, _ := json.Marshal(existing)
+	ex.ConditionsJSON = string(cj)
+
+	required := splitCSV(ex.RequiredApproverRoles)
+	approved := []string{}
+	for _, a := range approvers {
+		if a["vote"] == "true" { approved = append(approved, a["role"]) }
+	}
+	allApproved := true
+	for _, r := range required {
+		found := false
+		for _, x := range approved { if x == r { found = true; break } }
+		if !found { allApproved = false; break }
+	}
+	appJSON, _ := json.Marshal(approvers)
+	ex.ApproversJSON = string(appJSON)
+	if !allApproved {
+		// partial approval — keep pending but record the approver
+		ex.DecidedAt = now
+		s.db.Save(&ex)
+		s.recordAudit(orgID, "cp.policy.exception_partial_approval", "admin", "policy_exception", ex.ID,
+			fmt.Sprintf(`{"role":%q,"approved":%v}`, d.DecidedByRole, true))
+		return &ex, nil
+	}
+	ex.Status = "approved"
+	ex.DecidedBy = d.DecidedBy
+	ex.DecisionReason = d.Reason
+	ex.DecidedAt = now
+	if d.PublishNewEpoch {
+		epoch := &models.PolicyEpoch{
+			OrganizationID: orgID,
+			EpochID:        dari.GenerateID("epoch"),
+			EngineVersion:  "exception",
+			TransitionMode: "immediate",
+			EffectiveAt:    now,
+			Status:         "active",
+		}
+		s.db.Create(epoch)
+		ex.PublishedEpochID = epoch.EpochID
+	}
 	s.db.Save(&ex)
 	s.recordAudit(orgID, "cp.policy.exception_decided", "admin", "policy_exception", ex.ID,
-		fmt.Sprintf(`{"status":"%s"}`, status))
+		fmt.Sprintf(`{"status":"approved","by":%q,"epoch_id":%q}`, d.DecidedBy, ex.PublishedEpochID))
 	return &ex, nil
+}
+
+// RevokeException cancels an approved exception (manual override).
+func (s *Service) RevokeException(orgID, exceptionID, decidedBy, reason string) (*models.PolicyException, error) {
+	var ex models.PolicyException
+	if s.db.First(&ex, "id = ? AND organization_id = ?", exceptionID, orgID).Error != nil {
+		return nil, fmt.Errorf("policy: exception not found")
+	}
+	if ex.Status != "approved" {
+		return nil, fmt.Errorf("policy: only approved exceptions can be revoked")
+	}
+	ex.Status = "revoked"
+	ex.DecidedBy = decidedBy
+	ex.DecisionReason = reason
+	ex.DecidedAt = time.Now().UTC().Format(time.RFC3339)
+	s.db.Save(&ex)
+	s.recordAudit(orgID, "cp.policy.exception_revoked", "admin", "policy_exception", ex.ID, fmt.Sprintf(`{"reason":%q}`, reason))
+	return &ex, nil
+}
+
+func boolStr(b bool) string {
+	if b { return "true" }
+	return "false"
+}
+
+func splitCSV(s string) []string {
+	if s == "" { return nil }
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" { out = append(out, p) }
+	}
+	return out
 }
 
 func strOr(m map[string]interface{}, key string) string {

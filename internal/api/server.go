@@ -449,8 +449,10 @@ func (s *Server) setupRouter() {
 			r.Post("/templates", s.handleSavePolicyTemplate)
 			r.Delete("/templates/{id}", s.handleDeletePolicyTemplate)
 			r.Get("/exceptions", s.handleListPolicyExceptions)
+			r.Get("/exceptions/{id}", s.handleGetPolicyException)
 			r.Post("/exceptions", s.handleCreatePolicyException)
 			r.Post("/exceptions/{id}/decide", s.handleDecidePolicyException)
+			r.Post("/exceptions/{id}/revoke", s.handleRevokePolicyException)
 		})
 
 		// Communications

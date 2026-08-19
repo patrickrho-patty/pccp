@@ -288,11 +288,15 @@ export const api = {
     request<any>('/api/policy/templates', { method: 'POST', body: JSON.stringify(data) }),
   deletePolicyTemplate: (id: string) =>
     request<any>(`/api/policy/templates/${id}`, { method: 'DELETE' }),
-  listPolicyExceptions: () => request<any[]>('/api/policy/exceptions'),
+  // Policy exceptions (PAT-1506 evidence-backed approval flow)
+  listPolicyExceptions: (ranked = false) => request<any[]>(`/api/policy/exceptions${ranked ? '?ranked=true' : ''}`),
+  getPolicyException: (id: string) => request<any>(`/api/policy/exceptions/${id}`),
   createPolicyException: (data: any) =>
     request<any>('/api/policy/exceptions', { method: 'POST', body: JSON.stringify(data) }),
-  decidePolicyException: (id: string, approve: boolean, decidedBy?: string) =>
-    request<any>(`/api/policy/exceptions/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve, decided_by: decidedBy }) }),
+  decidePolicyException: (id: string, data: { approve: boolean; decided_by: string; decided_by_role: string; reason: string; conditions?: any[]; publish_new_epoch?: boolean }) =>
+    request<any>(`/api/policy/exceptions/${id}/decide`, { method: 'POST', body: JSON.stringify(data) }),
+  revokePolicyException: (id: string, decided_by: string, reason: string) =>
+    request<any>(`/api/policy/exceptions/${id}/revoke`, { method: 'POST', body: JSON.stringify({ decided_by, reason }) }),
 
   // Policy Rules (governance rules — PRD §13)
   listPolicyRules: () => request<any[]>('/api/policy/rules'),
