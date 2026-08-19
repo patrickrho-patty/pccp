@@ -11,6 +11,7 @@ import { useConfirm } from '../components/useConfirm'
 import { formatUsageStateInteger, formatUsageAmount, UsageReport } from '../components/UsageReport'
 import { AllowedModelChips, normalizeAllowedModelItems } from '../allowedModels'
 import { sessionLifecycleLabel } from '../glossary'
+import { tabNavNextIndex } from '../components/a11yLogic'
 
 const ROLES = [
   { value: 'owner', label: '소유자 · Owner' },
@@ -157,16 +158,27 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      <div className="flex gap-1 mb-6 border-b border-gray-200 flex-wrap" role="tablist">
+      <div className="flex gap-1 mb-6 border-b border-gray-200 flex-wrap" role="tablist" aria-label="프로젝트 상세 탭"
+        onKeyDown={e => {
+          const keys = ['ArrowRight', 'ArrowLeft', 'Home', 'End']
+          if (!keys.includes(e.key)) return
+          e.preventDefault()
+          const ids = ['overview', 'members', 'sessions', 'governance', 'audit']
+          const cur = Math.max(0, ids.indexOf(tab))
+          setTab(ids[tabNavNextIndex(e.key, cur, ids.length)] as any)
+        }}>
         {[
           { id: 'overview', label: '개요', en: 'Overview' },
           { id: 'members', label: '멤버', en: 'Members', count: members.length },
           { id: 'sessions', label: '세션', en: 'Sessions', count: sessions.length },
           { id: 'governance', label: '거버넌스', en: 'Governance', count: pendingChanges.length },
           { id: 'audit', label: '감사', en: 'Audit', count: auditEvents.length },
-        ].map(t => (
-          <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id as any)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === t.id ? 'border-patty-600 text-patty-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+        ].map((t, idx) => (
+          <button key={t.id} role="tab" aria-selected={tab === t.id}
+            aria-controls={`proj-${t.id}-panel`} id={`proj-${t.id}-tab`}
+            tabIndex={tab === t.id ? 0 : -1}
+            onClick={() => setTab(t.id as any)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-patty-400 ${tab === t.id ? 'border-patty-600 text-patty-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
             {t.label} {t.count !== undefined && t.count > 0 && `(${t.count})`}
           </button>
         ))}

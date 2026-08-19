@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"gorm.io/gorm"
 )
 
 const sandboxImageAllowlistKey = "sandbox.image_allowlist"
@@ -49,11 +50,12 @@ func (s *Server) handleSandboxImageAllowlist(w http.ResponseWriter, r *http.Requ
 			}
 		}
 		raw, _ := json.Marshal(cleaned)
-		s.upsertOrgSetting(orgID, sandboxImageAllowlistKey, string(raw))
-		// Replace canonical entries: simplest correct semantics — delete
-		// existing then re-insert. Each entry is validated; raw entries
-		// require expanded_digests; digest entries require a valid
-		// sha256 digest.
+		// Validate every canonical entry BEFORE touching any rows so a
+		// bad payload can't half-apply. Then replace (delete + insert)
+		// plus the org-setting upsert and audit event inside ONE
+		// transaction — a failure between delete and insert would
+		// otherwise leave the org with zero entries (fail-closed with
+		// no allowlist).
 		for i := range req.Canonical {
 			if err := validateSandboxImage(&req.Canonical[i]); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
@@ -65,7 +67,21 @@ func (s *Server) handleSandboxImageAllowlist(w http.ResponseWriter, r *http.Requ
 				req.Canonical[i].ApprovedAt = time.Now().UTC().Format(time.RFC3339)
 			}
 		}
-		err = s.db.Transaction(func(tx *gorm.DB) error {
+		var setting models.OrgSetting
+		settingExists := s.db.Where("organization_id = ? AND key = ?", orgID, sandboxImageAllowlistKey).First(&setting).Error == nil
+		txnErr := s.db.Transaction(func(tx *gorm.DB) error {
+			if settingExists {
+				if err := tx.Model(&setting).Update("value", string(raw)).Error; err != nil {
+					return err
+				}
+			} else {
+				if err := tx.Create(&models.OrgSetting{
+					Base:           models.Base{ID: models.GenerateID("os")},
+					OrganizationID: orgID, Key: sandboxImageAllowlistKey, Value: string(raw),
+				}).Error; err != nil {
+					return err
+				}
+			}
 			if err := tx.Where("organization_id = ?", orgID).Delete(&models.SandboxImage{}).Error; err != nil {
 				return err
 			}
@@ -82,8 +98,8 @@ func (s *Server) handleSandboxImageAllowlist(w http.ResponseWriter, r *http.Requ
 				OccurredAt: time.Now().Format(time.RFC3339),
 			}).Error
 		})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+		if txnErr != nil {
+			writeError(w, http.StatusInternalServerError, txnErr.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{

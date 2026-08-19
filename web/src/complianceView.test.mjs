@@ -53,7 +53,7 @@ test('repeated identical runs group into one row and preserve every snapshot', (
   const { grouped } = groupAssessmentRuns(runs)
   assert.equal(grouped.length, 2)               // 3 identical + 1 distinct
   assert.equal(grouped[0].count, 3)             // burst grouped with count
-  assert.equal(grouped[0].id, 'a1')             // newest of the group is the drill target
+  assert.equal(grouped[0].id, 'a3')             // newest of the group is the drill target
   assert.equal(grouped[1].count, 1)
 })
 

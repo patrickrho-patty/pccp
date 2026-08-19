@@ -21,15 +21,7 @@ export interface AccessibleTabItem {
   content: ReactNode
 }
 
-/** Pure arrow/Home/End navigation index (testable, mirrors AccessibleTabs). */
-export function tabNavNextIndex(key: string, current: number, length: number): number {
-  if (length <= 0) return 0
-  if (key === 'ArrowRight') return (current + 1) % length
-  if (key === 'ArrowLeft') return (current - 1 + length) % length
-  if (key === 'Home') return 0
-  if (key === 'End') return length - 1
-  return current
-}
+export { tabNavNextIndex } from './a11yLogic'
 
 export function AccessibleTabs({ items, active, onSelect, label }: {
   items: AccessibleTabItem[]

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { tabNavNextIndex as nav } from './components/a11y.tsx'
+import { tabNavNextIndex as nav } from './components/a11yLogic.ts'
 
 test('tab arrow navigation wraps and clamps', () => {
   assert.equal(nav('ArrowRight', 0, 3), 1)
