@@ -5,7 +5,7 @@ import { useFavorites, FavoriteStar } from '../hooks/useFavorites'
 import { EntitySelect } from '../components/EntitySelect'
 import { Modal, ModalFooter } from '../components/Modal'
 import EmptyState from '../components/EmptyState'
-import { formatRelative } from '../utils/format'
+import { formatRelative, formatShortTime } from '../utils/format'
 import { useConfirm } from '../components/useConfirm'
 import { showToast } from '../components/Toast'
 import { buildSourceTrace, buildScopePath, summarizeRuleConfig, parseModelRefs, ackSummary, DOMAIN_INFO } from '../effectivePolicyView'
@@ -73,7 +73,7 @@ export default function Policy() {
     reloadRules()
     api.listPolicyTemplates().then(d => setTemplates(Array.isArray(d) ? d : [])).catch(() => {})
     api.listPolicyPacks().then(d => setPacks(Array.isArray(d) ? d : [])).catch(() => {})
-    api.listPolicyExceptions().then(d => setExceptions(Array.isArray(d) ? d : [])).catch(() => {})
+    api.listPolicyExceptions(true).then(d => setExceptions(Array.isArray(d) ? d : [])).catch(() => {})
   }
   useEffect(() => { reloadAll() }, [])
 
@@ -884,7 +884,7 @@ export default function Policy() {
 
       {/* Exception modal */}
       <Modal open={exceptionModal} title="예외 신청 · Request Exception" onClose={() => setExceptionModal(false)} size="md"
-        footer={<ModalFooter onCancel={() => setExceptionModal(false)} onConfirm={submitException} confirmLabel="신청" disabled={!exceptionForm.reason || exceptionForm.rule_ids.length === 0} />}>
+        footer={<ModalFooter onCancel={() => setExceptionModal(false)} onConfirm={submitException} confirmLabel="신청" disabled={!exceptionForm.reason || exceptionForm.rule_ids.length === 0 || !exceptionEvidence.justification_ko.trim() || !exceptionEvidence.expires_at} />}>
         <div className="space-y-3">
           <div><label className="label">범위 · Scope</label>
             <select className="input" value={exceptionForm.scope} onChange={e => setExceptionForm({ ...exceptionForm, scope: e.target.value, scope_id: '' })}>
@@ -909,7 +909,126 @@ export default function Policy() {
               ))}
             </div>
           </div>
+          {/* PAT-1506: evidence block — justification, severity, time
+              bound, compensating controls, resource/destination. All
+              required so an approver never sees a summary-only row. */}
+          <div className="border-t pt-3 space-y-3">
+            <div className="text-xs font-semibold text-gray-500">증거 블록 (승인자가 심사하는 근거)</div>
+            <div><label className="label">업무 근거 · Justification (필수)</label>
+              <textarea className="input" rows={2} value={exceptionEvidence.justification_ko} onChange={e => setExceptionEvidence({ ...exceptionEvidence, justification_ko: e.target.value })} placeholder="예: 결제 시스템 긴급 장애 대응을 위한 일시적 접근" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="label">위험도</label>
+                <select className="input" value={exceptionEvidence.severity_label} onChange={e => setExceptionEvidence({ ...exceptionEvidence, severity_label: e.target.value as any })}>
+                  <option value="low">low</option><option value="medium">medium</option><option value="high">high</option>
+                </select>
+              </div>
+              <div><label className="label">만료시각 · Expiry (필수)</label>
+                <input type="datetime-local" className="input" value={exceptionEvidence.expires_at} onChange={e => setExceptionEvidence({ ...exceptionEvidence, expires_at: e.target.value })} />
+              </div>
+            </div>
+            <div><label className="label">보완 통제 · Compensating Controls</label>
+              <input className="input" value={exceptionEvidence.compensating_controls} onChange={e => setExceptionEvidence({ ...exceptionEvidence, compensating_controls: e.target.value })} placeholder="예: 세션 녹화 + 감사 알림 유지" />
+            </div>
+            <div><label className="label">대상 리소스/목적지</label>
+              <input className="input" value={exceptionEvidence.resource_destination} onChange={e => setExceptionEvidence({ ...exceptionEvidence, resource_destination: e.target.value })} placeholder="예: payments-service / gitlab.example" />
+            </div>
+          </div>
         </div>
+      </Modal>
+
+      {/* PAT-1506: exception detail + decision modal — evidence-backed
+          approval. Approve votes accumulate per role; a deny finalizes. */}
+      <Modal open={!!exceptionDetail} title={`예외 상세 — ${exceptionDetail?.scopeName || exceptionDetail?.scope_id || ''}`} onClose={() => { setExceptionDetail(null); setExceptionDecision(null) }} size="lg"
+        footer={<ModalFooter onCancel={() => { setExceptionDetail(null); setExceptionDecision(null) }} onConfirm={decideException}
+          confirmLabel={exceptionDecision?.approve ? '승인 투표 기록' : '거부'}
+          disabled={!exceptionDecision || !exceptionDecision.reason.trim()}
+          danger={!exceptionDecision?.approve} />}>
+        {exceptionDetail && (() => {
+          const ex = exceptionDetail
+          const ruleIds: string[] = (() => { try { return JSON.parse(ex.rule_ids || '[]') } catch { return [] } })()
+          const approvers: any[] = (() => { try { return JSON.parse(ex.approvers || '[]') } catch { return [] } })()
+          const required: string[] = (ex.required_approver_roles || '').split(',').map((s: string) => s.trim()).filter(Boolean)
+          const curVals: any[] = (() => { try { return JSON.parse(ex.current_rule_values || '[]') } catch { return [] } })()
+          const propVals: any[] = (() => { try { return JSON.parse(ex.proposed_rule_values || '[]') } catch { return [] } })()
+          const evidence: any[] = (() => { try { return JSON.parse(ex.evidence || '[]') } catch { return [] } })()
+          return (
+            <div className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="bg-gray-50 rounded p-2 space-y-0.5">
+                  <div>상태: <span className="font-semibold">{ex.status}</span></div>
+                  <div>신청자: {ex.requested_by || '-'}</div>
+                  <div>범위: {ex.scope} / {ex.scopeName || ex.scope_id}</div>
+                  <div>위험도: {ex.severity_label || 'medium'}</div>
+                </div>
+                <div className="bg-gray-50 rounded p-2 space-y-0.5">
+                  <div>시작: {ex.requested_start ? formatShortTime(ex.requested_start) : '즉시'}</div>
+                  <div>만료: {ex.expires_at && ex.expires_at !== '0001-01-01T00:00:00Z' ? formatShortTime(ex.expires_at) : '없음'}</div>
+                  <div>영향 세션: {ex.affected_sessions || 0} · 하네스: {ex.affected_harnesses || 0}</div>
+                  {ex.published_epoch_id && <div>발행 에포크: <span className="font-mono">{ex.published_epoch_id.slice(0, 16)}…</span></div>}
+                </div>
+              </div>
+              <div className="border rounded p-2 space-y-1">
+                <div className="font-semibold text-[11px] text-gray-500">업무 근거</div>
+                <p>{ex.justification_ko || ex.reason}</p>
+                {ex.compensating_controls && <p className="text-gray-600">보완 통제: {ex.compensating_controls}</p>}
+                {ex.resource_destination && <p className="text-gray-600">대상: {ex.resource_destination}</p>}
+              </div>
+              <div className="border rounded p-2 space-y-1">
+                <div className="font-semibold text-[11px] text-gray-500">규칙 diff ({ruleIds.length}개)</div>
+                {ruleIds.map(rid => {
+                  const cur = curVals.find(v => v.rule_id === rid)?.value ?? '(현재 값 없음)'
+                  const prop = propVals.find(v => v.rule_id === rid)?.value ?? '(완화)'
+                  return <div key={rid} className="font-mono text-[11px]">{rid}: <span className="line-through text-gray-400">{String(cur).slice(0, 60)}</span> → <span className="text-amber-700 font-semibold">{String(prop).slice(0, 60)}</span></div>
+                })}
+              </div>
+              {evidence.length > 0 && (
+                <div className="border rounded p-2 space-y-0.5">
+                  <div className="font-semibold text-[11px] text-gray-500">증거</div>
+                  {evidence.map((ev, i) => <div key={i}>{ev.type}: {ev.title || ev.ref}</div>)}
+                </div>
+              )}
+              <div className="border rounded p-2 space-y-1">
+                <div className="font-semibold text-[11px] text-gray-500">승인 체인 (필수 역할: {required.join(', ') || '지정 없음'})</div>
+                {approvers.length === 0 && <div className="text-gray-400">아직 투표 없음</div>}
+                {approvers.map((a, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <span className={a.vote === 'true' ? 'badge-green' : 'badge-red'}>{a.vote === 'true' ? '승인' : '거부'}</span>
+                    <span className="font-semibold">{a.role}</span>
+                    <span className="text-gray-500">{a.user} · {formatRelative(a.at)}</span>
+                    {a.reason && <span className="text-gray-400">— {a.reason}</span>}
+                  </div>
+                ))}
+              </div>
+              {exceptionDecision && (
+                <div className="border-t pt-3 space-y-2">
+                  <div className="text-[11px] font-semibold text-gray-500">
+                    {exceptionDecision.approve ? '승인 투표' : '거부'} — 사유는 감사 로그에 기록됩니다
+                    {exceptionDecision.approve && required.length > 1 && ' · 모든 필수 역할이 승인해야 활성화됩니다'}
+                  </div>
+                  {exceptionDecision.approve && (
+                    <div>
+                      <label className="label">투표 역할</label>
+                      <select className="input" value={exceptionDecision.role} onChange={e => setExceptionDecision({ ...exceptionDecision, role: e.target.value })}>
+                        {['security_admin', 'owner', 'super_admin', 'admin'].map(r => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  <div>
+                    <label className="label">결정 사유 (필수)</label>
+                    <textarea className="input" rows={2} value={exceptionDecision.reason} onChange={e => setExceptionDecision({ ...exceptionDecision, reason: e.target.value })} placeholder="예: 근거 확인 · 보완 통제 유효 · 만료 7일 이내" />
+                  </div>
+                </div>
+              )}
+              {ex.status === 'pending' && !exceptionDecision && (
+                <div className="flex gap-2">
+                  <button className="btn-sm btn-primary" onClick={() => setExceptionDecision({ approve: true, role: 'security_admin', reason: '' })}>승인 투표</button>
+                  <button className="btn-sm btn-secondary" onClick={() => setExceptionDecision({ approve: false, role: 'security_admin', reason: '' })}>거부</button>
+                </div>
+              )}
+            </div>
+          )
+        })()}
       </Modal>
 
       {/* Template edit modal */}
