@@ -7,6 +7,7 @@ import { Modal, ModalFooter } from '../components/Modal'
 import EmptyState from '../components/EmptyState'
 import { ResponsiveTable, Column } from '../components/ResponsiveTable'
 import { showToast } from '../components/Toast'
+import { deriveHarnessHealth, riskLabelKo, healthMeta } from '../harnessHealth'
 
 // Fleet page (web/09 plan): live fleet operations — containment happens
 // here. Server-side inventory query (A12), bulk actions (A5), 2-step
@@ -16,13 +17,6 @@ import { showToast } from '../components/Toast'
 
 const STATUS_KO: Record<string, string> = {
   pending: '대기', enrolled: '등록됨', active: '활성', quarantined: '격리', revoked: '해지',
-}
-const STATUS_BADGE: Record<string, string> = {
-  enrolled: 'bg-green-50 text-green-700 border-green-200',
-  active: 'bg-green-50 text-green-700 border-green-200',
-  pending: 'bg-gray-100 text-gray-500 border-gray-200',
-  quarantined: 'bg-amber-50 text-amber-700 border-amber-200',
-  revoked: 'bg-red-50 text-red-700 border-red-200',
 }
 const RISK_KO: Record<string, string> = { normal: '정상', low: '낮음', elevated: '주의', high: '높음', critical: '심각' }
 
@@ -271,18 +265,21 @@ export default function Fleet() {
     },
     {
       key: 'status', header: '상태',
-      render: (item) => (
-        <span className={`text-[10px] px-2 py-0.5 rounded-full border ${STATUS_BADGE[item.harness.status] || ''}`}>
-          {STATUS_KO[item.harness.status] || item.harness.status}
-        </span>
-      ),
+      render: (item) => {
+        const health = deriveHarnessHealth({ status: item.harness.status, risk_state: item.harness.risk_state, last_heartbeat: item.harness.last_heartbeat, stale: item.stale, binary_version: item.harness.binary_version })
+        return (
+          <span className={`text-[10px] px-2 py-0.5 rounded-full border ${healthMeta(health.overall).color}`} title={health.summary}>
+            {healthMeta(health.overall).icon} {health.overallLabel}
+          </span>
+        )
+      },
       cardLabel: '상태',
     },
     {
       key: 'risk', header: '위험',
       render: (item) => (
-        <span className={`text-[10px] px-2 py-0.5 rounded-full border ${item.harness.risk_state === 'high' || item.harness.risk_state === 'critical' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
-          {RISK_KO[item.harness.risk_state] || item.harness.risk_state || '—'}
+        <span className={`text-[10px] px-2 py-0.5 rounded-full border ${item.harness.risk_state === 'high' || item.harness.risk_state === 'critical' ? 'bg-red-50 text-red-700 border-red-200' : item.harness.risk_state === 'elevated' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
+          {riskLabelKo(item.harness.risk_state) || item.harness.risk_state || '—'}
         </span>
       ),
       cardLabel: '위험',

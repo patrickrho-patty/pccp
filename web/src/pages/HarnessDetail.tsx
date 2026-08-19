@@ -6,6 +6,7 @@ import { Modal, ModalFooter } from '../components/Modal'
 import { showToast } from '../components/Toast'
 import { formatRelative } from '../utils/format'
 import { useConfirm } from '../components/useConfirm'
+import { deriveHarnessHealth, statusLabelKo, riskLabelKo, healthMeta } from '../harnessHealth'
 
 // HarnessDetail (harnesses C1/C5) — deep-linkable harness view with
 // device posture, PPC credential metadata (issuer/validity/revocation),
@@ -39,8 +40,18 @@ export default function HarnessDetail() {
   const auditEvents = detail.audit_events || []
   const attEvents = detail.attestation_events || []
 
-  const statusBadge = (s: string) => ({ enrolled: 'badge-green', active: 'badge-green', quarantined: 'badge-red', revoked: 'badge-gray', pending: 'badge-yellow' } as any)[s] || 'badge-gray'
-  const statusLabel = (s: string) => ({ enrolled: '등록됨', active: '활성', pending: '대기', quarantined: '격리됨', revoked: '폐기됨' } as any)[s] || s
+  // PAT-1492: one explainable health state derived from canonical dimensions.
+  // The header, stat cards, and dimension list all consume the same result so
+  // a green indicator can never co-occur with an expired signal (unless it is
+  // explicitly a different dimension). Raw risk/lifecycle enums are replaced
+  // by governed Korean labels with evidence.
+  const health = deriveHarnessHealth({
+    status: h.status, risk_state: h.risk_state,
+    last_heartbeat: h.last_heartbeat, last_attestation: h.last_attestation,
+    binary_version: h.binary_version, stale: detail.stale,
+    version_blocked: detail.version_blocked,
+  })
+  const overallMeta = healthMeta(health.overall)
   const activeSessions = sessions.filter((s: any) => s.status === 'active')
 
   const handleRevoke = async () => {
@@ -62,17 +73,21 @@ export default function HarnessDetail() {
           <p className="text-sm text-gray-400">v{h.binary_version} · {h.build_channel || 'stable'} · {h.enrollment_mode || 'sso'}</p>
         </div>
         <div className="flex gap-2 items-center flex-wrap">
-          {detail.stale && <span className="badge-yellow">⚠ 하트비트 만료</span>}
-          <span className={statusBadge(h.status)}>{statusLabel(h.status)}</span>
-          <span className={h.risk_state === 'high' ? 'badge-red' : h.risk_state === 'elevated' ? 'badge-yellow' : 'badge-green'}>{h.risk_state}</span>
+          <span className={`text-[11px] px-2 py-0.5 rounded-full border ${overallMeta.color}`}>{overallMeta.icon} 전체 {overallMeta.label}</span>
+          <span className={`text-[11px] px-2 py-0.5 rounded-full border ${healthMeta(health.dimensions.find(d => d.key === 'lifecycle')!.state).color}`}>
+            {statusLabelKo(h.status)}
+          </span>
+          <span className={`text-[11px] px-2 py-0.5 rounded-full border ${healthMeta(health.dimensions.find(d => d.key === 'risk')!.state).color}`}>
+            위험 {riskLabelKo(h.risk_state)}
+          </span>
         </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 stat-grid mb-6">
         <StatCard label="활성 세션" value={activeSessions.length} accent="blue" to="/sessions" query={`?harness_id=${encodeURIComponent(h.harness_id)}`} />
         <StatCard label="허용 사용자" value={allowedUsers.length} accent="green" />
-        <StatCard label="PPC 유효" value={cred ? (cred.valid && !cred.revoked ? '✅' : '❌') : '-'} accent={cred?.valid && !cred?.revoked ? 'green' : 'red'} sub={cred?.revoked ? '폐기됨' : undefined} />
-        <StatCard label="하트비트" value={formatRelative(h.last_heartbeat) === '-' ? '-' : '🟢'} accent="gray" sub={h.last_heartbeat?.slice(0, 16).replace('T', ' ')} />
+        <StatCard label="전체 상태" value={`${overallMeta.icon} ${overallMeta.label}`} accent={health.overall === 'critical' ? 'red' : health.overall === 'warning' ? 'orange' : health.overall === 'attention' ? 'yellow' : 'green'} sub={health.summary} />
+        <StatCard label="하트비트" value={health.dimensions.find(d => d.key === 'heartbeat')!.icon} accent={health.dimensions.find(d => d.key === 'heartbeat')!.state === 'warning' ? 'orange' : health.dimensions.find(d => d.key === 'heartbeat')!.state === 'attention' ? 'yellow' : 'green'} sub={h.last_heartbeat?.slice(0, 16).replace('T', ' ')} />
       </div>
 
       <div className="flex gap-1 mb-6 border-b border-gray-200">

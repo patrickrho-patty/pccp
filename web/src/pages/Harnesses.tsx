@@ -11,6 +11,7 @@ import { formatRelative } from '../utils/format'
 import { exportCSV } from '../utils/csv'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
+import { deriveHarnessHealth, healthMeta, riskLabelKo } from '../harnessHealth'
 
 const PAGE_SIZE = 25
 
@@ -160,7 +161,12 @@ export default function Harnesses() {
     },
     {
       key: 'status', header: '상태', cardLabel: '상태',
-      render: (h) => <span className={statusBadge(h.status)}>{statusLabel(h.status)}</span>,
+      render: (h) => {
+        const hh = deriveHarnessHealth({ status: h.status, risk_state: h.risk_state, last_heartbeat: h.last_heartbeat, stale: h.stale, binary_version: h.binary_version })
+        return (
+          <span className={healthMeta(hh.overall).color} title={hh.summary}>{healthMeta(hh.overall).icon} {hh.overallLabel}</span>
+        )
+      },
     },
     {
       key: 'version', header: '버전', cardLabel: '버전',
@@ -168,7 +174,7 @@ export default function Harnesses() {
     },
     {
       key: 'risk', header: '위험', cardLabel: '위험도',
-      render: (h) => <span className={riskBadge(h.risk_state)}>{h.risk_state}</span>,
+      render: (h) => <span className={riskBadge(h.risk_state)}>{riskLabelKo(h.risk_state)}</span>,
     },
     {
       key: 'sessions', header: '세션', cardLabel: '세션',
