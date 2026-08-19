@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { Modal, ModalFooter } from '../components/Modal'
+import { GovernedActionModal } from '../components/GovernedActionModal'
 import EmptyState from '../components/EmptyState'
 import { showToast } from '../components/Toast'
 import { useFavorites, FavoriteStar } from '../hooks/useFavorites'
@@ -428,64 +429,51 @@ export default function Tools() {
       </Modal>
 
       {/* 승인 정책 변경 — 초안 diff + 영향 확인 (PAT-1509) */}
-      <Modal open={!!gateTarget} title="승인 정책 변경 — 영향 확인" subtitle={gateTarget?.name}
-        onClose={() => setGateTarget(null)}
-        footer={<ModalFooter onCancel={() => setGateTarget(null)} onConfirm={confirmGate}
-          confirmLabel="변경 적용" danger={!!gateTarget && assessGateChange(gateTarget, !gateTarget.requires_approval).weakening} />}>
-        {gateTarget && (() => {
-          const change = assessGateChange(gateTarget, !gateTarget.requires_approval)
-          return (
-            <div className="space-y-3 text-xs">
+      {gateTarget && (() => {
+        const change = assessGateChange(gateTarget, !gateTarget.requires_approval)
+        return (
+          <GovernedActionModal
+            open={!!gateTarget}
+            title="승인 정책 변경 — 영향 확인"
+            subtitle={gateTarget.name_ko || gateTarget.name}
+            warnings={change.weakening ? [{
+              kind: change.highRisk ? 'high' : 'medium',
+              text: change.highRisk
+                ? '보호 약화 경고: 이 게이트는 기본 정책 수단(심층 방어)입니다. 해제해도 high/critical 도구는 서버에서 항상 리뷰어 승인을 요구하므로 리뷰 없이 즉시 호출되지는 않습니다.'
+                : '보호 약화: 승인 없이 호출 가능해집니다.',
+            }] : []}
+            preview={<>
               <div className="border rounded-lg p-3 space-y-1">
                 <div className="text-[10px] text-gray-400 font-semibold">변경 diff</div>
                 <div>현재: <span className="font-semibold">{change.from ? '승인 필요' : '자동 허용'}</span> → 변경 후: <span className="font-semibold">{change.to ? '승인 필요' : '자동 허용'}</span></div>
               </div>
-              {change.weakening && (
-                <div className={`text-[11px] px-3 py-2 rounded-lg border ${change.highRisk ? 'bg-red-50 text-red-700 border-red-200' : 'bg-yellow-50 text-yellow-800 border-yellow-200'}`}>
-                  {change.highRisk
-                    ? '보호 약화 경고: 이 게이트는 기본 정책 수단(심층 방어)입니다. 해제해도 high/critical 도구는 서버에서 항상 리뷰어 승인을 요구하므로 리뷰 없이 즉시 호출되지는 않습니다.'
-                    : '보호 약화: 승인 없이 호출 가능해집니다.'}
-                </div>
-              )}
-              <div>
-                <label className="text-[10px] text-gray-500">변경 사유 (필수 — 감사 기록에 남습니다)</label>
-                <input className="input text-xs w-full" value={gateReason} onChange={e => setGateReason(e.target.value)}
-                  placeholder="예: 긴급 장애 대응 / 보안 검토 완료" />
-              </div>
-              {change.highRisk && (
-                <label className="flex items-center gap-2 text-xs text-gray-700">
-                  <input type="checkbox" checked={gateConfirm} onChange={e => setGateConfirm(e.target.checked)} />
-                  고위험 도구의 승인 게이트 해제 영향을 확인했습니다
-                </label>
-              )}
-            </div>
-          )
-        })()}
-      </Modal>
+            </>}
+            reason={gateReason}
+            onReasonChange={setGateReason}
+            confirmLabel="변경 적용"
+            onCancel={() => setGateTarget(null)}
+            onConfirm={confirmGate}
+            requireConfirmPhrase={change.highRisk}
+            confirmPhraseLabel="고위험 도구의 승인 게이트 해제 영향을 확인했습니다"
+            confirmChecked={gateConfirm}
+            onConfirmCheckedChange={setGateConfirm}
+            danger={change.weakening}
+          />
+        )
+      })()}
 
       {/* 허용 목록 저장 — 초안 diff + 영향 미리보기 (PAT-1509) */}
-      <Modal open={!!allowPreview} title="허용 목록 변경 — 영향 미리보기"
-        subtitle={projects.find((p: any) => p.id === selectedProject)?.name_ko || projects.find((p: any) => p.id === selectedProject)?.name}
-        onClose={() => setAllowPreview(null)}
-        footer={<ModalFooter onCancel={() => setAllowPreview(null)} onConfirm={confirmAllowSave}
-          confirmLabel="저장" danger={!!allowPreview?.weakening} />}>
-        {allowPreview && (
-          <div className="space-y-3 text-xs">
-            {allowPreview.becomesUnset && (
-              <div className="text-[11px] px-3 py-2 rounded-lg border bg-red-50 text-red-700 border-red-200">
-                보호 약화 경고: 목록이 비워지면 "미설정"으로 되돌아가 등록된 모든 도구가 허용됩니다.
-              </div>
-            )}
-            {allowPreview.addedHighRisk.length > 0 && (
-              <div className="text-[11px] px-3 py-2 rounded-lg border bg-red-50 text-red-700 border-red-200">
-                고위험 capability 추가: {allowPreview.addedHighRisk.join(', ')} — high/critical 도구가 이 프로젝트에서 호출 가능해집니다.
-              </div>
-            )}
-            {allowPreview.unknown.length > 0 && (
-              <div className="text-[11px] px-3 py-2 rounded-lg border bg-yellow-50 text-yellow-800 border-yellow-200">
-                레지스트리에 없는 도구가 포함되어 있습니다: {allowPreview.unknown.join(', ')}
-              </div>
-            )}
+      {allowPreview && (
+        <GovernedActionModal
+          open={!!allowPreview}
+          title="허용 목록 변경 — 영향 미리보기"
+          subtitle={projects.find((p: any) => p.id === selectedProject)?.name_ko || projects.find((p: any) => p.id === selectedProject)?.name}
+          warnings={[
+            ...(allowPreview.becomesUnset ? [{ kind: 'high' as const, text: '보호 약화 경고: 목록이 비워지면 "미설정"으로 되돌아가 등록된 모든 도구가 허용됩니다.' }] : []),
+            ...(allowPreview.addedHighRisk.length > 0 ? [{ kind: 'high' as const, text: `고위험 capability 추가: ${allowPreview.addedHighRisk.join(', ')} — high/critical 도구가 이 프로젝트에서 호출 가능해집니다.` }] : []),
+            ...(allowPreview.unknown.length > 0 ? [{ kind: 'medium' as const, text: `레지스트리에 없는 도구가 포함되어 있습니다: ${allowPreview.unknown.join(', ')}` }] : []),
+          ]}
+          preview={<>
             <div className="border rounded-lg p-3 space-y-1">
               <div className="text-[10px] text-gray-400 font-semibold">변경 diff (현재 저장본 기준)</div>
               <div>추가 ({allowPreview.diff.added.length}): {allowPreview.diff.added.join(', ') || '없음'}</div>
@@ -497,20 +485,20 @@ export default function Tools() {
             <p className="text-[10px] text-gray-400">
               전파: 저장 즉시 감사 기록되며, 실행 중인 세션/하네스는 다음 도구 호출 시점부터 새 목록이 강제됩니다 (릴레이 요청 시점 검사).
             </p>
-            <div>
-              <label className="text-[10px] text-gray-500">변경 사유 (필수 — 감사 기록에 남습니다)</label>
-              <input className="input text-xs w-full" value={allowReason} onChange={e => setAllowReason(e.target.value)}
-                placeholder="예: 보안 검토 완료 / 프로젝트 범위 조정" />
-            </div>
-            {allowPreview.weakening && (
-              <label className="flex items-center gap-2 text-xs text-gray-700">
-                <input type="checkbox" checked={allowConfirm} onChange={e => setAllowConfirm(e.target.checked)} />
-                보호가 약화되는 변경의 영향을 확인했습니다
-              </label>
-            )}
-          </div>
-        )}
-      </Modal>
+          </>}
+          reason={allowReason}
+          onReasonChange={setAllowReason}
+          reasonPlaceholder="예: 보안 검토 완료 / 프로젝트 범위 조정"
+          confirmLabel="저장"
+          onCancel={() => setAllowPreview(null)}
+          onConfirm={confirmAllowSave}
+          requireConfirmPhrase={allowPreview.weakening}
+          confirmPhraseLabel="보호가 약화되는 변경의 영향을 확인했습니다"
+          confirmChecked={allowConfirm}
+          onConfirmCheckedChange={setAllowConfirm}
+          danger={allowPreview.weakening}
+        />
+      )}
     </div>
   )
 }
