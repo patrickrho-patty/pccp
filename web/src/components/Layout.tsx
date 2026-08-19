@@ -1,7 +1,9 @@
 import { ReactNode, useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { api } from '../api'
 import { CommandPalette } from './CommandPalette'
+import { navCountsFromDashboard, navQueueFor, navSeverityTint } from '../navQueues'
 
 type NavItem = {
   path: string
@@ -148,6 +150,19 @@ export default function Layout({ children }: { children: ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
+  // PAT-1518: actionable nav counts — only for queues with an exact-scoped
+  // destination, resolved through the canonical dashboard metric contract
+  // (PAT-1487/1488) so the badge and its destination list always reconcile.
+  const [navCounts, setNavCounts] = useState<Record<string, number>>({})
+  useEffect(() => {
+    let active = true
+    api.dashboard().then((d: any) => {
+      if (!active || !d) return
+      setNavCounts(navCountsFromDashboard(d))
+    }).catch(() => {})
+    return () => { active = false }
+  }, [])
+
   // ⌘K / Ctrl+K toggles the command palette; "/" focuses search when
   // not typing in an input (00 A8/A13).
   useEffect(() => {
@@ -208,10 +223,12 @@ export default function Layout({ children }: { children: ReactNode }) {
                   {section.items.map((item) => {
                     const isActive = location.pathname === item.path ||
                       (item.path !== '/' && location.pathname.startsWith(item.path))
+                    const q = navQueueFor(item.path)
+                    const count = q ? (navCounts[item.path] || 0) : 0
                     return (
                       <Link
                         key={item.path}
-                        to={item.path}
+                        to={count > 0 && q ? q.href : item.path}
                         className={`flex items-center gap-2.5 px-4 py-1.5 text-xs transition-colors ${
                           isActive
                             ? 'bg-blue-600/20 text-blue-300 border-l-2 border-blue-400'
@@ -219,7 +236,13 @@ export default function Layout({ children }: { children: ReactNode }) {
                         }`}
                       >
                         <span className="text-sm leading-none">{item.icon}</span>
-                        <span>{item.label}</span>
+                        <span className="flex-1">{item.label}</span>
+                        {count > 0 && q && (
+                          <span className={`${navSeverityTint(q.severity)} text-[9px] px-1.5 py-0.5 rounded-full text-white`}
+                            aria-label={`${item.label} ${count}건`}>
+                            {count}
+                          </span>
+                        )}
                       </Link>
                     )
                   })}

@@ -51,6 +51,18 @@ export default function Policy() {
   const [assignForm, setAssignForm] = useState({ scope: 'org', scope_id: '' })
   const [exceptionModal, setExceptionModal] = useState(false)
   const [exceptionForm, setExceptionForm] = useState({ scope: 'project', scope_id: '', scopeName: '', reason: '', rule_ids: [] as string[] })
+  // PAT-1506: evidence-backed exception request — justification, time
+  // bound, severity, compensating controls are all required by the server.
+  const [exceptionEvidence, setExceptionEvidence] = useState({
+    justification_ko: '',
+    expires_at: '',
+    severity_label: 'medium' as 'high' | 'medium' | 'low',
+    compensating_controls: '',
+    resource_destination: '',
+  })
+  // PAT-1506: exception detail + decision modal state.
+  const [exceptionDetail, setExceptionDetail] = useState<any>(null)
+  const [exceptionDecision, setExceptionDecision] = useState<{ approve: boolean; role: string; reason: string } | null>(null)
   const [templateEdit, setTemplateEdit] = useState<any>(null)
   const [templateForm, setTemplateForm] = useState({ name: '', nameEn: '', desc: '', config: '{}', version: '1' })
   const [ruleDetail, setRuleDetail] = useState<any>(null)
@@ -215,21 +227,65 @@ export default function Policy() {
 
   const submitException = async () => {
     if (!exceptionForm.reason || exceptionForm.rule_ids.length === 0) { showToast('사유와 규칙을 선택하세요', 'error'); return }
+    if (!exceptionEvidence.justification_ko.trim()) { showToast('업무 근거(justification)는 필수입니다', 'error'); return }
+    if (!exceptionEvidence.expires_at) { showToast('만료시각은 필수입니다 (시간 제한 예외)', 'error'); return }
     try {
-      await api.createPolicyException({ ...exceptionForm, requested_by: 'admin' })
+      const me = await api.getUser('me').catch(() => null)
+      await api.createPolicyException({
+        ...exceptionForm,
+        requested_by: me?.email || 'operator',
+        justification_ko: exceptionEvidence.justification_ko.trim(),
+        expires_at: new Date(exceptionEvidence.expires_at).toISOString(),
+        severity_label: exceptionEvidence.severity_label,
+        compensating_controls: exceptionEvidence.compensating_controls.trim(),
+        resource_destination: exceptionEvidence.resource_destination.trim(),
+        required_approver_roles: ['security_admin'],
+      })
       showToast('예외 요청됨 — 승인 대기', 'success')
       setExceptionModal(false)
       setExceptionForm({ scope: 'project', scope_id: '', scopeName: '', reason: '', rule_ids: [] })
+      setExceptionEvidence({ justification_ko: '', expires_at: '', severity_label: 'medium', compensating_controls: '', resource_destination: '' })
       reloadAll()
     } catch (err: any) { showToast(err.message, 'error') }
   }
 
-  const decideException = async (ex: any, approve: boolean) => {
+  // PAT-1506: decisions open a detail modal first — no summary-only
+  // approval. The payload carries the role voting + reason; multi-party
+  // chains accumulate per role server-side.
+  const openExceptionDecision = (ex: any, approve: boolean) => {
+    setExceptionDetail(ex)
+    setExceptionDecision({ approve, role: 'security_admin', reason: '' })
+  }
+
+  const decideException = async () => {
+    if (!exceptionDetail || !exceptionDecision) return
+    if (!exceptionDecision.reason.trim()) { showToast('결정 사유는 필수입니다 (감사 로그)', 'error'); return }
     try {
-      await api.decidePolicyException(ex.id, approve, 'admin')
-      showToast(approve ? '예외 승인됨' : '예외 거부됨', 'info')
+      const me = await api.getUser('me').catch(() => null)
+      await api.decidePolicyException(exceptionDetail.id, {
+        approve: exceptionDecision.approve,
+        decided_by: me?.email || 'operator',
+        decided_by_role: exceptionDecision.role,
+        reason: exceptionDecision.reason.trim(),
+      })
+      showToast(exceptionDecision.approve ? '승인 투표 기록됨' : '예외 거부됨', 'info')
+      setExceptionDetail(null)
+      setExceptionDecision(null)
       reloadAll()
-    } catch { showToast('실패했습니다 · action failed', 'error') }
+    } catch (err: any) { showToast(err.message || '실패했습니다 · action failed', 'error') }
+  }
+
+  const revokeException = async () => {
+    if (!exceptionDetail) return
+    const reason = window.prompt('회수 사유 (필수):', '')
+    if (!reason || !reason.trim()) return
+    try {
+      const me = await api.getUser('me').catch(() => null)
+      await api.revokePolicyException(exceptionDetail.id, me?.email || 'operator', reason.trim())
+      showToast('예외 회수됨', 'info')
+      setExceptionDetail(null)
+      reloadAll()
+    } catch (err: any) { showToast(err.message, 'error') }
   }
 
   const saveTemplateEdit = async () => {
@@ -634,33 +690,56 @@ export default function Policy() {
       {tab === 'exceptions' && (
         <div>
           <div className="flex justify-between items-center mb-4">
-            <p className="text-xs text-gray-400">예외 마켓플레이스 · §33.8 — 범위별 정책 예외를 신청하고 승인합니다</p>
-            <button onClick={() => { setExceptionModal(true); setExceptionForm({ scope: 'project', scope_id: '', scopeName: '', reason: '', rule_ids: [] }) }} className="btn-primary text-sm">+ 예외 신청</button>
+            <p className="text-xs text-gray-400">예외 마켓플레이스 · §33.8 — 증거 기반 · 시간 제한 예외 승인 (PAT-1506)</p>
+            <button onClick={() => { setExceptionModal(true); setExceptionForm({ scope: 'project', scope_id: '', scopeName: '', reason: '', rule_ids: [] }); setExceptionEvidence({ justification_ko: '', expires_at: '', severity_label: 'medium', compensating_controls: '', resource_destination: '' }) }} className="btn-primary text-sm">+ 예외 신청</button>
           </div>
           {exceptions.length === 0 ? (
             <div className="card text-center py-12">
-              <EmptyState icon="🔓" title="예외 요청이 없습니다" message="정책을 완화해야 하는 범위가 있다면 예외를 신청하세요" />
+              <EmptyState icon="🔓" title="예외 요청이 없습니다" message="정책을 완화해야 하는 범위가 있다면 근거와 만료시각을 갖춘 예외를 신청하세요" />
             </div>
           ) : (
             <div className="space-y-2">
-              {exceptions.map(ex => (
-                <div key={ex.id} className={`card flex items-center gap-3 py-3 px-4 ${ex.status === 'pending' ? 'border-l-4 border-l-yellow-400' : ''}`}>
+              {exceptions.map(ex => {
+                const ruleIds: string[] = (() => { try { return JSON.parse(ex.rule_ids || '[]') } catch { return [] } })()
+                const approvers: any[] = (() => { try { return JSON.parse(ex.approvers || '[]') } catch { return [] } })()
+                const required: string[] = (ex.required_approver_roles || '').split(',').map((s: string) => s.trim()).filter(Boolean)
+                const voted = approvers.filter(a => a.vote === 'true').map((a: any) => a.role)
+                const pendingRoles = required.filter(r => !voted.includes(r))
+                return (
+                <div key={ex.id} className={`card flex items-center gap-3 py-3 px-4 ${ex.status === 'pending' ? 'border-l-4 border-l-yellow-400' : ''} cursor-pointer hover:shadow-sm transition-shadow`}
+                  onClick={() => setExceptionDetail(ex)}>
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium">{ex.scopeName || ex.scope_id || ex.scope}</span>
-                      <span className={ex.status === 'approved' ? 'badge-green' : ex.status === 'denied' ? 'badge-red' : 'badge-yellow'}>{ex.status}</span>
+                      <span className={ex.status === 'approved' ? 'badge-green' : ex.status === 'denied' ? 'badge-red' : ex.status === 'expired' ? 'badge-gray' : ex.status === 'revoked' ? 'badge-red' : 'badge-yellow'}>{ex.status}</span>
+                      {ex.severity_label === 'high' && <span className="badge-red">높은 위험</span>}
                     </div>
                     <p className="text-xs text-gray-500 mt-0.5">{ex.reason}</p>
-                    <div className="text-[10px] text-gray-400">규칙: {JSON.parse(ex.rule_ids || '[]').length}개 · 신청: {formatRelative(ex.created_at)}</div>
+                    <div className="text-[10px] text-gray-400">
+                      규칙: {ruleIds.length}개 · 신청자: {ex.requested_by || '-'} · 신청: {formatRelative(ex.created_at)}
+                      {ex.expires_at && ex.expires_at !== '0001-01-01T00:00:00Z' && ` · 만료: ${formatShortTime(ex.expires_at)}`}
+                    </div>
+                    {ex.status === 'pending' && required.length > 0 && (
+                      <div className="text-[10px] mt-0.5">
+                        {voted.length > 0 && <span className="text-green-600">승인 투표: {voted.join(', ')}</span>}
+                        {pendingRoles.length > 0 && <span className="text-amber-600">{voted.length > 0 ? ' · ' : ''}미투표 역할: {pendingRoles.join(', ')}</span>}
+                      </div>
+                    )}
                   </div>
                   {ex.status === 'pending' && (
-                    <div className="flex gap-2 shrink-0 flex-wrap">
-                      <button onClick={() => decideException(ex, true)} className="btn-sm btn-primary">승인</button>
-                      <button onClick={() => decideException(ex, false)} className="btn-sm btn-secondary">거부</button>
+                    <div className="flex gap-2 shrink-0 flex-wrap" onClick={e => e.stopPropagation()}>
+                      <button onClick={() => openExceptionDecision(ex, true)} className="btn-sm btn-primary">승인 투표</button>
+                      <button onClick={() => openExceptionDecision(ex, false)} className="btn-sm btn-secondary">거부</button>
+                    </div>
+                  )}
+                  {ex.status === 'approved' && (
+                    <div className="shrink-0" onClick={e => e.stopPropagation()}>
+                      <button onClick={revokeException} className="btn-sm btn-secondary">회수</button>
                     </div>
                   )}
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>

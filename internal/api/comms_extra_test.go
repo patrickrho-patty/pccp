@@ -24,6 +24,7 @@ func commsTestServer(t *testing.T) (*Server, *gorm.DB) {
 		&models.ProjectMember{},
 		&models.ServiceSigningKey{}, &models.SecurityRule{}, &models.PolicyEpoch{}, &models.CapabilityLease{},
 		&models.Harness{}, &models.Session{}, &models.SandboxImage{}, &models.SandboxRecord{},
+		&models.OrgSetting{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
 			t.Fatal(err)
@@ -99,8 +100,12 @@ func TestCommsFileTransferUploadScanDownload(t *testing.T) {
 	srv, db := commsTestServer(t)
 	org := models.Organization{Name: "o", Slug: "oft", Status: "active"}
 	db.Create(&org)
+	// The download handler authorizes via getActorID (claims subject or
+	// email) — the sender/recipient IDs must match that identity for
+	// the download to be allowed. doMultipart attaches Email
+	// "operator@corp.kr", so the recipient here is that same operator.
 	rec := doJSON(t, srv, "POST", "/api/communications/file-transfers",
-		`{"sender_id":"u1","recipient_id":"u2","file_name":"notes.txt","file_size":10,"file_type":"text","classification":"internal","expires_at":"2027-01-01T00:00:00Z"}`, org.ID)
+		`{"sender_id":"u1","recipient_id":"operator@corp.kr","file_name":"notes.txt","file_size":10,"file_type":"text","classification":"internal","expires_at":"2027-01-01T00:00:00Z"}`, org.ID)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("transfer create failed: %d %s", rec.Code, rec.Body.String())
 	}
@@ -117,14 +122,18 @@ func TestCommsFileTransferUploadScanDownload(t *testing.T) {
 	if up["scan_status"] != "clean" {
 		t.Fatalf("clean file should pass scan: %v", up)
 	}
-	rec = doJSON(t, srv, "GET", "/api/communications/file-transfers/"+tr.ID+"/download", "", org.ID)
+	// Download as the recipient (operator@corp.kr) — the handler
+	// authorizes via getActorID, so the download must carry the same
+	// identity as the transfer's recipient.
+	rec = doSessionJSONWithPermissions(t, srv, http.MethodGet, "/api/communications/file-transfers/"+tr.ID+"/download",
+		"", org.ID, "admin")
 	if rec.Code != http.StatusOK || rec.Body.String() != "hello world" {
 		t.Fatalf("download failed: %d %q", rec.Code, rec.Body.String())
 	}
 
 	// Blocked content: a secret-looking string must fail the scan.
 	rec = doJSON(t, srv, "POST", "/api/communications/file-transfers",
-		`{"sender_id":"u1","recipient_id":"u2","file_name":"s.txt","file_size":10,"file_type":"text","classification":"internal"}`, org.ID)
+		`{"sender_id":"u1","recipient_id":"operator@corp.kr","file_name":"s.txt","file_size":10,"file_type":"text","classification":"internal","expires_at":"2027-01-01T00:00:00Z"}`, org.ID)
 	json.Unmarshal(rec.Body.Bytes(), &tr)
 	rec = doMultipart(t, srv, "POST", "/api/communications/file-transfers/"+tr.ID+"/content",
 		"file", "s.txt", "AKIAIOSFODNN7EXAMPLE aws_secret=deadbeef", org.ID)
@@ -132,7 +141,8 @@ func TestCommsFileTransferUploadScanDownload(t *testing.T) {
 	if up["scan_status"] != "blocked" {
 		t.Fatalf("secret content should be blocked: %v", up)
 	}
-	rec = doJSON(t, srv, "GET", "/api/communications/file-transfers/"+tr.ID+"/download", "", org.ID)
+	rec = doSessionJSONWithPermissions(t, srv, http.MethodGet, "/api/communications/file-transfers/"+tr.ID+"/download",
+		"", org.ID, "admin")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("blocked file must not download: %d", rec.Code)
 	}
