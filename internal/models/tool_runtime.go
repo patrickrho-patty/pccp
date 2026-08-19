@@ -141,6 +141,12 @@ func AllModels() []interface{} {
 		&PublicStatusSnapshot{},
 		&PublicStatusSubscriber{},
 		&PublicStatusNotification{},
+		// Model distribution campaigns (PAT-1444)
+		&ModelPackageEntitlement{},
+		&ModelDistributionCampaign{},
+		&ModelCampaignTarget{},
+		&ModelArtifactLease{},
+		&ModelCampaignHealthEvidence{},
 		// Harness release campaigns (PAT-1449)
 		&HarnessRelease{},
 		&HarnessUpdateCampaign{},

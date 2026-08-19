@@ -549,6 +549,25 @@ func (s *Server) setupRouter() {
 			r.Get("/status", s.handleFleetStatus)
 		})
 
+		// Model distribution campaigns (PAT-1444)
+		r.Route("/models/distribution", func(r chi.Router) {
+			r.Post("/entitlements", s.handleMDEntitle)
+			r.Post("/entitlements/{id}/revoke", s.handleMDEntitleRevoke)
+			r.Get("/entitled", s.handleMDEntitledPackages)
+			r.Post("/campaigns", s.handleMDCampaignCreate)
+			r.Get("/campaigns", s.handleMDCampaignsList)
+			r.Post("/campaigns/preview", s.handleMDCampaignPreview)
+			r.Post("/campaigns/{id}/mutate", s.handleMDCampaignMutate)
+			r.Post("/campaigns/{id}/rollback", s.handleMDCampaignRollback)
+			r.Post("/campaigns/{id}/promote-gate", s.handleMDPromoteGate)
+			r.Post("/campaigns/{id}/approve", s.handleMDApprove)
+			r.Post("/agent/report", s.handleMDAgentReport)
+			r.Post("/agent/lease", s.handleMDRequestLease)
+			r.Post("/reconcile-sweep", s.handleMDReconcileSweep)
+			r.Post("/recall", s.handleMDRecall)
+			r.Get("/transfer/{token}", s.handleMDTransfer)
+		})
+
 		// Harness release campaigns (PAT-1449)
 		r.Route("/release", func(r chi.Router) {
 			r.Get("/catalog", s.handleHVReleasesList)

@@ -39,6 +39,7 @@ import ServiceCommandCenter from './pages/ServiceCommandCenter'
 import StatusCenter from './pages/StatusCenter'
 import NotificationRouting from './pages/NotificationRouting'
 import ReleaseCampaigns from './pages/ReleaseCampaigns'
+import ModelCampaigns from './pages/ModelCampaigns'
 import AccountPortal from './pages/AccountPortal'
 import LiveView from './pages/LiveView'
 import CodeExplorer from './pages/CodeExplorer'
@@ -127,6 +128,7 @@ function AppContent() {
           <Route path="/findings/:id" element={<FindingDetail />} />
           <Route path="/fleet" element={<Fleet />} />
           <Route path="/releases" element={<ReleaseCampaigns />} />
+          <Route path="/model-campaigns" element={<ModelCampaigns />} />
           <Route path="/explorer" element={<CodeExplorer />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/policy" element={<Policy />} />

@@ -368,6 +368,23 @@ export const api = {
   hvCreateException: (exception: any) => request<any>('/api/release/exceptions', { method: 'POST', body: JSON.stringify(exception) }),
   hvRevokeException: (id: number, data: { reason: string }) =>
     request<any>(`/api/release/exceptions/${id}/revoke`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // PAT-1444: model distribution campaigns.
+  mdCampaigns: () => request<any[]>('/api/models/distribution/campaigns'),
+  mdCreateCampaign: (campaign: any) => request<any>('/api/models/distribution/campaigns', { method: 'POST', body: JSON.stringify(campaign) }),
+  mdPreview: (data: any) => request<any>('/api/models/distribution/campaigns/preview', { method: 'POST', body: JSON.stringify(data) }),
+  mdMutate: (id: number, data: { action: string; reason: string; expected_epoch: number }) =>
+    request<any>(`/api/models/distribution/campaigns/${id}/mutate`, { method: 'POST', body: JSON.stringify(data) }),
+  mdRollback: (id: number, data: { reason: string; rollback_to: string; expected_epoch: number }) =>
+    request<any>(`/api/models/distribution/campaigns/${id}/rollback`, { method: 'POST', body: JSON.stringify(data) }),
+  mdPromoteGate: (id: number) => request<any>(`/api/models/distribution/campaigns/${id}/promote-gate`, { method: 'POST', body: '{}' }),
+  mdApprove: (id: number, data: { environment: string; approve: boolean }) =>
+    request<any>(`/api/models/distribution/campaigns/${id}/approve`, { method: 'POST', body: JSON.stringify(data) }),
+  mdEntitled: () => request<any[]>('/api/models/distribution/entitled'),
+  mdEntitle: (data: any) => request<any>('/api/models/distribution/entitlements', { method: 'POST', body: JSON.stringify(data) }),
+  mdReconcile: () => request<any>('/api/models/distribution/reconcile-sweep', { method: 'POST', body: '{}' }),
+  mdRecall: (data: { package_id: string; reason: string }) =>
+    request<any>('/api/models/distribution/recall', { method: 'POST', body: JSON.stringify(data) }),
   getPolicyException: (id: string) => request<any>(`/api/policy/exceptions/${id}`),
   createPolicyException: (data: any) =>
     request<any>('/api/policy/exceptions', { method: 'POST', body: JSON.stringify(data) }),
