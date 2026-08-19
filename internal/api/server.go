@@ -549,6 +549,26 @@ func (s *Server) setupRouter() {
 			r.Get("/status", s.handleFleetStatus)
 		})
 
+		// Incident notifications (PAT-1454)
+		r.Route("/incidentnotify", func(r chi.Router) {
+			r.Get("/policy", s.handleINPolicyGet)
+			r.Put("/policy", s.handleINPolicyPut)
+			r.Get("/groups", s.handleINGroupsList)
+			r.Post("/groups", s.handleINGroupUpsert)
+			r.Get("/channels", s.handleINChannelsList)
+			r.Post("/channels", s.handleINChannelUpsert)
+			r.Post("/channels/{id}/verify", s.handleINChannelVerify)
+			r.Post("/sources", s.handleINSourceIngest)
+			r.Post("/dispatch", s.handleINDispatch)
+			r.Post("/escalation-sweep", s.handleINEscalationSweep)
+			r.Post("/ack", s.handleINAck)
+			r.Get("/incidents", s.handleINIncidentsList)
+			r.Post("/incidents/{id}/resolve", s.handleINIncidentResolve)
+			r.Get("/jobs", s.handleINJobsList)
+			r.Post("/test", s.handleINTest)
+			r.Get("/health", s.handleINHealth)
+		})
+
 		// Public status page operator surface (PAT-1439)
 		r.Route("/publicstatus", func(r chi.Router) {
 			r.Get("/components", s.handlePSComponentsList)

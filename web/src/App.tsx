@@ -37,6 +37,7 @@ import ModelInfra from './pages/ModelInfra'
 import SubscriberManagement from './pages/SubscriberManagement'
 import ServiceCommandCenter from './pages/ServiceCommandCenter'
 import StatusCenter from './pages/StatusCenter'
+import NotificationRouting from './pages/NotificationRouting'
 import AccountPortal from './pages/AccountPortal'
 import LiveView from './pages/LiveView'
 import CodeExplorer from './pages/CodeExplorer'
@@ -127,6 +128,7 @@ function AppContent() {
           <Route path="/explorer" element={<CodeExplorer />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/policy" element={<Policy />} />
+          <Route path="/notifications" element={<NotificationRouting />} />
           <Route path="/security" element={<Security />} />
           <Route path="/compliance" element={<Compliance />} />
           <Route path="/tools" element={<Tools />} />

@@ -333,6 +333,25 @@ export const api = {
   psRebuildRollups: (componentId: string) =>
     request<any>(`/api/publicstatus/components/${componentId}/rollups/rebuild`, { method: 'POST', body: '{}' }),
   psPublishSnapshot: () => request<any>('/api/publicstatus/snapshot/publish', { method: 'POST', body: '{}' }),
+
+  // PAT-1454: governed incident notifications.
+  inPolicy: () => request<any>('/api/incidentnotify/policy'),
+  inSavePolicy: (policy: any) => request<any>('/api/incidentnotify/policy', { method: 'PUT', body: JSON.stringify(policy) }),
+  inGroups: () => request<any[]>('/api/incidentnotify/groups'),
+  inSaveGroup: (group: any) => request<any>('/api/incidentnotify/groups', { method: 'POST', body: JSON.stringify(group) }),
+  inChannels: () => request<any[]>('/api/incidentnotify/channels'),
+  inSaveChannel: (channel: any) => request<any>('/api/incidentnotify/channels', { method: 'POST', body: JSON.stringify(channel) }),
+  inVerifyChannel: (id: number) => request<any>(`/api/incidentnotify/channels/${id}/verify`, { method: 'POST', body: '{}' }),
+  inIngestSource: (source: any) => request<any>('/api/incidentnotify/sources', { method: 'POST', body: JSON.stringify(source) }),
+  inDispatch: () => request<any>('/api/incidentnotify/dispatch', { method: 'POST', body: '{}' }),
+  inEscalationSweep: () => request<any>('/api/incidentnotify/escalation-sweep', { method: 'POST', body: '{}' }),
+  inAck: (incidentId: number, token?: string) =>
+    request<any>('/api/incidentnotify/ack', { method: 'POST', body: JSON.stringify({ incident_id: incidentId, token }) }),
+  inIncidents: () => request<any[]>('/api/incidentnotify/incidents'),
+  inResolve: (id: number) => request<any>(`/api/incidentnotify/incidents/${id}/resolve`, { method: 'POST', body: '{}' }),
+  inJobs: () => request<any[]>('/api/incidentnotify/jobs'),
+  inSendTest: (test: any) => request<any>('/api/incidentnotify/test', { method: 'POST', body: JSON.stringify(test) }),
+  inHealth: () => request<any>('/api/incidentnotify/health'),
   getPolicyException: (id: string) => request<any>(`/api/policy/exceptions/${id}`),
   createPolicyException: (data: any) =>
     request<any>('/api/policy/exceptions', { method: 'POST', body: JSON.stringify(data) }),

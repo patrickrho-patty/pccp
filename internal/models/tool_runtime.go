@@ -141,6 +141,16 @@ func AllModels() []interface{} {
 		&PublicStatusSnapshot{},
 		&PublicStatusSubscriber{},
 		&PublicStatusNotification{},
+		// Incident notifications (PAT-1454)
+		&IncidentNotifyPolicy{},
+		&IncidentNotifyRecipientGroup{},
+		&IncidentNotifyChannel{},
+		&IncidentNotifyIncident{},
+		&IncidentNotifyJob{},
+		&IncidentNotifyReceipt{},
+		&IncidentNotifyAcknowledgement{},
+		&IncidentNotifyAudit{},
+		&IncidentNotifyHealthSum{},
 		// Provenance
 		&ActionEnvelope{},
 		&ChangeSet{},
