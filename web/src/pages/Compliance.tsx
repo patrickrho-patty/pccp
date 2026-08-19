@@ -389,8 +389,8 @@ export default function Compliance() {
           <div className="space-y-2 text-xs">
             <div><span className="text-gray-500">제목:</span> {evidenceDetail.title}</div>
             <div><span className="text-gray-500">통제:</span> {evidenceDetail.control_id}</div>
-            <div><span className="text-gray-500">출처:</span> {evidenceDetail.source} · {evidenceDetail.reference || '참조 없음'}</div>
-            <div><span className="text-gray-500">수집일:</span> {(evidenceDetail.collected_at || '').slice(0, 16)}</div>
+            <div><span className="text-gray-500">출처:</span> {evidenceSourceKo(evidenceDetail.source)} <span className="text-gray-400">· {evidenceDetail.reference || '참조 없음'}</span></div>
+            <div><span className="text-gray-500">수집일:</span> {(evidenceDetail.collected_at || '').slice(0, 16)} <span className="text-gray-400">({evidenceFreshnessLabel(evidenceDetail.collected_at)})</span></div>
             <div><span className="text-gray-500">설명:</span> {evidenceDetail.description || '설명 없음'}</div>
             <div className="text-[10px] text-gray-400">증거 ID: {evidenceDetail.id} · 증거는 감사 로그와 연결되어 추적됩니다.</div>
           </div>
@@ -399,23 +399,56 @@ export default function Compliance() {
 
       {/* Remediation detail drawer */}
       <Modal open={!!taskDetail} title={`개선 과제 상세 — ${taskDetail?.control_id || ''}`} onClose={() => setTaskDetail(null)} footer={<ModalFooter onCancel={() => setTaskDetail(null)} onConfirm={() => setTaskDetail(null)} confirmLabel="닫기" />}>
-        {taskDetail && (
-          <div className="space-y-2 text-xs">
-            <div><span className="text-gray-500">통제:</span> {taskDetail.control_id}</div>
-            <div><span className="text-gray-500">담당자:</span> {taskDetail.owner || '미정'}</div>
-            <div><span className="text-gray-500">상태:</span> <span className={`px-1.5 py-0.5 rounded border ${taskDetail.status === 'done' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-yellow-50 text-yellow-700 border-yellow-200'}`}>{taskDetail.status}</span></div>
-            <div><span className="text-gray-500">기한:</span> {taskDetail.due_date || '-'} · SLA {taskDetail.sla || '-'}</div>
-            <div><span className="text-gray-500">비고:</span> {taskDetail.notes || '비고 없음'}</div>
-            <div className="flex gap-2 mt-2">
-              <select className="input text-xs" value={taskDetail.status} onChange={e => { updateTask(taskDetail.id, e.target.value); setTaskDetail({ ...taskDetail, status: e.target.value }) }}>
-                <option value="open">open</option>
-                <option value="in_progress">in_progress</option>
-                <option value="done">done</option>
-              </select>
+        {taskDetail && (() => {
+          const st = taskState(taskDetail.status)
+          return (
+            <div className="space-y-2 text-xs">
+              <div><span className="text-gray-500">통제:</span> {taskDetail.control_id}</div>
+              <div><span className="text-gray-500">담당자:</span> {taskDetail.owner || '미정'}</div>
+              <div><span className="text-gray-500">현재 상태:</span> <span className={`px-1.5 py-0.5 rounded border ${st.color}`}>{st.icon} {st.labelKo}</span> <span className="text-gray-400">· 다음 단계: {st.nextActionKo}</span></div>
+              <div><span className="text-gray-500">기한:</span> {taskDetail.due_date || '-'} · SLA {taskDetail.sla || '-'} {dueAgeLabel(taskDetail.due_date) ? <span className="text-red-500">({dueAgeLabel(taskDetail.due_date)})</span> : ''}</div>
+              <div><span className="text-gray-500">비고:</span> {taskDetail.notes || '비고 없음'}</div>
+              <div className="flex items-center gap-2 mt-2">
+                <span className="text-gray-400 text-[10px]">상태 변경:</span>
+                <select className="input text-xs" value={taskDetail.status} onChange={e => { updateTask(taskDetail.id, e.target.value); setTaskDetail({ ...taskDetail, status: e.target.value }) }}>
+                  <option value="open">미착수</option>
+                  <option value="in_progress">진행 중</option>
+                  <option value="done">완료</option>
+                </select>
+              </div>
+              <div className="text-[10px] text-gray-400">과제 ID: {taskDetail.id} · 대시보드 카운트와 동일한 필터 계약을 사용합니다.</div>
             </div>
-            <div className="text-[10px] text-gray-400">과제 ID: {taskDetail.id} · 대시보드 카운트와 동일한 필터 계약을 사용합니다.</div>
-          </div>
-        )}
+          )
+        })()}
+      </Modal>
+      {/* Assessment snapshot (PAT-1504): immutable result snapshot */}
+      <Modal open={!!snapshotOpen} title={`평가 스냅샷 — ${snapshotOpen?.scope || ''}/${snapshotOpen?.level || ''} (×${snapshotOpen?.count || 1})`} onClose={() => setSnapshotOpen(null)} size="lg"
+        footer={<ModalFooter onCancel={() => setSnapshotOpen(null)} onConfirm={() => setSnapshotOpen(null)} confirmLabel="닫기" />}>
+        {snapshotOpen && (() => {
+          const controls = Object.entries(snapshotOpen.results || {})
+          return (
+            <div className="space-y-2 text-xs">
+              <div className="flex justify-between text-[11px] text-gray-500">
+                <span>평가 시각: {snapshotOpen.assessedAt ? snapshotOpen.assessedAt.slice(0, 16).replace('T', ' ') : '—'}</span>
+                <span>종합 {snapshotOpen.overallStatus} · 갭 {snapshotOpen.openGaps}</span>
+              </div>
+              {controls.length === 0 && <p className="text-[11px] text-gray-400">스냅샷에 통제 결과가 없습니다</p>}
+              {controls.map(([cid, rows]) => {
+                const first = rows[0] || {}
+                return (
+                  <div key={cid} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
+                    <div className="min-w-0">
+                      <span className="text-gray-700 font-medium">{cid}</span>
+                      <span className="text-gray-400 ml-1 block truncate">{first.gap_description_ko || first.gap_description || '상세 설명 없음'}</span>
+                    </div>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full border ${STATUS_KO[first.status] ? STATUS_BADGE[first.status] || '' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>{STATUS_KO[first.status] || first.status}</span>
+                  </div>
+                )
+              })}
+              <p className="text-[10px] text-gray-400">이 스냅샷은 평가 시점의 불변 결과입니다. (ResultsJSON)</p>
+            </div>
+          )
+        })()}
       </Modal>
     </div>
   )
