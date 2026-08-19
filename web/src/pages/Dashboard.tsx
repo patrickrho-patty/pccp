@@ -201,7 +201,7 @@ export default function Dashboard() {
                   <span className="text-gray-500">미해결 발견</span>
                   <span className="block text-[10px] text-gray-400">모든 심각도 · 해결 제외</span>
                 </div>
-                <Link to="/security?tab=findings&status=unresolved" className={`font-bold hover:underline ${(data?.unresolved_findings ?? findingCount) > 0 ? 'text-red-600' : 'text-green-600'}`}>{data?.unresolved_findings ?? findingCount}</Link>
+                <Link to="/security?tab=findings&status=unresolved" className={`font-bold hover:underline ${(data?.unresolved_findings ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>{data?.unresolved_findings ?? '—'}</Link>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">활성 하네스</span>
@@ -221,7 +221,7 @@ export default function Dashboard() {
             <div className="space-y-2">
               <Link to="/security?tab=findings&severity=critical,high&status=unresolved" className="flex justify-between items-center p-2 bg-red-50 rounded hover:bg-red-100 border border-red-100">
                 <span className="text-xs font-medium text-red-700">미해결 심각·높음 보안 발견</span>
-                <span className="text-sm font-bold text-red-600">{data?.open_critical_findings ?? findingCount}건 →</span>
+                <span className="text-sm font-bold text-red-600">{data?.open_critical_findings ?? '—'}건 →</span>
               </Link>
               <Link to="/compliance?tab=remediation&status=unresolved" className="flex justify-between items-center p-2 bg-amber-50 rounded hover:bg-amber-100 border border-amber-100">
                 <span className="text-xs font-medium text-amber-700">진행 중 컴플라이언스 개선 과제</span>
@@ -247,7 +247,7 @@ export default function Dashboard() {
             <div className="text-xs text-gray-500 space-y-1">
               <div className="flex justify-between"><span>활성 하네스</span><span className="font-medium">{brief?.active_harnesses ?? data?.harnesses ?? 0}</span></div>
               <div className="flex justify-between"><span>활성 세션</span><span className="font-medium">{data?.active_session_count ?? 0}</span></div>
-              <div className="flex justify-between"><span>미해결 보안 발견</span><span className="font-medium text-red-600">{findingCount}</span></div>
+              <div className="flex justify-between"><span>미해결 보안 발견</span><span className="font-medium text-red-600">{data?.unresolved_findings ?? '—'}</span></div>
               <div className="text-[10px] text-gray-400 mt-1">지속 탐색은 좌측 내비게이션을 사용하세요 — 대시보드는 조치 큐에 집중합니다.</div>
             </div>
           </div>

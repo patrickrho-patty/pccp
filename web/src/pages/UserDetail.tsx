@@ -640,7 +640,7 @@ export default function UserDetail() {
                   if (!reason.trim()) { showToast('사유를 입력해주세요', 'error'); return }
                   try {
                     setLifecycleBusy(true)
-                    await api.putContractor(id!, { sponsor_user_id: '', company: '', contract_start: '', contract_end: '', allowed_repo_ids: [], allowed_model_classes: [], network_zone: '' } as any)
+                    await api.putContractor(id!, { sponsor_user_id: '', company: '', contract_start: '', contract_end: '', allowed_repo_ids: [], allowed_model_classes: [], network_zone: '', transition_reason: reason.trim() } as any)
                     // Reload to reflect non-contractor state
                     await load()
                     showToast('계약직 해제 완료', 'success')

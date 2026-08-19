@@ -487,12 +487,24 @@ func commsStorageDir() string {
 // fallback is used (NOT for production — use KMS or a sealed secret).
 var commsEncryptionKey = sync.OnceValues(func() ([]byte, error) {
 	if k := os.Getenv("PCCP_COMMS_ENCRYPTION_KEY"); k != "" {
-		if raw, err := base64.StdEncoding.DecodeString(k); err == nil && len(raw) == 32 {
+		raw, err := base64.StdEncoding.DecodeString(k)
+		if err != nil {
+			log.Printf("WARN: PCCP_COMMS_ENCRYPTION_KEY is set but not valid base64: %v — using dev fallback", err)
+			if os.Getenv("PCCP_DEV_MODE") != "true" {
+				return nil, fmt.Errorf("invalid PCCP_COMMS_ENCRYPTION_KEY: %w", err)
+			}
+		} else if len(raw) != 32 {
+			log.Printf("WARN: PCCP_COMMS_ENCRYPTION_KEY must be 32 bytes after base64, got %d — using dev fallback", len(raw))
+			if os.Getenv("PCCP_DEV_MODE") != "true" {
+				return nil, fmt.Errorf("PCCP_COMMS_ENCRYPTION_KEY must be 32 bytes, got %d", len(raw))
+			}
+		} else {
 			return raw, nil
 		}
 	}
-	// Development fallback — stable per-process so uploads + downloads
-	// round-trip during local development. Production must set the env.
+	if os.Getenv("PCCP_DEV_MODE") != "true" {
+		log.Printf("WARN: PCCP_COMMS_ENCRYPTION_KEY not set — using deterministic dev fallback, NOT for production")
+	}
 	return []byte("0123456789abcdef0123456789abcdef"), nil // 32-byte dev fallback
 })
 
@@ -501,7 +513,10 @@ var commsEncryptionKey = sync.OnceValues(func() ([]byte, error) {
 // crypto/rand.Read call so re-encrypting the same plaintext yields
 // different ciphertexts (verified by tests).
 func commsEncrypt(plaintext []byte) ([]byte, error) {
-	key, _ := commsEncryptionKey()
+	key, err := commsEncryptionKey()
+	if err != nil {
+		return nil, err
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -519,7 +534,10 @@ func commsEncrypt(plaintext []byte) ([]byte, error) {
 }
 
 func commsDecrypt(ciphertext []byte) ([]byte, error) {
-	key, _ := commsEncryptionKey()
+	key, err := commsEncryptionKey()
+	if err != nil {
+		return nil, err
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -544,6 +562,12 @@ func (s *Server) handleFileTransferUpload(w http.ResponseWriter, r *http.Request
 	var transfer models.FileTransfer
 	if err := s.db.First(&transfer, "id = ? AND organization_id = ?", transferID, orgID).Error; err != nil {
 		writeError(w, http.StatusNotFound, "transfer not found")
+		return
+	}
+	actorID := getActorID(r)
+	role := getRole(r)
+	if transfer.SenderID != "" && transfer.SenderID != actorID && transfer.RecipientID != actorID && role != "super_admin" && role != "admin" {
+		writeError(w, http.StatusForbidden, "파일 전송에 대한 권한이 없습니다")
 		return
 	}
 	file, header, err := r.FormFile("file")
@@ -613,6 +637,12 @@ func (s *Server) handleFileTransferDownload(w http.ResponseWriter, r *http.Reque
 	var transfer models.FileTransfer
 	if err := s.db.First(&transfer, "id = ? AND organization_id = ?", transferID, orgID).Error; err != nil {
 		writeError(w, http.StatusNotFound, "transfer not found")
+		return
+	}
+	actorID := getActorID(r)
+	role := getRole(r)
+	if transfer.RecipientID != "" && transfer.RecipientID != actorID && transfer.SenderID != actorID && role != "super_admin" && role != "admin" {
+		writeError(w, http.StatusForbidden, "파일 다운로드 권한이 없습니다")
 		return
 	}
 	if transfer.ScanStatus != "clean" {
