@@ -47,13 +47,11 @@ func resolveBroadcastAudience(db *gorm.DB, orgID, targetType, targetID string) (
 	case "all", "org":
 		db.Where("organization_id = ?", orgID).Find(&users)
 	case "project":
-		var memberIDs []string
-		db.Model(&models.ProjectMember{}).
-			Where("organization_id = ? AND project_id = ?", orgID, targetID).
-			Pluck("user_id", &memberIDs)
-		if len(memberIDs) > 0 {
-			db.Where("organization_id = ? AND id IN ?", orgID, memberIDs).Find(&users)
-		}
+		// Single round trip: subquery the roster instead of Pluck + IN.
+		roster := db.Model(&models.ProjectMember{}).
+			Select("user_id").
+			Where("organization_id = ? AND project_id = ?", orgID, targetID)
+		db.Where("organization_id = ? AND id IN (?)", orgID, roster).Find(&users)
 	case "user":
 		if targetID != "" {
 			db.Where("organization_id = ? AND id = ?", orgID, targetID).Find(&users)
@@ -174,6 +172,17 @@ func (s *Server) handleSendBroadcastGoverned(w http.ResponseWriter, r *http.Requ
 	}
 	bc.OrganizationID = orgID
 	if err := s.db.Create(&bc).Error; err != nil {
+		// The partial unique index on client_token serializes concurrent
+		// same-token retries: the loser of the race returns the original
+		// broadcast instead of erroring or duplicating it.
+		if req.ClientToken != "" {
+			var existing models.Broadcast
+			if s.db.Where("organization_id = ? AND client_token = ?", orgID, req.ClientToken).
+				First(&existing).Error == nil {
+				writeJSON(w, http.StatusOK, map[string]interface{}{"broadcast": existing, "duplicate": true})
+				return
+			}
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

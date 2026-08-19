@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 
 import {
   LARGE_AUDIENCE_THRESHOLD,
+  audienceSizeOf,
   broadcastSendBlockers,
+  exclusionReasonKo,
   mergeReachability,
   renderBroadcastText,
   resolveAudiencePreview,
@@ -64,6 +66,20 @@ test('locale fallback renders the available side', () => {
   assert.deepEqual(renderBroadcastText(bc, 'en-US'), { title: 'Maintenance', body: 'Restart at 9' })
   const koOnly = { title: '', title_ko: '점검', body: '', body_ko: '본문' }
   assert.deepEqual(renderBroadcastText(koOnly, 'en-US'), { title: '점검', body: '본문' })
+})
+
+test('audienceSizeOf reads the frozen snapshot; null when absent or malformed', () => {
+  assert.equal(audienceSizeOf({ audience: '{"eligible_ids":["u1","u2"],"excluded":[],"resolved_at":"t"}' }), 2)
+  assert.equal(audienceSizeOf({ audience: '{"eligible_ids":[]}' }), 0)
+  assert.equal(audienceSizeOf({}), null)
+  assert.equal(audienceSizeOf({ audience: '' }), null)
+  assert.equal(audienceSizeOf({ audience: 'not json' }), null)
+  assert.equal(audienceSizeOf({ audience: '{"foo":1}' }), null)
+})
+
+test('exclusionReasonKo maps suspended/offboarded to Korean labels', () => {
+  assert.equal(exclusionReasonKo('suspended'), '정지')
+  assert.equal(exclusionReasonKo('offboarded'), '오프보딩')
 })
 
 const GATE_BASE = {

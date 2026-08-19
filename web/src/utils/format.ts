@@ -14,6 +14,20 @@ export function formatRelative(ts?: string, now: number = Date.now()): string {
   return d.toLocaleDateString('ko-KR')
 }
 
+// formatShortTime renders an ISO instant as a short, timezone-labeled local
+// timestamp. Single canonical short formatter — do not hand-roll
+// `slice(0,16).replace('T',' ')` (it silently strips timezone info).
+export function formatShortTime(iso?: string | null, timeZone: string = 'Asia/Seoul'): string {
+	if (!iso) return '-'
+	const d = new Date(iso)
+	if (isNaN(d.getTime())) return '-'
+	try {
+		return `${d.toLocaleString('ko-KR', { timeZone, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })} (${timeZone})`
+	} catch {
+		return `${d.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })} (Asia/Seoul)`
+	}
+}
+
 // formatTenantTime renders an ISO instant with the tenant's explicit IANA
 // timezone label (PAT-1496: never show an unlabeled local timestamp).
 export function formatTenantTime(iso?: string, timeZone: string = 'Asia/Seoul'): string {

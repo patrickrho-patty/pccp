@@ -3,6 +3,8 @@
 // Rollout metadata rides on the feature's existing `config` JSON text
 // field (internal/models/enterprise.go), so no backend change is needed.
 
+import { isHarnessOnlineNow } from './harnessHealth.ts'
+
 export interface CatalogEntry {
   key: string
   purposeKo: string
@@ -212,13 +214,9 @@ export function versionAtLeast(version: string | undefined, min: string): boolea
   return true
 }
 
-const OFFLINE_AFTER_MS = 10 * 60 * 1000
-
+// Heartbeat staleness is owned by harnessHealth.ts — do not re-implement.
 export function isHarnessOnline(h: HarnessInfo, now: number): boolean {
-  if (h.status !== 'active') return false
-  if (!h.last_heartbeat) return true // no heartbeat recorded yet — trust status
-  const t = Date.parse(h.last_heartbeat)
-  return Number.isNaN(t) ? true : now - t <= OFFLINE_AFTER_MS
+  return isHarnessOnlineNow(h, now)
 }
 
 // Per-harness applicability for a scope: exact harness, online, and
@@ -328,8 +326,12 @@ export function buildPreview(
   return lines
 }
 
-function headEpoch(g: Governance): number {
+export function headEpoch(g: Governance): number {
   return g.rollouts.length === 0 ? 0 : Math.max(...g.rollouts.map(r => r.epoch))
+}
+
+export function headEpochOf(config: string | undefined | null): number {
+  return headEpoch(parseGovernance(config))
 }
 
 export interface ApplyResult {

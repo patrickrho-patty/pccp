@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"gorm.io/driver/sqlite"
@@ -96,6 +97,8 @@ func TestSyncRepositoryRejectsConcurrentSync(t *testing.T) {
 		CloneURL:      makeRepo(t),
 		DefaultBranch: "main",
 		SyncStatus:    "syncing",
+		// A live attempt: the atomic claim must refuse a second sync.
+		LastSyncAttemptAt: time.Now().Format(time.RFC3339),
 	}
 	db.Create(&repo)
 
@@ -107,6 +110,44 @@ func TestSyncRepositoryRejectsConcurrentSync(t *testing.T) {
 	db.First(&got, "id = ?", repo.ID)
 	if got.SyncStatus != "syncing" {
 		t.Fatalf("sync_status mutated to %q", got.SyncStatus)
+	}
+}
+
+func TestSyncRepositoryReclaimsStaleSyncing(t *testing.T) {
+	svc, db := browserTestService(t)
+	cases := map[string]models.Repository{
+		// Crash mid-clone: attempt recorded long ago, never resolved.
+		"old-attempt": {
+			Name:              "r-old",
+			CloneURL:          makeRepo(t),
+			DefaultBranch:     "main",
+			SyncStatus:        "syncing",
+			LastSyncAttemptAt: time.Now().Add(-time.Hour).Format(time.RFC3339),
+		},
+		// Legacy row: syncing with no recorded attempt at all.
+		"no-attempt": {
+			Name:          "r-none",
+			CloneURL:      makeRepo(t),
+			DefaultBranch: "main",
+			SyncStatus:    "syncing",
+		},
+	}
+	for name, repo := range cases {
+		t.Run(name, func(t *testing.T) {
+			db.Create(&repo)
+			head, err := svc.SyncRepository(context.Background(), &repo)
+			if err != nil {
+				t.Fatalf("stale syncing row must be reclaimable: %v", err)
+			}
+			if head == "" {
+				t.Fatal("expected head SHA")
+			}
+			var got models.Repository
+			db.First(&got, "id = ?", repo.ID)
+			if got.SyncStatus != "synced" {
+				t.Fatalf("sync_status = %q", got.SyncStatus)
+			}
+		})
 	}
 }
 

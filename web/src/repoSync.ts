@@ -89,8 +89,11 @@ export function resolveRepoSync(repo: RepoSyncRow | null | undefined, opts?: Res
       phase = 'failed'
       break
     case 'synced': {
+      // Freshness hinges on the sync success timestamp only: an empty
+      // repository has no commits, so last_commit_at is legitimately
+      // empty right after a successful sync and must not read as stale.
       const successAt = parseTime(r.last_sync_at)
-      if (successAt === null || !r.last_commit_at || now - successAt > staleAfterMs) {
+      if (successAt === null || now - successAt > staleAfterMs) {
         phase = 'stale'
       } else {
         phase = 'current'

@@ -15,6 +15,19 @@
 export const HEARTBEAT_STALE_MS = 10 * 60 * 1000 // matches server harnessStaleAfter
 export const ATTESTATION_STALE_MS = 24 * 60 * 60 * 1000 // 24h freshness window
 
+// Shared online predicate — the single source of truth for "is this harness
+// reachable now", used by the fleet surfaces and enterprise feature
+// governance. Aligned with the heartbeat dimension below: a harness is
+// online only when it is active AND a heartbeat was observed within the
+// staleness window. Missing heartbeat = not online.
+export function isHarnessOnlineNow(h: { status?: string; last_heartbeat?: string }, now: number = Date.now()): boolean {
+  if (h.status !== 'active') return false
+  if (!h.last_heartbeat) return false
+  const t = Date.parse(h.last_heartbeat)
+  if (Number.isNaN(t)) return false
+  return now - t <= HEARTBEAT_STALE_MS
+}
+
 export interface HarnessHealthFacts {
   status: string            // pending, enrolled, active, quarantined, revoked
   risk_state: string        // normal, low, elevated, high, critical

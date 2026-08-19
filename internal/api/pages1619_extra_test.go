@@ -166,3 +166,51 @@ func TestCodeExplorerAttribution(t *testing.T) {
 		t.Fatalf("attribution wrong: %v", attrs)
 	}
 }
+
+// PAT-1503 contract: the Audit ledger's faceted filters (category from the
+// canonical taxonomy, actor, integrity/hold) are enforced server-side and
+// encoded in the URL.
+func TestAuditFacetedFiltersPAT1503(t *testing.T) {
+	srv, db := pages1619TestServer(t)
+	org := models.Organization{Name: "o", Slug: "op1503", Status: "active"}
+	db.Create(&org)
+	seed := []models.AuditEvent{
+		{EventType: "cp.compliance.assessed", ActorType: "system", Action: "assessed", ResourceType: "repo", ResourceID: "r1", Result: "success", LegalHold: true},
+		{EventType: "cp.compliance.assessed", ActorType: "system", Action: "assessed", ResourceType: "repo", ResourceID: "r1", Result: "success"},
+		{EventType: "cp.user.created", ActorType: "admin", ActorID: "usr_adm1", Action: "created", ResourceType: "user", ResourceID: "usr_new1", Result: "success"},
+		{EventType: "enterprise.feature.violation", ActorType: "harness", ActorID: "hrn_1", Action: "violated", ResourceType: "session", ResourceID: "ses_1", Result: "denied"},
+	}
+	for _, ev := range seed {
+		ev.OrganizationID = org.ID
+		db.Create(&ev)
+	}
+
+	// Category filter matches all event_type prefixes of the taxonomy.
+	rec := doJSON(t, srv, "GET", "/api/audit?page=1&size=50&category=compliance", "", org.ID)
+	var page map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &page)
+	if page["total"].(float64) != 2 {
+		t.Fatalf("category=compliance total = %v, want 2", page["total"])
+	}
+
+	// Security category covers enterprise.feature.violation too.
+	rec = doJSON(t, srv, "GET", "/api/audit?page=1&size=50&category=security", "", org.ID)
+	json.Unmarshal(rec.Body.Bytes(), &page)
+	if page["total"].(float64) != 1 {
+		t.Fatalf("category=security total = %v, want 1", page["total"])
+	}
+
+	// Actor filter by actor_id / actor_type.
+	rec = doJSON(t, srv, "GET", "/api/audit?page=1&size=50&actor=hrn_1", "", org.ID)
+	json.Unmarshal(rec.Body.Bytes(), &page)
+	if page["total"].(float64) != 1 {
+		t.Fatalf("actor=hrn_1 total = %v, want 1", page["total"])
+	}
+
+	// Integrity/hold filter surfaces only held events.
+	rec = doJSON(t, srv, "GET", "/api/audit?page=1&size=50&integrity=hold", "", org.ID)
+	json.Unmarshal(rec.Body.Bytes(), &page)
+	if page["total"].(float64) != 1 {
+		t.Fatalf("integrity=hold total = %v, want 1", page["total"])
+	}
+}

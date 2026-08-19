@@ -268,12 +268,40 @@ func (s *Server) handleListAuditEventsExtended(w http.ResponseWriter, r *http.Re
 			"%"+v+"%", "%"+v+"%", "%"+v+"%", "%"+v+"%")
 	}
 	for key, col := range map[string]string{
-		"type": "event_type", "actor": "actor_type", "resource": "resource_type",
+		"type": "event_type", "resource": "resource_type",
 		"result": "result", "action": "action",
 	} {
 		if v := r.URL.Query().Get(key); v != "" {
 			q = q.Where(col+" = ?", v)
 		}
+	}
+	// PAT-1503: actor filters by actor_id OR actor_type (shared with the UI).
+	if v := r.URL.Query().Get("actor"); v != "" {
+		q = q.Where("actor_id = ? OR actor_type = ?", v, v)
+	}
+	// PAT-1503: canonical category filter (same taxonomy as the Audit UI).
+	if v := r.URL.Query().Get("category"); v != "" {
+		like := auditCategoryLike(v)
+		if len(like) > 0 {
+			or := make([]string, len(like))
+			args := make([]interface{}, len(like))
+			for i, p := range like {
+				or[i] = "event_type LIKE ?"
+				args[i] = p + ".%"
+			}
+			q = q.Where("("+strings.Join(or, " OR ")+")", args...)
+		} else {
+			q = q.Where("event_type = ?", v) // exact unknown prefix still matches
+		}
+	}
+	// PAT-1503: integrity/hold facet.
+	switch r.URL.Query().Get("integrity") {
+	case "hold":
+		q = q.Where("legal_hold = ?", true)
+	case "degraded":
+		q = q.Where("event_digest = '' OR event_digest IS NULL")
+	case "verified":
+		q = q.Where("event_digest != '' AND event_digest IS NOT NULL")
 	}
 	if v := r.URL.Query().Get("from"); v != "" {
 		q = q.Where("created_at >= ?", v)

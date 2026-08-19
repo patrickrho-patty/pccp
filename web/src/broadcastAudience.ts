@@ -94,6 +94,24 @@ export function renderBroadcastText(
   }
 }
 
+// audienceSizeOf parses a broadcast's frozen audience snapshot and returns
+// the eligible recipient count; null when the snapshot is absent (legacy
+// broadcasts) or malformed. Call once when loading, not per render.
+export function audienceSizeOf(broadcast: { audience?: string }): number | null {
+  if (!broadcast.audience) return null
+  try {
+    const snap = JSON.parse(broadcast.audience)
+    return Array.isArray(snap?.eligible_ids) ? snap.eligible_ids.length : null
+  } catch {
+    return null
+  }
+}
+
+// exclusionReasonKo renders the inline Korean label for an exclusion reason.
+export function exclusionReasonKo(reason: string): string {
+  return reason === 'suspended' ? '정지' : '오프보딩'
+}
+
 // LARGE_AUDIENCE_THRESHOLD: sends above this need explicit confirmation.
 export const LARGE_AUDIENCE_THRESHOLD = 100
 

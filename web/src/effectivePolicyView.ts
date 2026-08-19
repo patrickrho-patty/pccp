@@ -3,6 +3,8 @@
 // response, the rule registry, and the exception marketplace. Pure module so
 // inheritance/conflict fixtures run under node:test.
 
+import { parseList } from './evidenceView.ts'
+
 export interface RuleRef {
   rule_id: string
   domain: string
@@ -64,13 +66,16 @@ export interface RuleTrace {
   exception?: { id: string; scopeName: string; reason?: string }
 }
 
-export const DOMAIN_NAMES: Record<string, string> = {
-  models: '모델 접근',
-  tools: '도구 권한',
-  data: '데이터 보호',
-  scm: 'Git/SCM',
-  network: '네트워크',
-  session: '세션',
+// DOMAIN_INFO is the single source of policy-domain presentation
+// (name/nameEn/icon/desc). Policy.tsx imports it and trace labels derive
+// from it, so the two surfaces cannot drift.
+export const DOMAIN_INFO: Record<string, { name: string; nameEn: string; icon: string; desc: string }> = {
+  models: { name: '모델 접근 정책', nameEn: 'Model Access', icon: '◆', desc: '조직/부서/프로젝트별 허용 모델 제어' },
+  tools: { name: '도구 권한 정책', nameEn: 'Tool Permissions', icon: '🔧', desc: '하네스가 사용할 수 있는 도구와 승인 규칙' },
+  data: { name: '데이터 보호 정책', nameEn: 'Data Protection', icon: '🛡', desc: '민감 정보, 개인정보, 비밀번호 보호' },
+  scm: { name: 'Git/SCM 정책', nameEn: 'Git/SCM Governance', icon: '🌿', desc: '브랜치 보호, 커밋 규칙, PR 승인' },
+  network: { name: '네트워크 정책', nameEn: 'Network Access', icon: '🌐', desc: '외부 통신 대상 제한' },
+  session: { name: '세션 정책', nameEn: 'Session Controls', icon: '⏱', desc: '세션 시간 제한, 동시성, 자동 종료' },
 }
 
 const KEY_LABELS: Record<string, Record<string, string>> = {
@@ -106,8 +111,8 @@ export function keyLabel(domain: string, key: string): string {
   return KEY_LABELS[domain]?.[key] || key
 }
 
-// summarizeValue renders one config value as Korean text — never raw JSON
-// unless the shape is genuinely unknown.
+// summarizeValue renders one config value as Korean text — never raw JSON;
+// unknown object shapes get a typed item-count summary instead.
 export function summarizeValue(domain: string, key: string, value: any): string {
   if (value == null) return '설정 없음'
   if (typeof value === 'boolean') return value ? '적용' : '미적용'
@@ -117,7 +122,7 @@ export function summarizeValue(domain: string, key: string, value: any): string 
     if (value.length === 0) return domain === 'models' || key === 'allowed_models' ? '없음 — 전체 차단' : '없음'
     return value.map(v => (typeof v === 'object' ? JSON.stringify(v) : `${v}`)).join(', ')
   }
-  return JSON.stringify(value)
+  return `세부 설정 ${Object.keys(value).length}개 항목`
 }
 
 // summarizeRuleConfig turns a rule config into typed Korean rows.
@@ -185,7 +190,7 @@ export function buildSourceTrace(
     const state: TraceState = winner?.deleted ? 'deleted_source' : exception ? 'exception' : overridden.length > 0 ? 'overridden' : 'inherited'
     traces.push({
       domain,
-      domainName: DOMAIN_NAMES[domain] || domain,
+      domainName: DOMAIN_INFO[domain]?.name || domain,
       key,
       keyLabel: keyLabel(domain, key),
       summary: summarizeValue(domain, key, value),
@@ -224,18 +229,10 @@ export function buildScopePath(effective: Record<string, any> | null | undefined
   return path
 }
 
-// parseModelRefs normalizes epoch allowed_models (array or JSON string).
+// parseModelRefs normalizes epoch allowed_models (array or JSON string) via
+// the shared array-or-JSON-string parser from evidenceView.
 export function parseModelRefs(value: any): string[] {
-  if (Array.isArray(value)) return value.filter(v => typeof v === 'string')
-  if (typeof value === 'string') {
-    try {
-      const parsed = JSON.parse(value)
-      return Array.isArray(parsed) ? parsed.filter(v => typeof v === 'string') : []
-    } catch {
-      return []
-    }
-  }
-  return []
+  return parseList(value)
 }
 
 // ackSummary aggregates required/acknowledged/pending counts for one epoch.

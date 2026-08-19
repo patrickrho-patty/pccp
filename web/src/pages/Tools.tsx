@@ -53,7 +53,8 @@ export default function Tools() {
   const [filterDanger, setFilterDanger] = useState('')
   // PAT-1509 governed-change state
   const [detailTool, setDetailTool] = useState<any | null>(null)
-  const [detailProjects, setDetailProjects] = useState<any[] | null>(null)
+  // 프로젝트별 허용 목록 캐시 — 페이지 로드 시 한 번만 조회 (도구 상세 모달이 재사용)
+  const [projectAllowlists, setProjectAllowlists] = useState<Record<string, any[] | null> | null>(null)
   const [gateTarget, setGateTarget] = useState<any | null>(null)
   const [gateReason, setGateReason] = useState('')
   const [gateConfirm, setGateConfirm] = useState(false)
@@ -70,7 +71,16 @@ export default function Tools() {
     }).catch(() => {})
     api.toolApprovals().then((d: any[]) => setApprovals(Array.isArray(d) ? d : [])).catch(() => {})
     api.toolPresets().then(setPresets).catch(() => {})
-    api.listProjects().then((d: any[]) => setProjects(Array.isArray(d) ? d : [])).catch(() => {})
+    api.listProjects().then((d: any[]) => {
+      const list = Array.isArray(d) ? d : []
+      setProjects(list)
+      // 모든 프로젝트의 허용 목록을 로드 시 한 번에 가져와 캐시한다.
+      Promise.all(list.map((p: any) =>
+        api.getProjectToolAllowlist(p.id)
+          .then((rows: any[]) => [p.id, Array.isArray(rows) ? rows : []] as [string, any[] | null])
+          .catch(() => [p.id, null] as [string, any[] | null])
+      )).then(entries => setProjectAllowlists(Object.fromEntries(entries)))
+    }).catch(() => {})
   }
   useEffect(() => { load() }, [])
 
@@ -122,15 +132,8 @@ export default function Tools() {
   }
 
   // 도구 상세: 한글 capability/위험 근거/임대 클래스/다이제스트 + 프로젝트별 허용 상태.
-  const openDetail = (t: any) => {
-    setDetailTool(t)
-    setDetailProjects(null)
-    Promise.all(projects.map((p: any) =>
-      api.getProjectToolAllowlist(p.id)
-        .then((rows: any[]) => ({ project: p, rows: Array.isArray(rows) ? rows : [] as any[] }))
-        .catch(() => ({ project: p, rows: null as any }))
-    )).then(setDetailProjects)
-  }
+  // 허용 상태는 로드 시 캐시한 projectAllowlists를 읽는다 — 모달을 열 때마다 재조회하지 않는다.
+  const openDetail = (t: any) => setDetailTool(t)
 
   const decide = async (a: any, decision: string) => {
     try {
@@ -183,6 +186,10 @@ export default function Tools() {
   const filtered = tools.filter(t =>
     (!filterCat || t.category === filterCat) && (!filterDanger || t.danger_level === filterDanger))
   const sorted = sortPinnedFirst(filtered, t => t.id)
+
+  // 도구 상세 모달의 프로젝트별 허용 상태 — 캐시가 아직이면 null (조회 중 표시)
+  const detailProjects = !detailTool || projectAllowlists === null ? null
+    : projects.map((p: any) => ({ project: p, rows: projectAllowlists[p.id] ?? null }))
 
   return (
     <div className="p-6 space-y-4 page-enter">
@@ -417,7 +424,7 @@ export default function Tools() {
               {change.weakening && (
                 <div className={`text-[11px] px-3 py-2 rounded-lg border ${change.highRisk ? 'bg-red-50 text-red-700 border-red-200' : 'bg-yellow-50 text-yellow-800 border-yellow-200'}`}>
                   {change.highRisk
-                    ? '보호 약화 경고: high/critical 도구의 승인 게이트를 해제하면 리뷰 없이 즉시 호출됩니다.'
+                    ? '보호 약화 경고: 이 게이트는 기본 정책 수단(심층 방어)입니다. 해제해도 high/critical 도구는 서버에서 항상 리뷰어 승인을 요구하므로 리뷰 없이 즉시 호출되지는 않습니다.'
                     : '보호 약화: 승인 없이 호출 가능해집니다.'}
                 </div>
               )}

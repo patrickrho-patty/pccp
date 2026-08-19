@@ -13,6 +13,7 @@ import {
   buildPreview,
   applyChange,
   buildRollback,
+  headEpochOf,
 } from './enterpriseFeatures.ts'
 
 const NOW = Date.parse('2026-08-19T09:00:00Z')
@@ -75,7 +76,8 @@ test('offline harness: non-active status or stale heartbeat is offline', () => {
   assert.equal(isHarnessOnline(harness('h1'), NOW), true)
   assert.equal(isHarnessOnline(harness('h1', { status: 'quarantined' }), NOW), false)
   assert.equal(isHarnessOnline(harness('h1', { last_heartbeat: '2026-08-19T08:40:00Z' }), NOW), false)
-  assert.equal(isHarnessOnline(harness('h1', { last_heartbeat: '' }), NOW), true)
+  // Aligned with harnessHealth: a missing heartbeat is NOT online.
+  assert.equal(isHarnessOnline(harness('h1', { last_heartbeat: '' }), NOW), false)
 })
 
 test('mandatory feature cannot be weakened by a tenant admin but can by patty ops', () => {
@@ -150,6 +152,9 @@ test('applyChange appends a versioned record and detects concurrent changes', ()
   const first = applyChange({ feature: f, target: { enabled: true, enforced: false }, scope: defaultScope(), reason: '감사 기간 동결', actor: 'admin@acme.kr', now: NOW_ISO, evals, expectedEpoch: 0 })
   assert.equal(first.error, undefined)
   assert.equal(first.record.epoch, 1)
+  assert.equal(headEpochOf(first.config), 1)
+  assert.equal(headEpochOf(''), 0)
+  assert.equal(headEpochOf('not json'), 0)
 
   const f2 = feature('change_freeze', { enabled: true, config: first.config })
   const stale = applyChange({ feature: f2, target: { enabled: false, enforced: false }, scope: defaultScope(), reason: '해제', actor: 'admin@acme.kr', now: NOW_ISO, evals, expectedEpoch: 0 })

@@ -103,7 +103,10 @@ type Broadcast struct {
 	// so delivery/ack reporting stays reproducible; ClientToken makes
 	// retries idempotent.
 	AudienceJSON string `gorm:"type:text" json:"audience,omitempty"` // JSON {eligible_ids, excluded, resolved_at}
-	ClientToken  string `gorm:"type:varchar(64);index" json:"client_token,omitempty"`
+	// Partial unique index: only non-empty tokens are deduped (legacy rows
+	// carry an empty token), so concurrent same-token retries cannot both
+	// insert.
+	ClientToken string `gorm:"type:varchar(64);index:,unique,where:client_token <> ''" json:"client_token,omitempty"`
 }
 
 // UsageRecord tracks billable usage (PRD §29).

@@ -5,6 +5,10 @@
 
 export type SandboxStatus = 'pending' | 'defined' | 'running' | 'paused' | 'destroyed' | 'failed'
 
+// Display mirrors shared by the list and detail pages (PAT-1513).
+export const MODE_KO: Record<string, string> = { container: '컨테이너', microvm: '마이크로VM', remote: '원격', local: '로컬' }
+export const NETWORK_KO: Record<string, string> = { none: '차단', restricted: '제한', host: '호스트' }
+
 export interface SandboxStatusMeta {
   ko: string
   badge: string
@@ -65,6 +69,22 @@ const DISABLED_REASON: Record<SandboxAction, string> = {
 // Unknown states fail closed (everything disabled), matching the server.
 export function sandboxActions(sb: { status?: string }): SandboxActionInfo[] {
   const valid = ACTION_TABLE[sb?.status || ''] || []
+  return (['snapshot', 'retry', 'destroy'] as SandboxAction[]).map(id => ({
+    id,
+    ko: ACTION_LABEL[id],
+    enabled: valid.includes(id),
+    reason: valid.includes(id) ? undefined : DISABLED_REASON[id],
+    danger: id === 'destroy',
+  }))
+}
+
+// sandboxActionsFor derives the action set from the SERVER's valid_actions
+// (handleGetSandboxDetail; the lifecycle state machine is authoritative),
+// using the client mirror only for labels and disabled reasons. The detail
+// page uses this so it can never offer an action the service would reject,
+// even if the mirror table drifts.
+export function sandboxActionsFor(validActions: string[]): SandboxActionInfo[] {
+  const valid = validActions || []
   return (['snapshot', 'retry', 'destroy'] as SandboxAction[]).map(id => ({
     id,
     ko: ACTION_LABEL[id],

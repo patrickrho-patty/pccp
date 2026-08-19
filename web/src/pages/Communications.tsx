@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { EntitySelect } from '../components/EntitySelect'
@@ -8,7 +8,9 @@ import { showToast } from '../components/Toast'
 import { useFavorites, FavoriteStar } from '../hooks/useFavorites'
 import {
   LARGE_AUDIENCE_THRESHOLD,
+  audienceSizeOf,
   broadcastSendBlockers,
+  exclusionReasonKo,
   mergeReachability,
   renderBroadcastText,
   resolveAudiencePreview,
@@ -31,6 +33,15 @@ const SEVERITY_BADGE: Record<string, string> = {
 // PAT-1510: governed broadcast composer — explicit audience scope,
 // preview, confirmation gates. Scope types map to backend target types.
 const SCOPE_KO: Record<string, string> = { org: '조직 전체', project: '프로젝트', user: '특정 사용자' }
+// Presence states render with their actual Korean label (away/busy are
+// still reachable per mergeReachability, not offline).
+const PRESENCE_KO: Record<string, string> = { online: '온라인', away: '자리비움', busy: '바쁨', offline: '오프라인' }
+// crypto.randomUUID throws in non-secure contexts — fall back to a
+// timestamp+random token so the composer still gets an idempotency key.
+const newClientToken = (): string =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `bc-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 const BC_FORM_INIT = {
   severity: 'info', title: '', title_ko: '', body: '', body_ko: '', requires_ack: false,
   scope_type: '' as BroadcastScopeType, target_id: '', expires_at: '',
@@ -64,6 +75,7 @@ export default function Communications() {
   const [bcUsers, setBcUsers] = useState<any[]>([])
   const [bcMemberIds, setBcMemberIds] = useState<Set<string> | null>(null)
   const [bcClientToken, setBcClientToken] = useState('')
+  const [bcSending, setBcSending] = useState(false)
   const [ackTarget, setAckTarget] = useState<any>(null)
   const [ackDash, setAckDash] = useState<any>(null)
   const [transferOpen, setTransferOpen] = useState(false)
@@ -78,7 +90,10 @@ export default function Communications() {
 
   const loadAll = () => {
     api.listConversations().then((d: any[]) => setConversations(Array.isArray(d) ? d : [])).catch(() => {})
-    api.listBroadcasts().then((d: any[]) => setBroadcasts(Array.isArray(d) ? d : [])).catch(() => {})
+    // Parse the frozen audience snapshot once here, not per row per render.
+    api.listBroadcasts().then((d: any[]) =>
+      setBroadcasts((Array.isArray(d) ? d : []).map((b: any) => ({ ...b, audience_size: audienceSizeOf(b) })))
+    ).catch(() => {})
     api.listFileTransfers().then((d: any[]) => setTransfers(Array.isArray(d) ? d : [])).catch(() => {})
     api.getPresence().then((d: any[]) => setPresence(Array.isArray(d) ? d : [])).catch(() => {})
   }
@@ -214,7 +229,7 @@ export default function Communications() {
   const openBroadcast = () => {
     setBcForm(BC_FORM_INIT)
     setBcMemberIds(null)
-    setBcClientToken(crypto.randomUUID())
+    setBcClientToken(newClientToken())
     api.listUsers().then((d: any[]) => setBcUsers(Array.isArray(d) ? d : [])).catch(() => setBcUsers([]))
     setBroadcastOpen(true)
   }
@@ -228,8 +243,12 @@ export default function Communications() {
   }, [bcForm.scope_type, bcForm.target_id])
 
   const bcScope = { type: bcForm.scope_type, targetId: bcForm.target_id }
-  const bcPreview = resolveAudiencePreview(bcUsers, bcScope, bcMemberIds)
-  const bcReach = mergeReachability(bcPreview.eligible, presence)
+  // Memoized: composer keystrokes must not re-run O(users) filtering.
+  const bcPreview = useMemo(
+    () => resolveAudiencePreview(bcUsers, { type: bcForm.scope_type, targetId: bcForm.target_id }, bcMemberIds),
+    [bcUsers, bcForm.scope_type, bcForm.target_id, bcMemberIds],
+  )
+  const bcReach = useMemo(() => mergeReachability(bcPreview.eligible, presence), [bcPreview, presence])
   const bcBlockers = broadcastSendBlockers({
     title: bcForm.title, scope: bcScope, eligibleCount: bcPreview.eligible.length,
     severity: bcForm.severity, confirmReason: bcForm.confirm_reason,
@@ -242,6 +261,8 @@ export default function Communications() {
       showToast(blockers[0], 'error')
       return
     }
+    if (bcSending) return
+    setBcSending(true)
     try {
       await api.sendBroadcastGoverned({
         severity: bcForm.severity, title: bcForm.title, title_ko: bcForm.title_ko,
@@ -256,6 +277,7 @@ export default function Communications() {
       loadAll()
       showToast('방송 전송 완료', 'success')
     } catch (e: any) { showToast(e?.message || '실패', 'error') }
+    finally { setBcSending(false) }
   }
 
   const showAcks = async (bc: any) => {
@@ -449,12 +471,9 @@ export default function Communications() {
         <div className="card p-4 space-y-2">
           {broadcasts.length === 0 && <p className="text-[11px] text-gray-400">방송 없음</p>}
           {broadcasts.map((b: any) => {
-            // Audience snapshot frozen at send time (PAT-1510) drives the
-            // recipient count; absent for legacy broadcasts.
-            let audienceCount: number | null = null
-            if (b.audience) {
-              try { audienceCount = (JSON.parse(b.audience).eligible_ids || []).length } catch { audienceCount = null }
-            }
+            // Audience size comes pre-parsed from loadAll (snapshot frozen
+            // at send time, PAT-1510); null for legacy broadcasts.
+            const audienceCount: number | null = b.audience_size ?? null
             const expired = b.status === 'expired' || (b.expires_at && new Date(b.expires_at).getTime() < Date.now())
             return (
             <div key={b.id} className="border rounded-lg p-2 flex items-start justify-between gap-2">
@@ -541,7 +560,7 @@ export default function Communications() {
       {/* Broadcast composer (PAT-1510): explicit audience scope + impact
           preview + confirmation gates before send. */}
       <Modal open={broadcastOpen} title="방송 보내기" onClose={() => setBroadcastOpen(false)} size="lg"
-        footer={<ModalFooter onCancel={() => setBroadcastOpen(false)} onConfirm={sendBroadcast} confirmLabel="전송" disabled={bcBlockers.length > 0} />}>
+        footer={<ModalFooter onCancel={() => setBroadcastOpen(false)} onConfirm={sendBroadcast} confirmLabel="전송" disabled={bcBlockers.length > 0 || bcSending} />}>
         <div className="space-y-2">
           <div className="grid grid-cols-2 gap-2">
             <div>
@@ -571,10 +590,22 @@ export default function Communications() {
               <EntitySelect entity="user" value={bcForm.target_id} onChange={v => setBcForm({ ...bcForm, target_id: v })} />
             </div>
           )}
-          <input className="input text-xs w-full" placeholder="제목" value={bcForm.title} onChange={e => setBcForm({ ...bcForm, title: e.target.value })} />
-          <input className="input text-xs w-full" placeholder="제목 (KO)" value={bcForm.title_ko} onChange={e => setBcForm({ ...bcForm, title_ko: e.target.value })} />
-          <textarea className="input text-xs w-full" rows={2} placeholder="본문" value={bcForm.body} onChange={e => setBcForm({ ...bcForm, body: e.target.value })} />
-          <textarea className="input text-xs w-full" rows={2} placeholder="본문 (KO)" value={bcForm.body_ko} onChange={e => setBcForm({ ...bcForm, body_ko: e.target.value })} />
+          <div>
+            <label htmlFor="bc-title" className="text-[10px] text-gray-500">제목</label>
+            <input id="bc-title" className="input text-xs w-full" value={bcForm.title} onChange={e => setBcForm({ ...bcForm, title: e.target.value })} />
+          </div>
+          <div>
+            <label htmlFor="bc-title-ko" className="text-[10px] text-gray-500">제목 (KO)</label>
+            <input id="bc-title-ko" className="input text-xs w-full" value={bcForm.title_ko} onChange={e => setBcForm({ ...bcForm, title_ko: e.target.value })} />
+          </div>
+          <div>
+            <label htmlFor="bc-body" className="text-[10px] text-gray-500">본문</label>
+            <textarea id="bc-body" className="input text-xs w-full" rows={2} value={bcForm.body} onChange={e => setBcForm({ ...bcForm, body: e.target.value })} />
+          </div>
+          <div>
+            <label htmlFor="bc-body-ko" className="text-[10px] text-gray-500">본문 (KO)</label>
+            <textarea id="bc-body-ko" className="input text-xs w-full" rows={2} value={bcForm.body_ko} onChange={e => setBcForm({ ...bcForm, body_ko: e.target.value })} />
+          </div>
           <div>
             <label className="text-[10px] text-gray-500">만료 시각 (선택)</label>
             <input type="datetime-local" className="input text-xs w-full" value={bcForm.expires_at} onChange={e => setBcForm({ ...bcForm, expires_at: e.target.value })} />
@@ -611,7 +642,7 @@ export default function Communications() {
                 )}
                 {bcPreview.excluded.length > 0 && (
                   <div className="text-[10px] text-gray-400">
-                    제외: {bcPreview.excluded.slice(0, 5).map(e => `${e.user.name_ko || e.user.name || e.user.email} (${e.reason === 'suspended' ? '정지' : '오프보딩'})`).join(', ')}
+                    제외: {bcPreview.excluded.slice(0, 5).map(e => `${e.user.name_ko || e.user.name || e.user.email} ({exclusionReasonKo(e.reason)})`).join(', ')}
                     {bcPreview.excluded.length > 5 && ` 외 ${bcPreview.excluded.length - 5}명`}
                   </div>
                 )}
@@ -659,8 +690,8 @@ export default function Communications() {
                 <div key={p.user_id} className="flex items-center justify-between text-gray-600 border-b border-gray-50 py-0.5">
                   <span>{p.name_ko || p.name} ({p.email})</span>
                   <span className="flex items-center gap-1 text-[10px]">
-                    <span className={p.presence === 'online' ? 'text-green-600' : 'text-gray-400'}>
-                      {p.presence === 'online' ? '온라인' : '오프라인'}
+                    <span className={p.presence === 'online' ? 'text-green-600' : p.presence === 'away' || p.presence === 'busy' ? 'text-yellow-600' : 'text-gray-400'}>
+                      {PRESENCE_KO[p.presence] || PRESENCE_KO.offline}
                     </span>
                     <span className={p.acked ? 'text-blue-600 font-semibold' : 'text-amber-600'}>
                       {p.acked ? '확인 완료' : '확인 대기'}
@@ -672,7 +703,7 @@ export default function Communications() {
             </div>
             {(ackDash.excluded || []).length > 0 && (
               <div className="text-[10px] text-gray-400">
-                제외됨: {ackDash.excluded.map((e: any) => `${e.name_ko || e.name || e.email} (${e.reason === 'suspended' ? '정지' : '오프보딩'})`).join(', ')}
+                제외됨: {ackDash.excluded.map((e: any) => `${e.name_ko || e.name || e.email} ({exclusionReasonKo(e.reason)})`).join(', ')}
               </div>
             )}
           </div>

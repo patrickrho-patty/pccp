@@ -245,3 +245,47 @@ func TestBroadcastAcksLegacyFallback(t *testing.T) {
 		t.Fatalf("legacy fallback wrong: %+v (active=%s)", dash, active.ID)
 	}
 }
+
+func TestBroadcastAcksSnapshotAuthoritativeWhenEmpty(t *testing.T) {
+	srv, _ := commsTestServer(t)
+	org, _, _, _, _ := commsBroadcastFixture(t, srv)
+
+	// A snapshot frozen with zero eligible recipients stays zero — the ack
+	// dashboard must not fall through to live scope or all org users.
+	emptyProj := models.Project{Name: "empty", Slug: "empty"}
+	emptyProj.OrganizationID = org.ID
+	srv.db.Create(&emptyProj)
+	rec := doJSON(t, srv, "POST", "/api/communications/broadcasts/send",
+		`{"title":"t","target_type":"project","target_id":"`+emptyProj.ID+`","allow_empty":true}`, org.ID)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("allow_empty send failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Broadcast models.Broadcast `json:"broadcast"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	rec = doJSON(t, srv, "GET", "/api/communications/broadcasts/"+out.Broadcast.ID+"/acks", "", org.ID)
+	var dash struct {
+		TotalUsers int `json:"total_users"`
+		Acked      int `json:"acked"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &dash)
+	if dash.TotalUsers != 0 || dash.Acked != 0 {
+		t.Fatalf("empty frozen snapshot not authoritative: %+v", dash)
+	}
+
+	// Recipients deleted after send: counts still derive from the frozen
+	// snapshot (now resolving to zero rows), not from live re-resolution.
+	rec = doJSON(t, srv, "POST", "/api/communications/broadcasts/send",
+		`{"title":"t2","target_type":"org"}`, org.ID)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("org send failed: %d %s", rec.Code, rec.Body.String())
+	}
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	srv.db.Exec("DELETE FROM users")
+	rec = doJSON(t, srv, "GET", "/api/communications/broadcasts/"+out.Broadcast.ID+"/acks", "", org.ID)
+	json.Unmarshal(rec.Body.Bytes(), &dash)
+	if dash.TotalUsers != 0 || dash.Acked != 0 {
+		t.Fatalf("snapshot with deleted recipients not authoritative: %+v", dash)
+	}
+}

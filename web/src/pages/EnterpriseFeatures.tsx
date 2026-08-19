@@ -4,11 +4,12 @@ import EmptyState from '../components/EmptyState'
 import { showToast } from '../components/Toast'
 import { Modal, ModalFooter } from '../components/Modal'
 import { useAuth } from '../hooks/useAuth'
+import { api } from '../api'
 import {
   FEATURE_CATALOG, ADMIN_ROLES,
   parseGovernance, evaluateHarnesses, validateChange,
-  buildPreview, applyChange, buildRollback,
-  type Scope, type HarnessInfo, type RolloutRecord,
+  buildPreview, applyChange, buildRollback, headEpoch,
+  type Scope, type HarnessInfo, type RolloutRecord, type Governance,
 } from '../enterpriseFeatures'
 
 const CATEGORY_INFO: Record<string, { icon: string; name: string; nameEn: string }> = {
@@ -60,11 +61,6 @@ function featureLabel(f: Feature) {
   return f.feature_name_ko || f.feature_name
 }
 
-function headEpoch(config: string): number {
-  const { rollouts } = parseGovernance(config)
-  return rollouts.length === 0 ? 0 : Math.max(...rollouts.map(r => r.epoch))
-}
-
 function scopeSummary(scope: Scope, totalHarnesses: number): string {
   if (scope.type === 'selected') return `지정 하네스 ${scope.harness_ids.length}대`
   const n = Math.max(totalHarnesses - scope.exceptions.length, 0)
@@ -104,6 +100,15 @@ export default function EnterpriseFeatures() {
 
   const isAdmin = ADMIN_ROLES.includes(role)
 
+  // One governance parse per feature config, shared by the cards, the
+  // detail modal, and the change flow (epoch derives from this parse).
+  const govByConfig = useMemo(() => {
+    const m = new Map<string, Governance>()
+    for (const f of features) m.set(f.config, parseGovernance(f.config))
+    return m
+  }, [features])
+  const govOf = (config: string): Governance => govByConfig.get(config) ?? parseGovernance(config)
+
   const load = () => {
     const h = authHeaders()
     Promise.all([
@@ -129,10 +134,10 @@ export default function EnterpriseFeatures() {
     setDraft({
       feature: f,
       target: { enabled: f.enabled, enforced: f.enforced, [field]: !f[field] },
-      scope: parseGovernance(f.config).scope,
+      scope: govOf(f.config).scope,
       reason: '',
       approved: false,
-      expectedEpoch: headEpoch(f.config),
+      expectedEpoch: headEpoch(govOf(f.config)),
     })
   }
 
@@ -143,7 +148,7 @@ export default function EnterpriseFeatures() {
       scope: record.scope,
       reason: '',
       approved: false,
-      expectedEpoch: headEpoch(f.config),
+      expectedEpoch: headEpoch(govOf(f.config)),
       rollbackOf: record.epoch,
     })
   }
@@ -165,13 +170,21 @@ export default function EnterpriseFeatures() {
       showToast(result.error || '변경에 실패했습니다', 'error')
       return
     }
-    const res = await fetch(`/api/enterprise/features/${f.id}`, {
-      method: 'PUT',
-      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: draft.target.enabled, enforced: draft.target.enforced, config: result.config }),
-    })
-    if (!res.ok) {
-      showToast('변경 저장에 실패했습니다', 'error')
+    try {
+      await api.updateEnterpriseFeature(f.id, {
+        enabled: draft.target.enabled, enforced: draft.target.enforced,
+        config: result.config, expected_epoch: draft.expectedEpoch,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : ''
+      if (msg.includes('epoch_conflict')) {
+        showToast('다른 변경이 먼저 적용되었습니다. 최신 상태를 불러온 후 다시 시도하세요.', 'error')
+        load()
+      } else if (msg.includes('patty_mandatory_weakening_forbidden')) {
+        showToast('패티 필수 기능은 테넌트 관리자가 비활성화하거나 강제를 해제할 수 없습니다.', 'error')
+      } else {
+        showToast('변경 저장에 실패했습니다', 'error')
+      }
       return
     }
     showToast(draft.rollbackOf !== undefined ? `에포크 ${draft.rollbackOf} 롤백이 기록되었습니다` : `에포크 ${result.record?.epoch} 롤아웃이 기록되었습니다`, 'success')
@@ -253,8 +266,8 @@ export default function EnterpriseFeatures() {
                 <div className="grid grid-cols-2 gap-3">
                   {catFeatures.map(f => {
                     const entry = FEATURE_CATALOG[f.feature_key]
-                    const gov = parseGovernance(f.config)
-                    const epoch = headEpoch(f.config)
+                    const gov = govOf(f.config)
+                    const epoch = headEpoch(gov)
                     return (
                       <div key={f.id} className={`p-3 rounded-lg border ${f.enabled ? 'border-gray-200' : 'border-gray-100 bg-gray-50 opacity-60'}`}>
                         <div className="flex items-start justify-between mb-1">
@@ -341,7 +354,7 @@ export default function EnterpriseFeatures() {
         subtitle={detail ? `${detail.feature_name} · ${detail.feature_key} · ${detail.prd_ref}` : undefined}>
         {detail && (() => {
           const entry = FEATURE_CATALOG[detail.feature_key]
-          const gov = parseGovernance(detail.config)
+          const gov = govOf(detail.config)
           const detailViolations = violations.filter(v => v.feature_key === detail.feature_key)
           return (
             <div className="space-y-4 text-sm">
@@ -480,12 +493,12 @@ export default function EnterpriseFeatures() {
               <div className="text-xs font-semibold text-gray-500 mb-1">적용 범위 선택</div>
               <div className="flex gap-3 text-xs mb-2">
                 <label className="flex items-center gap-1 cursor-pointer">
-                  <input type="radio" checked={draft.scope.type === 'org'}
+                  <input type="radio" name="ef-change-scope" checked={draft.scope.type === 'org'}
                     onChange={() => setDraft({ ...draft, scope: { ...draft.scope, type: 'org' } })} />
                   조직 전체
                 </label>
                 <label className="flex items-center gap-1 cursor-pointer">
-                  <input type="radio" checked={draft.scope.type === 'selected'}
+                  <input type="radio" name="ef-change-scope" checked={draft.scope.type === 'selected'}
                     onChange={() => setDraft({ ...draft, scope: { ...draft.scope, type: 'selected' } })} />
                   하네스 지정
                 </label>

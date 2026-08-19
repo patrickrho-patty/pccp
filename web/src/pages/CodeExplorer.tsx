@@ -4,6 +4,7 @@ import { api } from '../api'
 import EmptyState from '../components/EmptyState'
 import { showToast } from '../components/Toast'
 import { classifySyncError } from '../repoSync'
+import { formatShortTime } from '../utils/format'
 
 const ATTRIBUTION_KO: Record<string, string> = {
   AI_GENERATED: 'AI 생성', AI_THEN_HUMAN_EDITED: 'AI 후 사람 수정',
@@ -114,7 +115,7 @@ export default function CodeExplorer() {
             파일 스냅샷 사용 불가 — {classifySyncError(treeErr).label}
             {attribution.length > 0 && (
               <span className="block text-amber-600 mt-0.5">
-                귀속 데이터는 마지막 동기화({selectedRepoRow?.last_sync_at ? selectedRepoRow.last_sync_at.slice(0, 16).replace('T', ' ') : '기록 없음'}) 기준이며 현재 소스와 다를 수 있습니다.
+                귀속 데이터는 마지막 동기화({selectedRepoRow?.last_sync_at ? formatShortTime(selectedRepoRow.last_sync_at) : '기록 없음'}) 기준이며 현재 소스와 다를 수 있습니다.
               </span>
             )}
           </div>

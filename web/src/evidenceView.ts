@@ -137,7 +137,10 @@ function verdictLabelKo(v: string): string {
 
 function short(id: string): string { return id && id.length > 14 ? id.slice(0, 8) + '…' + id.slice(-4) : (id || '—') }
 
-function parseList(v: unknown): string[] {
+// parseList normalizes a server field that may arrive as an array or a JSON
+// string (e.g. files_changed, allowed_models) into a string list. Shared with
+// effectivePolicyView.parseModelRefs.
+export function parseList(v: unknown): string[] {
   if (Array.isArray(v)) return v.map(String)
   if (typeof v === 'string') { try { const p = JSON.parse(v); if (Array.isArray(p)) return p.map(String) } catch { /* not json */ } }
   return []
@@ -148,4 +151,193 @@ export function sessionEvidenceRoute(sessionId?: string, kind?: string): string 
   if (!sessionId) return undefined
   if (kind === 'provenance') return `/sessions/${sessionId}/provenance`
   return `/sessions/${sessionId}`
+}
+
+// ---------------------------------------------------------------------------
+// Audit ledger presentation (PAT-1503)
+//
+// The audit page and the dashboard activity feed render AuditEvent rows. This
+// section is the single source of the audit presentation intent — canonical
+// event taxonomy (category → Korean label), actor/resource labels with exact
+// drill-down routes, outcome/severity semantics, and integrity/hold state —
+// so a row never needs raw `EventType`/`Action`/`Details` keys as its primary
+// explanation.
+// ---------------------------------------------------------------------------
+
+export interface AuditCategory {
+  id: string // canonical filter value (server-side, shared with the list endpoint)
+  labelKo: string
+  icon: string
+  prefixes: string[] // event_type prefixes at/after the first dot
+}
+
+/** Canonical event taxonomy used by the Audit faceted filters AND row labels. */
+export const AUDIT_CATEGORIES: AuditCategory[] = [
+  { id: 'session', labelKo: '세션', icon: '🔵', prefixes: ['cp.session', 'session', 'exchange'] },
+  { id: 'user', labelKo: '사용자', icon: '👤', prefixes: ['cp.user', 'user'] },
+  { id: 'harness', labelKo: '하네스', icon: '🤖', prefixes: ['cp.fleet', 'fleet', 'cp.harness', 'harness'] },
+  { id: 'model', labelKo: '모델', icon: '🧠', prefixes: ['cp.model', 'model'] },
+  { id: 'policy', labelKo: '정책', icon: '📜', prefixes: ['cp.policy', 'policy'] },
+  { id: 'security', labelKo: '보안', icon: '🛡', prefixes: ['cp.security', 'security', 'enterprise.feature'] },
+  { id: 'compliance', labelKo: '컴플라이언스', icon: '📋', prefixes: ['cp.compliance', 'compliance'] },
+  { id: 'tool', labelKo: '도구', icon: '🧰', prefixes: ['cp.tool', 'tool'] },
+  { id: 'sandbox', labelKo: '샌드박스', icon: '📦', prefixes: ['cp.sandbox', 'sandbox'] },
+  { id: 'hold', labelKo: '보류', icon: '⛔', prefixes: ['cp.hold', 'cp.retention', 'hold'] },
+]
+
+const AUDIT_SYSTEM: AuditCategory = { id: 'system', labelKo: '시스템', icon: '⚙️', prefixes: [] }
+
+/** Canonical category id for an event_type (falls back to "system"). */
+export function auditCategoryOf(eventType?: string): string {
+  const type = (eventType || '').toLowerCase()
+  if (!type) return 'system'
+  for (const c of AUDIT_CATEGORIES) {
+    if (c.prefixes.some(p => type === p || type.startsWith(p + '.'))) return c.id
+  }
+  return 'system'
+}
+
+export function auditCategory(id: string): AuditCategory {
+  return AUDIT_CATEGORIES.find(c => c.id === id) || AUDIT_SYSTEM
+}
+
+export const AUDIT_CATEGORY_OPTIONS: AuditCategory[] = AUDIT_CATEGORIES
+
+/** Korean actor label by actor_type. */
+const ACTOR_TYPE_KO: Record<string, string> = {
+  admin: '관리자', user: '사용자', harness: '하네스', system: '시스템', service: '서비스',
+}
+
+export function auditActorLabel(actorType?: string): string {
+  return (actorType && ACTOR_TYPE_KO[actorType.toLowerCase()]) || actorType || '시스템'
+}
+
+/** Exact drill-down route for an actor (undefined when not navigable). */
+export function auditActorRoute(actorType?: string, actorId?: string): string | undefined {
+  if (!actorId) return undefined
+  const t = (actorType || '').toLowerCase()
+  if (t === 'harness') return `/fleet?harness_id=${encodeURIComponent(actorId)}`
+  if (t === 'user' || t === 'admin') return `/users/${encodeURIComponent(actorId)}`
+  return undefined
+}
+
+const RESOURCE_LABEL_KO: Record<string, string> = {
+  session: '세션', user: '사용자', harness: '하네스', repository: '저장소', project: '프로젝트',
+  model: '모델', finding: '보안 발견', policy_rule: '정책 규칙', policy_epoch: '정책 버전',
+  policy_pack: '정책 팩', exchange: '익스체인지', audit_event: '감사 이벤트', tool: '도구',
+}
+
+/** Exact drill-down route for a resource (undefined when not navigable). */
+export function auditResourceRoute(resourceType?: string, resourceId?: string): string | undefined {
+  if (!resourceId || !resourceType) return undefined
+  const t = (resourceType || '').toLowerCase()
+  const id = encodeURIComponent(resourceId)
+  switch (t) {
+    case 'session': return `/sessions/${id}`
+    case 'user': return `/users/${id}`
+    case 'harness': return `/fleet?harness_id=${id}`
+    case 'repository': return `/repositories/${id}`
+    case 'project': return `/projects/${id}`
+    case 'model': return `/models/${id}`
+    case 'finding': return `/findings/${id}`
+    case 'audit_event': return `/audit?event=${id}`
+    default: return undefined
+  }
+}
+
+export function auditResourceLabel(resourceType?: string): string {
+  return (resourceType && RESOURCE_LABEL_KO[resourceType.toLowerCase()]) || resourceType || '리소스'
+}
+
+/** Korean action verb from the raw action tail + event_type signals. */
+const AUDIT_ACTION_TAIL_KO: Record<string, string> = {
+  approved: '승인', rejected: '거부', revoked: '해제', enrolled: '등록', created: '생성',
+  updated: '갱신', deleted: '삭제', assessed: '평가', opened: '시작', closed: '종료',
+  published: '게시', quarantined: '격리', denied: '거부', allowed: '허용', violated: '위반',
+  detected: '감지', suppressed: '억제', locked: '잠금', unlocked: '잠금 해제',
+}
+
+function auditActionKo(e: Record<string, any>): string {
+  const raw = e.action || e.event_type || ''
+  const tail = raw.toLowerCase().split(/[._-]/).pop() || ''
+  return AUDIT_ACTION_TAIL_KO[tail] || raw || e.event_type || '작업'
+}
+
+/** Outcome/severity semantics shared by row badges and detail. */
+export function auditOutcome(e: Record<string, any>): OutcomeKind {
+  const r = (e.result || '').toLowerCase()
+  if (r === 'success' || r === 'allowed') return 'success'
+  if (r === 'denied' || r === 'failed' || r === 'failure') return 'danger'
+  if (r === 'pending' || r === 'warning') return 'warning'
+  return 'info'
+}
+
+export function auditResultLabel(result?: string): string {
+  return { success: '성공', allowed: '허용', denied: '거부', failed: '실패', failure: '실패', pending: '대기', warning: '경고' }[result || ''] || result || '미기록'
+}
+
+/** Integrity state for the row + detail. */
+export function auditIntegrityState(e: Record<string, any>): 'verified' | 'degraded' | 'unknown' {
+  if (!e.event_digest) return 'degraded' // written pre-chain or broken
+  if (e.prev_event_digest) return 'verified'
+  return 'unknown' // single first event still unhealthy until chain check
+}
+
+export interface AuditView extends EvidenceView {
+  categoryId: string
+  categoryLabelKo: string
+  categoryIcon: string
+  actorLabel: string
+  actorRoute?: string
+  resourceLabel: string
+  resourceRoute?: string
+  integrity: 'verified' | 'degraded' | 'unknown'
+  legalHold: boolean
+  chainSeq?: number
+  archiveState?: string
+}
+
+/** AuditEvent → human-readable Korean row/detail view (PAT-1503). */
+export function auditEventView(e: Record<string, any>): AuditView {
+  const cat = auditCategory(auditCategoryOf(e.event_type))
+  const outcome: OutcomeKind = auditOutcome(e)
+  const m = outcomeMeta(outcome)
+  const actorLabel = auditActorLabel(e.actor_type)
+  const resourceLabel = auditResourceLabel(e.resource_type)
+  const actorName = e.actor_id ? short(e.actor_id) : undefined
+  const title = `${actorLabel}${actorName ? ' ' + actorName : ''} — ${resourceLabel}에서 ${auditActionKo(e)} ${auditResultLabel(e.result)}`
+  return {
+    title,
+    actor: actorLabel,
+    actorLabel, actorRoute: auditActorRoute(e.actor_type, e.actor_id),
+    target: resourceLabel, resourceLabel,
+    resourceRoute: auditResourceRoute(e.resource_type, e.resource_id),
+    outcome: auditResultLabel(e.result),
+    icon: m.icon, color: m.color,
+    route: auditResourceRoute(e.resource_type, e.resource_id),
+    categoryId: cat.id, categoryLabelKo: cat.labelKo, categoryIcon: cat.icon,
+    integrity: auditIntegrityState(e),
+    legalHold: !!e.legal_hold,
+    chainSeq: e.chain_seq, archiveState: e.archive_state,
+  }
+}
+
+/** Group repeated burst events (same event type + actor + minute) into one
+ *  collapsible row while preserving every underlying record. */
+export function groupAuditBursts(events: Record<string, any>[]): { rows: Record<string, any>[] } {
+  const rows = events.reduce<Record<string, any>[]>((acc, e) => {
+    const last = acc[acc.length - 1]
+    const sameBurst = last &&
+      last.state_event_type === e.event_type &&
+      last.state_actor === (e.actor_id || '') &&
+      (last.state_minute === (e.occurred_at || '').slice(0, 16))
+    if (sameBurst) {
+      last.count = (last.count || 1) + 1
+      last.items.push(e)
+    } else {
+      acc.push({ ...e, count: 1, items: [e], state_event_type: e.event_type, state_actor: e.actor_id || '', state_minute: (e.occurred_at || '').slice(0, 16) })
+    }
+    return acc
+  }, [])
+  return { rows }
 }

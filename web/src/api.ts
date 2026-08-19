@@ -615,4 +615,9 @@ export const api = {
   publicCreateSub: (id: string, plan: string) => request<any>(`/api/public/accounts/${id}/subscription`, { method: 'POST', body: JSON.stringify({ plan }) }),
   publicLease: (id: string) => request<any>(`/api/public/accounts/${id}/lease`),
   publicSlots: (id: string) => request<any>(`/api/public/accounts/${id}/slots`),
+
+  // Enterprise harness features (§33). expected_epoch is the rollout head
+  // epoch the change was based on — the server rejects stale heads with 409.
+  updateEnterpriseFeature: (id: string, data: { enabled: boolean; enforced: boolean; config: string; expected_epoch: number }) =>
+    request<any>(`/api/enterprise/features/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 };

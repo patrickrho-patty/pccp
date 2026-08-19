@@ -133,9 +133,10 @@ func mustBilling(db interface{}) *billing.Service {
 func (s *Server) setupAdditionalRoutes(r chi.Router, ext *AdditionalServices) {
 	// Sandbox detail + lifecycle recovery (PAT-1513) — additive to the
 	// sandbox block in server.go; registered flat because chi panics on a
-	// second Route()/Mount for the same path. The param route would
-	// otherwise shadow the mounted static GET below it, so the static
-	// route is re-registered at this level where it wins by priority.
+	// second Route()/Mount for the same path. The image-allowlist GET is
+	// registered HERE, not in server.go's Route("/sandboxes") block: a
+	// static route nested in that block loses to the flat {id} param
+	// below, while at this level chi's static-over-param priority holds.
 	r.Get("/sandboxes/image-allowlist", s.handleSandboxImageAllowlist)
 	r.Get("/sandboxes/{id}", s.handleGetSandboxDetail)
 	r.Post("/sandboxes/{id}/retry", s.handleRetrySandbox)

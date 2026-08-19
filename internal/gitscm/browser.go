@@ -22,11 +22,17 @@ import (
 const scmWorkRoot = "pccp-scm"
 
 type cloneCache struct {
-	mu    sync.RWMutex
-	dirs  map[string]string // repoID -> workdir
+	mu   sync.RWMutex
+	dirs map[string]string // repoID -> workdir
 }
 
 var clones = &cloneCache{dirs: map[string]string{}}
+
+// syncStaleAfter bounds how long a 'syncing' row is trusted. A crash
+// mid-clone would otherwise leave sync_status='syncing' forever and
+// deadlock every future sync; a syncing row with no recorded attempt or
+// an attempt older than this is treated as failed and may be reclaimed.
+const syncStaleAfter = 15 * time.Minute
 
 // SyncRepository clones (or refreshes) the repository and records the
 // HEAD commit + sync status on the repo row. The provider is selected
@@ -37,12 +43,20 @@ func (s *Service) SyncRepository(ctx context.Context, repo *models.Repository) (
 	if repo.CloneURL == "" {
 		return "", fmt.Errorf("gitscm: repository %s has no clone_url", repo.Name)
 	}
-	// Idempotence: refuse a second clone while one is already running.
-	var current models.Repository
-	if s.db.First(&current, "id = ?", repo.ID).Error == nil && current.SyncStatus == "syncing" {
+	// Idempotence: claim the repo with one atomic conditional UPDATE so
+	// two concurrent syncs cannot both pass a check-then-set race.
+	attemptAt := time.Now().Format(time.RFC3339)
+	staleBefore := time.Now().Add(-syncStaleAfter).Format(time.RFC3339)
+	claim := s.db.Model(&models.Repository{}).
+		Where("id = ?", repo.ID).
+		Where("(sync_status <> ? OR sync_status IS NULL OR last_sync_attempt_at = '' OR last_sync_attempt_at < ?)", "syncing", staleBefore).
+		Updates(map[string]interface{}{"sync_status": "syncing", "last_sync_attempt_at": attemptAt})
+	if claim.Error != nil {
+		return "", fmt.Errorf("gitscm: claim sync for %s: %w", repo.Name, claim.Error)
+	}
+	if claim.RowsAffected == 0 {
 		return "", fmt.Errorf("gitscm: sync already in progress for %s", repo.Name)
 	}
-	attemptAt := time.Now().Format(time.RFC3339)
 	fail := func(err error) (string, error) {
 		s.db.Model(repo).Updates(map[string]interface{}{
 			"sync_status": "failed", "last_sync_attempt_at": attemptAt, "last_sync_error": err.Error(),
@@ -67,7 +81,6 @@ func (s *Service) SyncRepository(ctx context.Context, repo *models.Repository) (
 		ref = "main"
 	}
 	prov := providerFor(repo.SCMProvider)
-	s.db.Model(repo).Updates(map[string]interface{}{"sync_status": "syncing", "last_sync_attempt_at": attemptAt})
 	if err := prov.Clone(ctx, repo.CloneURL, ref, workDir); err != nil {
 		return fail(fmt.Errorf("gitscm: clone %s: %w", repo.Name, err))
 	}
@@ -78,10 +91,10 @@ func (s *Service) SyncRepository(ctx context.Context, repo *models.Repository) (
 	commitAt := lastCommitTime(workDir)
 	now := time.Now().Format(time.RFC3339)
 	s.db.Model(repo).Updates(map[string]interface{}{
-		"sync_status":    "synced",
-		"last_sync_at":   now,
-		"last_commit_at": commitAt,
-		"last_sync_head": head,
+		"sync_status":     "synced",
+		"last_sync_at":    now,
+		"last_commit_at":  commitAt,
+		"last_sync_head":  head,
 		"last_sync_error": "",
 	})
 	// Evict the previous clone and register the fresh one.

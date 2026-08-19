@@ -146,7 +146,6 @@ func (s *Service) CreateSandbox(req CreateRequest) (*Sandbox, error) {
 	networkPolicy := req.NetworkPolicy
 
 	sandbox := &Sandbox{
-		ID:             dari.GenerateID("sandbox"),
 		OrganizationID: req.OrganizationID,
 		SessionID:      req.SessionID,
 		UserID:         req.UserID,
@@ -169,6 +168,11 @@ func (s *Service) CreateSandbox(req CreateRequest) (*Sandbox, error) {
 		return nil, fmt.Errorf("sandbox: persist definition: %w", err)
 	}
 	sandbox.DBID = rec.ID
+	// The durable row ID is the canonical identity: the list endpoint,
+	// detail endpoint, and audit evidence all key on it, so the provisional
+	// ID minted above would orphan every lifecycle event (and the create
+	// response's id would 404 on the detail endpoint).
+	sandbox.ID = rec.ID
 
 	// Provisioning: attempt a real runtime when one is reachable, and
 	// record the HONEST outcome either way. The definition is always
@@ -189,13 +193,13 @@ func (s *Service) CreateSandbox(req CreateRequest) (*Sandbox, error) {
 		sandbox.Status = "running"
 		sandbox.StartedAt = outcome.startedAt
 		sandbox.RuntimeProvider = outcome.provider
-		s.updateSandboxStatus(sandbox.ID, "running", sandbox.StartedAt)
+		s.updateSandboxStatus(sandbox, "running", sandbox.StartedAt)
 	} else {
 		// No runtime reachable — record the definition with the honest
 		// status and the provider probe result for operators.
 		sandbox.Status = "defined"
 		sandbox.RuntimeProvider = "none (" + outcome.detail + ")"
-		s.updateSandboxStatus(sandbox.ID, "defined", "")
+		s.updateSandboxStatus(sandbox, "defined", "")
 	}
 
 	return sandbox, nil
@@ -263,7 +267,7 @@ func (s *Service) DestroySandbox(sandboxID string) (*Sandbox, error) {
 	sandbox.DestroyedAt = time.Now().Format(time.RFC3339)
 	sandbox.DestroyEvidence = dari.GenerateID("destruct")
 
-	s.updateSandboxStatus(sandboxID, "destroyed", sandbox.DestroyedAt)
+	s.updateSandboxStatus(sandbox, "destroyed", sandbox.DestroyedAt)
 
 	// Record audit
 	auditEvent := &models.AuditEvent{
@@ -330,13 +334,13 @@ func (s *Service) RetryProvision(sandboxID string) (*Sandbox, error) {
 		sandbox.Status = "running"
 		sandbox.StartedAt = outcome.startedAt
 		sandbox.RuntimeProvider = outcome.provider
-		s.updateSandboxStatus(sandbox.ID, "running", sandbox.StartedAt)
+		s.updateSandboxStatus(sandbox, "running", sandbox.StartedAt)
 	} else {
 		// Runtime still unreachable — stay defined with the fresh probe
 		// detail so operators can see the recovery attempt happened.
 		sandbox.Status = "defined"
 		sandbox.RuntimeProvider = "none (" + outcome.detail + ")"
-		s.updateSandboxStatus(sandbox.ID, "defined", "")
+		s.updateSandboxStatus(sandbox, "defined", "")
 	}
 	return sandbox, nil
 }
@@ -419,17 +423,23 @@ func (s *Service) recordSandbox(sb *Sandbox) error {
 	return s.db.Create(auditEvent).Error
 }
 
-func (s *Service) updateSandboxStatus(sandboxID, status, timestamp string) {
+// updateSandboxStatus persists a lifecycle transition: the durable row's
+// status AND the honest provisioning outcome (runtime_provider), plus an
+// org-scoped audit event — the detail page derives started_at/destroyed_at
+// from these events and filters evidence by organization_id, so the event
+// must carry the sandbox's org or it is invisible to the console.
+func (s *Service) updateSandboxStatus(sb *Sandbox, status, timestamp string) {
 	// Durable row update first (the list reads the table).
-	s.db.Model(&models.SandboxRecord{}).Where("id = ?", sandboxID).
-		Update("status", status)
+	s.db.Model(&models.SandboxRecord{}).Where("id = ?", sb.ID).
+		Updates(map[string]interface{}{"status": status, "runtime_provider": sb.RuntimeProvider})
 	auditEvent := &models.AuditEvent{
-		EventType:    fmt.Sprintf("cp.runtime.sandbox_%s", status),
-		Action:       fmt.Sprintf("sandbox_%s", status),
-		ResourceType: "sandbox",
-		ResourceID:   sandboxID,
-		Result:       "success",
-		OccurredAt:   timestamp,
+		OrganizationID: sb.OrganizationID,
+		EventType:      fmt.Sprintf("cp.runtime.sandbox_%s", status),
+		Action:         fmt.Sprintf("sandbox_%s", status),
+		ResourceType:   "sandbox",
+		ResourceID:     sb.ID,
+		Result:         "success",
+		OccurredAt:     timestamp,
 	}
 	s.db.Create(auditEvent)
 }

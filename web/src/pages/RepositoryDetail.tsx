@@ -3,10 +3,10 @@ import { useParams, Link } from 'react-router-dom'
 import { api } from '../api'
 import { StatCard } from '../components/StatCard'
 import { Modal, ModalFooter } from '../components/Modal'
-import { formatRelative } from '../utils/format'
+import { formatRelative, formatShortTime } from '../utils/format'
 import { showToast } from '../components/Toast'
 import { resolveRepoSync, classifySyncError, treeViewState, SyncDataset } from '../repoSync'
-import { detailRoute, scopedListRoute } from '../relationLinks'
+import { scopedListRoute } from '../relationLinks'
 
 function authHeaders(): Record<string, string> { const token = sessionStorage.getItem('pccp_token'); return token ? { Authorization: `Bearer ${token}` } : {} }
 
@@ -37,8 +37,8 @@ export default function RepositoryDetail() {  const { id: paramId } = useParams<
     api.repoBranches(id).then(d => { setBranches(Array.isArray(d) ? d : []); setDatasetErrors(e => ({ ...e, branches: '' })) }).catch((err: any) => setDatasetErrors(e => ({ ...e, branches: err?.message || 'load failed' })))
     api.repoBaselines(id).then(d => { setBaselines(Array.isArray(d) ? d : []); setDatasetErrors(e => ({ ...e, baselines: '' })) }).catch((err: any) => setDatasetErrors(e => ({ ...e, baselines: err?.message || 'load failed' })))
     api.repoHeatmap().then(d => { setHeatmaps((Array.isArray(d) ? d : []).filter((h: any) => h.repository_id === id)); setDatasetErrors(e => ({ ...e, heatmap: '' })) }).catch((err: any) => setDatasetErrors(e => ({ ...e, heatmap: err?.message || 'load failed' })))
-    api.listSessions().then((d: any[]) => setSessions((Array.isArray(d) ? d : []).filter((s: any) => s.repository_id === id))).catch(() => {})
-    api.securityFindings().then((d: any) => setFindings((Array.isArray(d) ? d : []).filter((f: any) => sessions.some((s: any) => s.session_id === f.session_id)))).catch(() => {})
+    api.listSessionsPaged(`page=1&size=100&repository=${encodeURIComponent(id)}`).then((res: any) => setSessions(res?.data || [])).catch(() => {})
+    api.securityFindings({ repository: id }).then((d: any) => setFindings(Array.isArray(d) ? d : [])).catch(() => {})
   }
   useEffect(() => { loadRepo() }, [id])
 
@@ -95,7 +95,6 @@ export default function RepositoryDetail() {  const { id: paramId } = useParams<
   ]
   const sync = resolveRepoSync(repo, { datasets })
   const treeView = treeViewState(treeLoading, tree, treeError, treePath)
-  const fmtTime = (v?: string | null) => v ? v.slice(0, 16).replace('T', ' ') : '-'
 
   return (
     <div>
@@ -120,12 +119,12 @@ export default function RepositoryDetail() {  const { id: paramId } = useParams<
           {sync.sourceRevision && <span className="text-xs text-gray-400 font-mono">리비전 {sync.sourceRevision.slice(0, 10)}</span>}
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs text-gray-500">
-          <div>마지막 성공: {fmtTime(sync.lastSuccessAt)}</div>
+          <div>마지막 성공: {formatShortTime(sync.lastSuccessAt)}</div>
           <div>
-            최근 시도: {fmtTime(sync.lastAttemptAt)}
+            최근 시도: {formatShortTime(sync.lastAttemptAt)}
             {sync.lastAttemptResult && ` · ${{ success: '성공', failed: '실패', running: '진행 중', queued: '대기 중' }[sync.lastAttemptResult]}`}
           </div>
-          <div>소스 기준 커밋: {fmtTime(repo.last_commit_at)}</div>
+          <div>소스 기준 커밋: {formatShortTime(repo.last_commit_at)}</div>
         </div>
         {sync.lastError && (
           <div className="mt-2 text-xs text-red-600">

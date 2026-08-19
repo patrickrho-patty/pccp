@@ -569,7 +569,8 @@ func (s *Server) setupRouter() {
 			r.Post("/", s.handleCreateSandbox)
 			r.Post("/{id}/destroy", s.handleDestroySandbox)
 			r.Post("/{id}/snapshot", s.handleForensicSnapshot)
-			r.Get("/image-allowlist", s.handleSandboxImageAllowlist)
+			// GET image-allowlist lives in services.go: nested here it is
+			// shadowed by the flat /sandboxes/{id} route registered there.
 			r.Put("/image-allowlist", s.handleSandboxImageAllowlist)
 		})
 
@@ -3351,6 +3352,9 @@ func (s *Server) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
 		search := r.URL.Query().Get("search")
 		eventType := r.URL.Query().Get("type")
 		result := r.URL.Query().Get("result")
+		category := r.URL.Query().Get("category")
+		actor := r.URL.Query().Get("actor")
+		integrity := r.URL.Query().Get("integrity")
 		if size == 0 {
 			size = 50
 		}
@@ -3366,6 +3370,33 @@ func (s *Server) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
 		if result != "" {
 			q = q.Where("result = ?", result)
 		}
+		// PAT-1503: canonical category filter (same taxonomy as the Audit UI)
+		// and actor/integrity facets, all server-side + URL-encodable.
+		if category != "" {
+			like := auditCategoryLike(category)
+			if len(like) > 0 {
+				or := make([]string, len(like))
+				args := make([]interface{}, len(like))
+				for i, p := range like {
+					or[i] = "event_type LIKE ?"
+					args[i] = p + ".%"
+				}
+				q = q.Where("("+strings.Join(or, " OR ")+")", args...)
+			} else {
+				q = q.Where("event_type = ?", category) // exact unknown prefix still matches
+			}
+		}
+		if actor != "" {
+			q = q.Where("actor_id = ? OR actor_type = ?", actor, actor)
+		}
+		switch integrity {
+		case "hold":
+			q = q.Where("legal_hold = ?", true)
+		case "degraded":
+			q = q.Where("event_digest = '' OR event_digest IS NULL")
+		case "verified":
+			q = q.Where("event_digest != '' AND event_digest IS NOT NULL")
+		}
 		var total int64
 		q.Count(&total)
 		var events []models.AuditEvent
@@ -3376,6 +3407,37 @@ func (s *Server) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
 	var events []models.AuditEvent
 	q.Order("occurred_at DESC").Limit(200).Find(&events)
 	writeJSON(w, http.StatusOK, events)
+}
+
+// auditCategoryLike returns the event_type prefixes for a canonical audit
+// category, matching the taxonomy the Audit UI renders (web/src/evidenceView.ts
+// AUDIT_CATEGORIES). Keeping both in lockstep means the faceted filter and the
+// displayed labels always agree.
+func auditCategoryLike(category string) []string {
+	switch category {
+	case "session":
+		return []string{"cp.session", "session", "exchange"}
+	case "user":
+		return []string{"cp.user", "user"}
+	case "harness":
+		return []string{"cp.fleet", "fleet", "cp.harness", "harness"}
+	case "model":
+		return []string{"cp.model", "model"}
+	case "policy":
+		return []string{"cp.policy", "policy"}
+	case "security":
+		return []string{"cp.security", "security", "enterprise.feature"}
+	case "compliance":
+		return []string{"cp.compliance", "compliance"}
+	case "tool":
+		return []string{"cp.tool", "tool"}
+	case "sandbox":
+		return []string{"cp.sandbox", "sandbox"}
+	case "hold":
+		return []string{"cp.hold", "cp.retention", "hold"}
+	default:
+		return nil
+	}
 }
 
 // handleExportAuditEvents streams the org's audit trail as CSV (up to
@@ -4030,20 +4092,30 @@ func (s *Server) handleDestroySandbox(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	sb, err := s.sandbox.DestroySandbox(id)
 	if err != nil {
+		var inv *sandbox.InvalidTransitionError
+		if errors.As(err, &inv) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: getOrgID(r),
-		EventType:      "cp.sandbox.destroyed",
-		ActorType:      "admin",
-		Action:         "destroy_sandbox",
-		ResourceType:   "sandbox",
-		ResourceID:     id,
-		Details:        "sandbox destroyed",
-		Result:         "success",
-		OccurredAt:     time.Now().Format(time.RFC3339),
-	})
+	// Audit only a real transition: the idempotent re-destroy path returns
+	// the record without fresh destruction evidence (DestroyEvidence is
+	// minted only when this call actually destroyed the sandbox).
+	if sb.DestroyEvidence != "" {
+		s.db.Create(&models.AuditEvent{
+			OrganizationID: getOrgID(r),
+			EventType:      "cp.sandbox.destroyed",
+			ActorType:      "admin",
+			Action:         "destroy_sandbox",
+			ResourceType:   "sandbox",
+			ResourceID:     id,
+			Details:        "sandbox destroyed",
+			Result:         "success",
+			OccurredAt:     time.Now().Format(time.RFC3339),
+		})
+	}
 	writeJSON(w, http.StatusOK, sb)
 }
 
@@ -4051,6 +4123,11 @@ func (s *Server) handleForensicSnapshot(w http.ResponseWriter, r *http.Request) 
 	id := chi.URLParam(r, "id")
 	snapshotID, err := s.sandbox.ForensicSnapshot(id)
 	if err != nil {
+		var inv *sandbox.InvalidTransitionError
+		if errors.As(err, &inv) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -7231,21 +7308,77 @@ func (s *Server) handleListEnterpriseFeatures(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, features)
 }
 
+// pattyMandatoryEnterpriseFeatures mirrors the `mandatory` flags in the
+// client catalog (web/src/enterpriseFeatures.ts FEATURE_CATALOG). Weakening
+// one of these (enabled/enforced true→false) requires a privileged role.
+var pattyMandatoryEnterpriseFeatures = map[string]bool{
+	"code_review": true, "code_signing": true, "audit_export": true,
+	"sso_binding": true, "device_attestation": true, "data_classification": true,
+	"supply_chain": true, "network_egress": true, "secret_broker": true,
+	"mandatory_ack": true, "ai_attribution": true, "command_auth": true,
+	"mcp_allowlist": true, "model_recall": true,
+}
+
+// enterpriseRolePrivileged mirrors PATTY_ROLES in web/src/enterpriseFeatures.ts.
+func enterpriseRolePrivileged(role string) bool {
+	return role == "super_admin" || role == "security_admin"
+}
+
+// enterpriseConfigHeadEpoch reads the head (max) rollout epoch from the
+// feature's governance config JSON; 0 for empty or invalid configs.
+func enterpriseConfigHeadEpoch(config string) int {
+	var g struct {
+		Rollouts []struct {
+			Epoch int `json:"epoch"`
+		} `json:"rollouts"`
+	}
+	if err := json.Unmarshal([]byte(config), &g); err != nil {
+		return 0
+	}
+	head := 0
+	for _, r := range g.Rollouts {
+		if r.Epoch > head {
+			head = r.Epoch
+		}
+	}
+	return head
+}
+
 func (s *Server) handleUpdateEnterpriseFeature(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
 	id := chi.URLParam(r, "id")
 	var req struct {
-		Enabled  bool   `json:"enabled"`
-		Enforced bool   `json:"enforced"`
-		Config   string `json:"config"`
+		Enabled       bool   `json:"enabled"`
+		Enforced      bool   `json:"enforced"`
+		Config        string `json:"config"`
+		ExpectedEpoch *int   `json:"expected_epoch"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	s.db.Model(&models.EnterpriseHarnessFeature{}).Where("id = ?", id).
-		Updates(map[string]interface{}{"enabled": req.Enabled, "enforced": req.Enforced, "config": req.Config})
+	// Org-scoped lookup: another tenant's feature id is indistinguishable
+	// from a missing one.
 	var feature models.EnterpriseHarnessFeature
-	s.db.Where("id = ?", id).First(&feature)
+	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&feature).Error; err != nil {
+		writeError(w, http.StatusNotFound, "feature not found")
+		return
+	}
+	// Patty-mandatory (패티 필수): tenant admins may not weaken these.
+	weakening := (feature.Enabled && !req.Enabled) || (feature.Enforced && !req.Enforced)
+	if weakening && pattyMandatoryEnterpriseFeatures[feature.FeatureKey] && !enterpriseRolePrivileged(getRole(r)) {
+		writeError(w, http.StatusForbidden, "patty_mandatory_weakening_forbidden")
+		return
+	}
+	// Optimistic concurrency: the client sends the head epoch its change was
+	// based on; if the stored head moved, reject so rollouts never clobber.
+	if req.ExpectedEpoch != nil && enterpriseConfigHeadEpoch(feature.Config) != *req.ExpectedEpoch {
+		writeError(w, http.StatusConflict, "epoch_conflict")
+		return
+	}
+	s.db.Model(&models.EnterpriseHarnessFeature{}).Where("id = ? AND organization_id = ?", id, orgID).
+		Updates(map[string]interface{}{"enabled": req.Enabled, "enforced": req.Enforced, "config": req.Config})
+	s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&feature)
 	writeJSON(w, http.StatusOK, feature)
 }
 

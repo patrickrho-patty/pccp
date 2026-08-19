@@ -285,22 +285,29 @@ func (s *Server) handleBroadcastAcks(w http.ResponseWriter, r *http.Request) {
 		ackedBy[a] = true
 	}
 	// Audience resolution: frozen snapshot > target scope > legacy fallback.
+	// A parseable snapshot is authoritative even when its eligible set is
+	// empty or every eligible user was deleted since — ack counts derive
+	// from the audience frozen at send time, never re-resolved live.
 	var users []models.User
 	var exclusions []audienceExclusion
+	snapshotResolved := false
 	if bc.AudienceJSON != "" {
 		var snap broadcastAudienceSnapshot
-		if json.Unmarshal([]byte(bc.AudienceJSON), &snap) == nil && len(snap.EligibleIDs) > 0 {
-			s.db.Where("organization_id = ? AND id IN ?", orgID, snap.EligibleIDs).Find(&users)
+		if json.Unmarshal([]byte(bc.AudienceJSON), &snap) == nil {
+			snapshotResolved = true
+			if len(snap.EligibleIDs) > 0 {
+				s.db.Where("organization_id = ? AND id IN ?", orgID, snap.EligibleIDs).Find(&users)
+			}
 			exclusions = snap.Excluded
 		}
 	}
-	if users == nil && bc.TargetType != "" {
+	if !snapshotResolved && bc.TargetType != "" {
 		if aud, err := resolveBroadcastAudience(s.db, orgID, bc.TargetType, bc.TargetID); err == nil {
 			users = aud.Eligible
 			exclusions = aud.Excluded
 		}
 	}
-	if users == nil {
+	if !snapshotResolved && users == nil {
 		s.db.Where("organization_id = ? AND status = 'active'", orgID).Find(&users)
 	}
 	// Presence reachability for drill-down.

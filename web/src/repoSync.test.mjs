@@ -44,8 +44,13 @@ test('stale: success older than the freshness window', () => {
   assert.equal(s.phaseLabel, '오래된 스냅샷')
 })
 
-test('stale: synced but source revision timestamp missing', () => {
+test('current: empty repository — fresh sync with no commits (no last_commit_at)', () => {
   const s = resolveRepoSync({ sync_status: 'synced', last_sync_at: fresh }, { now: NOW })
+  assert.equal(s.phase, 'current')
+})
+
+test('stale: synced but the success timestamp itself is missing', () => {
+  const s = resolveRepoSync({ sync_status: 'synced', last_commit_at: '2026-08-18T09:00:00Z' }, { now: NOW })
   assert.equal(s.phase, 'stale')
 })
 

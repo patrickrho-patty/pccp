@@ -16,7 +16,7 @@ test('single org rule resolves as inherited with the org as winning source', () 
   const traces = buildSourceTrace(effective, rules, [])
   assert.equal(traces.length, 1)
   const t = traces[0]
-  assert.equal(t.domainName, '네트워크')
+  assert.equal(t.domainName, '네트워크 정책')
   assert.equal(t.keyLabel, '허용 통신 대상')
   assert.equal(t.summary, 'gitlab.example, internal-inference')
   assert.equal(t.state, 'inherited')
@@ -145,7 +145,7 @@ test('unknown domains and keys fall back to generic labels without crashing', ()
   const [t] = buildSourceTrace(effective, [], [])
   assert.equal(t.domainName, 'custom_domain')
   assert.equal(t.keyLabel, 'unknown_key')
-  assert.equal(t.summary, '{"nested":true}')
+  assert.equal(t.summary, '세부 설정 1개 항목')
 })
 
 test('scope path lists contributing layers once, in resolution order', () => {

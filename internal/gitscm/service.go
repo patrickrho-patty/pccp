@@ -260,7 +260,13 @@ func (s *Service) GetRepositoryHeatmap(orgID string) ([]RepositoryHeatmapData, e
 		var sessionCount, changeCount, findingCount int64
 		s.db.Model(&models.Session{}).Where("organization_id = ? AND repository_id = ?", orgID, repo.ID).Count(&sessionCount)
 		s.db.Model(&models.ChangeSet{}).Where("organization_id = ? AND repository_id = ?", orgID, repo.ID).Count(&changeCount)
-		s.db.Model(&models.SecurityFinding{}).Where("organization_id = ?", orgID).Count(&findingCount)
+		// Scope findings to this repository through its sessions, mirroring
+		// the `repository` filter in handleSecurityFindings (PAT-1490), so
+		// the heatmap count reconciles with the repo's findings drill-down.
+		s.db.Model(&models.SecurityFinding{}).
+			Where("organization_id = ? AND session_id IN (?)", orgID,
+				s.db.Model(&models.Session{}).Select("session_id").Where("organization_id = ? AND repository_id = ?", orgID, repo.ID)).
+			Count(&findingCount)
 
 		riskScore := 0.0
 		switch repo.Sensitivity {

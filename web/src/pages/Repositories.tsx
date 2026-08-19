@@ -9,6 +9,7 @@ import { ResponsiveTable, Column } from '../components/ResponsiveTable'
 import { Modal, ModalFooter } from '../components/Modal'
 import EmptyState from '../components/EmptyState'
 import { exportCSV } from '../utils/csv'
+import { formatShortTime } from '../utils/format'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
 import { resolveRepoSync } from '../repoSync'
@@ -131,9 +132,15 @@ export default function Repositories() {
   }
 
   const scmIcon: Record<string, string> = { github: '🐙', gitlab: '🦊', bitbucket: '🪣', gitea: '🍵', git: '📦' }
-  // Canonical sync state (PAT-1493) — one object shared with the detail page.
-  const syncOf = (r: any) => resolveRepoSync(r)
-  const fmtTime = (v?: string | null) => v ? v.slice(0, 16).replace('T', ' ') : '-'
+  // Canonical sync state (PAT-1493) — one object shared with the detail
+  // page, resolved once per row per rows-change and reused by every
+  // column/expand render.
+  const syncById = useMemo(() => {
+    const m = new Map<string, ReturnType<typeof resolveRepoSync>>()
+    for (const r of rows) m.set(r.id, resolveRepoSync(r))
+    return m
+  }, [rows])
+  const syncOf = (r: any) => syncById.get(r.id) ?? resolveRepoSync(r)
 
   const columns: Column<any>[] = [
     {
@@ -145,15 +152,18 @@ export default function Repositories() {
     { key: 'pin', header: '★', cardLabel: '고정', render: (r) => <FavoriteStar entity="repositories" id={r.id} /> },
     {
       key: 'name', header: '저장소', cardLabel: '저장소',
-      render: (r) => (
+      render: (r) => {
+        const sync = syncOf(r)
+        return (
         <div className="flex items-center gap-2">
           <span className="text-lg">{scmIcon[r.scm_provider] || '📦'}</span>
           <div>
-            <div className="font-medium text-sm"><Link to={`/repositories/${r.id}`} className="text-blue-600 hover:underline">{r.name}</Link> <span className={syncOf(r).badgeClass}>{syncOf(r).phaseLabel}</span></div>
+            <div className="font-medium text-sm"><Link to={`/repositories/${r.id}`} className="text-blue-600 hover:underline">{r.name}</Link> <span className={sync.badgeClass}>{sync.phaseLabel}</span></div>
             {r.clone_url && <div className="text-xs text-gray-400 font-mono truncate max-w-xs">{r.clone_url} <button className="text-gray-400 hover:text-blue-600" onClick={e => { e.stopPropagation(); copyText(r.clone_url) }} title="복사">⧉</button></div>}
           </div>
         </div>
-      ),
+        )
+      },
       onClick: (r) => setExpandedId(expandedId === r.id ? null : r.id),
     },
     {
@@ -173,7 +183,7 @@ export default function Repositories() {
     },
     {
       key: 'last', header: '마지막 동기화', cardLabel: '마지막 동기화',
-      render: (r) => <span className="text-xs text-gray-400">{fmtTime(syncOf(r).lastSuccessAt)}</span>,
+      render: (r) => <span className="text-xs text-gray-400">{formatShortTime(syncOf(r).lastSuccessAt)}</span>,
     },
     {
       key: 'actions', header: '작업', cardLabel: '작업',
@@ -190,7 +200,9 @@ export default function Repositories() {
     },
   ]
 
-  const expanded = (r: any) => (
+  const expanded = (r: any) => {
+    const sync = syncOf(r)
+    return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 expand-enter">
       <div>
         <div className="text-xs font-semibold text-gray-600 mb-2">저장소 정보</div>
@@ -199,10 +211,10 @@ export default function Repositories() {
           <div>슬러그: {r.slug || '-'}</div>
           <div>Clone URL: {r.clone_url || '-'}</div>
           <div>기본 브랜치: <span className="font-mono">{r.default_branch || 'main'}</span></div>
-          <div>동기화: {syncOf(r).phaseLabel}{r.last_commit_at && ` · 커밋 ${r.last_commit_at.slice(0, 16).replace('T', ' ')}`}</div>
-          <div>마지막 성공: {fmtTime(syncOf(r).lastSuccessAt)}</div>
-          {syncOf(r).sourceRevision && <div>소스 리비전: <span className="font-mono">{syncOf(r).sourceRevision!.slice(0, 10)}</span></div>}
-          {syncOf(r).lastError && <div className="text-red-500">최근 실패: {syncOf(r).lastError}</div>}
+          <div>동기화: {sync.phaseLabel}{r.last_commit_at && ` · 커밋 ${formatShortTime(r.last_commit_at)}`}</div>
+          <div>마지막 성공: {formatShortTime(sync.lastSuccessAt)}</div>
+          {sync.sourceRevision && <div>소스 리비전: <span className="font-mono">{sync.sourceRevision.slice(0, 10)}</span></div>}
+          {sync.lastError && <div className="text-red-500">최근 실패: {sync.lastError}</div>}
           <div>생성일: {r.created_at?.slice(0, 10)}</div>
         </div>
       </div>
@@ -225,7 +237,8 @@ export default function Repositories() {
         <Link to="/security" className="text-xs text-blue-600 hover:underline block mt-2">🛡 보안 발견 보기 →</Link>
       </div>
     </div>
-  )
+    )
+  }
 
   return (
     <div>

@@ -8,16 +8,7 @@ import EmptyState from '../components/EmptyState'
 import { formatRelative } from '../utils/format'
 import { useConfirm } from '../components/useConfirm'
 import { showToast } from '../components/Toast'
-import { buildSourceTrace, buildScopePath, summarizeRuleConfig, parseModelRefs, ackSummary } from '../effectivePolicyView'
-
-const DOMAIN_INFO: Record<string, { name: string; nameEn: string; icon: string; desc: string }> = {
-  models: { name: '모델 접근 정책', nameEn: 'Model Access', icon: '◆', desc: '조직/부서/프로젝트별 허용 모델 제어' },
-  tools: { name: '도구 권한 정책', nameEn: 'Tool Permissions', icon: '🔧', desc: '하네스가 사용할 수 있는 도구와 승인 규칙' },
-  data: { name: '데이터 보호 정책', nameEn: 'Data Protection', icon: '🛡', desc: '민감 정보, 개인정보, 비밀번호 보호' },
-  scm: { name: 'Git/SCM 정책', nameEn: 'Git/SCM Governance', icon: '🌿', desc: '브랜치 보호, 커밋 규칙, PR 승인' },
-  network: { name: '네트워크 정책', nameEn: 'Network Access', icon: '🌐', desc: '외부 통신 대상 제한' },
-  session: { name: '세션 정책', nameEn: 'Session Controls', icon: '⏱', desc: '세션 시간 제한, 동시성, 자동 종료' },
-}
+import { buildSourceTrace, buildScopePath, summarizeRuleConfig, parseModelRefs, ackSummary, DOMAIN_INFO } from '../effectivePolicyView'
 
 const LAYERS = ['Patty 필수', '프로필', '조직', '계열사', '부서', '프로젝트', '저장소', '브랜치', '세션']
 
@@ -477,7 +468,7 @@ export default function Policy() {
                         <button onClick={() => rejectRule(r.id)} className="btn-sm btn-secondary">거부</button>
                       </div>
                     ) : (
-                      <button onClick={() => toggleRule(r)}
+                      <button type="button" role="switch" aria-checked={r.enabled} onClick={() => toggleRule(r)}
                         aria-label={`${r.name} ${r.enabled ? '비활성화' : '활성화'}`}
                         title={r.enabled ? '비활성화' : '활성화'}
                         className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-shrink-0 ${r.enabled ? 'bg-patty-600' : 'bg-gray-300'}`}>
