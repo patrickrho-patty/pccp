@@ -16,10 +16,9 @@ export default function Dashboard() {
   const [brief, setBrief] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
-  const [findingCount, setFindingCount] = useState(0)
-	const [usage, setUsage] = useState<UsageReportData | null>(null)
+  const [usage, setUsage] = useState<UsageReportData | null>(null)
   const [usageError, setUsageError] = useState(false)
-  const [feedExpanded, setFeedExpanded] = useState<Set<number>>(new Set()) // burst rows opened
+  const [feedExpanded, setFeedExpanded] = useState<Set<string>>(new Set()) // burst rows opened — keyed by stable rawKey
   const [feedRaw, setFeedRaw] = useState<Set<string>>(new Set()) // events with raw technical detail open
 
   useEffect(() => {
@@ -28,13 +27,11 @@ export default function Dashboard() {
     Promise.all([
 	  api.dashboard().catch(() => ({})),
 	  api.governanceBrief().catch(() => null),
-	  api.securityFindings().catch(() => []),
 	  api.usageExtended('30d', '', controller.signal, true).catch(error => { if (error?.name !== 'AbortError') setUsageError(true); return null }),
-	]).then(([dash, brf, findings, usageReport]) => {
+	]).then(([dash, brf, usageReport]) => {
       if (!active) return
       setData(dash); setBrief(brf)
 	  setUsage(usageReport)
-      setFindingCount(Array.isArray(findings) ? findings.filter((f: any) => f.status === 'open').length : 0)
       setLoading(false)
     })
     return () => { active = false; controller.abort() }
@@ -93,8 +90,9 @@ export default function Dashboard() {
           scope contract so the destination list reconciles with the card. */}
       <div className="grid grid-cols-2 gap-3 mb-4">
         <Link to="/security?tab=findings&severity=critical,high&status=unresolved" className="card py-3 px-5 hover:shadow-md transition-shadow focus:outline-none focus:ring-2 focus:ring-red-400" aria-label="미해결 심각·높음 보안 발견 목록 열기 (열린 목록으로 이동)">
-          <div className="text-sm font-semibold text-red-600">{data?.open_critical_findings ?? findingCount}</div>
+          <div className="text-sm font-semibold text-red-600">{data?.open_critical_findings ?? '—'}</div>
           <div className="text-xs text-gray-500">미해결 심각·높음 보안 발견</div>
+          {data?.open_critical_findings === undefined && <div className="text-[10px] text-gray-400">집계 지연 — 새로고침</div>}
         </Link>
         <Link to="/compliance?tab=remediation&status=unresolved" className="card py-3 px-5 hover:shadow-md transition-shadow focus:outline-none focus:ring-2 focus:ring-amber-400" aria-label="진행 중 컴플라이언스 개선 과제 목록 열기 (열린 과제로 이동)">
           <div className="text-sm font-semibold text-amber-600">{data?.open_remediations ?? 0}</div>
@@ -123,11 +121,11 @@ export default function Dashboard() {
               {((() => {
                 const { rows } = groupAuditBursts(data.recent_activity || [])
                 return rows.slice(0, 12)
-              })()).map((g: any, i: number) => {
+              })()).map((g: any) => {
                 const v = auditEventView(g)
                 const isBurst = (g.count || 1) > 1
-                const burstOpen = feedExpanded.has(i)
                 const rawKey = g.id || String(g.chain_seq) || `${g.event_type}-${g.occurred_at}`
+                const burstOpen = feedExpanded.has(rawKey)
                 const rawOpen = feedRaw.has(rawKey)
                 return (
                   <div key={rawKey} className="text-sm py-2 border-b border-gray-50 last:border-0">
@@ -149,7 +147,7 @@ export default function Dashboard() {
                           {rawOpen ? '기술 상세 ▲' : '기술 상세 ▼'}
                         </button>
                         {isBurst && (
-                          <button className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600" onClick={() => setFeedExpanded(prev => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n })} aria-expanded={burstOpen}>
+                          <button className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600" onClick={() => setFeedExpanded(prev => { const n = new Set(prev); if (n.has(rawKey)) n.delete(rawKey); else n.add(rawKey); return n })} aria-expanded={burstOpen}>
                             {burstOpen ? `접기 (${g.count})` : `× ${g.count}`}
                           </button>
                         )}

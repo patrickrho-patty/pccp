@@ -264,7 +264,30 @@ func (s *Service) SetLexicon(orgID, version, updatedBy string, patterns map[stri
 	if version == "" {
 		version = fmt.Sprintf("%d", time.Now().Unix())
 	}
+	// PAT-1508: invalid/unsafe rules must not reach the detector. Every
+	// pattern must compile, and the conservative regex-safety guard rejects
+	// catastrophic constructs (kept in lockstep with the UI validator in
+	// web/src/securityLexicon.ts). Compilation also fails fast here instead
+	// of silently falling back to the built-in rule at scan time.
 	patternsJSON, _ := json.Marshal(patterns)
+	var decoded map[string]string
+	if err := json.Unmarshal(patternsJSON, &decoded); err != nil {
+		return nil, fmt.Errorf("security: lexicon patterns invalid: %w", err)
+	}
+	if len(decoded) == 0 {
+		return nil, fmt.Errorf("security: lexicon cannot be empty")
+	}
+	for id, pattern := range decoded {
+		if pattern == "" {
+			return nil, fmt.Errorf("security: lexicon rule %s has an empty pattern", id)
+		}
+		if _, err := regexp.Compile(pattern); err != nil {
+			return nil, fmt.Errorf("security: lexicon rule %s has an invalid regex: %v", id, err)
+		}
+		if reason := unsafeRegexReason(pattern); reason != "" {
+			return nil, fmt.Errorf("security: lexicon rule %s is unsafe: %s", id, reason)
+		}
+	}
 	lexicon := &models.PIILexicon{
 		OrganizationID: orgID, Version: version, UpdatedBy: updatedBy,
 		PatternsJSON: string(patternsJSON), Enabled: true,
@@ -273,6 +296,29 @@ func (s *Service) SetLexicon(orgID, version, updatedBy string, patterns map[stri
 		return nil, fmt.Errorf("security: publish lexicon: %w", err)
 	}
 	return lexicon, nil
+}
+
+// unsafeRegexReason returns a non-empty reason when a pattern uses a
+// construct the console blocks (catastrophic quantifiers, lookaround, atomic
+// groups). This mirrors web/src/securityLexicon.ts regexSafety so the UI and
+// the API reject the same inputs.
+func unsafeRegexReason(pattern string) string {
+	if pattern == "" {
+		return "empty pattern"
+	}
+	if look := regexp.MustCompile(`\(\?[<=!]|\(\?>|\(\?P?[<']`); look.MatchString(pattern) {
+		return "lookaround/atomic/backreference"
+	}
+	if nested := regexp.MustCompile(`\((?:[^()]*[*+])+\)[*+]`); nested.MatchString(pattern) {
+		return "nested quantifier (catastrophic backtracking)"
+	}
+	if group := regexp.MustCompile(`\)[*+]\s*[*+]`); group.MatchString(pattern) {
+		return "group followed by repeated quantifier"
+	}
+	if adjacent := regexp.MustCompile(`(?:\*|\+|\{\d+(?:,\d*)?\})\s*(?:\*|\+|\{\d+(?:,\d*)?\})`); adjacent.MatchString(pattern) {
+		return "adjacent quantifiers"
+	}
+	return ""
 }
 
 // piiPatternsFor resolves the effective PII pattern set: the org's

@@ -6752,6 +6752,12 @@ func (s *Server) handleUpdateLexicon(w http.ResponseWriter, r *http.Request) {
 	}
 	lexicon, err := s.security.SetLexicon(orgID, req.Version, getActorID(r), req.Patterns)
 	if err != nil {
+		// PAT-1508: validation/safety failures are client errors (400);
+		// storage failures stay 500.
+		if strings.HasPrefix(err.Error(), "security: lexicon rule") || err.Error() == "security: lexicon cannot be empty" {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

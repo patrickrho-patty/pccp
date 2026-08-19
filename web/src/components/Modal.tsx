@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useId } from 'react'
+import { ReactNode, useEffect, useId, useRef } from 'react'
 
 // Modal (00-cross-cutting A10) — shared overlay with sticky header,
 // scrollable body capped at viewport height, consistent cancel/confirm
@@ -6,6 +6,10 @@ import { ReactNode, useEffect, useId } from 'react'
 // Every destructive action routes through ConfirmDialog; this Modal
 // covers the form/editor modals. Exposes dialog semantics to assistive
 // tech (role/aria-modal/aria-labelledby → the title).
+//
+// A11y: focus is moved into the dialog on open (initial focus to the
+// first focusable child, or the close button if none), trapped inside
+// the dialog while open, and restored to the trigger element on close.
 export function Modal({ open, title, subtitle, onClose, children, footer, size = 'md' }: {
   open: boolean
   title: string
@@ -16,15 +20,49 @@ export function Modal({ open, title, subtitle, onClose, children, footer, size =
   size?: 'sm' | 'md' | 'lg' | 'xl'
 }) {
   const titleId = useId()
-  // Escape closes; scroll lock while open.
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const previouslyFocused = useRef<Element | null>(null)
+
+  // Escape closes; scroll lock while open; focus trap; initial focus;
+  // restore focus to the trigger element on close.
   useEffect(() => {
     if (!open) return
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    previouslyFocused.current = document.activeElement
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); onClose(); return }
+      if (e.key === 'Tab') {
+        const root = dialogRef.current
+        if (!root) return
+        const focusables = root.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+        if (focusables.length === 0) { e.preventDefault(); return }
+        const first = focusables[0]
+        const last = focusables[focusables.length - 1]
+        const active = document.activeElement as HTMLElement | null
+        if (e.shiftKey && active === first) { e.preventDefault(); last.focus() }
+        else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus() }
+      }
+    }
     window.addEventListener('keydown', handler)
     document.body.style.overflow = 'hidden'
+    // Initial focus: first focusable child, falling back to the dialog
+    // itself so screen readers announce the title.
+    const t = window.setTimeout(() => {
+      const root = dialogRef.current
+      if (!root) return
+      const focusables = root.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+      if (focusables.length > 0) focusables[0].focus()
+      else root.focus()
+    }, 0)
     return () => {
+      window.clearTimeout(t)
       window.removeEventListener('keydown', handler)
       document.body.style.overflow = ''
+      const prev = previouslyFocused.current as HTMLElement | null
+      if (prev && typeof prev.focus === 'function') prev.focus()
     }
   }, [open, onClose])
 
@@ -33,7 +71,7 @@ export function Modal({ open, title, subtitle, onClose, children, footer, size =
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 animate-fadeIn" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-labelledby={titleId}
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
         className={`bg-white rounded-xl shadow-xl w-full ${widths[size] || widths.md} flex flex-col max-h-[85vh] animate-scaleIn`} onClick={e => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-4 flex-shrink-0 sticky top-0 bg-white rounded-t-xl">
           <div>

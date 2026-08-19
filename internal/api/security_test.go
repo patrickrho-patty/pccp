@@ -497,3 +497,36 @@ func TestDashboardActionCenterMetricsReconcilePAT1488(t *testing.T) {
 		t.Fatalf("pending_approvals = %d, want 1", got)
 	}
 }
+
+// PAT-1508 contract: unsafe/invalid lexicon patterns cannot publish — the
+// server rejects them (mirroring the UI validator) so they never reach the
+// detector.
+func TestLexiconRejectsUnsafeAndInvalidPatternsPAT1508(t *testing.T) {
+	srv, db := securityTestServer(t)
+	org := models.Organization{Name: "o", Slug: "o-lx", Status: "active"}
+	db.Create(&org)
+
+	// Invalid regex syntax → rejected
+	rec := doJSON(t, srv, "PUT", "/api/security/lexicon", `{"version":"1","patterns":{"kr-x":"(unclosed"}}`, org.ID)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid regex publish = %d, want 400", rec.Code)
+	}
+
+	// Catastrophic nested quantifier → rejected
+	rec = doJSON(t, srv, "PUT", "/api/security/lexicon", `{"version":"1","patterns":{"kr-x":"(a+)+$"}}`, org.ID)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unsafe regex publish = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+
+	// Empty lexicon → rejected
+	rec = doJSON(t, srv, "PUT", "/api/security/lexicon", `{"version":"1","patterns":{}}`, org.ID)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty lexicon publish = %d, want 400", rec.Code)
+	}
+
+	// Valid pattern still publishes
+	rec = doJSON(t, srv, "PUT", "/api/security/lexicon", `{"version":"2","patterns":{"pii-kr-rrn":"\\b[0-9]{6}-[1-4][0-9]{6}\\b"}}`, org.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("valid publish = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+}

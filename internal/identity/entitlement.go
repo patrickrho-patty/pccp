@@ -330,4 +330,5 @@ type ContractorProfile struct {
 	AllowedRepoIDs    []string `json:"allowed_repo_ids"`
 	AllowedModelClass []string `json:"allowed_model_classes"`
 	NetworkZone       string   `json:"network_zone"`
+	TransitionReason  string   `json:"transition_reason,omitempty"`
 }

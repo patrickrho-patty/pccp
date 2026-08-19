@@ -1,14 +1,20 @@
 package api
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -460,6 +466,60 @@ func commsStorageDir() string {
 	return filepath.Join(os.TempDir(), "pccp-comms")
 }
 
+// commsEncryptionKey returns the AES-256 key used to encrypt file transfer
+// content at rest. The key is loaded once from PCCP_COMMS_ENCRYPTION_KEY
+// (32 raw bytes base64-encoded); if unset a deterministic development
+// fallback is used (NOT for production — use KMS or a sealed secret).
+var commsEncryptionKey = sync.OnceValues(func() ([]byte, error) {
+	if k := os.Getenv("PCCP_COMMS_ENCRYPTION_KEY"); k != "" {
+		if raw, err := base64.StdEncoding.DecodeString(k); err == nil && len(raw) == 32 {
+			return raw, nil
+		}
+	}
+	// Development fallback — stable per-process so uploads + downloads
+	// round-trip during local development. Production must set the env.
+	return []byte("0123456789abcdef0123456789abcdef"), nil // 32-byte dev fallback
+})
+
+// commsEncrypt / commsDecrypt use AES-256-GCM with a 12-byte nonce
+// prepended to the ciphertext. The nonce is unique per
+// crypto/rand.Read call so re-encrypting the same plaintext yields
+// different ciphertexts (verified by tests).
+func commsEncrypt(plaintext []byte) ([]byte, error) {
+	key, _ := commsEncryptionKey()
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, err
+	}
+	sealed := gcm.Seal(nil, nonce, plaintext, nil)
+	return append(nonce, sealed...), nil
+}
+
+func commsDecrypt(ciphertext []byte) ([]byte, error) {
+	key, _ := commsEncryptionKey()
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	if len(ciphertext) < gcm.NonceSize() {
+		return nil, fmt.Errorf("comms: ciphertext too short")
+	}
+	nonce, sealed := ciphertext[:gcm.NonceSize()], ciphertext[gcm.NonceSize():]
+	return gcm.Open(nil, nonce, sealed, nil)
+}
+
 // handleFileTransferUpload stores the file content, hashes it, scans it
 // with the security content checks, and flips the transfer to ready or
 // blocked (A3).
@@ -489,8 +549,17 @@ func (s *Server) handleFileTransferUpload(w http.ResponseWriter, r *http.Request
 	}
 	sum := sha256.Sum256(content)
 	hashHex := hex.EncodeToString(sum[:])
+	// PAT-1511: content is encrypted at rest with AES-256-GCM before
+	// being written to disk. Hash is computed on the plaintext so it
+	// represents the user-visible content (decryption is the storage
+	// concern, not the identity concern).
+	sealed, err := commsEncrypt(content)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	path := filepath.Join(dir, transferID+"-"+sanitizeName(header.Filename))
-	if err := os.WriteFile(path, content, 0o600); err != nil {
+	if err := os.WriteFile(path, sealed, 0o600); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -546,6 +615,16 @@ func (s *Server) handleFileTransferDownload(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, "content not uploaded")
 		return
 	}
+	sealed, err := os.ReadFile(transfer.StoragePath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "content not uploaded")
+		return
+	}
+	plaintext, err := commsDecrypt(sealed)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "content decrypt failed")
+		return
+	}
 	// PAT-1511 delivery evidence: stamp downloaded_at + bump counter
 	// + audit event so admins can audit exfiltration paths.
 	now := time.Now().Format(time.RFC3339)
@@ -561,7 +640,10 @@ func (s *Server) handleFileTransferDownload(w http.ResponseWriter, r *http.Reque
 		Action: "download", Result: "success",
 		OccurredAt: now,
 	})
-	http.ServeFile(w, r, transfer.StoragePath)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", transfer.FileName))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(plaintext)
 }
 
 // handleFileTransferTransition implements accept/decline/complete (C4).

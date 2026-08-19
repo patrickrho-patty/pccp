@@ -6,6 +6,7 @@ import { Modal, ModalFooter } from '../components/Modal'
 import EmptyState from '../components/EmptyState'
 import { formatRelative } from '../utils/format'
 import { showToast } from '../components/Toast'
+import { validateRule, validateLexicon, diffLexicon, previewRule, parseLexiconPayload, DEMO_SAMPLES } from '../securityLexicon'
 import { useConfirm } from '../components/useConfirm'
 import { exportCSV } from '../utils/csv'
 import { useAuth } from '../hooks/useAuth'
@@ -454,10 +455,8 @@ export default function Security() {
   const publishLexicon = async () => {
     try {
       if (!lexPublish) return
-      const patterns: Record<string, string | { pattern: string }> = {}
-      for (const [id, pat] of Object.entries(lexPublish.after)) {
-        patterns[id] = { pattern: pat }
-      }
+      // Backend contract (SetLexicon) is rule_id → regex string map.
+      const patterns: Record<string, string> = { ...lexPublish.after }
       await api.updateSecurityLexicon({ version: String(Date.now()), patterns })
       showToast('렉시콘 버전 발행됨', 'success')
       setLexPublish(null)
