@@ -7500,6 +7500,10 @@ func (s *Server) handleUpdateEnterpriseFeature(w http.ResponseWriter, r *http.Re
 
 func (s *Server) handleListEnterpriseViolations(w http.ResponseWriter, r *http.Request) {
 	orgID := getOrgID(r)
+	if !enterpriseRoleAdmin(getRole(r)) {
+		writeError(w, http.StatusForbidden, "엔터프라이즈 위반 조회 권한이 없습니다")
+		return
+	}
 	// PAT-1516: counts per feature for dashboard reconciliation.
 	if r.URL.Query().Get("counts") == "true" {
 		type row struct {
@@ -7508,15 +7512,21 @@ func (s *Server) handleListEnterpriseViolations(w http.ResponseWriter, r *http.R
 		Resolved   int    `json:"resolved"`
 	}
 		var rows []row
-		s.db.Model(&models.EnterpriseFeatureViolation{}).
-			Select("feature_key, SUM(CASE WHEN resolved = 0 THEN 1 ELSE 0 END) as open, SUM(CASE WHEN resolved = 1 THEN 1 ELSE 0 END) as resolved").
+		if err := s.db.Model(&models.EnterpriseFeatureViolation{}).
+			Select("feature_key, SUM(CASE WHEN resolved = false THEN 1 ELSE 0 END) as open, SUM(CASE WHEN resolved = true THEN 1 ELSE 0 END) as resolved").
 			Where("organization_id = ?", orgID).
-			Group("feature_key").Scan(&rows)
+			Group("feature_key").Scan(&rows).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "위반 집계 조회 실패")
+			return
+		}
 		writeJSON(w, http.StatusOK, rows)
 		return
 	}
 	var violations []models.EnterpriseFeatureViolation
-	s.db.Where("organization_id = ? AND resolved = false", orgID).Order("occurred_at DESC").Limit(100).Find(&violations)
+	if err := s.db.Where("organization_id = ? AND resolved = false", orgID).Order("occurred_at DESC").Limit(100).Find(&violations).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "위반 목록 조회 실패")
+		return
+	}
 	writeJSON(w, http.StatusOK, violations)
 }
 
@@ -7525,6 +7535,10 @@ func (s *Server) handleListEnterpriseViolations(w http.ResponseWriter, r *http.R
 func (s *Server) handleGetEnterpriseViolation(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
+	if !enterpriseRoleAdmin(getRole(r)) {
+		writeError(w, http.StatusForbidden, "엔터프라이즈 위반 조회 권한이 없습니다")
+		return
+	}
 	var v models.EnterpriseFeatureViolation
 	if err := s.db.Where("id = ? AND organization_id = ?", id, orgID).First(&v).Error; err != nil {
 		writeError(w, http.StatusNotFound, "위반 사항을 찾을 수 없습니다")
@@ -7539,6 +7553,10 @@ func (s *Server) handleGetEnterpriseViolation(w http.ResponseWriter, r *http.Req
 func (s *Server) handleResolveViolation(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
+	if !enterpriseRoleAdmin(getRole(r)) {
+		writeError(w, http.StatusForbidden, "엔터프라이즈 위반 해결 권한이 없습니다")
+		return
+	}
 	var req struct {
 		Disposition        string              `json:"disposition"`        // fixed | false_positive | risk_accepted | duplicate | suppressed
 		DispositionReason  string              `json:"disposition_reason"` // required
@@ -7560,15 +7578,22 @@ func (s *Server) handleResolveViolation(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "disposition_reason required")
 		return
 	}
-	if req.Disposition == "risk_accepted" && req.ExpiresAt == "" {
-		writeError(w, http.StatusBadRequest, "risk_accepted requires expires_at (accepted-risk window)")
-		return
+	if req.Disposition == "risk_accepted" {
+		if req.ExpiresAt == "" || req.ExpiresAt == "0001-01-01T00:00:00Z" {
+			writeError(w, http.StatusBadRequest, "risk_accepted requires expires_at (accepted-risk window)")
+			return
+		}
+		if t, err := time.Parse(time.RFC3339, req.ExpiresAt); err != nil || t.Before(time.Now()) {
+			writeError(w, http.StatusBadRequest, "expires_at must be a future RFC3339 timestamp")
+			return
+		}
 	}
-	actor := getOperatorEmail(r)
+	actor := getActorID(r)
+	if actor == "" {
+		actor = getOperatorEmail(r)
+	}
 	evJSON, _ := json.Marshal(req.Evidence)
 	expires := req.ExpiresAt
-	// Treat empty/zero expiry as cleared (matches the existing comms
-	// pattern: gorm's zero time isn't NULL but is meaningless).
 	if expires == "0001-01-01T00:00:00Z" {
 		expires = ""
 	}
@@ -7582,24 +7607,40 @@ func (s *Server) handleResolveViolation(w http.ResponseWriter, r *http.Request) 
 		"resolved_at":        time.Now().UTC().Format(time.RFC3339),
 		"expires_at":         expires,
 	}
-	res := s.db.Model(&models.EnterpriseFeatureViolation{}).
-		Where("id = ? AND organization_id = ?", id, orgID).
-		Updates(updates)
-	if res.Error != nil {
-		writeError(w, http.StatusInternalServerError, res.Error.Error())
-		return
-	}
-	if res.RowsAffected == 0 {
-		writeError(w, http.StatusNotFound, "위반 사항을 찾을 수 없습니다")
-		return
-	}
-	s.db.Create(&models.AuditEvent{
-		OrganizationID: orgID, EventType: "cp.enterprise.violation_resolved",
-		ActorID: actor, ActorType: "user",
-		ResourceType: "enterprise_violation", ResourceID: id,
-		Action: "resolve", Result: "success",
-		Details: string(evJSON), OccurredAt: updates["resolved_at"].(string),
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&models.EnterpriseFeatureViolation{}).
+			Where("id = ? AND organization_id = ? AND resolved = false", id, orgID).
+			Updates(updates)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			var existing models.EnterpriseFeatureViolation
+			if err := tx.Where("id = ? AND organization_id = ?", id, orgID).First(&existing).Error; err == nil && existing.Resolved {
+				return gorm.ErrDuplicatedKey
+			}
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: orgID, EventType: "cp.enterprise.violation_resolved",
+			ActorID: actor, ActorType: "user",
+			ResourceType: "enterprise_violation", ResourceID: id,
+			Action: "resolve", Result: "success",
+			Details: string(evJSON), OccurredAt: updates["resolved_at"].(string),
+		}).Error
 	})
+	if err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			writeError(w, http.StatusConflict, "이미 해결된 위반 사항입니다")
+			return
+		}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			writeError(w, http.StatusNotFound, "위반 사항을 찾을 수 없습니다")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "위반 해결 처리 실패")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "resolved", "disposition": req.Disposition})
 }
 

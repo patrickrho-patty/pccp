@@ -565,14 +565,14 @@
       "turnCount": 0,
       "startedAt": 1787171346788,
       "pausedAt": 0,
-      "totalTokens": 450344,
+      "totalTokens": 471482,
       "usage": {
-        "input": 889274,
-        "output": 36925,
-        "reasoning": 26368,
-        "cacheRead": 51952121,
+        "input": 1360307,
+        "output": 40971,
+        "reasoning": 28871,
+        "cacheRead": 55147137,
         "cacheWrite": 0,
-        "cost": 0.20549024199999993,
+        "cost": 0.2602933739999999,
         "costKnown": true
       },
       "options": {
@@ -596,7 +596,7 @@
       "lastAssistantText": "",
       "lastAssistantMessageID": "",
       "lastContinueAt": 0,
-      "lastProgressAt": 1787173855469,
+      "lastProgressAt": 1787173986709,
       "noProgressTurns": 0,
       "noToolCallTurns": 0,
       "blockedReason": "",
@@ -751,7 +751,15 @@
         "msg_01bd695d10011qE4bvveOwYjcS",
         "msg_01bd7e175001roVk42r7ze1iQV",
         "msg_01bd7f909001n7C5BCQONUqpoa",
-        "msg_01bd9d0a1001ilWy18pQB47Pkh"
+        "msg_01bd9d0a1001ilWy18pQB47Pkh",
+        "msg_01bdce147001j5wz0oUNj0Uyo8",
+        "msg_01bddd9f1001FMZZWVh1y8EPSO",
+        "msg_01bde0cda0013NVhLn4MI0HHff",
+        "msg_01bde25da001w3kc5h4eCTgaY1",
+        "msg_01bde61e3001YJJxSYyk16t2MO",
+        "msg_01bde7c970012uJQW4PiMlnBtE",
+        "msg_01bdeb3f90013hhq27BlWqwDFk",
+        "msg_01bdec275001gZEZliA98H3Tgk"
       ],
       "history": [
         {
