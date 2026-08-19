@@ -5,12 +5,19 @@ import { StatCard } from '../components/StatCard'
 import { FavoriteStar } from '../hooks/useFavorites'
 import { formatUsageStateInteger, formatUsageAmount, UsageReport, UsageReportData } from '../components/UsageReport'
 import { allowedSessionActions, formatSessionTime, SESSION_STATUS_META } from '../sessionState'
+import { sessionActionView, changeSetView, findingView, decisionView, replayEventView } from '../evidenceView'
 
 // Canonical session state vocabulary (PAT-1496) — badge-only view of the
 // shared table used by Sessions and Live.
 const STATUS_META: Record<string, { ko: string; badge: string }> = Object.fromEntries(
   Object.entries(SESSION_STATUS_META).map(([k, v]) => [k, { ko: v.ko, badge: v.badge }])
 )
+
+// safeParse best-effort parses JSON payload strings for raw-evidence display.
+function safeParse(v: unknown): unknown {
+  if (typeof v !== 'string') return v
+  try { return JSON.parse(v) } catch { return v }
+}
 
 // SessionDetail (web/02 B5) — deep-linkable inspector built on the
 // consolidated /detail endpoint (UX6), with the per-exchange decision
@@ -26,6 +33,7 @@ export default function SessionDetail() {
   const [usageLoading, setUsageLoading] = useState(true)
   const [usageError, setUsageError] = useState(false)
   const [tab, setTab] = useState('timeline')
+  const [expandedRaw, setExpandedRaw] = useState<string | null>(null) // evidence key expanded to raw/technical detail (PAT-1498)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -140,70 +148,140 @@ export default function SessionDetail() {
 
       {tab === 'timeline' && (
         <div className="card p-4 space-y-1">
+          <p className="text-[10px] text-gray-400 mb-2">세션 타임라인 — 액션을 한국어로 요약하며, 각 항목을 펼치면 원시/기술 증거를 확인할 수 있습니다.</p>
           {(detail.actions || []).length === 0 && <p className="text-[11px] text-gray-400">액션 기록 없음</p>}
-          {(detail.actions || []).slice(0, 100).map((a: any, i: number) => (
-            <div key={i} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
-              <span className="text-gray-700">{a.action_type || a.type || a.kind} — {(a.description || a.summary || '').slice(0, 80)}</span>
-              <span className="text-gray-400">{formatSessionTime(a.occurred_at, timezone)}</span>
-            </div>
-          ))}
+          {(detail.actions || []).slice(0, 100).map((a: any, i: number) => {
+            const v = sessionActionView(a)
+            const key = 'a' + a.action_id + i
+            return (
+              <div key={key} className="border-b border-gray-50 py-1">
+                <button className="w-full flex items-center gap-2 text-left text-[11px] hover:bg-gray-50 rounded px-1"
+                  onClick={() => setExpandedRaw(expandedRaw === key ? null : key)}
+                  aria-expanded={expandedRaw === key}>
+                  <span onClick={e => { e.stopPropagation(); if (v.route) window.location.href = v.route }} className="cursor-pointer">{v.icon}</span>
+                  <span className="text-gray-700">{v.title}</span>
+                  <span className="text-gray-400 ml-auto">{formatSessionTime(a.occurred_at, timezone)}</span>
+                  <span className="text-gray-400 text-[10px]">{expandedRaw === key ? '▲' : '▼'}</span>
+                </button>
+                {expandedRaw === key && (
+                  <pre className="text-[10px] font-mono bg-gray-50 p-2 rounded mt-1 overflow-x-auto whitespace-pre-wrap">
+                    {JSON.stringify({ action_id: a.action_id, action_type: a.action_type, exchange_id: a.exchange_id, verdict_result: a.verdict_result, occurred_at: a.occurred_at, payload: safeParse(a.action_payload) }, null, 2)}
+                  </pre>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
 
       {tab === 'decisions' && (
         <div className="card p-4 space-y-1">
-          <p className="text-[10px] text-gray-400 mb-2">익스체인지별 정책 판정 로그 (B2) — 판정 근거는 epoch 정책 + 보안 파이프라인에서 산출됩니다.</p>
+          <p className="text-[10px] text-gray-400 mb-2">익스체인지별 정책 판정 — 판정·epoch·모델을 한국어로 요약합니다.</p>
           {(decisions?.decisions || []).length === 0 && <p className="text-[11px] text-gray-400">판정 로그 없음</p>}
-          {(decisions?.decisions || []).map((d: any) => (
-            <div key={d.exchange_id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
-              <span className="text-gray-700 font-mono">{d.exchange_id?.slice(0, 14)}</span>
-              <span className={d.verdict === 'allowed' ? 'text-green-600' : d.verdict === 'denied' ? 'text-red-600' : 'text-gray-400'}>
-                {d.verdict}
-              </span>
-              <span className="text-gray-400">{d.input_tokens}/{d.output_tokens} tok · {formatSessionTime(d.at, timezone)}</span>
-            </div>
-          ))}
+          {(decisions?.decisions || []).map((d: any) => {
+            const v = decisionView(d)
+            const key = 'd' + d.exchange_id
+            return (
+              <div key={key} className="border-b border-gray-50 py-1">
+                <button className="w-full flex items-center gap-2 text-left text-[11px] hover:bg-gray-50 rounded px-1"
+                  onClick={() => setExpandedRaw(expandedRaw === key ? null : key)}
+                  aria-expanded={expandedRaw === key}>
+                  <span>{v.icon}</span>
+                  <span className="text-gray-700">{v.title}</span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full border ${v.color}"`}>{v.outcome}</span>
+                  <span className="text-gray-400 ml-auto">{formatSessionTime(d.at, timezone)}</span>
+                  <span className="text-gray-400 text-[10px]">{expandedRaw === key ? '▲' : '▼'}</span>
+                </button>
+                {expandedRaw === key && (
+                  <pre className="text-[10px] font-mono bg-gray-50 p-2 rounded mt-1 overflow-x-auto whitespace-pre-wrap">
+                    {JSON.stringify({ exchange_id: d.exchange_id, policy_epoch_id: d.policy_epoch_id, verdict: d.verdict, model_package_id: d.model_package_id, input_tokens: d.input_tokens, output_tokens: d.output_tokens }, null, 2)}
+                  </pre>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
 
       {tab === 'changes' && (
         <div className="card p-4 space-y-1">
+          <p className="text-[10px] text-gray-400 mb-2">변경셋 — 파일·디프·기여 구분을 한국어로 요약합니다.</p>
           {(detail.change_sets || []).length === 0 && <p className="text-[11px] text-gray-400">변경셋 없음</p>}
-          {(detail.change_sets || []).map((c: any) => (
-            <div key={c.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
-              <span className="text-gray-700">{c.summary || c.message || '변경'}</span>
-              <span className="text-gray-400">{c.attribution_state || ''}</span>
-            </div>
-          ))}
+          {(detail.change_sets || []).map((c: any) => {
+            const v = changeSetView(c)
+            const key = 'c' + c.id
+            return (
+              <div key={key} className="border-b border-gray-50 py-1">
+                <button className="w-full flex items-center gap-2 text-left text-[11px] hover:bg-gray-50 rounded px-1"
+                  onClick={() => setExpandedRaw(expandedRaw === key ? null : key)}
+                  aria-expanded={expandedRaw === key}>
+                  <span>{v.icon}</span>
+                  <span className="text-gray-700">{v.title}</span>
+                  <span className="text-gray-400">{v.target}</span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full border ${v.color}"`}>{v.outcome}</span>
+                  <span className="text-gray-400 ml-auto">{formatSessionTime(c.created_at, timezone)}</span>
+                  <span className="text-gray-400 text-[10px]">{expandedRaw === key ? '▲' : '▼'}</span>
+                </button>
+                {expandedRaw === key && (
+                  <pre className="text-[10px] font-mono bg-gray-50 p-2 rounded mt-1 overflow-x-auto whitespace-pre-wrap">
+                    {JSON.stringify({ id: c.id, files_changed: safeParse(c.files_changed), diff_summary: c.diff_summary, diff_digest: c.diff_digest, attribution_state: c.attribution_state, lines_added: c.lines_added, lines_removed: c.lines_removed, change_set_digest: c.change_set_digest }, null, 2)}
+                  </pre>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
 
       {tab === 'findings' && (
         <div className="card p-4 space-y-1">
+          <p className="text-[10px] text-gray-400 mb-2">보안 발견 — 정확한 발견 상세로 이동합니다.</p>
           {(detail.findings || []).length === 0 && <p className="text-[11px] text-gray-400">보안 발견 없음</p>}
-          {(detail.findings || []).map((f: any) => (
-            <div key={f.id} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
-              <span className="text-gray-700">{f.title || f.finding_type || '발견'}</span>
-              <span className="text-gray-400">{f.severity}</span>
-            </div>
-          ))}
+          {(detail.findings || []).map((f: any) => {
+            const v = findingView(f)
+            const key = 'f' + f.id
+            return (
+              <div key={key} className="border-b border-gray-50 py-1">
+                <div className="w-full flex items-center gap-2 text-left text-[11px] hover:bg-gray-50 rounded px-1">
+                  <span>{v.icon}</span>
+                  {v.route ? <Link className="text-blue-600 hover:underline" to={v.route}>{v.title}</Link> : <span className="text-gray-700">{v.title}</span>}
+                  <span className="text-gray-400">{v.target}</span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full border ${v.color}"`}>{v.severity}</span>
+                  <span className="text-gray-400 ml-auto">{f.occurred_at ? formatSessionTime(f.occurred_at, timezone) : ''}</span>
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
 
       {tab === 'replay' && (
         <div className="card p-4 space-y-1">
           <p className="text-[10px] text-gray-400 mb-2">
-            리플레이 (B6) — 베이스라인 {replay?.baseline_id ? replay.baseline_id.slice(0, 10) : '없음'}에서 시작하는 통치 이벤트 시퀀스.
+            리플레이 — 베이스라인 {replay?.baseline_id ? replay.baseline_id.slice(0, 10) : '없음'}에서 시작하는 통치 이벤트 시퀀스.
           </p>
           {(replay?.events || []).length === 0 && <p className="text-[11px] text-gray-400">리플레이 이벤트 없음</p>}
-          {(replay?.events || []).map((ev: any, i: number) => (
-            <div key={i} className="flex justify-between text-[11px] border-b border-gray-50 py-1">
-              <span className="text-gray-700">
-                <span className="text-gray-400">{formatSessionTime(ev.at, timezone)}</span> {ev.kind}
-              </span>
-              <span className="text-gray-400">{ev.payload?.id?.slice(0, 10) || ''}</span>
-            </div>
-          ))}
+          {(replay?.events || []).map((ev: any, i: number) => {
+            const v = replayEventView(ev)
+            const key = 'r' + i
+            return (
+              <div key={key} className="border-b border-gray-50 py-1">
+                <button className="w-full flex items-center gap-2 text-left text-[11px] hover:bg-gray-50 rounded px-1"
+                  onClick={() => setExpandedRaw(expandedRaw === key ? null : key)}
+                  aria-expanded={expandedRaw === key}>
+                  <span className="text-gray-400">{formatSessionTime(ev.at, timezone)}</span>
+                  <span className="text-gray-700">{v.title}</span>
+                  <span className="text-gray-400">{v.target}</span>
+                  <span className="text-gray-400 ml-auto">{expandedRaw === key ? '▲' : '▼'}</span>
+                </button>
+                {expandedRaw === key && (
+                  <pre className="text-[10px] font-mono bg-gray-50 p-2 rounded mt-1 overflow-x-auto whitespace-pre-wrap">
+                    {JSON.stringify(ev.payload || ev, null, 2)}
+                  </pre>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
