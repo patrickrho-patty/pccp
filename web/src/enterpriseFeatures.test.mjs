@@ -3,18 +3,22 @@ import assert from 'node:assert/strict'
 
 import {
   FEATURE_CATALOG,
-  parseGovernance,
   defaultScope,
-  scopeHarnessIds,
   versionAtLeast,
   isHarnessOnline,
+} from './enterpriseCatalog.ts'
+import {
+  parseGovernance,
   evaluateHarnesses,
+  headEpochOf,
+  scopeHarnessIds,
+} from './governanceTrace.ts'
+import {
   validateChange,
   buildPreview,
   applyChange,
   buildRollback,
-  headEpochOf,
-} from './enterpriseFeatures.ts'
+} from './enterpriseChangeset.ts'
 
 const NOW = Date.parse('2026-08-19T09:00:00Z')
 const NOW_ISO = '2026-08-19T09:00:00Z'

@@ -8,10 +8,10 @@ import { api } from '../api'
 import { formatShortTime } from '../utils/format'
 import {
   FEATURE_CATALOG, ADMIN_ROLES,
-  parseGovernance, evaluateHarnesses, validateChange,
-  buildPreview, applyChange, buildRollback, headEpoch,
   type Scope, type HarnessInfo, type RolloutRecord, type Governance,
-} from '../enterpriseFeatures'
+} from '../enterpriseCatalog'
+import { parseGovernance, evaluateHarnesses, headEpoch } from '../governanceTrace'
+import { validateChange, buildPreview, applyChange, buildRollback } from '../enterpriseChangeset'
 
 const CATEGORY_INFO: Record<string, { icon: string; name: string; nameEn: string }> = {
   governance: { icon: '⚖️', name: '거버넌스', nameEn: 'Governance' },
