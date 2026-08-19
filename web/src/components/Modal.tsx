@@ -28,18 +28,21 @@ export function Modal({ open, title, subtitle, onClose, children, footer, size =
   useEffect(() => {
     if (!open) return
     previouslyFocused.current = document.activeElement
+    const prevOverflow = document.body.style.overflow
+    let isActive = true
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); onClose(); return }
       if (e.key === 'Tab') {
         const root = dialogRef.current
         if (!root) return
+        const active = document.activeElement as HTMLElement | null
+        if (!root.contains(active as Node)) return
         const focusables = root.querySelectorAll<HTMLElement>(
           'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
         )
         if (focusables.length === 0) { e.preventDefault(); return }
         const first = focusables[0]
         const last = focusables[focusables.length - 1]
-        const active = document.activeElement as HTMLElement | null
         if (e.shiftKey && active === first) { e.preventDefault(); last.focus() }
         else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus() }
       }
@@ -49,6 +52,7 @@ export function Modal({ open, title, subtitle, onClose, children, footer, size =
     // Initial focus: first focusable child, falling back to the dialog
     // itself so screen readers announce the title.
     const t = window.setTimeout(() => {
+      if (!isActive) return
       const root = dialogRef.current
       if (!root) return
       const focusables = root.querySelectorAll<HTMLElement>(
@@ -58,11 +62,12 @@ export function Modal({ open, title, subtitle, onClose, children, footer, size =
       else root.focus()
     }, 0)
     return () => {
+      isActive = false
       window.clearTimeout(t)
       window.removeEventListener('keydown', handler)
-      document.body.style.overflow = ''
+      document.body.style.overflow = prevOverflow
       const prev = previouslyFocused.current as HTMLElement | null
-      if (prev && typeof prev.focus === 'function') prev.focus()
+      if (prev && typeof prev.focus === 'function' && document.contains(prev)) prev.focus()
     }
   }, [open, onClose])
 

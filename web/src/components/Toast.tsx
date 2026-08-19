@@ -29,18 +29,26 @@ export function useToasts() {
 
 export function ToastContainer() {
   const toasts = useToasts()
-  if (toasts.length === 0) return null
+  const latest = toasts[toasts.length - 1]
   return (
-    <div className="fixed bottom-4 right-4 z-50 space-y-2">
-      {toasts.map(t => (
-        <div key={t.id} className={`px-4 py-2.5 rounded-lg shadow-lg text-sm animate-fadeIn max-w-sm ${
-          t.type === 'success' ? 'bg-green-600 text-white' :
-          t.type === 'error' ? 'bg-red-600 text-white' :
-          'bg-gray-800 text-white'
-        }`}>
-          {t.message}
+    <>
+      {/* PAT-1517: announce async/status results to assistive tech. */}
+      <div aria-live="polite" role="status" className="sr-only">
+        {latest ? `${latest.message}` : ''}
+      </div>
+      {toasts.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-50 space-y-2">
+          {toasts.map(t => (
+            <div key={t.id} className={`px-4 py-2.5 rounded-lg shadow-lg text-sm animate-fadeIn max-w-sm ${
+              t.type === 'success' ? 'bg-green-600 text-white' :
+              t.type === 'error' ? 'bg-red-600 text-white' :
+              'bg-gray-800 text-white'
+            }`}>
+              {t.message}
+            </div>
+          ))}
         </div>
-      ))}
-    </div>
+      )}
+    </>
   )
 }

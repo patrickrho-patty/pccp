@@ -65,20 +65,27 @@ func (s *Server) handleSandboxImageAllowlist(w http.ResponseWriter, r *http.Requ
 				req.Canonical[i].ApprovedAt = time.Now().UTC().Format(time.RFC3339)
 			}
 		}
-		s.db.Where("organization_id = ?", orgID).Delete(&models.SandboxImage{})
-		if len(req.Canonical) > 0 {
-			if err := s.db.Create(&req.Canonical).Error; err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
-				return
+		err = s.db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Where("organization_id = ?", orgID).Delete(&models.SandboxImage{}).Error; err != nil {
+				return err
 			}
-		}
-		s.db.Create(&models.AuditEvent{
-			OrganizationID: orgID, EventType: "cp.sandbox.allowlist_updated", ActorType: "admin",
-			Action: "update_image_allowlist", ResourceType: "organization", ResourceID: orgID,
-			Details:    string(raw),
-			Result:     "success",
-			OccurredAt: time.Now().Format(time.RFC3339),
+			if len(req.Canonical) > 0 {
+				if err := tx.Create(&req.Canonical).Error; err != nil {
+					return err
+				}
+			}
+			return tx.Create(&models.AuditEvent{
+				OrganizationID: orgID, EventType: "cp.sandbox.allowlist_updated", ActorType: "admin",
+				Action: "update_image_allowlist", ResourceType: "organization", ResourceID: orgID,
+				Details:    string(raw),
+				Result:     "success",
+				OccurredAt: time.Now().Format(time.RFC3339),
+			}).Error
 		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"images": cleaned, "canonical": req.Canonical, "enforced": len(cleaned) > 0 || len(req.Canonical) > 0,
 		})

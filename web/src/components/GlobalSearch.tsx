@@ -57,6 +57,7 @@ export default function GlobalSearch() {
     <div className="relative w-full max-w-2xl mx-auto">
       <input
         ref={inputRef}
+        aria-label="전역 검색 — 사용자, 하네스, 세션, 프로젝트 검색"
         className="w-full px-3 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 focus:bg-white transition-colors"
         placeholder="🔍 전역 검색 (⌘K) · Search users, harnesses, sessions..."
         value={query}

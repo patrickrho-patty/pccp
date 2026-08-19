@@ -93,10 +93,17 @@ export function groupAssessmentRuns(runs: any[]): { grouped: AssessmentRun[]; ch
   const seen: Record<string, AssessmentRun> = {}
   const order: string[] = []
   for (const r of runs || []) {
-    const key = [r.scope || '', r.level || '', r.overall_status || '', r.open_gaps].join('|')
+    const resultsHash = typeof r.results === 'string' ? String(r.results).slice(0, 512) : JSON.stringify(r.results || '').slice(0, 512)
+    const key = [r.certification || '', r.scope || '', r.level || '', r.overall_status || '', resultsHash].join('|')
     const existing = seen[key]
     if (existing) {
       existing.count = (existing.count || 1) + 1
+      // Keep newest snapshot as drill target
+      if (String(r.assessed_at || '') > String(existing.assessedAt || '')) {
+        existing.id = r.id
+        existing.assessedAt = r.assessed_at
+        existing.results = parseControlResults(r.results)
+      }
       continue
     }
     const parsed = parseControlResults(r.results)

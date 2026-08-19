@@ -90,6 +90,7 @@ export default function OpsLayout({ children }: { children: ReactNode }) {
 
         <div className="px-4 py-3 border-t border-gray-800 flex-shrink-0 space-y-2">
           <select
+            aria-label="콘솔 전환 — 운영 콘솔 / 기업·정부 콘솔 / 계정 포털"
             className="w-full bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700"
             value="patty_ops"
             onChange={(e) => setProfile(e.target.value as any)}
