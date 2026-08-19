@@ -141,6 +141,10 @@ func AllModels() []interface{} {
 		&PublicStatusSnapshot{},
 		&PublicStatusSubscriber{},
 		&PublicStatusNotification{},
+		// Read-only SCM lineage observation (PAT-1453)
+		&SCMProviderConnection{},
+		&ObservedRepositoryEvent{},
+		&CommitAttribution{},
 		// Evidence-hardened search (PAT-1451)
 		&EvidenceSearchGrant{},
 		&EvidenceSearchAudit{},

@@ -406,6 +406,15 @@ export const api = {
   esGrants: () => request<any[]>('/api/evidence-search/grants'),
   esCreateGrant: (grant: any) => request<any>('/api/evidence-search/grants', { method: 'POST', body: JSON.stringify(grant) }),
   esRevokeGrant: (id: number) => request<any>(`/api/evidence-search/grants/${id}/revoke`, { method: 'POST', body: '{}' }),
+
+  // PAT-1453: read-only SCM lineage observation.
+  lgConnections: () => request<any[]>('/api/scm/observation/connections'),
+  lgCreateConnection: (conn: any) => request<any>('/api/scm/observation/connections', { method: 'POST', body: JSON.stringify(conn) }),
+  lgRevokeConnection: (id: number) => request<any>(`/api/scm/observation/connections/${id}/revoke`, { method: 'POST', body: '{}' }),
+  lgEvents: () => request<any[]>('/api/scm/observation/events'),
+  lgBindAttribution: (attr: any) => request<any>('/api/scm/observation/attribution', { method: 'POST', body: JSON.stringify(attr) }),
+  lgLineage: () => request<any>('/api/scm/observation/lineage'),
+  lgReconcile: () => request<any>('/api/scm/observation/reconcile', { method: 'POST', body: '{}' }),
   getPolicyException: (id: string) => request<any>(`/api/policy/exceptions/${id}`),
   createPolicyException: (data: any) =>
     request<any>('/api/policy/exceptions', { method: 'POST', body: JSON.stringify(data) }),

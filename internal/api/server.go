@@ -549,6 +549,19 @@ func (s *Server) setupRouter() {
 			r.Get("/status", s.handleFleetStatus)
 		})
 
+		// Read-only SCM lineage observation (PAT-1453) — webhook is
+		// signature-verified per provider; no provider-side mutations exist.
+		r.Route("/scm/observation", func(r chi.Router) {
+			r.Post("/connections", s.handleSCMConnectionCreate)
+			r.Get("/connections", s.handleSCMConnectionsList)
+			r.Post("/connections/{id}/revoke", s.handleSCMConnectionRevoke)
+			r.Post("/webhooks/{connId}", s.handleSCMObservationWebhook)
+			r.Get("/events", s.handleSCMEventsList)
+			r.Post("/attribution", s.handleSCMBindAttribution)
+			r.Get("/lineage", s.handleSCMLineage)
+			r.Post("/reconcile", s.handleSCMReconcile)
+		})
+
 		// Evidence-hardened admin search (PAT-1451) — no bulk export by design.
 		r.Route("/evidence-search", func(r chi.Router) {
 			r.Post("/query", s.handleESSearch)
