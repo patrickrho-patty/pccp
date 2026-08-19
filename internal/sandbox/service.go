@@ -136,7 +136,9 @@ func (s *Service) CreateSandbox(req CreateRequest) (*Sandbox, error) {
 		First(&allowlistSetting).Error; err == nil && allowlistSetting.Value != "" {
 		var allowed []string
 		if json.Unmarshal([]byte(allowlistSetting.Value), &allowed) == nil && len(allowed) > 0 {
-			if !imageAllowlisted(req.BaseImage, allowed) {
+			// PAT-1514: pass when EITHER the legacy text list OR the
+			// canonical SandboxImage table approves the image.
+			if !imageAllowlisted(req.BaseImage, allowed) && !allowedByCanonicalImage(req.OrganizationID, req.BaseImage, s.db) {
 				return nil, fmt.Errorf("sandbox: image %q not on the organization allowlist", req.BaseImage)
 			}
 		}
@@ -491,4 +493,81 @@ func imageTagPart(image string) string {
 		return image[colon+1:]
 	}
 	return ""
+}
+
+// allowedByCanonicalImage checks the SandboxImage canonical table.
+// An image passes if it matches a digest, a non-raw repo+tag, or one of
+// the explicit digests listed in a raw entry's expanded set. Unknown
+// images get a fail-closed verdict.
+func allowedByCanonicalImage(orgID, image string, db *gorm.DB) bool {
+	entries := canonicalImagesForOrg(orgID, db)
+	if len(entries) == 0 {
+		// No canonical table → fall through to the legacy text-list
+		// verdict (the caller still gates on that). This helper
+		// returning false just means "not approved by digest table",
+		// not "denied overall".
+		return false
+	}
+	imgRepo := imageRepoPart(image)
+	imgTag := imageTagPart(image)
+	imgDigest := imageDigestPart(image) // sha256:hex if present
+	for _, e := range entries {
+		if e.Repository != imgRepo {
+			continue
+		}
+		if e.IsRaw {
+			// Raw entry: matches by repo+tag, AND must have this
+			// specific digest in its expanded set.
+			if imgTag != "" && e.OriginalRef != "" && imageTagPart(e.OriginalRef) != imgTag && e.OriginalRef[len(e.OriginalRef)-len("*"):] != "*" {
+				continue
+			}
+			for _, d := range parseExpandedDigests(e.ExpandedDigests) {
+				if d == imgDigest {
+					return true
+				}
+			}
+			continue
+		}
+		// Canonical entry: digest match.
+		if imgDigest != "" && e.DigestSHA256 == imgDigest {
+			return true
+		}
+		// OR same repo+tag (still informative for non-digested refs).
+		if imgTag != "" && e.OriginalRef != "" {
+			if imageTagPart(e.OriginalRef) == imgTag {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// canonicalImagesForOrg loads approved SandboxImage entries for the org.
+func canonicalImagesForOrg(orgID string, db *gorm.DB) []models.SandboxImage {
+	var entries []models.SandboxImage
+	db.Where("organization_id = ? AND status = 'approved'", orgID).Find(&entries)
+	return entries
+}
+
+// imageDigestPart extracts the sha256:hex digest from "repo@sha256:hex"
+// and returns it (without the algorithm prefix). Returns "" if not a
+// digest form.
+func imageDigestPart(image string) string {
+	if at := strings.Index(image, "@"); at >= 0 {
+		d := image[at+1:]
+		if strings.HasPrefix(d, "sha256:") {
+			return strings.TrimPrefix(d, "sha256:")
+		}
+		return d
+	}
+	return ""
+}
+
+func parseExpandedDigests(jsonStr string) []string {
+	var out []string
+	if jsonStr == "" {
+		return out
+	}
+	_ = json.Unmarshal([]byte(jsonStr), &out)
+	return out
 }

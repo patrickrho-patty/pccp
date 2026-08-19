@@ -23,6 +23,40 @@ type OrgSetting struct {
 	Value          string `gorm:"type:text" json:"value"`
 }
 
+// SandboxImage is a single canonical entry in the sandbox image
+// allowlist (PAT-1514). Production enforcement requires immutable
+// content (sha256 digest), signer trust, supply-chain evidence, and an
+// explicit approver. Wildcards/tags are accepted at write time only
+// with allow_raw + a precomputed reviewed digest set so enforcement
+// always sees digests.
+type SandboxImage struct {
+	Base
+	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
+	// Registry + repository (canonical).
+	Registry     string `gorm:"type:varchar(255)" json:"registry"`
+	Repository   string `gorm:"type:varchar(255);not null" json:"repository"`
+	// Immutable content identity. Either a sha256 digest (preferred)
+	// OR an explicit allow_raw entry that lists the resolved digests.
+	DigestSHA256   string `gorm:"type:varchar(64);index" json:"digest_sha256,omitempty"`
+	OriginalRef    string `gorm:"type:varchar(255)" json:"original_ref,omitempty"` // e.g. "patty/sandbox-base:2026.08" if allow_raw
+	IsRaw          bool   `gorm:"default:false" json:"is_raw"` // true for tag/wildcard entries carrying an explicit digest expansion
+	ExpandedDigests string `gorm:"type:text" json:"expanded_digests,omitempty"` // JSON array of digests when IsRaw=true
+	// Supply-chain evidence.
+	Signer        string `gorm:"type:varchar(255)" json:"signer,omitempty"`
+	SignatureRef  string `gorm:"type:varchar(255)" json:"signature_ref,omitempty"`
+	ProvenanceRef string `gorm:"type:varchar(255)" json:"provenance_ref,omitempty"`
+	SBOMRef       string `gorm:"type:varchar(255)" json:"sbom_ref,omitempty"`
+	ScanStatus    string `gorm:"type:varchar(32);default:'pending'" json:"scan_status"` // pending, clean, vulnerable, failed
+	ScanSummary   string `gorm:"type:text" json:"scan_summary,omitempty"`
+	Classification string `gorm:"type:varchar(32);default:'internal'" json:"classification"`
+	// Approval metadata
+	ApprovedBy    string `gorm:"type:varchar(64)" json:"approved_by,omitempty"`
+	ApprovedAt    string `gorm:"type:timestamp" json:"approved_at,omitempty"`
+	ApprovedReason string `gorm:"type:text" json:"approved_reason,omitempty"`
+	Status        string `gorm:"type:varchar(32);default:'pending'" json:"status"` // pending, approved, revoked, expired
+	Version       string `gorm:"type:varchar(64)" json:"version,omitempty"`
+}
+
 // BillingFXRate is an immutable, effective-dated exchange-rate snapshot.
 // OrgSetting remains the administrator's current configuration; reports read
 // this history so changing that configuration cannot rewrite past totals.

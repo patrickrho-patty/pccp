@@ -90,6 +90,7 @@ func AllModels() []interface{} {
 		// Identity
 		&Organization{},
 		&OrgSetting{},
+		&SandboxImage{},
 		&BillingFXRate{},
 		&BusinessUnit{},
 		&User{},

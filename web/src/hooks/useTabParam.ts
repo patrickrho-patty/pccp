@@ -10,6 +10,6 @@ export function useTabParam(defaultTab: string, validTabs: string[]) {
     if (t === defaultTab) next.delete('tab')
     else next.set('tab', t)
     return next
-  }, { replace: true })
+  })
   return [tab, setTab] as const
 }

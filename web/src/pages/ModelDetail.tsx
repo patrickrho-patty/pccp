@@ -35,7 +35,10 @@ export default function ModelDetail() {
 	  if (loadGeneration.current === generation) setAllEndpoints([])
 	})
 	api.listEpochs().then((d: any[]) => {
-	  if (loadGeneration.current === generation) setEpochs(Array.isArray(d) ? d : [])
+	  if (loadGeneration.current === generation) {
+	    const sorted = Array.isArray(d) ? [...d].sort((a: any, b: any) => String(b.created_at || '').localeCompare(String(a.created_at || ''))) : []
+	    setEpochs(sorted)
+	  }
 	}).catch(() => {
 	  if (loadGeneration.current === generation) setEpochs([])
 	})

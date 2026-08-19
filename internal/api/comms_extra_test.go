@@ -22,7 +22,7 @@ func commsTestServer(t *testing.T) (*Server, *gorm.DB) {
 		&models.Presence{}, &models.FileTransfer{}, &models.Broadcast{}, &models.AuditEvent{},
 		&models.ProjectMember{},
 		&models.ServiceSigningKey{}, &models.SecurityRule{}, &models.PolicyEpoch{}, &models.CapabilityLease{},
-		&models.Harness{}, &models.Session{},
+		&models.Harness{}, &models.Session{}, &models.SandboxImage{}, &models.SandboxRecord{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
 			t.Fatal(err)

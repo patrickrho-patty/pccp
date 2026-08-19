@@ -641,7 +641,7 @@ export default function Security() {
             </select>
             <select className="input max-w-[140px] text-xs" value={findingFilters.status} onChange={e => setFindingFilters({ ...findingFilters, status: e.target.value })}>
               <option value="">상태: 전체</option>
-              <option value="open">미해결</option><option value="investigating">조사 중</option><option value="resolved">해결</option><option value="suppressed">억제</option>
+              <option value="unresolved">미해결(해결 제외)</option><option value="open">open</option><option value="investigating">조사 중</option><option value="resolved">해결</option><option value="suppressed">억제</option>
             </select>
             <select className="input max-w-[150px] text-xs" value={findingFilters.type} onChange={e => setFindingFilters({ ...findingFilters, type: e.target.value })}>
               <option value="">유형: 전체</option>
