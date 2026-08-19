@@ -352,6 +352,22 @@ export const api = {
   inJobs: () => request<any[]>('/api/incidentnotify/jobs'),
   inSendTest: (test: any) => request<any>('/api/incidentnotify/test', { method: 'POST', body: JSON.stringify(test) }),
   inHealth: () => request<any>('/api/incidentnotify/health'),
+
+  // PAT-1449: harness release campaigns.
+  hvReleases: () => request<any[]>('/api/release/catalog'),
+  hvRegisterRelease: (release: any) => request<any>('/api/release/catalog', { method: 'POST', body: JSON.stringify(release) }),
+  hvRevokeRelease: (id: number, data: { reason: string }) =>
+    request<any>(`/api/release/catalog/${id}/revoke`, { method: 'POST', body: JSON.stringify(data) }),
+  hvCampaigns: () => request<any[]>('/api/release/campaigns'),
+  hvCreateCampaign: (campaign: any) => request<any>('/api/release/campaigns', { method: 'POST', body: JSON.stringify(campaign) }),
+  hvMutate: (id: number, data: { action: string; reason: string; expected_epoch: number }) =>
+    request<any>(`/api/release/campaigns/${id}/mutate`, { method: 'POST', body: JSON.stringify(data) }),
+  hvPreview: (data: any) => request<any>('/api/release/campaigns/preview', { method: 'POST', body: JSON.stringify(data) }),
+  hvFleetStates: () => request<any>('/api/release/fleet-states'),
+  hvExceptions: () => request<any[]>('/api/release/exceptions'),
+  hvCreateException: (exception: any) => request<any>('/api/release/exceptions', { method: 'POST', body: JSON.stringify(exception) }),
+  hvRevokeException: (id: number, data: { reason: string }) =>
+    request<any>(`/api/release/exceptions/${id}/revoke`, { method: 'POST', body: JSON.stringify(data) }),
   getPolicyException: (id: string) => request<any>(`/api/policy/exceptions/${id}`),
   createPolicyException: (data: any) =>
     request<any>('/api/policy/exceptions', { method: 'POST', body: JSON.stringify(data) }),

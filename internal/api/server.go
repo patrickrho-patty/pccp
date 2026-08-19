@@ -549,6 +549,22 @@ func (s *Server) setupRouter() {
 			r.Get("/status", s.handleFleetStatus)
 		})
 
+		// Harness release campaigns (PAT-1449)
+		r.Route("/release", func(r chi.Router) {
+			r.Get("/catalog", s.handleHVReleasesList)
+			r.Post("/catalog", s.handleHVReleaseRegister)
+			r.Post("/catalog/{id}/revoke", s.handleHVReleaseRevoke)
+			r.Post("/campaigns", s.handleHVCampaignCreate)
+			r.Get("/campaigns", s.handleHVCampaignsList)
+			r.Post("/campaigns/{id}/mutate", s.handleHVCampaignMutate)
+			r.Post("/campaigns/preview", s.handleHVCampaignPreview)
+			r.Post("/heartbeat-report", s.handleHVHeartbeatReport)
+			r.Get("/fleet-states", s.handleHVFleetVersionStates)
+			r.Post("/exceptions", s.handleHVExceptionCreate)
+			r.Get("/exceptions", s.handleHVExceptionsList)
+			r.Post("/exceptions/{id}/revoke", s.handleHVExceptionRevoke)
+		})
+
 		// Incident notifications (PAT-1454)
 		r.Route("/incidentnotify", func(r chi.Router) {
 			r.Get("/policy", s.handleINPolicyGet)
