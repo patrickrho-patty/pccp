@@ -456,6 +456,8 @@ export const api = {
   listFileTransfers: () => request<any[]>('/api/communications/file-transfers'),
   createFileTransfer: (data: any) =>
     request<any>('/api/communications/file-transfers', { method: 'POST', body: JSON.stringify(data) }),
+  // PAT-1511: file transfers carry real content (not filename-only).
+  // expires_at is required (retention deadline).
   uploadFileTransfer: (id: string, file: File) => {
     const form = new FormData()
     form.append('file', file)

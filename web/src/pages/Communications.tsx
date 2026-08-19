@@ -16,7 +16,7 @@ import {
   resolveAudiencePreview,
 } from '../broadcastAudience'
 import type { BroadcastScopeType } from '../broadcastAudience'
-import { formatShortTime } from '../utils/format'
+import { formatShortTime, formatBytes } from '../utils/format'
 
 // Communications hub (web/13 plan): real-time SSE (A1), threading/
 // mentions/reactions/read receipts (B1/B2), AI-context linking (B4),
@@ -79,7 +79,9 @@ export default function Communications() {
   const [ackTarget, setAckTarget] = useState<any>(null)
   const [ackDash, setAckDash] = useState<any>(null)
   const [transferOpen, setTransferOpen] = useState(false)
-  const [transferForm, setTransferForm] = useState({ recipient_id: '', file_name: '', file_type: 'text', classification: 'internal' })
+  const [transferForm, setTransferForm] = useState({ recipient_id: '', file_name: '', file_type: 'text', classification: 'internal', expires_at: '' })
+  const [transferFile, setTransferFile] = useState<File | null>(null)
+  const [transferPreview, setTransferPreview] = useState('')
   const [uploadTarget, setUploadTarget] = useState<any>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [linkTarget, setLinkTarget] = useState<any>(null)
@@ -293,16 +295,40 @@ export default function Communications() {
       showToast('받는 사람과 파일명이 필요합니다', 'error')
       return
     }
+    if (!transferForm.expires_at) {
+      showToast('만료시각(retention deadline)을 입력하세요', 'error')
+      return
+    }
     try {
       const tr = await api.createFileTransfer({
         sender_id: 'operator', recipient_id: transferForm.recipient_id,
-        file_name: transferForm.file_name, file_size: 0, file_type: transferForm.file_type,
+        file_name: transferForm.file_name,
+        file_size: transferFile?.size || 0,
+        file_type: transferForm.file_type,
         classification: transferForm.classification,
+        expires_at: new Date(transferForm.expires_at).toISOString(),
       })
       setTransferOpen(false)
       setUploadTarget(tr)
+      setTransferFile(null)
+      setTransferPreview('')
       loadAll()
     } catch (e: any) { showToast(e?.message || '실패', 'error') }
+  }
+
+  // PAT-1511: client-side hash + preview so the sender sees the real
+  // content fingerprint before deciding to upload.
+  const onTransferFilePicked = async (file: File | null) => {
+    setTransferFile(file)
+    if (!file) { setTransferPreview(''); return }
+    const buf = await file.slice(0, Math.min(file.size, 64 * 1024)).arrayBuffer()
+    const hashBuf = await crypto.subtle.digest('SHA-256', buf)
+    const hash = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('')
+    let preview = ''
+    if (file.type.startsWith('text/') || /\.(md|txt|json|ya?ml|csv|log)$/i.test(file.name)) {
+      try { preview = new TextDecoder().decode(buf).slice(0, 1024) } catch {}
+    }
+    setTransferPreview(`해시: ${hash.slice(0, 16)}…\n크기: ${formatBytes(file.size)}\n유형: ${file.type || 'unknown'}\n미리보기(최대 1KB):\n${preview || '(텍스트 미리보기 불가 — 바이너리 파일)'}`)
   }
 
   const uploadContent = async () => {
@@ -718,20 +744,31 @@ export default function Communications() {
         ) : <p className="text-xs text-gray-400">로딩...</p>}
       </Modal>
 
-      {/* Transfer composer */}
+      {/* Transfer composer (PAT-1511): file picker computes client-side hash
+          + size + preview before any upload; retention deadline is required */}
       <Modal open={transferOpen} title="파일 전송" onClose={() => setTransferOpen(false)}
-        footer={<ModalFooter onCancel={() => setTransferOpen(false)} onConfirm={createTransfer} confirmLabel="생성" />}>
+        footer={<ModalFooter onCancel={() => setTransferOpen(false)} onConfirm={createTransfer} confirmLabel="생성 + 업로드" />}>
         <div className="space-y-2">
           <div>
             <label className="text-[10px] text-gray-500">받는 사용자</label>
             <EntitySelect entity="user" value={transferForm.recipient_id} onChange={v => setTransferForm({ ...transferForm, recipient_id: v })} />
           </div>
-          <input className="input text-xs w-full" placeholder="파일명" value={transferForm.file_name} onChange={e => setTransferForm({ ...transferForm, file_name: e.target.value })} />
+          <div>
+            <label className="text-[10px] text-gray-500">실제 파일 (검사 포함 — PAT-1511)</label>
+            <input type="file" className="text-xs w-full" onChange={e => onTransferFilePicked(e.target.files?.[0] || null)} />
+          </div>
+          {transferPreview && (
+            <pre className="text-[10px] bg-gray-50 border border-gray-200 rounded p-2 whitespace-pre-wrap max-h-32 overflow-auto">{transferPreview}</pre>
+          )}
+          <input className="input text-xs w-full" placeholder="파일명 (수신자 표기용)" value={transferForm.file_name} onChange={e => setTransferForm({ ...transferForm, file_name: e.target.value })} />
           <select className="input text-xs w-full" value={transferForm.classification} onChange={e => setTransferForm({ ...transferForm, classification: e.target.value })}>
             <option value="internal">internal</option>
             <option value="confidential">confidential</option>
             <option value="public">public</option>
           </select>
+          <label className="text-[10px] text-gray-500">만료시각 (retention deadline) — 필수</label>
+          <input type="datetime-local" className="input text-xs w-full" value={transferForm.expires_at} onChange={e => setTransferForm({ ...transferForm, expires_at: e.target.value })} />
+          {transferFile && <p className="text-[10px] text-gray-500">선택한 파일: {transferFile.name} · {formatBytes(transferFile.size)}</p>}
         </div>
       </Modal>
 

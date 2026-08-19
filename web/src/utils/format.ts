@@ -28,6 +28,19 @@ export function formatShortTime(iso?: string | null, timeZone: string = 'Asia/Se
 	}
 }
 
+// formatBytes renders a byte count in B / KB / MB / GB / TB.
+export function formatBytes(bytes?: number | null): string {
+	if (bytes == null || bytes < 0) return '-'
+	if (bytes < 1024) return `${bytes} B`
+	const units = ['KB', 'MB', 'GB', 'TB']
+	let v = bytes / 1024
+	for (const u of units) {
+		if (v < 1024) return `${v.toFixed(v < 10 ? 1 : 0)} ${u}`
+		v /= 1024
+	}
+	return `${v.toFixed(1)} PB`
+}
+
 // formatTenantTime renders an ISO instant with the tenant's explicit IANA
 // timezone label (PAT-1496: never show an unlabeled local timestamp).
 export function formatTenantTime(iso?: string, timeZone: string = 'Asia/Seoul'): string {

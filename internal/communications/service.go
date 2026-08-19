@@ -115,8 +115,21 @@ func (s *Service) GetPresence(orgID string) ([]models.Presence, error) {
 	return presences, err
 }
 
-// CreateFileTransfer initiates a file transfer (PRD §23).
-func (s *Service) CreateFileTransfer(orgID, senderID, recipientID, fileName string, fileSize int64, fileType, classification string) (*models.FileTransfer, error) {
+// CreateFileTransfer initiates a file transfer (PRD §23). The caller
+// (handler) is expected to validate fileName + recipient before
+// calling; size/type are sourced from the multipart upload, not the
+// filename. ExpiresAt is the content-retention deadline — past that
+// the content is purged by sweepCommsRetention.
+func (s *Service) CreateFileTransfer(orgID, senderID, recipientID, fileName string, fileSize int64, fileType, classification, expiresAt string) (*models.FileTransfer, error) {
+	if fileName == "" {
+		return nil, fmt.Errorf("comms: file_name required")
+	}
+	if recipientID == "" {
+		return nil, fmt.Errorf("comms: recipient_id required")
+	}
+	if expiresAt == "" {
+		return nil, fmt.Errorf("comms: expires_at required (retention deadline)")
+	}
 	transfer := &models.FileTransfer{
 		AuditBase: models.AuditBase{
 			OrganizationID: orgID,
@@ -129,6 +142,7 @@ func (s *Service) CreateFileTransfer(orgID, senderID, recipientID, fileName stri
 		FileType:    fileType,
 		Status:      "pending",
 		ScanStatus:  "pending",
+		ExpiresAt:   expiresAt,
 	}
 	if err := s.db.Create(transfer).Error; err != nil {
 		return nil, fmt.Errorf("comms: create file transfer: %w", err)

@@ -99,7 +99,7 @@ func TestCommsFileTransferUploadScanDownload(t *testing.T) {
 	org := models.Organization{Name: "o", Slug: "oft", Status: "active"}
 	db.Create(&org)
 	rec := doJSON(t, srv, "POST", "/api/communications/file-transfers",
-		`{"sender_id":"u1","recipient_id":"u2","file_name":"notes.txt","file_size":10,"file_type":"text","classification":"internal"}`, org.ID)
+		`{"sender_id":"u1","recipient_id":"u2","file_name":"notes.txt","file_size":10,"file_type":"text","classification":"internal","expires_at":"2027-01-01T00:00:00Z"}`, org.ID)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("transfer create failed: %d %s", rec.Code, rec.Body.String())
 	}

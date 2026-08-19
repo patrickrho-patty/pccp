@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"gorm.io/gorm"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
 )
@@ -545,10 +546,28 @@ func (s *Server) handleFileTransferDownload(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, "content not uploaded")
 		return
 	}
+	// PAT-1511 delivery evidence: stamp downloaded_at + bump counter
+	// + audit event so admins can audit exfiltration paths.
+	now := time.Now().Format(time.RFC3339)
+	actor := ""
+	if a, ok := r.Context().Value("actor_id").(string); ok { actor = a }
+	s.db.Model(&transfer).Updates(map[string]interface{}{
+		"downloaded_at": now,
+		"download_count": gorm.Expr("download_count + 1"),
+	})
+	s.db.Create(&models.AuditEvent{
+		OrganizationID: orgID, EventType: "comms.transfer_downloaded",
+		ActorID: actor, ActorType: "user",
+		ResourceType: "file_transfer", ResourceID: transferID,
+		Action: "download", Result: "success",
+		OccurredAt: now,
+	})
 	http.ServeFile(w, r, transfer.StoragePath)
 }
 
 // handleFileTransferTransition implements accept/decline/complete (C4).
+// Each accept/decline is recorded as an audit event for delivery
+// evidence (PAT-1511).
 func (s *Server) handleFileTransferTransition(w http.ResponseWriter, r *http.Request) {
 	transferID := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
@@ -564,16 +583,35 @@ func (s *Server) handleFileTransferTransition(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusNotFound, "transfer not found")
 		return
 	}
+	now := time.Now().Format(time.RFC3339)
+	actor := ""
+	if a, ok := r.Context().Value("actor_id").(string); ok { actor = a }
 	switch req.Action {
 	case "accept":
 		if transfer.Status == "ready" {
-			s.db.Model(&transfer).Update("status", "downloading")
+			s.db.Model(&transfer).Updates(map[string]interface{}{
+				"status": "downloading", "accepted_at": now,
+			})
+			s.db.Create(&models.AuditEvent{
+				OrganizationID: orgID, EventType: "comms.transfer_accepted",
+				ActorID: actor, ActorType: "user",
+				ResourceType: "file_transfer", ResourceID: transferID,
+				Action: "accept", Result: "success",
+				OccurredAt: now,
+			})
 		}
 	case "decline":
 		s.db.Model(&transfer).Update("status", "rejected")
+		s.db.Create(&models.AuditEvent{
+			OrganizationID: orgID, EventType: "comms.transfer_declined",
+			ActorID: actor, ActorType: "user",
+			ResourceType: "file_transfer", ResourceID: transferID,
+			Action: "decline", Result: "success",
+			OccurredAt: now,
+		})
 	case "complete":
 		s.db.Model(&transfer).Updates(map[string]interface{}{
-			"status": "completed", "completed_at": time.Now().Format(time.RFC3339),
+			"status": "completed", "completed_at": now,
 		})
 	default:
 		writeError(w, http.StatusBadRequest, "action must be accept|decline|complete")

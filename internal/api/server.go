@@ -7030,15 +7030,16 @@ func (s *Server) handleCreateFileTransfer(w http.ResponseWriter, r *http.Request
 		FileSize       int64  `json:"file_size"`
 		FileType       string `json:"file_type"`
 		Classification string `json:"classification"`
+		ExpiresAt      string `json:"expires_at"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	orgID := getOrgID(r)
-	ft, err := s.comms.CreateFileTransfer(orgID, req.SenderID, req.RecipientID, req.FileName, req.FileSize, req.FileType, req.Classification)
+	ft, err := s.comms.CreateFileTransfer(orgID, req.SenderID, req.RecipientID, req.FileName, req.FileSize, req.FileType, req.Classification, req.ExpiresAt)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, ft)
