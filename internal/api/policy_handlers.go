@@ -329,6 +329,11 @@ func (s *Server) handleCreatePolicyException(w http.ResponseWriter, r *http.Requ
 func (s *Server) handleDecidePolicyException(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
+	callerRole := getRole(r)
+	if !enterpriseRoleAdmin(callerRole) {
+		writeError(w, http.StatusForbidden, "예외 결정 권한이 없습니다")
+		return
+	}
 	var req struct {
 		Approve         bool                `json:"approve"`
 		DecidedBy       string              `json:"decided_by"`
@@ -340,6 +345,14 @@ func (s *Server) handleDecidePolicyException(w http.ResponseWriter, r *http.Requ
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+	if req.DecidedByRole != "" && req.DecidedByRole != callerRole {
+		writeError(w, http.StatusBadRequest, "decided_by_role must match caller role")
+		return
+	}
+	req.DecidedByRole = callerRole
+	if req.DecidedBy == "" {
+		req.DecidedBy = getActorID(r)
 	}
 	ex, err := s.policy.DecideException(orgID, id, policy.ExceptionDecision{
 		Approve: req.Approve, DecidedBy: req.DecidedBy, DecidedByRole: req.DecidedByRole,

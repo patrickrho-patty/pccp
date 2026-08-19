@@ -31,7 +31,7 @@ export function taskState(s: string): TaskState {
 /** Human due-date age label (overdue / due-soon / recent), secondary text. */
 export function dueAgeLabel(dueDate?: string): string | undefined {
   if (!dueDate) return undefined
-  const day = Math.floor((new Date(dueDate + 'T00:00:00').getTime() - Date.now()) / 86400000)
+  const day = Math.floor((new Date(dueDate + 'T12:00:00').getTime() - Date.now()) / 86400000)
   if (day < 0) return `기한 초과 ${Math.abs(day)}일`
   if (day === 0) return '오늘 마감'
   if (day <= 7) return `${day}일 내`

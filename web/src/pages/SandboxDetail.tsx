@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api'
-import { Modal, ModalFooter } from '../components/Modal'
+import { GovernedActionModal } from '../components/GovernedActionModal'
 import { showToast } from '../components/Toast'
 import { formatRelative, formatShortTime } from '../utils/format'
 import { MODE_KO, NETWORK_KO, sandboxActionsFor, sandboxStatusMeta, sandboxRuntimeConnected } from '../sandboxLifecycle'
@@ -19,6 +19,7 @@ export default function SandboxDetail() {
   const [detail, setDetail] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [destroyOpen, setDestroyOpen] = useState(false)
+  const [destroyReason, setDestroyReason] = useState('')
   const [busy, setBusy] = useState('')
 
   const load = () => {
@@ -67,7 +68,7 @@ export default function SandboxDetail() {
   const clickAction = (actionId: string) => {
     if (actionId === 'snapshot') doSnapshot()
     else if (actionId === 'retry') doRetry()
-    else if (actionId === 'destroy') setDestroyOpen(true)
+    else if (actionId === 'destroy') { setDestroyReason(''); setDestroyOpen(true) }
   }
 
   return (
@@ -193,18 +194,25 @@ export default function SandboxDetail() {
         </div>
       </div>
 
-      <Modal open={destroyOpen} title="샌드박스 파괴" subtitle={sb.id} onClose={() => setDestroyOpen(false)} size="sm"
-        footer={<ModalFooter onCancel={() => setDestroyOpen(false)} onConfirm={doDestroy} confirmLabel="파괴 실행" danger disabled={busy !== ''} />}>
-        <div className="space-y-2">
-          <p className="text-sm text-gray-600">런타임을 종료하고 파괴 증거(키 폐기 증명)를 감사에 기록합니다. 되돌릴 수 없습니다.</p>
-          <ul className="text-[11px] text-gray-500 list-disc pl-4 space-y-0.5">
-            <li>스냅샷 이력과 감사 증거는 보존됩니다</li>
-            {sb.session_id && <li>바인딩된 세션 {sb.session_id.slice(0, 12)}… 의 격리 런타임이 해제됩니다</li>}
-            {sb.status === 'defined' && <li>런타임 미연결 상태이므로 정의 레코드만 파괴됩니다</li>}
-            <li>동일 작업을 반복해도 증거는 한 번만 기록됩니다 (멱등)</li>
-          </ul>
-        </div>
-      </Modal>
+      <GovernedActionModal
+        open={destroyOpen}
+        title="샌드박스 파괴"
+        subtitle={sb.id}
+        warnings={[{ kind: 'high', text: '런타임을 종료하고 파괴 증거(키 폐기 증명)를 감사에 기록합니다. 되돌릴 수 없습니다.' }]}
+        preview={<ul className="text-[11px] text-gray-500 list-disc pl-4 space-y-0.5">
+          <li>스냅샷 이력과 감사 증거는 보존됩니다</li>
+          {sb.session_id && <li>바인딩된 세션 {sb.session_id.slice(0, 12)}… 의 격리 런타임이 해제됩니다</li>}
+          {sb.status === 'defined' && <li>런타임 미연결 상태이므로 정의 레코드만 파괴됩니다</li>}
+          <li>동일 작업을 반복해도 증거는 한 번만 기록됩니다 (멱등)</li>
+        </ul>}
+        reason={destroyReason}
+        onReasonChange={setDestroyReason}
+        reasonPlaceholder="예: 세션 종료 후 리소스 회수 / 침해 조사 완료"
+        confirmLabel="파괴 실행"
+        onCancel={() => setDestroyOpen(false)}
+        onConfirm={doDestroy}
+        danger
+      />
     </div>
   )
 }

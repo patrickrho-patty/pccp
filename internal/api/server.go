@@ -1177,8 +1177,12 @@ func (s *Server) handleCreateOrganization(w http.ResponseWriter, r *http.Request
 func (s *Server) handleGetOrganization(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	orgID := getOrgID(r)
+	if id != orgID {
+		writeError(w, http.StatusNotFound, "조직을 찾을 수 없습니다")
+		return
+	}
 	var org models.Organization
-	if err := s.db.First(&org, "id = ? AND organization_id = ?", id, orgID).Error; err != nil {
+	if err := s.db.First(&org, "id = ?", id).Error; err != nil {
 		writeError(w, http.StatusNotFound, "조직을 찾을 수 없습니다")
 		return
 	}
