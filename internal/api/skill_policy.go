@@ -8,8 +8,6 @@ package api
 // to affected harnesses over the relay directive carrier.
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -20,12 +18,9 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
-	"github.com/patrickrho-patty/pccp/internal/keys"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/skillpolicy"
 )
-
-const skillPolicyIssuer = "policy-issuer"
 
 // skillAssignmentFromRow converts a persisted row back to the resolver shape.
 func skillAssignmentFromRow(row models.SkillPolicyAssignment) skillpolicy.Assignment {
@@ -390,18 +385,12 @@ func (s *Server) handleAdminSkillEpochDeliver(w http.ResponseWriter, r *http.Req
 		"issued_at":       time.Now().UTC().Format(time.RFC3339),
 	}
 	body, _ := json.Marshal(payload)
-	sum := sha256.Sum256(body)
-	digest := hex.EncodeToString(sum[:])
-	priv, err := keys.LoadOrCreate(s.db, skillPolicyIssuer)
+	digest, sig, err := signPolicyPayload(s.db, body)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "skill policy: no signing identity: "+err.Error())
+		writePolicyEpochError(w, "skill policy: sign", err)
 		return
 	}
-	sig, err := dari.COSESign1Hex(body, priv, []byte(skillPolicyIssuer))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "skill policy: sign: "+err.Error())
-		return
-	}
+	enforcement := s.orgSkillEnforcement(orgID)
 	epoch := &models.SkillPolicyEpoch{
 		OrganizationID:     orgID,
 		EpochID:            dari.GenerateID("skpe"),
@@ -409,13 +398,13 @@ func (s *Server) handleAdminSkillEpochDeliver(w http.ResponseWriter, r *http.Req
 		AssignmentsJSON:    string(body),
 		Digest:             digest,
 		SignatureHex:       sig,
-		EnforcementEnabled: s.orgSkillEnforcement(orgID),
+		EnforcementEnabled: enforcement,
 		CreatedBy:          getActorID(r),
 		Status:             "active",
 		EffectiveAt:        time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := s.db.Create(epoch).Error; err != nil {
-		writeError(w, http.StatusInternalServerError, "skill policy: "+err.Error())
+		writePolicyEpochError(w, "skill policy", err)
 		return
 	}
 	// Supersede older active epochs.

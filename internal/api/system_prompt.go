@@ -21,7 +21,6 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
-	"github.com/patrickrho-patty/pccp/internal/keys"
 	"github.com/patrickrho-patty/pccp/internal/models"
 )
 
@@ -477,16 +476,9 @@ func (s *Server) handleSystemPromptEpochDeliver(w http.ResponseWriter, r *http.R
 		"additions": docs, "issued_at": time.Now().UTC().Format(time.RFC3339),
 	}
 	body, _ := json.Marshal(payload)
-	sum := sha256.Sum256(body)
-	digest := hex.EncodeToString(sum[:])
-	priv, err := keys.LoadOrCreate(s.db, promptPolicyIssuer)
+	digest, sig, err := signPolicyPayload(s.db, body)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "system prompt: no signing identity: "+err.Error())
-		return
-	}
-	sig, err := dari.COSESign1Hex(body, priv, []byte(promptPolicyIssuer))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "system prompt: sign: "+err.Error())
+		writePolicyEpochError(w, "system prompt: sign", err)
 		return
 	}
 	epoch := &models.SystemPromptEpoch{
@@ -496,27 +488,20 @@ func (s *Server) handleSystemPromptEpochDeliver(w http.ResponseWriter, r *http.R
 		Status: "active", EffectiveAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := s.db.Create(epoch).Error; err != nil {
-		writeError(w, http.StatusInternalServerError, "system prompt: "+err.Error())
+		writePolicyEpochError(w, "system prompt", err)
 		return
 	}
 	s.db.Model(&models.SystemPromptEpoch{}).Where("organization_id = ? AND status = 'active' AND id != ?", orgID, epoch.ID).
 		Updates(map[string]interface{}{"status": "superseded", "superseded_by": epoch.EpochID})
-	var targets []string
-	s.db.Model(&models.Harness{}).Where("organization_id = ? AND status IN ?", orgID, []string{"active", "enrolled"}).Pluck("harness_id", &targets)
-	delivered := 0
-	for _, hid := range targets {
-		if err := s.pushRelayDirective("system_prompt", orgID, hid, "prompt-policy epoch "+epoch.EpochID, map[string]interface{}{
-			"epoch_id": epoch.EpochID, "epoch_number": epoch.EpochNumber,
-			"digest": digest, "signature_hex": sig,
-		}); err == nil {
-			delivered++
-		}
-	}
+	delivered := s.pushEpochToActiveHarnesses(orgID, "system_prompt", "prompt-policy epoch "+epoch.EpochID, map[string]interface{}{
+		"epoch_id": epoch.EpochID, "epoch_number": epoch.EpochNumber,
+		"digest": digest, "signature_hex": sig,
+	})
 	s.db.Model(&models.SystemPromptDocument{}).Where("organization_id = ? AND (epoch_id = '' OR epoch_id IS NULL)", orgID).
 		Update("epoch_id", epoch.EpochID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"ok": true, "epoch_id": epoch.EpochID, "epoch_number": epoch.EpochNumber,
-		"digest": digest, "targets": len(targets), "delivered": delivered,
+		"digest": digest, "targets": delivered, "delivered": delivered,
 	})
 }
 
@@ -525,8 +510,6 @@ func (s *Server) nextPromptEpochNumber(orgID string) uint64 {
 	s.db.Model(&models.SystemPromptEpoch{}).Where("organization_id = ?", orgID).Select("COALESCE(MAX(epoch_number),0)").Scan(&max)
 	return max + 1
 }
-
-const promptPolicyIssuer = "policy-issuer"
 
 func boolString(b bool) string {
 	if b {
