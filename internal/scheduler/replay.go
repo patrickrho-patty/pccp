@@ -1,5 +1,7 @@
 package scheduler
 
+import "github.com/patrickrho-patty/pccp/internal/scheduler/queue"
+
 // replay.go implements the offline half of PAT-1445 research evaluation:
 // replay a captured trace through any versioned router and compare a
 // candidate's decisions against the frozen baseline — the same agreement
@@ -19,6 +21,8 @@ type ReplaySummary struct {
 // routeRequestFor rebuilds the router input from an arrived event. The
 // trace carries exactly the bounded features the production router is
 // authorized to see, so replayed decisions are comparable to live ones.
+// The queue class maps through the same requestClassFor the live path
+// uses — replay must see the SLO scoping live routing saw.
 func routeRequestFor(e TraceEvent) RouteRequest {
 	return RouteRequest{
 		Model:                e.Model,
@@ -27,7 +31,7 @@ func routeRequestFor(e TraceEvent) RouteRequest {
 		InputTokens:          e.InputTokens,
 		CachedTokens:         e.CachedTokens,
 		ExpectedOutputTokens: e.ExpectedOutputTokens,
-		RequestClass:         e.Class,
+		RequestClass:         requestClassFor(queue.Class(e.Class)),
 	}
 }
 

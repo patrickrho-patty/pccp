@@ -3,6 +3,8 @@ package scheduler
 import (
 	"errors"
 	"testing"
+
+	"github.com/patrickrho-patty/pccp/internal/scheduler/queue"
 )
 
 func replayTrace() []TraceEvent {
@@ -59,5 +61,22 @@ func TestCompareRouters(t *testing.T) {
 	rep = CompareRouters(replayTrace(), base, failing)
 	if rep.Compared != 2 || rep.CandidateErrors != 2 || rep.Agree != 0 {
 		t.Fatalf("failing comparison = %+v", rep)
+	}
+}
+
+func TestReplayUsesLiveSLOClassMapping(t *testing.T) {
+	// The replay harness must apply the same queue-class → SLO-class
+	// mapping the live dispatch path uses, or replayed decisions see
+	// different SLO scoping than live traffic did.
+	cases := map[string]string{
+		string(queue.ClassBackgroundAgent): "agentic",
+		string(queue.ClassBatch):           "batch",
+		string(queue.ClassInteractivePaid): "interactive",
+	}
+	for queueClass, want := range cases {
+		req := routeRequestFor(TraceEvent{Stage: TraceArrived, Class: queueClass})
+		if req.RequestClass != want {
+			t.Fatalf("class %q mapped to %q, want %q", queueClass, req.RequestClass, want)
+		}
 	}
 }
