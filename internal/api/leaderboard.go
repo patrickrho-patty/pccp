@@ -77,12 +77,8 @@ func (s *Server) handleLeaderboardRubrics(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "leaderboard: "+err.Error())
 		return
 	}
-	models.CreateAuditEvent(s.db, &models.AuditEvent{
-		OrganizationID: orgID, ActorID: getActorID(r), ActorType: "user",
-		EventType: "cp.leaderboard.rubric", Action: "leaderboard.rubric",
-		ResourceType: "scorecard_rubric", ResourceID: rubric.RubricID, Result: "created",
-		Details: string(mustJSON(map[string]interface{}{"version": version, "weights": fmt.Sprintf("%d/%d/%d/%d", req.WeightDelivery, req.WeightQuality, req.WeightSecurity, req.WeightEfficiency)})),
-	})
+	s.governanceAudit(orgID, r, "cp.leaderboard.rubric", "leaderboard.rubric", "scorecard_rubric", rubric.RubricID, "created",
+		map[string]interface{}{"version": version, "weights": fmt.Sprintf("%d/%d/%d/%d", req.WeightDelivery, req.WeightQuality, req.WeightSecurity, req.WeightEfficiency)})
 	writeJSON(w, http.StatusOK, rubric)
 }
 
@@ -292,12 +288,8 @@ func (s *Server) handleLeaderboardObjective(w http.ResponseWriter, r *http.Reque
 	if err := s.db.Where("organization_id = ? AND objective_id = ?", orgID, req.ObjectiveID).First(&existing).Error; err == nil {
 		if existing.WorkType != req.WorkType || existing.SizeBand != req.SizeBand {
 			// Class change after outcome observed — audited as a correction.
-			models.CreateAuditEvent(s.db, &models.AuditEvent{
-				OrganizationID: orgID, ActorID: getActorID(r), ActorType: "user",
-				EventType: "cp.leaderboard.correction", Action: "leaderboard.objective_reclassify",
-				ResourceType: "work_objective", ResourceID: obj.ObjectiveID, Result: "review",
-				Details: string(mustJSON(map[string]interface{}{"from": existing.WorkType + "/" + existing.SizeBand, "to": req.WorkType + "/" + req.SizeBand})),
-			})
+			s.governanceAudit(orgID, r, "cp.leaderboard.correction", "leaderboard.objective_reclassify", "work_objective", obj.ObjectiveID, "review",
+				map[string]interface{}{"from": existing.WorkType + "/" + existing.SizeBand, "to": req.WorkType + "/" + req.SizeBand})
 		}
 		obj.ID = existing.ID
 		if err := s.db.Model(&existing).Updates(map[string]interface{}{
@@ -398,12 +390,8 @@ func (s *Server) handleLeaderboardReview(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "leaderboard: "+err.Error())
 		return
 	}
-	models.CreateAuditEvent(s.db, &models.AuditEvent{
-		OrganizationID: orgID, ActorID: getActorID(r), ActorType: "user",
-		EventType: "cp.leaderboard.reviewed", Action: "leaderboard.reviewed",
-		ResourceType: "scorecard_review", ResourceID: review.ID, Result: "saved",
-		Details: string(mustJSON(map[string]interface{}{"decision": req.Decision, "period_id": req.PeriodID, "subject_id": req.SubjectID})),
-	})
+	s.governanceAudit(orgID, r, "cp.leaderboard.reviewed", "leaderboard.reviewed", "scorecard_review", review.ID, "saved",
+		map[string]interface{}{"decision": req.Decision, "period_id": req.PeriodID, "subject_id": req.SubjectID})
 	writeJSON(w, http.StatusOK, review)
 }
 

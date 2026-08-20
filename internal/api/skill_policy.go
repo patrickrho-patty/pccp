@@ -323,12 +323,8 @@ func (s *Server) handleAdminSkillAssignmentUpsert(w http.ResponseWriter, r *http
 			return
 		}
 	}
-	models.CreateAuditEvent(s.db, &models.AuditEvent{
-		OrganizationID: orgID, ActorID: actor, ActorType: "user", EventType: "cp.skill_policy.set",
-		Action:       "skill_policy.set",
-		ResourceType: "skill", ResourceID: req.SkillIdentity, Result: req.State,
-		Details: string(mustJSON(map[string]interface{}{"scope": req.Scope, "scope_id": req.ScopeID, "digest": req.Digest, "reason": req.Reason})),
-	})
+	s.governanceAudit(orgID, r, "cp.skill_policy.set", "skill_policy.set", "skill", req.SkillIdentity, req.State,
+		map[string]interface{}{"scope": req.Scope, "scope_id": req.ScopeID, "digest": req.Digest, "reason": req.Reason})
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "target": req.SkillIdentity})
 }
 
@@ -351,12 +347,8 @@ func (s *Server) handleAdminSkillAssignmentDelete(w http.ResponseWriter, r *http
 	}
 	var row models.SkillPolicyAssignment
 	if err := s.db.Where("organization_id = ? AND id = ?", orgID, id).First(&row).Error; err == nil {
-		models.CreateAuditEvent(s.db, &models.AuditEvent{
-			OrganizationID: orgID, ActorID: getActorID(r), ActorType: "user", EventType: "cp.skill_policy.delete",
-			Action:       "skill_policy.delete",
-			ResourceType: "skill", ResourceID: row.SkillIdentity, Result: "deleted",
-			Details: "{\"assignment_id\":\"" + id + "\"}",
-		})
+		s.governanceAudit(orgID, r, "cp.skill_policy.delete", "skill_policy.delete", "skill", row.SkillIdentity, "deleted",
+			map[string]interface{}{"assignment_id": id})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }

@@ -9,6 +9,7 @@ package api
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 
 	"github.com/patrickrho-patty/pccp/internal/dari"
@@ -74,4 +75,19 @@ func epochDirective(epochID string, epochNumber uint64, digest, signature string
 // writePolicyEpochError converts signing/persistence errors to HTTP responses.
 func writePolicyEpochError(w http.ResponseWriter, prefix string, err error) {
 	writeError(w, http.StatusInternalServerError, prefix+": "+err.Error())
+}
+
+// governanceAudit records an org-scoped governance audit event with the
+// caller's verified actor identity. All mutating governance endpoints share
+// this so ActorType/EventType conventions cannot drift.
+func (s *Server) governanceAudit(orgID string, r *http.Request, eventType, action, resourceType, resourceID, result string, details map[string]interface{}) {
+	detailsJSON := "{}"
+	if b, err := json.Marshal(details); err == nil {
+		detailsJSON = string(b)
+	}
+	_ = models.CreateAuditEvent(s.db, &models.AuditEvent{
+		OrganizationID: orgID, ActorID: getActorID(r), ActorType: "user",
+		EventType: eventType, Action: action, ResourceType: resourceType,
+		ResourceID: resourceID, Result: result, Details: detailsJSON,
+	})
 }

@@ -324,12 +324,8 @@ func (s *Server) handleSaveSystemPrompt(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, "system prompt: "+err.Error())
 			return
 		}
-		models.CreateAuditEvent(s.db, &models.AuditEvent{
-			OrganizationID: orgID, ActorID: actor, ActorType: "user", EventType: "cp.prompt.versioned",
-			Action:       "prompt.versioned",
-			ResourceType: "system_prompt", ResourceID: doc.ID, Result: "saved",
-			Details: string(mustJSON(map[string]interface{}{"scope": doc.Scope, "scope_id": doc.ScopeID, "from": doc.Version, "to": next, "digest": digest})),
-		})
+		s.governanceAudit(orgID, r, "cp.prompt.versioned", "prompt.versioned", "system_prompt", doc.ID, "saved",
+			map[string]interface{}{"scope": doc.Scope, "scope_id": doc.ScopeID, "from": doc.Version, "to": next, "digest": digest})
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "id": doc.ID, "version": next})
 		return
 	}
@@ -352,11 +348,8 @@ func (s *Server) handleSaveSystemPrompt(w http.ResponseWriter, r *http.Request) 
 		s.db.Model(&existing).Updates(map[string]interface{}{
 			"title": req.Title, "content": req.Content, "digest": digest, "version": next, "enabled": true, "epoch_id": "",
 		})
-		models.CreateAuditEvent(s.db, &models.AuditEvent{
-			OrganizationID: orgID, ActorID: actor, ActorType: "user", EventType: "cp.prompt.versioned",
-			Action: "prompt.versioned", ResourceType: "system_prompt", ResourceID: existing.ID, Result: "saved",
-			Details: string(mustJSON(map[string]interface{}{"scope": existing.Scope, "scope_id": existing.ScopeID, "to": next, "digest": digest})),
-		})
+		s.governanceAudit(orgID, r, "cp.prompt.versioned", "prompt.versioned", "system_prompt", existing.ID, "saved",
+			map[string]interface{}{"scope": existing.Scope, "scope_id": existing.ScopeID, "to": next, "digest": digest})
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "id": existing.ID, "version": next})
 		return
 	}
@@ -374,11 +367,8 @@ func (s *Server) handleSaveSystemPrompt(w http.ResponseWriter, r *http.Request) 
 		OrganizationID: orgID, DocumentID: doc.ID, Scope: doc.Scope, ScopeID: doc.ScopeID,
 		Version: 1, Content: req.Content, Digest: digest, CreatedBy: actor,
 	})
-	models.CreateAuditEvent(s.db, &models.AuditEvent{
-		OrganizationID: orgID, ActorID: actor, ActorType: "user", EventType: "cp.prompt.created",
-		Action: "prompt.created", ResourceType: "system_prompt", ResourceID: doc.ID, Result: "created",
-		Details: string(mustJSON(map[string]interface{}{"scope": doc.Scope, "scope_id": doc.ScopeID, "digest": digest})),
-	})
+	s.governanceAudit(orgID, r, "cp.prompt.created", "prompt.created", "system_prompt", doc.ID, "created",
+		map[string]interface{}{"scope": doc.Scope, "scope_id": doc.ScopeID, "digest": digest})
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "id": doc.ID, "version": 1})
 }
 
@@ -401,11 +391,8 @@ func (s *Server) handleSetSystemPromptEnabled(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "system prompt: "+err.Error())
 		return
 	}
-	models.CreateAuditEvent(s.db, &models.AuditEvent{
-		OrganizationID: orgID, ActorID: getActorID(r), ActorType: "user", EventType: "cp.prompt." + boolString(enabled),
-		Action: "prompt." + boolString(enabled), ResourceType: "system_prompt", ResourceID: doc.ID, Result: "saved",
-		Details: string(mustJSON(map[string]interface{}{"scope": doc.Scope, "scope_id": doc.ScopeID, "version": doc.Version})),
-	})
+	s.governanceAudit(orgID, r, "cp.prompt."+boolString(enabled), "prompt."+boolString(enabled), "system_prompt", doc.ID, "saved",
+		map[string]interface{}{"scope": doc.Scope, "scope_id": doc.ScopeID, "version": doc.Version})
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "enabled": enabled})
 }
 
@@ -449,11 +436,8 @@ func (s *Server) handleRestoreSystemPrompt(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s.db.Model(&doc).Updates(map[string]interface{}{"content": old.Content, "digest": digest, "version": next, "enabled": true, "epoch_id": ""})
-	models.CreateAuditEvent(s.db, &models.AuditEvent{
-		OrganizationID: orgID, ActorID: getActorID(r), ActorType: "user", EventType: "cp.prompt.restored",
-		Action: "prompt.restored", ResourceType: "system_prompt", ResourceID: doc.ID, Result: "saved",
-		Details: string(mustJSON(map[string]interface{}{"from": old.Version, "to": next, "digest": digest})),
-	})
+	s.governanceAudit(orgID, r, "cp.prompt.restored", "prompt.restored", "system_prompt", doc.ID, "saved",
+		map[string]interface{}{"from": old.Version, "to": next, "digest": digest})
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "id": doc.ID, "version": next})
 }
 

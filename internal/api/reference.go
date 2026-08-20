@@ -45,10 +45,7 @@ func (s *Server) handleReferenceSources(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	models.CreateAuditEvent(s.db, &models.AuditEvent{
-		OrganizationID: orgID, ActorID: getActorID(r), ActorType: "user", EventType: "cp.reference.source",
-		Action: "reference.source", ResourceType: "reference_source", ResourceID: created.SourceID, Result: "saved",
-	})
+	s.governanceAudit(orgID, r, "cp.reference.source", "reference.source", "reference_source", created.SourceID, "saved", nil)
 	writeJSON(w, http.StatusOK, created)
 }
 
@@ -190,11 +187,8 @@ func (s *Server) handleReferencePackageActivate(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	models.CreateAuditEvent(s.db, &models.AuditEvent{
-		OrganizationID: orgID, ActorID: getActorID(r), ActorType: "user", EventType: "cp.reference.activate",
-		Action: "reference.activate", ResourceType: "reference_package", ResourceID: id, Result: "activated",
-		Details: string(mustJSON(map[string]interface{}{"note": req.Note})),
-	})
+	s.governanceAudit(orgID, r, "cp.reference.activate", "reference.activate", "reference_package", id, "activated",
+		map[string]interface{}{"note": req.Note})
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "state": "active"})
 }
 

@@ -120,20 +120,7 @@ func (s *Service) GeneratePeriodScores(orgID, periodID string) ([]Score, error) 
 	}
 	// Rank within cohort (sufficient subjects first, then by overall).
 	for _, list := range byCohort {
-		sort.SliceStable(list, func(a, b int) bool {
-			if list[a].Sufficient != list[b].Sufficient {
-				return list[a].Sufficient
-			}
-			return list[a].Overall > list[b].Overall
-		})
-		rank := 0
-		for i, sc := range list {
-			if sc.Sufficient {
-				rank++
-				sc.Rank = rank
-				sc.Percentile = cohortPercentile(i, len(list))
-			}
-		}
+		rankCohort(list)
 	}
 	// Persist snapshots (idempotent) with the filled rank/percentile/explanation.
 	merged := make([]Score, 0, len(rows))
@@ -143,6 +130,31 @@ func (s *Service) GeneratePeriodScores(orgID, periodID string) ([]Score, error) 
 		s.persistSnapshot(orgID, period, rubric, row.id, row.cohort, *row.score)
 	}
 	return merged, nil
+}
+
+// rankCohort assigns cohort rank + percentile in place. Invariant: eligible
+// (sufficient-evidence) subjects rank ahead of insufficient ones; within each
+// class the overall score orders descending; insufficient subjects carry
+// rank 0 (no rank) and no percentile. Pure — rank assignment is testable
+// without a DB.
+func rankCohort(list []*Score) {
+	sort.SliceStable(list, func(a, b int) bool {
+		if list[a].Sufficient != list[b].Sufficient {
+			return list[a].Sufficient
+		}
+		return list[a].Overall > list[b].Overall
+	})
+	rank := 0
+	for i, sc := range list {
+		if sc.Sufficient {
+			rank++
+			sc.Rank = rank
+			sc.Percentile = cohortPercentile(i, len(list))
+		} else {
+			sc.Rank = 0
+			sc.Percentile = 0
+		}
+	}
 }
 
 func cohortPercentile(idx, total int) float64 {

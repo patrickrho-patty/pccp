@@ -47,11 +47,8 @@ func (s *Server) handleSSOMigrateLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	models.CreateAuditEvent(s.db, &models.AuditEvent{
-		OrganizationID: orgID, ActorID: getActorID(r), ActorType: "user", EventType: "cp.sso.link",
-		Action: "sso.link", ResourceType: "sso_identity_link", ResourceID: link.ID, Result: "linked",
-		Details: string(ssomigrate.Marshal(map[string]interface{}{"legacy_issuer": req.LegacyIssuer, "legacy_subject": req.LegacySubject, "patty_user_id": req.PattyUserID})),
-	})
+	s.governanceAudit(orgID, r, "cp.sso.link", "sso.link", "sso_identity_link", link.ID, "linked",
+		map[string]interface{}{"legacy_issuer": req.LegacyIssuer, "legacy_subject": req.LegacySubject, "patty_user_id": req.PattyUserID})
 	writeJSON(w, http.StatusOK, link)
 }
 

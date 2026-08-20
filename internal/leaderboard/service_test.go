@@ -203,3 +203,30 @@ func TestCriticalCeiling(t *testing.T) {
 		t.Fatalf("critical violation not counted: %+v", scores[0])
 	}
 }
+
+// rankCohort: eligible (sufficient) subjects always rank ahead of insufficient
+// ones; within eligible class, higher overall wins; insufficient carry no rank.
+func TestRankCohortInvariant(t *testing.T) {
+	mk := func(overall float64, sufficient bool) *Score { return &Score{Overall: overall, Sufficient: sufficient} }
+	list := []*Score{
+		mk(20, true), mk(90, true), mk(30, false), mk(70, true),
+	}
+	rankCohort(list)
+	// eligible first, descending overall: 90,70,20 then insufficient 30.
+	wantOrder := []float64{90, 70, 20, 30}
+	for i, sc := range list {
+		if sc.Overall != wantOrder[i] {
+			t.Fatalf("order[%d]=%v want %v", i, sc.Overall, wantOrder[i])
+		}
+	}
+	if list[0].Rank != 1 || list[1].Rank != 2 || list[2].Rank != 3 || list[2].Percentile <= 0 {
+		t.Fatalf("eligible ranks wrong: %+v", list)
+	}
+	if list[3].Rank != 0 || list[3].Percentile != 0 {
+		t.Fatalf("insufficient must carry no rank/percentile: %+v", list[3])
+	}
+	// Percentile takes the full cohort size into account (not only eligible).
+	if list[0].Percentile != 100 || list[2].Percentile < 50 {
+		t.Fatalf("percentile bounds wrong: %+v", list)
+	}
+}
