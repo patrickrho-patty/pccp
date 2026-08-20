@@ -17,6 +17,7 @@ type Scheduler struct {
 	KV        *KVIndex
 	KVDir     *KVDirectory
 	Trace     *TraceRecorder
+	PD        *PDController
 }
 
 // NewScheduler assembles the full S1–S12 scheduler with the given trust
@@ -33,6 +34,8 @@ func NewScheduler(trust Trust, policy PolicySource, ttl, grace time.Duration, ev
 		KV:        NewKVIndex(),
 		KVDir:     NewKVDirectory(),
 		Trace:     NewTraceRecorder(4096),
+		PD: NewPDController(NewPDPlanner(),
+			NewLatencyPredictorPair(DefaultPredictorConfig())),
 	}
 	svc.wireServingStack()
 	return svc
@@ -59,6 +62,12 @@ func (s *Scheduler) wireServingStack() {
 	s.Trace.SetVersion("predictor", PredictorVersion)
 	s.Trace.SetVersion("output_estimator", OutputEstimatorVersion)
 	s.Serving.Dispatcher.SetTraceRecorder(s.Trace)
+	// WS2 stage planning: every binding records its execution path as
+	// trace evidence; execution stays co-located until the PIA stage
+	// protocol lands (PAT-1445 rollout: decide in shadow first).
+	topology := NewTopologyInventory()
+	s.Serving.Dispatcher.SetStagePlanner(
+		NewStagePlanner(s.PD.planner, NewStaticTopologyOracle(topology), s.PD))
 }
 
 // SyncRouter refreshes the router's worker/gang/load tables from the

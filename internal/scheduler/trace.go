@@ -43,6 +43,8 @@ type TraceEvent struct {
 	QueueWaitMs          int64      `json:"queue_wait_ms,omitempty"`
 	WorkerID             string     `json:"worker_id,omitempty"`
 	OutputTokens         int        `json:"output_tokens,omitempty"`
+	PlanMode             string     `json:"plan_mode,omitempty"`
+	TransferMs           float64    `json:"transfer_ms,omitempty"`
 	Err                  string     `json:"err,omitempty"`
 }
 

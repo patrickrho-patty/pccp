@@ -128,6 +128,7 @@ type Dispatcher struct {
 	policy   OverloadPolicy
 	est      *OutputEstimator
 	router   *CostRouter
+	planner  *StagePlanner
 
 	fwMu      sync.Mutex
 	forwarder Forwarder
@@ -291,6 +292,11 @@ func (d *Dispatcher) assignLocked(workerID string) *Dispatch {
 	boundEvent := traceEventFor(*out.Request, TraceBound)
 	boundEvent.WorkerID = selected
 	boundEvent.QueueWaitMs = time.Since(out.Request.ArrivedAt).Milliseconds()
+	if d.planner != nil {
+		plan := d.planner.Plan(model, selected, out.Request.InputTokens)
+		boundEvent.PlanMode = plan.Mode
+		boundEvent.TransferMs = plan.TransferMs
+	}
 	d.recordTrace(boundEvent)
 	return &Dispatch{Request: *out.Request, WorkerID: selected, Model: model}
 }
@@ -309,6 +315,16 @@ func (d *Dispatcher) SetTraceRecorder(t *TraceRecorder) {
 	d.fwMu.Lock()
 	d.trace = t
 	d.fwMu.Unlock()
+}
+
+// SetStagePlanner installs the WS2 stage planner: each binding records
+// its execution path (co-located or disaggregated plan) as trace
+// evidence. Execution remains co-located until the PIA stage protocol
+// lands — plans are shadow-grade decision evidence (PAT-1445 rollout).
+func (d *Dispatcher) SetStagePlanner(p *StagePlanner) {
+	d.mu.Lock()
+	d.planner = p
+	d.mu.Unlock()
 }
 
 // recordTrace appends one event when a recorder is installed.

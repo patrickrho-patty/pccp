@@ -242,6 +242,18 @@ func (p *LatencyPredictor) PredictTTFT(configID string, f PredictorFeatures) Pre
 	return p.predictFrom(m, p.global, x)
 }
 
+// Evidence returns the observation count backing a config's model
+// (WS2: decisions that depend on learned estimates must know how much
+// evidence supports them — low-evidence configs fall back conservative).
+func (p *LatencyPredictor) Evidence(configID string) int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if m := p.models[configID]; m != nil {
+		return m.count
+	}
+	return 0
+}
+
 func (p *LatencyPredictor) predictFrom(m, global *bayesModel, x []float64) Prediction {
 	// Hierarchical mean: shrink the config mean toward the global mean
 	// by the config's observation count (rare configs lean global).
