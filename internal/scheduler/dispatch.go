@@ -132,6 +132,7 @@ type Dispatcher struct {
 	fwMu      sync.Mutex
 	forwarder Forwarder
 	pending   map[string]*pendingWaiter
+	trace     *TraceRecorder
 }
 
 // NewDispatcher builds a dispatcher with default overload policy and a
@@ -226,8 +227,10 @@ func (d *Dispatcher) assignLocked(workerID string) *Dispatch {
 		if out.Request != nil {
 			switch out.Outcome {
 			case queue.OutcomeExpiredTTL:
+				d.recordTrace(traceEventFor(*out.Request, TraceExpired))
 				d.submitResult(out.Request.ID, InferenceResult{Err: "scheduler: queued request expired; retry", Cancelled: true})
 			case queue.OutcomeDrained:
+				d.recordTrace(traceEventFor(*out.Request, TraceDrained))
 				d.submitResult(out.Request.ID, InferenceResult{Err: "scheduler: shutting down", Cancelled: true})
 			}
 		}
@@ -284,6 +287,10 @@ func (d *Dispatcher) assignLocked(workerID string) *Dispatch {
 		d.queue.Enqueue(*out.Request)
 		return nil
 	}
+	boundEvent := traceEventFor(*out.Request, TraceBound)
+	boundEvent.WorkerID = selected
+	boundEvent.QueueWaitMs = time.Since(out.Request.ArrivedAt).Milliseconds()
+	d.recordTrace(boundEvent)
 	return &Dispatch{Request: *out.Request, WorkerID: selected, Model: model}
 }
 
@@ -293,6 +300,24 @@ func (d *Dispatcher) SetRouter(r *CostRouter) {
 	d.mu.Lock()
 	d.router = r
 	d.mu.Unlock()
+}
+
+// SetTraceRecorder installs the governed trace recorder (PAT-1445);
+// arrival/binding/completion events are recorded content-free.
+func (d *Dispatcher) SetTraceRecorder(t *TraceRecorder) {
+	d.fwMu.Lock()
+	d.trace = t
+	d.fwMu.Unlock()
+}
+
+// recordTrace appends one event when a recorder is installed.
+func (d *Dispatcher) recordTrace(e TraceEvent) {
+	d.fwMu.Lock()
+	t := d.trace
+	d.fwMu.Unlock()
+	if t != nil {
+		t.Add(e)
+	}
 }
 
 // RejectSheddable removes queued requests of shed classes during overload

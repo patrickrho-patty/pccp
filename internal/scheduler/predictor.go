@@ -11,6 +11,11 @@ import (
 // on completion events; prediction is a local matrix-vector product —
 // zero-hop, no sidecar, no retrain cycles, no predictor-outage mode.
 
+// PredictorVersion is the algorithm/schema identity stamped on routing
+// receipts (PAT-1445: receipts record the estimator versions that
+// produced the decision).
+const PredictorVersion = "bayes-ttft/v1"
+
 // PredictorConfig tunes the Bayesian model.
 type PredictorConfig struct {
 	NoisePrecision float64 // β: observation precision (1/σ²) prior

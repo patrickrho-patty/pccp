@@ -15,6 +15,7 @@ type Scheduler struct {
 	Evidence  *EvidenceLog
 	Serving   *Serving
 	KV        *KVIndex
+	Trace     *TraceRecorder
 }
 
 // NewScheduler assembles the full S1–S12 scheduler with the given trust
@@ -29,6 +30,7 @@ func NewScheduler(trust Trust, policy PolicySource, ttl, grace time.Duration, ev
 		Evidence:  NewEvidenceLog(evidenceKey),
 		Serving:   NewServing(),
 		KV:        NewKVIndex(),
+		Trace:     NewTraceRecorder(4096),
 	}
 	svc.wireServingStack()
 	return svc
@@ -48,6 +50,12 @@ func (s *Scheduler) wireServingStack() {
 	router.SetSLOResolver(NewSLOResolver())
 	router.SetPredictor(NewLatencyPredictor(DefaultPredictorConfig()))
 	s.Serving.Dispatcher.SetRouter(router)
+	// PAT-1445 governed trace capture: versioned, content-free decisions
+	// for replay/shadow evaluation.
+	s.Trace.SetVersion("router", CostRouterVersion)
+	s.Trace.SetVersion("predictor", PredictorVersion)
+	s.Trace.SetVersion("output_estimator", OutputEstimatorVersion)
+	s.Serving.Dispatcher.SetTraceRecorder(s.Trace)
 }
 
 // SyncRouter refreshes the router's worker/gang/load tables from the

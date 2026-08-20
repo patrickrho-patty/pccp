@@ -14,6 +14,19 @@ import (
 // routing, breakable session affinity, overload filters, and topology
 // awareness from capability cards.
 
+// CostRouterVersion is the frozen baseline policy identity (PAT-1445
+// baseline freeze): receipts and shadow comparisons key on it.
+const CostRouterVersion = "cost-router/v1"
+
+// Router is the versioned placement interface (PAT-1445 maintainability:
+// a stable router interface with versioned candidate implementations).
+// The baseline cost router is v1; candidates implement the same seam for
+// shadow evaluation and, later, canary rollout.
+type Router interface {
+	Route(RouteRequest) (RouteDecision, error)
+	Version() string
+}
+
 // RouterConfig tunes the cost model.
 type RouterConfig struct {
 	PrefillScale     float64 // cost per prefill token (uncached)
@@ -87,6 +100,7 @@ type CostRouter struct {
 	maxSLORisk float64           // placements above this P(SLO violation) are rejected
 	lora       *LoRaLifecycle
 	pools      *ModelPoolManager
+	shadow     Router            // candidate evaluated alongside (PAT-1445 shadow mode)
 }
 
 // NewCostRouter builds a router with the given config.
@@ -99,6 +113,9 @@ func NewCostRouter(cfg RouterConfig) *CostRouter {
 		maxSLORisk: 0.5,
 	}
 }
+
+// Version returns the frozen baseline policy identity.
+func (r *CostRouter) Version() string { return CostRouterVersion }
 
 // SetKV installs the fleet KV index (S3 §13.11).
 func (r *CostRouter) SetKV(kv *KVIndex) { r.kv = kv }
@@ -282,13 +299,21 @@ func (r *CostRouter) Route(req RouteRequest) (RouteDecision, error) {
 		return RouteDecision{}, fmt.Errorf("scheduler: no eligible worker for model %q", req.Model)
 	}
 	if r.receipts != nil {
-		r.receipts.Add(RoutingReceipt{
-			Decision:    best,
-			Model:       req.Model,
-			Namespace:   req.Namespace,
-			InputTokens: req.InputTokens,
-			AtUnixMs:    timeNowUnixMs(),
-		})
+		rec := RoutingReceipt{
+			Decision:      best,
+			Model:         req.Model,
+			Namespace:     req.Namespace,
+			InputTokens:   req.InputTokens,
+			AtUnixMs:      timeNowUnixMs(),
+			PolicyVersion: r.Version(),
+		}
+		if r.predictor != nil {
+			rec.PredictorVersion = PredictorVersion
+		}
+		if r.shadow != nil {
+			rec.Shadow = r.runShadow(req, best)
+		}
+		r.receipts.Add(rec)
 	}
 	return best, nil
 }
@@ -306,26 +331,34 @@ func containsStr(s []string, v string) bool {
 }
 
 // RoutingReceipt is a signed, queryable record of one placement decision
-// (spec §13.6): worker, overlap tokens, affinity decision, class. The
-// scheduler signs with its evidence key; the CP API queries them (S10).
+// (spec §13.6): worker, overlap tokens, affinity decision, class. PAT-1445
+// adds the policy/predictor versions that produced the decision and the
+// shadow-candidate comparison. The scheduler signs with its evidence key;
+// the CP API queries them (S10).
 type RoutingReceipt struct {
-	Decision     RouteDecision `json:"decision"`
-	Model        string        `json:"model"`
-	Namespace    string        `json:"namespace"`
-	InputTokens  int           `json:"input_tokens"`
-	AtUnixMs     int64         `json:"at_unix_ms"`
-	SignatureHex string        `json:"signature_hex,omitempty"`
+	Decision         RouteDecision `json:"decision"`
+	Model            string        `json:"model"`
+	Namespace        string        `json:"namespace"`
+	InputTokens      int           `json:"input_tokens"`
+	AtUnixMs         int64         `json:"at_unix_ms"`
+	PolicyVersion    string        `json:"policy_version,omitempty"`
+	PredictorVersion string        `json:"predictor_version,omitempty"`
+	Shadow           *ShadowRecord `json:"shadow,omitempty"`
+	SignatureHex     string        `json:"signature_hex,omitempty"`
 }
 
 // Sign binds the receipt with the given key (canonical body = the JSON
 // fields excluding the signature).
 func (r *RoutingReceipt) Sign(priv ed25519.PrivateKey) error {
 	body := RoutingReceipt{
-		Decision:    r.Decision,
-		Model:       r.Model,
-		Namespace:   r.Namespace,
-		InputTokens: r.InputTokens,
-		AtUnixMs:    r.AtUnixMs,
+		Decision:         r.Decision,
+		Model:            r.Model,
+		Namespace:        r.Namespace,
+		InputTokens:      r.InputTokens,
+		AtUnixMs:         r.AtUnixMs,
+		PolicyVersion:    r.PolicyVersion,
+		PredictorVersion: r.PredictorVersion,
+		Shadow:           r.Shadow,
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -345,11 +378,14 @@ func (r *RoutingReceipt) Verify(pub ed25519.PublicKey) bool {
 		return false
 	}
 	body := RoutingReceipt{
-		Decision:    r.Decision,
-		Model:       r.Model,
-		Namespace:   r.Namespace,
-		InputTokens: r.InputTokens,
-		AtUnixMs:    r.AtUnixMs,
+		Decision:         r.Decision,
+		Model:            r.Model,
+		Namespace:        r.Namespace,
+		InputTokens:      r.InputTokens,
+		AtUnixMs:         r.AtUnixMs,
+		PolicyVersion:    r.PolicyVersion,
+		PredictorVersion: r.PredictorVersion,
+		Shadow:           r.Shadow,
 	}
 	raw, _ := json.Marshal(body)
 	return ed25519.Verify(pub, raw, sig)

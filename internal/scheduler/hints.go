@@ -20,6 +20,10 @@ type RequestHints struct {
 	TenantPriority       string `json:"tenant_priority"`
 }
 
+// OutputEstimatorVersion is the algorithm identity stamped on exported
+// traces (PAT-1445: versioned traces record estimator identities).
+const OutputEstimatorVersion = "ema-ratio/v1"
+
 // EstimatorConfig tunes the online output-length estimator.
 type EstimatorConfig struct {
 	// DefaultRatio is the initial expected-output-per-input-token ratio

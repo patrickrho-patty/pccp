@@ -72,6 +72,7 @@ func (d *Dispatcher) Submit(qr queue.Request) (<-chan InferenceResult, error) {
 	if err := d.queue.Enqueue(qr); err != nil {
 		return nil, err
 	}
+	d.recordTrace(traceEventFor(qr, TraceArrived))
 	w := &pendingWaiter{
 		ch:     make(chan InferenceResult, 1),
 		cancel: make(chan struct{}, 1),
@@ -90,6 +91,7 @@ func (d *Dispatcher) SubmitStream(qr queue.Request) (<-chan InferenceResult, <-c
 	if err := d.queue.Enqueue(qr); err != nil {
 		return nil, nil, err
 	}
+	d.recordTrace(traceEventFor(qr, TraceArrived))
 	w := &pendingWaiter{
 		ch:     make(chan InferenceResult, 1),
 		cancel: make(chan struct{}, 1),
@@ -112,6 +114,9 @@ func (d *Dispatcher) Cancel(id string) bool {
 		delete(d.pending, id)
 	}
 	d.fwMu.Unlock()
+	if removed || ok {
+		d.recordTrace(TraceEvent{RequestID: id, Stage: TraceCancelled})
+	}
 	if w != nil {
 		select {
 		case w.ch <- InferenceResult{Cancelled: true}:
@@ -244,13 +249,18 @@ func (d *Dispatcher) execute(ctx context.Context, bound *Dispatch) {
 	if err != nil {
 		res = InferenceResult{Err: err.Error()}
 	}
+	completed := traceEventFor(req, TraceCompleted)
+	completed.WorkerID = workerID
+	completed.Err = res.Err
 	if res.Usage != nil {
 		if in, ok := res.Usage["prompt_tokens"]; ok {
 			if out, ok2 := res.Usage["completion_tokens"]; ok2 {
 				d.est.ObserveCompletion(in, out)
+				completed.OutputTokens = out
 			}
 		}
 	}
+	d.recordTrace(completed)
 	d.submitResult(req.ID, res)
 	if waiter != nil {
 		d.closeDeltas(waiter)
