@@ -12,56 +12,54 @@ import (
 // binds them (spec §14 row 2; llm-d "scheduling regret" avoidance). Worker
 // selection is capability matching here; the cost model replaces it in S3.
 
-// WorkerSelector picks a serving worker for a model. All methods are safe
-// for concurrent use (dispatch + heartbeat paths both touch it).
+// WorkerSelector picks a serving worker for a model, reading from the
+// shared WorkerFleet (PAT-1445 B1: one worker-state module). With no
+// fleet supplied it owns a private one (tests).
 type WorkerSelector struct {
-	mu      sync.RWMutex
-	workers map[string]WorkerEntry
-	load    map[string]WorkerLoad
+	fleet *WorkerFleet
 }
 
-// NewWorkerSelector builds an empty selector.
-func NewWorkerSelector() *WorkerSelector {
-	return &WorkerSelector{
-		workers: make(map[string]WorkerEntry),
-		load:    make(map[string]WorkerLoad),
+// NewWorkerSelector builds a selector over the given fleet (or a private
+// one when omitted).
+func NewWorkerSelector(fleets ...*WorkerFleet) *WorkerSelector {
+	f := NewWorkerFleet()
+	if len(fleets) == 1 && fleets[0] != nil {
+		f = fleets[0]
 	}
+	return &WorkerSelector{fleet: f}
 }
 
-// Upsert installs or refreshes a worker's capability entry.
+// Upsert installs or refreshes a worker's capability entry. Load state
+// survives re-upserts (heartbeats refresh cards, not load).
 func (s *WorkerSelector) Upsert(e WorkerEntry, _ int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.workers[e.Card.WorkerID] = e
-	if _, ok := s.load[e.Card.WorkerID]; !ok {
-		s.load[e.Card.WorkerID] = WorkerLoad{MaxConcurrent: int(e.Card.MaxConcurrentSeqs)}
+	id := e.Card.WorkerID
+	if !s.fleet.Mutate(id, func(w *FleetWorker) { w.Entry = e }) {
+		s.fleet.Upsert(e, RouterWorkerState{
+			Load: WorkerLoad{MaxConcurrent: int(e.Card.MaxConcurrentSeqs)},
+		})
 	}
 }
 
 // SetLoad updates a worker's layer-2 load picture (active seqs + local
 // buffer) and recomputes the max-concurrency bound from the card.
 func (s *WorkerSelector) SetLoad(workerID string, active, localQueued int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	l := s.load[workerID]
-	if e, ok := s.workers[workerID]; ok {
-		l.MaxConcurrent = int(e.Card.MaxConcurrentSeqs)
-	}
-	l.Active = active
-	l.LocalQueued = localQueued
-	s.load[workerID] = l
+	s.fleet.Mutate(workerID, func(w *FleetWorker) {
+		w.State.Load.MaxConcurrent = int(w.Entry.Card.MaxConcurrentSeqs)
+		w.State.Load.Active = active
+		w.State.Load.LocalQueued = localQueued
+	})
 }
 
 // Select returns a worker serving the model with free capacity, skipping
 // quarantined, lapsed, and degraded entries. S2 matching is
 // capability-only; the S3 cost model supersedes the tie-break.
 func (s *WorkerSelector) Select(model string) (string, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	now := time.Now()
 	best := ""
 	bestLoad := -1
-	for id, e := range s.workers {
+	for _, w := range s.fleet.List() {
+		e := w.Entry
+		id := e.Card.WorkerID
 		if e.Card.ModelName != model {
 			continue
 		}
@@ -74,7 +72,7 @@ func (s *WorkerSelector) Select(model string) (string, bool) {
 		if now.After(e.LeasedUntil) {
 			continue
 		}
-		l := s.load[id]
+		l := w.State.Load
 		if !l.CanAccept() {
 			continue
 		}
@@ -89,17 +87,12 @@ func (s *WorkerSelector) Select(model string) (string, bool) {
 
 // Remove drops a worker (eviction).
 func (s *WorkerSelector) Remove(workerID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.workers, workerID)
-	delete(s.load, workerID)
+	s.fleet.Remove(workerID)
 }
 
 // Count returns the number of tracked workers.
 func (s *WorkerSelector) Count() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.workers)
+	return len(s.fleet.List())
 }
 
 // Dispatch is a binding of one queued request to one worker.
@@ -176,15 +169,14 @@ func (d *Dispatcher) FleetSignalsFromRegistry() FleetSignals {
 	if d.selector == nil {
 		return sig
 	}
-	d.selector.mu.RLock()
-	defer d.selector.mu.RUnlock()
 	var active, maxCap int
 	now := time.Now()
-	for _, e := range d.selector.workers {
+	for _, w := range d.selector.fleet.List() {
+		e := w.Entry
 		if e.Quarantined || e.Lapsed || now.After(e.LeasedUntil) {
 			continue
 		}
-		l := d.selector.load[e.Card.WorkerID]
+		l := w.State.Load
 		active += l.Active
 		maxCap += int(e.Card.MaxConcurrentSeqs)
 		if l.CanAccept() {
@@ -368,12 +360,11 @@ func (d *Dispatcher) ServedModels() []string {
 	if d.selector == nil {
 		return nil
 	}
-	d.selector.mu.RLock()
-	defer d.selector.mu.RUnlock()
 	now := time.Now()
 	seen := map[string]bool{}
 	var out []string
-	for _, e := range d.selector.workers {
+	for _, w := range d.selector.fleet.List() {
+		e := w.Entry
 		if e.Quarantined || e.Lapsed || now.After(e.LeasedUntil) {
 			continue
 		}
@@ -387,18 +378,18 @@ func (d *Dispatcher) ServedModels() []string {
 
 // FreeWorkers returns every worker with at least one free slot.
 func (s *WorkerSelector) FreeWorkers() []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	now := time.Now()
 	var out []string
-	for id, e := range s.workers {
+	for _, w := range s.fleet.List() {
+		e := w.Entry
+		id := e.Card.WorkerID
 		if e.Quarantined || e.Lapsed || now.After(e.LeasedUntil) {
 			continue
 		}
 		if !e.Card.Servable() {
 			continue
 		}
-		if s.load[id].CanAccept() {
+		if w.State.Load.CanAccept() {
 			out = append(out, id)
 		}
 	}
@@ -407,40 +398,35 @@ func (s *WorkerSelector) FreeWorkers() []string {
 
 // WorkerAddr returns the card's DARI dispatch address for a worker.
 func (s *WorkerSelector) WorkerAddr(workerID string) (string, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	e, ok := s.workers[workerID]
+	w, ok := s.fleet.Get(workerID)
 	if !ok {
 		return "", false
 	}
-	return e.Card.DariAddr, e.Card.DariAddr != ""
+	return w.Entry.Card.DariAddr, w.Entry.Card.DariAddr != ""
 }
 
 // ReserveLoad atomically marks one more active sequence on a worker.
 // Returns false when the worker has no capacity left (double-check the
 // bind before forwarding).
 func (s *WorkerSelector) ReserveLoad(workerID string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	l := s.load[workerID]
-	if !l.CanAccept() {
-		return false
-	}
-	l.Active++
-	s.load[workerID] = l
-	return true
+	reserved := false
+	s.fleet.Mutate(workerID, func(w *FleetWorker) {
+		if w.State.Load.CanAccept() {
+			w.State.Load.Active++
+			reserved = true
+		}
+	})
+	return reserved
 }
 
 // ReleaseLoad marks one active sequence finished on a worker and wakes
 // the dispatch loop (a slot freed).
 func (s *WorkerSelector) ReleaseLoad(workerID string) {
-	s.mu.Lock()
-	l := s.load[workerID]
-	if l.Active > 0 {
-		l.Active--
-	}
-	s.load[workerID] = l
-	s.mu.Unlock()
+	s.fleet.Mutate(workerID, func(w *FleetWorker) {
+		if w.State.Load.Active > 0 {
+			w.State.Load.Active--
+		}
+	})
 	dispatchWake <- struct{}{}
 }
 
