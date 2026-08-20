@@ -200,6 +200,10 @@ func AllModels() []interface{} {
 		&SSOMigrationManifest{},
 		&SSOMigrationWave{},
 		&SSOMigrationBridgeEvent{},
+		// GPU queue / inference QoS analytics (PAT-1443)
+		&QoSRequestEvent{},
+		&QoSRollup{},
+		&QoSForecast{},
 		// Model distribution campaigns (PAT-1444)
 		&ModelPackageEntitlement{},
 		&ModelDistributionCampaign{},

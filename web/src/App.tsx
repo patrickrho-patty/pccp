@@ -31,6 +31,7 @@ import SystemPrompts from './pages/SystemPrompts'
 import Leaderboard from './pages/Leaderboard'
 import ReferenceAdmin from './pages/ReferenceAdmin'
 import SSOMigrate from './pages/SSOMigrate'
+import QosOps from './pages/QosOps'
 import Provenance from './pages/Provenance'
 import Audit from './pages/Audit'
 import Fleet from './pages/Fleet'
@@ -152,6 +153,7 @@ function AppContent() {
           <Route path="/leaderboard" element={<Leaderboard />} />
           <Route path="/reference" element={<ReferenceAdmin />} />
           <Route path="/sso" element={<SSOMigrate />} />
+          <Route path="/sre/qos" element={<QosOps />} />
           <Route path="/notifications" element={<NotificationRouting />} />
           <Route path="/security" element={<Security />} />
           <Route path="/compliance" element={<Compliance />} />

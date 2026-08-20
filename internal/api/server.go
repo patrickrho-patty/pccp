@@ -42,6 +42,7 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/leaderboard"
 	"github.com/patrickrho-patty/pccp/internal/reference"
 	"github.com/patrickrho-patty/pccp/internal/ssomigrate"
+	"github.com/patrickrho-patty/pccp/internal/qos"
 	"github.com/patrickrho-patty/pccp/internal/metering"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/policy"
@@ -76,6 +77,7 @@ type Server struct {
 	leaderboardSV    *leaderboard.Service
 	refSV            *reference.Service
 	ssoMigrate       *ssomigrate.Service
+	qosSV            *qos.Service
 	events           *events.Service
 	gitscm           *gitscm.Service
 	impact           *impact.Service
@@ -126,6 +128,7 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 	lbSvc := leaderboard.New(db)
 	refSvc := reference.New(db)
 	ssoMigSvc := ssomigrate.New(db)
+	qosSvc := qos.New(db)
 	evtSvc, _ := events.New(db)
 	gitSvc := gitscm.New(db)
 	impactSvc := impact.New(db)
@@ -151,6 +154,7 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 		leaderboardSV:    lbSvc,
 		refSV:            refSvc,
 		ssoMigrate:       ssoMigSvc,
+		qosSV:            qosSvc,
 		events:           evtSvc,
 		gitscm:           gitSvc,
 		impact:           impactSvc,
@@ -857,6 +861,15 @@ func (s *Server) setupRouter() {
 			r.Get("/waves", s.handleSSOMigrateWaves)
 			r.Post("/waves", s.handleSSOMigrateWaves)
 			r.Post("/waves/{id}/signoff", s.handleSSOMigrateWaveSignOff)
+		})
+
+		// GPU queue / QoS operations analytics (PAT-1443)
+		r.Route("/qos", func(r chi.Router) {
+			r.Post("/ingest", s.handleQoSIngest)
+			r.Get("/snapshot", s.handleQoSQueueSnapshot)
+			r.Get("/outcomes", s.handleQoSOutcomes)
+			r.Get("/timeline", s.handleQoSTimeline)
+			r.Get("/forecast", s.handleQoSForecast)
 		})
 
 		// Audit

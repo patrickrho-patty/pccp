@@ -871,4 +871,10 @@ export const api = {
     data ? request<any>('/api/sso-migrate/waves', { method: 'POST', body: JSON.stringify(data) }) : request<any[]>('/api/sso-migrate/waves'),
   ssoMigrateSignOff: (id: string, rollbackWindow: string) =>
     request<any>(`/api/sso-migrate/waves/${encodeURIComponent(id)}/signoff`, { method: 'POST', body: JSON.stringify({ rollback_window: rollbackWindow }) }),
+
+  // GPU queue / QoS ops analytics (PAT-1443)
+  qosSnapshot: (q: string) => request<any>(`/api/qos/snapshot${q}`),
+  qosOutcomes: (q: string) => request<any>(`/api/qos/outcomes${q}`),
+  qosTimeline: (q: string) => request<any>(`/api/qos/timeline${q}`),
+  qosForecast: (q: string) => request<any>(`/api/qos/forecast${q}`),
 };
