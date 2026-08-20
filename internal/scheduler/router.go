@@ -91,8 +91,7 @@ type RouteDecision struct {
 type CostRouter struct {
 	mu         sync.RWMutex
 	cfg        RouterConfig
-	workers    map[string]WorkerEntry
-	state      map[string]RouterWorkerState
+	fleet      *WorkerFleet
 	kv         *KVIndex
 	receipts   *ReceiptStore
 	gang       *GangRegistry
@@ -110,8 +109,7 @@ type CostRouter struct {
 func NewCostRouter(cfg RouterConfig) *CostRouter {
 	return &CostRouter{
 		cfg:        cfg,
-		workers:    make(map[string]WorkerEntry),
-		state:      make(map[string]RouterWorkerState),
+		fleet:      NewWorkerFleet(),
 		workerCfg:  make(map[string]string),
 		maxSLORisk: 0.5,
 	}
@@ -119,6 +117,13 @@ func NewCostRouter(cfg RouterConfig) *CostRouter {
 
 // Version returns the frozen baseline policy identity.
 func (r *CostRouter) Version() string { return CostRouterVersion }
+
+// SetFleet installs the shared worker-state module (PAT-1445 B1).
+func (r *CostRouter) SetFleet(f *WorkerFleet) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.fleet = f
+}
 
 // SetKV installs the fleet KV index (S3 §13.11).
 func (r *CostRouter) SetKV(kv *KVIndex) { r.kv = kv }
@@ -189,20 +194,15 @@ func (r *CostRouter) SetReceipts(rs *ReceiptStore) {
 // Receipts exposes recent placement receipts.
 func (r *CostRouter) Receipts() *ReceiptStore { return r.receipts }
 
-// UpsertWorker installs or refreshes a worker's card + load state.
+// UpsertWorker installs or refreshes a worker's card + load state
+// (delegates to the shared fleet).
 func (r *CostRouter) UpsertWorker(e WorkerEntry, s RouterWorkerState) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.workers[e.Card.WorkerID] = e
-	r.state[e.Card.WorkerID] = s
+	r.fleet.Upsert(e, s)
 }
 
 // RemoveWorker drops a worker.
 func (r *CostRouter) RemoveWorker(workerID string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.workers, workerID)
-	delete(r.state, workerID)
+	r.fleet.Remove(workerID)
 }
 
 // Route runs the two decision phases (PAT-1445 Phase 1): the eligibility
@@ -222,8 +222,10 @@ func (r *CostRouter) Route(req RouteRequest) (RouteDecision, error) {
 	found := false
 	elig := &EligibilityReport{Region: req.Region}
 
-	for id, e := range r.workers {
-		st := r.state[id]
+	for _, w := range r.fleet.List() {
+		id := w.Entry.Card.WorkerID
+		e := w.Entry
+		st := w.State
 		if reason := r.ineligible(req, id, e, st); reason != "" {
 			if elig.Filtered == nil {
 				elig.Filtered = make(map[IneligibilityReason]int)
@@ -287,7 +289,10 @@ func (r *CostRouter) Route(req RouteRequest) (RouteDecision, error) {
 		return RouteDecision{}, fmt.Errorf("scheduler: no eligible worker for model %q", req.Model)
 	}
 	if r.receipts != nil {
-		st := r.state[best.WorkerID]
+		st := RouterWorkerState{}
+		if w, ok := r.fleet.Get(best.WorkerID); ok {
+			st = w.State
+		}
 		rec := RoutingReceipt{
 			Decision:      best,
 			Model:         req.Model,

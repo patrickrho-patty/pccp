@@ -112,11 +112,10 @@ func NewServingHandler(svc *Scheduler, adminToken string) http.Handler {
 	return mux
 }
 
-// selectorFor rebuilds the worker selector from the live registry
-// (card-driven worker discovery; heartbeats refresh loads). The selector
-// is the dispatch-side view of the same signed cards the registry holds.
+// selectorFor rebuilds the worker selector over the shared fleet (the
+// card-driven worker view SyncRouter feeds; heartbeats refresh loads).
 func (s *Serving) selectorFor(svc *Scheduler) *WorkerSelector {
-	sel := NewWorkerSelector()
+	sel := NewWorkerSelector(svc.Fleet)
 	for _, e := range svc.Registry.List() {
 		sel.Upsert(e, 0)
 		sel.SetLoad(e.Card.WorkerID, int(e.Card.ActiveSeqs), 0)

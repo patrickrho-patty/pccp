@@ -20,6 +20,7 @@ type Scheduler struct {
 	PD        *PDController
 	Programs  *ProgramRegistry
 	Topology  *TopologyInventory
+	Fleet     *WorkerFleet
 }
 
 // NewScheduler assembles the full S1–S12 scheduler with the given trust
@@ -36,10 +37,11 @@ func NewScheduler(trust Trust, policy PolicySource, ttl, grace time.Duration, ev
 		KV:        NewKVIndex(),
 		KVDir:     NewKVDirectory(),
 		Trace:     NewTraceRecorder(4096),
-		PD: NewPDController(NewPDPlanner(),
-			NewLatencyPredictorPair(DefaultPredictorConfig())),
-		Topology: NewTopologyInventory(),
+		Topology:  NewTopologyInventory(),
+		Fleet:     NewWorkerFleet(),
 	}
+	svc.PD = NewPDController(NewPDPlanner(svc.Fleet),
+		NewLatencyPredictorPair(DefaultPredictorConfig()))
 	svc.Programs = NewProgramRegistry(svc.KVDir)
 	svc.wireServingStack()
 	return svc
@@ -51,6 +53,7 @@ func NewScheduler(trust Trust, policy PolicySource, ttl, grace time.Duration, ev
 // built for the binary to expose.
 func (s *Scheduler) wireServingStack() {
 	router := NewCostRouter(DefaultRouterConfig())
+	router.SetFleet(s.Fleet)
 	router.SetKV(s.KV)
 	router.SetKVDirectory(s.KVDir)
 	receipts := NewReceiptStore(1024)
@@ -74,9 +77,10 @@ func (s *Scheduler) wireServingStack() {
 	s.Serving.Dispatcher.SetPrograms(s.Programs)
 }
 
-// SyncRouter refreshes the router's worker/gang/load tables from the
-// live registry. Called on every register/heartbeat (the listener owns
-// the card feed; the router owns placement).
+// SyncRouter refreshes the shared worker fleet from the live registry —
+// the single fan-out point: cost router, selector, P/D planner, gang
+// registry, and the network oracle's topology all read from it (the
+// listener owns the card feed; the fleet owns worker state).
 func (s *Scheduler) SyncRouter() {
 	router := s.Serving.Dispatcher.router
 	if router == nil {
@@ -84,18 +88,12 @@ func (s *Scheduler) SyncRouter() {
 	}
 	gang := router.gang
 	for _, e := range s.Registry.List() {
-		router.UpsertWorker(e, RouterWorkerState{
+		s.Fleet.Upsert(e, RouterWorkerState{
 			ActiveRequests: int(e.Card.ActiveSeqs),
 			Load:           WorkerLoad{MaxConcurrent: int(e.Card.MaxConcurrentSeqs), Active: int(e.Card.ActiveSeqs)},
 		})
 		if gang != nil {
 			gang.Upsert(e)
-		}
-		// The card feed fans out to every worker-state consumer from this
-		// one point: the P/D role view drives stage planning and the S10
-		// capacity views.
-		if s.PD != nil {
-			s.PD.planner.Upsert(e, RouterWorkerState{})
 		}
 		// Feed the network oracle's static fallback from signed cards.
 		// Rack is pinned to the node ID: with no rack telemetry, distinct
