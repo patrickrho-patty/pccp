@@ -168,9 +168,6 @@ func resolveOne(identity, reportedDigest string, perScope map[Scope][]Assignment
 	}
 }
 
-// approvedDefined reports whether the winning assignment pins an exact digest.
-func approvedDefined(a *Assignment) bool { return a != nil && a.Digest != "" }
-
 // digestMatches reports whether the winning assignment's pinned digest equals
 // the reported one. An assignment with no digest never matches (unverified).
 func digestMatches(a *Assignment, reported string) bool {
