@@ -18,36 +18,39 @@ const (
 	PDPhaseDecode  PDPhase = "decode"
 )
 
-// PDPlanner places requests on workers by phase and role. Safe for
-// concurrent use.
+// PDPlanner places requests on workers by phase and role, reading worker
+// state from the shared WorkerFleet (PAT-1445 B1). Its own state is only
+// the prefill-share EMA. Safe for concurrent use.
 type PDPlanner struct {
-	mu      sync.RWMutex
-	workers map[string]WorkerEntry
+	mu sync.RWMutex
+	// fleet is the shared worker-state module (PAT-1445 B1).
+	fleet *WorkerFleet
 	// prefillShare is a trailing-window EMA of prefill time share per
 	// model; conditional disaggregation keys off it.
 	prefillShare map[string]float64
 }
 
-// NewPDPlanner builds an empty planner.
-func NewPDPlanner() *PDPlanner {
+// NewPDPlanner builds an empty planner over the given fleet (or a
+// private one when omitted).
+func NewPDPlanner(fleets ...*WorkerFleet) *PDPlanner {
+	f := NewWorkerFleet()
+	if len(fleets) == 1 && fleets[0] != nil {
+		f = fleets[0]
+	}
 	return &PDPlanner{
-		workers:      make(map[string]WorkerEntry),
+		fleet:        f,
 		prefillShare: make(map[string]float64),
 	}
 }
 
-// Upsert installs or refreshes a worker.
-func (p *PDPlanner) Upsert(e WorkerEntry, _ RouterWorkerState) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.workers[e.Card.WorkerID] = e
+// Upsert installs or refreshes a worker (delegates to the fleet).
+func (p *PDPlanner) Upsert(e WorkerEntry, s RouterWorkerState) {
+	p.fleet.Upsert(e, s)
 }
 
-// Remove drops a worker.
+// Remove drops a worker (delegates to the fleet).
 func (p *PDPlanner) Remove(workerID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	delete(p.workers, workerID)
+	p.fleet.Remove(workerID)
 }
 
 // Place returns workers eligible for a model + phase. Aggregated workers
@@ -55,13 +58,12 @@ func (p *PDPlanner) Remove(workerID string) {
 // model on SGLang with split roles gets nothing (conditional P/D
 // unsupported upstream, spec §12.3.10).
 func (p *PDPlanner) Place(model string, phase PDPhase) []string {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
 	sglang := false
 	roleWorkers := map[string][]string{}
 	var aggregated []string
-	for id, e := range p.workers {
+	for _, w := range p.fleet.List() {
+		e := w.Entry
+		id := e.Card.WorkerID
 		if e.Card.ModelName != model || e.Quarantined || e.Lapsed || !e.Card.Servable() {
 			continue
 		}
@@ -123,9 +125,8 @@ func (p *PDPlanner) PrefillShare(model string) float64 {
 // RoleCounts returns how many servable workers carry each role for a
 // model (S10 P/D capacity view).
 func (p *PDPlanner) RoleCounts(model string) (prefill, decode, aggregated int) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	for _, e := range p.workers {
+	for _, w := range p.fleet.List() {
+		e := w.Entry
 		if e.Card.ModelName != model || e.Quarantined || e.Lapsed || !e.Card.Servable() {
 			continue
 		}
