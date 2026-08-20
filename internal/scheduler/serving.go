@@ -66,6 +66,11 @@ func NewServingHandler(svc *Scheduler, adminToken string) http.Handler {
 	mux.Handle("/api/v1/perf", views)
 	mux.Handle("/api/v1/routing", views)
 	mux.Handle("/api/v1/scaling", views)
+	// PAT-1445 internal views (KV directory, P/D capacity, programs, shadow).
+	mux.Handle("/api/v1/kvdir", views)
+	mux.Handle("/api/v1/pd", views)
+	mux.Handle("/api/v1/programs", views)
+	mux.Handle("/api/v1/shadow", views)
 
 	// S9 batch gateway: submit/status/cancel (slack-gated dispatch).
 	batch := svc.Serving.Batch()

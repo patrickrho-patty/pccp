@@ -112,3 +112,31 @@ func (p *PDPlanner) ShouldDisaggregate(model string) bool {
 	const threshold = 0.6
 	return p.prefillShare[model] > threshold
 }
+
+// PrefillShare returns the model's trailing prefill-share EMA (S10 view).
+func (p *PDPlanner) PrefillShare(model string) float64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.prefillShare[model]
+}
+
+// RoleCounts returns how many servable workers carry each role for a
+// model (S10 P/D capacity view).
+func (p *PDPlanner) RoleCounts(model string) (prefill, decode, aggregated int) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	for _, e := range p.workers {
+		if e.Card.ModelName != model || e.Quarantined || e.Lapsed || !e.Card.Servable() {
+			continue
+		}
+		switch e.Card.EffectivePDRole() {
+		case PDRolePrefill:
+			prefill++
+		case PDRoleDecode:
+			decode++
+		default:
+			aggregated++
+		}
+	}
+	return prefill, decode, aggregated
+}

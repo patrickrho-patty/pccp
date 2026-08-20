@@ -189,5 +189,126 @@ func (o *Observability) AdminViews(prefix string) http.Handler {
 			"config": o.autoscale.Config(),
 		}
 	}))
+	// PAT-1445 internal views: KV directory occupancy and hot prefixes,
+	// P/D capacity and imbalance, program/tool-pause effects, and the
+	// baseline-vs-candidate shadow comparison — all content-free.
+	mux.Handle(prefix+"/api/v1/kvdir", jsonView(func() interface{} { return o.KVDirView() }))
+	mux.Handle(prefix+"/api/v1/pd", jsonView(func() interface{} { return o.PDView() }))
+	mux.Handle(prefix+"/api/v1/programs", jsonView(func() interface{} { return o.ProgramsView() }))
+	mux.Handle(prefix+"/api/v1/shadow", jsonView(func() interface{} { return o.ShadowView() }))
 	return mux
+}
+
+// KVDirView renders the WS1 directory occupancy (tier locations,
+// verification split, hot-prefix replication pressure).
+func (o *Observability) KVDirView() interface{} {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	if o.svc == nil || o.svc.KVDir == nil {
+		return map[string]interface{}{}
+	}
+	return o.svc.KVDir.Summary(3, 10)
+}
+
+// PDModelView is one model's P/D capacity and engagement state.
+type PDModelView struct {
+	Model        string  `json:"model"`
+	PrefillShare float64 `json:"prefill_share"`
+	Engaged      bool    `json:"disaggregation_engaged"`
+	Prefill      int     `json:"prefill_workers"`
+	Decode       int     `json:"decode_workers"`
+	Aggregated   int     `json:"aggregated_workers"`
+}
+
+// PDView renders per-model P/D capacity and imbalance (PAT-1445 §internal
+// UI: current P/D capacity and imbalance by model).
+func (o *Observability) PDView() interface{} {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	if o.svc == nil || o.svc.PD == nil || o.registry == nil {
+		return []PDModelView{}
+	}
+	models := map[string]bool{}
+	for _, e := range o.registry.List() {
+		models[e.Card.ModelName] = true
+	}
+	out := []PDModelView{}
+	for m := range models {
+		pre, dec, agg := o.svc.PD.planner.RoleCounts(m)
+		out = append(out, PDModelView{
+			Model:        m,
+			PrefillShare: o.svc.PD.planner.PrefillShare(m),
+			Engaged:      o.svc.PD.Engaged(m),
+			Prefill:      pre,
+			Decode:       dec,
+			Aggregated:   agg,
+		})
+	}
+	return out
+}
+
+// ProgramsView renders program-level scheduling state using opaque
+// identifiers only (PAT-1445 §internal UI: program-level tool-pause
+// effects; no conversation or code content).
+func (o *Observability) ProgramsView() interface{} {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	if o.svc == nil || o.svc.Programs == nil {
+		return map[string]interface{}{}
+	}
+	programs, paused, predictErrs := o.svc.Programs.Stats()
+	return map[string]interface{}{
+		"programs":                programs,
+		"tool_paused":             paused,
+		"pause_prediction_errors": predictErrs,
+	}
+}
+
+// ShadowView renders the baseline-vs-candidate comparison from routing
+// receipts: agreement rate, per-reason eligibility histogram, and the
+// active policy versions (PAT-1445 §internal UI: baseline/shadow/canary
+// policy comparisons and active versions).
+func (o *Observability) ShadowView() interface{} {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	out := map[string]interface{}{
+		"receipts":        0,
+		"shadowed":        0,
+		"agree":           0,
+		"agreement_rate":  0.0,
+		"policy_versions": map[string]int{},
+		"filtered":        map[string]int{},
+	}
+	if o.receipts == nil {
+		return out
+	}
+	total, shadowed, agree := 0, 0, 0
+	versions := map[string]int{}
+	filtered := map[string]int{}
+	for _, r := range o.receipts.Recent() {
+		total++
+		versions[r.PolicyVersion]++
+		if r.Shadow != nil {
+			shadowed++
+			if r.Shadow.Agree {
+				agree++
+			}
+		}
+		if r.Eligibility != nil {
+			for reason, n := range r.Eligibility.Filtered {
+				filtered[string(reason)] += n
+			}
+		}
+	}
+	rate := 0.0
+	if shadowed > 0 {
+		rate = float64(agree) / float64(shadowed)
+	}
+	out["receipts"] = total
+	out["shadowed"] = shadowed
+	out["agree"] = agree
+	out["agreement_rate"] = rate
+	out["policy_versions"] = versions
+	out["filtered"] = filtered
+	return out
 }

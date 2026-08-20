@@ -319,6 +319,11 @@ func (d *KVDirectory) InvalidateIf(match func(CacheIdentity) bool) int {
 func (d *KVDirectory) HotPrefixes(minHits int64, maxReplicas int) []HotPrefix {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
+	return d.hotPrefixesLocked(minHits, maxReplicas)
+}
+
+// hotPrefixesLocked is HotPrefixes with the read lock already held.
+func (d *KVDirectory) hotPrefixesLocked(minHits int64, maxReplicas int) []HotPrefix {
 	var out []HotPrefix
 	for _, ext := range d.extents {
 		if ext.Hits < minHits {
@@ -388,4 +393,55 @@ func (d *KVDirectory) Locations(namespace, hash string, id CacheIdentity) []Exte
 		return out[i].WorkerID < out[j].WorkerID
 	})
 	return out
+}
+
+// DirectorySummary is the fleet cache view (PAT-1445 §internal UI: KV
+// tier occupancy, hit/recompute/transfer, hot prefixes, replication
+// pressure). Counts are metadata only — bounded, content-free.
+type DirectorySummary struct {
+	Extents             int            `json:"extents"`
+	LocationsVerified   int            `json:"locations_verified"`
+	LocationsUnverified int            `json:"locations_unverified"`
+	ByTier              map[string]int `json:"by_tier"`
+	HotPrefixes         []HotPrefix    `json:"hot_prefixes,omitempty"`
+}
+
+// Summary aggregates the directory's occupancy plus the top hot-prefix
+// replication candidates (hotLimit bounds the list).
+func (d *KVDirectory) Summary(hotMinHits int64, hotLimit int) DirectorySummary {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	sum := DirectorySummary{ByTier: make(map[string]int)}
+	for _, ext := range d.extents {
+		sum.Extents++
+		for _, loc := range ext.Locations {
+			sum.ByTier[tierName(loc.Tier)]++
+			if loc.Verified {
+				sum.LocationsVerified++
+			} else {
+				sum.LocationsUnverified++
+			}
+		}
+	}
+	hot := d.hotPrefixesLocked(hotMinHits, 1<<30)
+	if len(hot) > hotLimit {
+		hot = hot[:hotLimit]
+	}
+	sum.HotPrefixes = hot
+	return sum
+}
+
+// tierName labels a tier for views.
+func tierName(t KVTier) string {
+	switch t {
+	case L1GPU:
+		return "L1-hbm"
+	case L2CPU:
+		return "L2-host"
+	case L3LocalDisk:
+		return "L3-disk"
+	case L4Remote:
+		return "L4-remote"
+	}
+	return "unknown"
 }
