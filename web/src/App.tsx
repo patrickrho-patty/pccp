@@ -45,6 +45,7 @@ import EvidenceSearch from './pages/EvidenceSearch'
 import LineageObservation from './pages/LineageObservation'
 import Schedules from './pages/Schedules'
 import BrowserGov from './pages/BrowserGov'
+import MarketplaceConsole from './pages/MarketplaceConsole'
 import AccountPortal from './pages/AccountPortal'
 import LiveView from './pages/LiveView'
 import CodeExplorer from './pages/CodeExplorer'
@@ -156,6 +157,7 @@ function AppContent() {
           <Route path="/portal" element={<AccountPortal />} />
           <Route path="/schedules" element={<Schedules />} />
           <Route path="/browsergov" element={<BrowserGov />} />
+          <Route path="/marketplace" element={<MarketplaceConsole />} />
           <Route path="/harnesses" element={<Harnesses />} />
         </>)}
 

@@ -554,6 +554,26 @@ func (s *Server) setupRouter() {
 			r.Get("/status", s.handleFleetStatus)
 		})
 
+		// Marketplace registry (PAT-1438)
+		r.Route("/marketplace", func(r chi.Router) {
+			r.Post("/publishers", s.handleMKPublisherRegister)
+			r.Get("/publishers", s.handleMKPublishersList)
+			r.Post("/publishers/{id}/trust", s.handleMKPublisherVerify)
+			r.Post("/publish", s.handleMKPublish)
+			r.Post("/versions", s.handleMKAddVersion)
+			r.Get("/search", s.handleMKSearch)
+			r.Get("/listings/{slug}", s.handleMKListingDetail)
+			r.Post("/update-eligibility", s.handleMKUpdateEligibility)
+			r.Post("/installs", s.handleMKInstall)
+			r.Get("/installs", s.handleMKInstalledList)
+			r.Post("/installs/{id}/lifecycle", s.handleMKInstallLifecycle)
+			r.Post("/installs/update", s.handleMKRecordUpdate)
+			r.Post("/reports", s.handleMKReport)
+			r.Get("/reports", s.handleMKReportsList)
+			r.Post("/moderate", s.handleMKModerate)
+			r.Post("/placement", s.handleMKPlacement)
+		})
+
 		// Browser governance control plane (PAT-1448)
 		r.Route("/browsergov", func(r chi.Router) {
 			r.Get("/policy", s.handleBGPolicyGet)

@@ -141,6 +141,12 @@ func AllModels() []interface{} {
 		&PublicStatusSnapshot{},
 		&PublicStatusSubscriber{},
 		&PublicStatusNotification{},
+		// Marketplace registry (PAT-1438)
+		&MarketPublisher{},
+		&MarketListing{},
+		&MarketListingVersion{},
+		&MarketReport{},
+		&MarketInstallRecord{},
 		// Browser governance (PAT-1448)
 		&BrowserPolicy{},
 		&BrowserTask{},

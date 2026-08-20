@@ -433,6 +433,19 @@ export const api = {
   bgExplain: (action: string) => request<any>(`/api/browsergov/policy/explain?action=${encodeURIComponent(action)}`),
   bgTasks: (state?: string) => request<any[]>(`/api/browsergov/tasks${state ? '?state=' + encodeURIComponent(state) : ''}`),
   bgTaskTimeline: (taskId: string) => request<any>(`/api/browsergov/tasks/${encodeURIComponent(taskId)}/timeline`),
+
+  // PAT-1438: marketplace registry.
+  mkSearch: (query = '', trust = '') =>
+    request<any[]>(`/api/marketplace/search?query=${encodeURIComponent(query)}&trust=${encodeURIComponent(trust)}`),
+  mkListing: (slug: string) => request<any>(`/api/marketplace/listings/${encodeURIComponent(slug)}`),
+  mkPublishers: () => request<any[]>('/api/marketplace/publishers'),
+  mkSetTrust: (publisherId: string, trustState: string) =>
+    request<any>(`/api/marketplace/publishers/${encodeURIComponent(publisherId)}/trust`, { method: 'POST', body: JSON.stringify({ trust_state: trustState }) }),
+  mkReports: (state?: string) => request<any[]>(`/api/marketplace/reports${state ? '?state=' + state : ''}`),
+  mkModerate: (data: { action: string; slug: string; version?: string; reason: string }) =>
+    request<any>('/api/marketplace/moderate', { method: 'POST', body: JSON.stringify(data) }),
+  mkPlacement: (slug: string, featured: boolean) =>
+    request<any>('/api/marketplace/placement', { method: 'POST', body: JSON.stringify({ slug, featured }) }),
   getPolicyException: (id: string) => request<any>(`/api/policy/exceptions/${id}`),
   createPolicyException: (data: any) =>
     request<any>('/api/policy/exceptions', { method: 'POST', body: JSON.stringify(data) }),
