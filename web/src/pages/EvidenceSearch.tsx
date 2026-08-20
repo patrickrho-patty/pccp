@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { showToast } from '../components/Toast'
 import { Modal, ModalFooter } from '../components/Modal'
+import { GovernedActionModal } from '../components/GovernedActionModal'
 
 type Hit = {
   domain: string; source_id: string; scope_ref: string; label: string
@@ -167,18 +168,30 @@ export default function EvidenceSearch() {
         </div>
       </Modal>
 
-      {/* Reveal governed action */}
-      {revealFor && (
-        <Modal open title="민감 내용 표시 (별도 권한 · 감사 기록)" size="sm" onClose={() => setRevealFor(null)}
-          footer={<ModalFooter onCancel={() => setRevealFor(null)} onConfirm={reveal} confirmLabel="표시" danger disabled={!revealReason.trim()} />}>
-          <div className="space-y-3">
-            <p className="text-sm">대상: <span className="font-mono text-xs">{revealFor.scope_ref}</span></p>
-            <div><label className="label">사유 (필수)</label>
-              <input className="input" value={revealReason} onChange={(e) => setRevealReason(e.target.value)} placeholder="예: 침해 사고 조사 케이스 #123" /></div>
-            <p className="text-xs text-gray-500">표시된 내용은 원본 증거이며 해석이 아닙니다. 이 작업은 테넌트 범위 감사 이벤트로 기록됩니다.</p>
-          </div>
-        </Modal>
-      )}
+      {/* Reveal governed action (shared shell: reason + danger) */}
+      {revealFor && (() => {
+        const h = revealFor
+        return (
+          <GovernedActionModal
+            open
+            danger
+            title="민감 내용 표시 (별도 권한 · 감사 기록)"
+            subtitle={h.scope_ref}
+            preview={
+              <div className="space-y-2">
+                <p className="text-sm">대상 도메인: {DOMAIN_KO[h.domain]}</p>
+                <p className="text-xs text-gray-500">표시된 내용은 원본 증거이며 해석이 아닙니다. 이 작업은 테넌트 범위 감사 이벤트로 기록됩니다.</p>
+              </div>
+            }
+            confirmLabel="표시"
+            reason={revealReason}
+            onReasonChange={setRevealReason}
+            reasonPlaceholder="예: 침해 사고 조사 케이스 #123"
+            onCancel={() => setRevealFor(null)}
+            onConfirm={reveal}
+          />
+        )
+      })()}
     </div>
   )
 }

@@ -287,3 +287,55 @@ func TestMDRecallAndPreview(t *testing.T) {
 		t.Fatal("entitlement not revoked on recall")
 	}
 }
+
+// Campaign listing is tenant-scoped: another org's admin sees nothing.
+func TestMDCampaignListTenantIsolation(t *testing.T) {
+	srv, db := mdTestServer(t)
+	mdSeedPackage(t, db, "pmp_iso")
+	mdJSON(t, srv, "POST", "/api/models/distribution/campaigns",
+		`{"package_id":"pmp_iso","targets_json":"[{\"organization_id\":\"orgA\"}]","reason":"x"}`, "admin", "orgP")
+	// Same org as creator sees it.
+	w := mdJSON(t, srv, "GET", "/api/models/distribution/campaigns", "", "admin", "orgP")
+	var rows []map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &rows)
+	if len(rows) != 1 {
+		t.Fatalf("creator org sees %d campaigns, want 1", len(rows))
+	}
+	// Foreign org sees none.
+	w = mdJSON(t, srv, "GET", "/api/models/distribution/campaigns", "", "admin", "orgQ")
+	json.Unmarshal(w.Body.Bytes(), &rows)
+	if len(rows) != 0 {
+		t.Fatalf("foreign org sees %d campaigns, want 0", len(rows))
+	}
+	// Viewer role is rejected outright.
+	if w := mdJSON(t, srv, "GET", "/api/models/distribution/campaigns", "", "viewer", "orgP"); w.Code != http.StatusForbidden {
+		t.Fatalf("viewer listed campaigns: %d", w.Code)
+	}
+}
+
+// Unattended activation without approval or delegation is refused even
+// along the legal loading→active path.
+func TestMDActivationNeedsApprovalOrDelegation(t *testing.T) {
+	srv, db := mdTestServer(t)
+	mdSeedPackage(t, db, "pmp_au")
+	mdJSON(t, srv, "POST", "/api/models/distribution/entitlements",
+		`{"organization_id":"orgA","package_id":"pmp_au","reason":"x"}`, "admin", "patty")
+	mdJSON(t, srv, "POST", "/api/models/distribution/campaigns",
+		`{"package_id":"pmp_au","targets_json":"[{\"organization_id\":\"orgA\"}]","reason":"x"}`, "admin", "patty")
+	var c models.ModelDistributionCampaign
+	db.First(&c)
+	var t1 models.ModelCampaignTarget
+	db.Where("campaign_id = ?", fmt.Sprint(c.ID)).First(&t1)
+	// Forge the target into loading (as a compromised agent would claim).
+	db.Model(&t1).Updates(map[string]interface{}{"observed_state": mdLoading, "approval_state": "required"})
+	if w := mdJSON(t, srv, "POST", "/api/models/distribution/agent/report",
+		fmt.Sprintf(`{"campaign_id":"%d","organization_id":"orgA","environment":"default","observed_state":"active"}`, c.ID), "viewer", "orgA"); w.Code != http.StatusForbidden {
+		t.Fatalf("unapproved unattended activation accepted: %d %s", w.Code, w.Body.String())
+	}
+	// Terminal states reject `failed` reports too.
+	db.Model(&t1).Updates(map[string]interface{}{"observed_state": mdBlockedRecalled})
+	if w := mdJSON(t, srv, "POST", "/api/models/distribution/agent/report",
+		fmt.Sprintf(`{"campaign_id":"%d","organization_id":"orgA","environment":"default","observed_state":"failed"}`, c.ID), "viewer", "orgA"); w.Code != http.StatusConflict {
+		t.Fatalf("failed accepted from terminal state: %d", w.Code)
+	}
+}

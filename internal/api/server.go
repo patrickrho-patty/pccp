@@ -270,6 +270,11 @@ func (s *Server) setupRouter() {
 		r.Handle("/scim/v2/*", s.wrapSSOSCIM(ext))
 	}
 
+	// SCM lineage observation webhooks (PAT-1453): unauthenticated like
+	// real provider webhooks — each delivery is signature-verified
+	// against the connection's secret before any state is touched.
+	r.Post("/api/scm/observation/webhooks/{connId}", s.handleSCMObservationWebhook)
+
 	// Public status page (PAT-1439): unauthenticated read-only status
 	// API + anonymous subscriptions. Must never require console auth and
 	// keeps serving the last valid snapshot when evaluation stopped.
@@ -561,13 +566,11 @@ func (s *Server) setupRouter() {
 			r.Post("/delegations", s.handleCSDelegation)
 		})
 
-		// Read-only SCM lineage observation (PAT-1453) — webhook is
-		// signature-verified per provider; no provider-side mutations exist.
+		// Read-only SCM lineage observation (PAT-1453) — no provider-side mutations exist.
 		r.Route("/scm/observation", func(r chi.Router) {
 			r.Post("/connections", s.handleSCMConnectionCreate)
 			r.Get("/connections", s.handleSCMConnectionsList)
 			r.Post("/connections/{id}/revoke", s.handleSCMConnectionRevoke)
-			r.Post("/webhooks/{connId}", s.handleSCMObservationWebhook)
 			r.Get("/events", s.handleSCMEventsList)
 			r.Post("/attribution", s.handleSCMBindAttribution)
 			r.Get("/lineage", s.handleSCMLineage)

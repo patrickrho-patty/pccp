@@ -26,6 +26,7 @@ type ModelPackageEntitlement struct {
 // replaces the package-level `release` string (PAT-1444).
 type ModelDistributionCampaign struct {
 	gorm.Model
+	OrganizationID string `gorm:"index" json:"organization_id"` // campaign owner (Patty ops org)
 	PackageID       string `gorm:"index" json:"package_id"`
 	ManifestDigest  string `json:"manifest_digest"` // immutable content address
 	// JSON targets: [{"organization_id":"o1","environments":["prod-eu"]}]

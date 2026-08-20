@@ -145,23 +145,39 @@ func csNextCron(expr string, after time.Time) (time.Time, error) {
 }
 
 func csCronField(field string, lo, hi int) ([]int, error) {
+	parsePart := func(part string) (int, error) {
+		var v int
+		if _, err := fmt.Sscanf(part, "%d", &v); err != nil {
+			return 0, fmt.Errorf("cron 필드에 숫자가 아닌 값: %q", part)
+		}
+		return v, nil
+	}
 	out := []int{}
 	for _, part := range strings.Split(field, ",") {
 		step := 1
 		if at := strings.Index(part, "/"); at >= 0 {
-			if _, err := fmt.Sscanf(part[at+1:], "%d", &step); err != nil || step <= 0 {
+			v, err := parsePart(part[at+1:])
+			if err != nil || v <= 0 {
 				return nil, fmt.Errorf("잘못된 cron 단계")
 			}
+			step = v
 			part = part[:at]
 		}
 		start, end := lo, hi
 		if part != "*" {
 			if dash := strings.Index(part, "-"); dash >= 0 {
-				fmt.Sscanf(part[:dash], "%d", &start)
-				fmt.Sscanf(part[dash+1:], "%d", &end)
+				s, err1 := parsePart(part[:dash])
+				e, err2 := parsePart(part[dash+1:])
+				if err1 != nil || err2 != nil {
+					return nil, fmt.Errorf("잘못된 cron 범위")
+				}
+				start, end = s, e
 			} else {
-				fmt.Sscanf(part, "%d", &start)
-				end = start
+				v, err := parsePart(part)
+				if err != nil {
+					return nil, err
+				}
+				start, end = v, v
 			}
 		}
 		if start < lo || end > hi || start > end {
@@ -208,7 +224,7 @@ func (s *Server) handleCSCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	// Malicious-use screen BEFORE registration (deterministic).
 	if class := csScreenObjective(objective); class != "" {
-		s.db.Create(&models.AuditEvent{
+		models.CreateAuditEvent(s.db, &models.AuditEvent{
 			OrganizationID: getOrgID(r), EventType: "cp.schedule.denied", ActorType: "system",
 			Action: "deny_schedule", ResourceType: "cloud_schedule", ResourceID: "draft",
 			Details: fmt.Sprintf(`{"class":"%s"}`, class), Result: "denied",
@@ -348,8 +364,27 @@ func (s *Server) handleCSMutate(w http.ResponseWriter, r *http.Request) {
 // ---------- dispatch sweep (idempotent, coalescing, catch-up ≤24h) ----------
 
 // handleCSDispatchSweep admits due occurrences for active schedules.
+// Operator-gated: dispatching drives every user's schedules.
 func (s *Server) handleCSDispatchSweep(w http.ResponseWriter, r *http.Request) {
+	if !inRolesAllowed(getRole(r)) && !enterpriseRoleAdmin(getRole(r)) {
+		writeError(w, http.StatusForbidden, "디스패치 권한이 필요합니다")
+		return
+	}
 	now := time.Now().UTC()
+	// Retry pass first: pending occurrences with a due retry become
+	// runnable again (the ≤3 bound was enforced at report time).
+	var retries []models.ScheduleOccurrence
+	s.db.Where("state = ? AND next_retry_at != '' AND next_retry_at <= ?", soPending, now.Format(time.RFC3339)).
+		Limit(100).Find(&retries)
+	for i := range retries {
+		occ := &retries[i]
+		var activeRuns int64
+		s.db.Model(&models.ScheduleOccurrence{}).
+			Where("schedule_id = ? AND state IN ?", occ.ScheduleID, []string{soAdmitted, soRunning}).Count(&activeRuns)
+		if activeRuns == 0 {
+			s.db.Model(&occ).Updates(map[string]interface{}{"state": soAdmitted, "next_retry_at": ""})
+		}
+	}
 	var schedules []models.CloudSchedule
 	s.db.Where("state = ?", "active").Find(&schedules)
 	admitted, coalesced, expired := 0, 0, 0
@@ -387,6 +422,10 @@ func (s *Server) handleCSDispatchSweep(w http.ResponseWriter, r *http.Request) {
 			occ := models.ScheduleOccurrence{
 				ScheduleID: sc.ID, Revision: sc.Revision,
 				IntendedAt: next.UTC().Format(time.RFC3339), IdempotencyKey: key,
+				// Frozen snapshot copied at admission: later edits to the
+				// schedule row never change what this run executes.
+				TaskSpecJSON:        sc.TaskSpecJSON,
+				ContextSnapshotJSON: sc.ContextSnapshotJSON,
 				State: soAdmitted, StartedAt: now.UTC().Format(time.RFC3339),
 			}
 			s.db.Create(&occ)
@@ -434,6 +473,13 @@ func (s *Server) handleCSReport(w http.ResponseWriter, r *http.Request) {
 	var occ models.ScheduleOccurrence
 	if err := s.db.First(&occ, "id = ?", req.OccurrenceID).Error; err != nil {
 		writeError(w, http.StatusNotFound, "발생을 찾을 수 없습니다")
+		return
+	}
+	// Owner check: occurrences belong to the schedule's owner; another
+	// user must never mutate someone else's run state.
+	var parent models.CloudSchedule
+	if err := s.db.First(&parent, "id = ?", occ.ScheduleID).Error; err != nil || parent.OwnerUserID != csOwner(r) {
+		writeError(w, http.StatusForbidden, "본인 일정의 발생만 보고할 수 있습니다")
 		return
 	}
 	switch req.State {

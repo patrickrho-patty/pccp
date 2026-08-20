@@ -58,7 +58,7 @@ func TestCanaryCannotSatisfyStableMinimum(t *testing.T) {
 		{"1.5.0", true},
 		{"v1.6.1", true},
 		{"1.5.0-beta.2", false}, // same triple prerelease
-		{"1.5.1-rc.1", true},    // higher triple prerelease still above floor
+		{"1.5.1-rc.1", false},   // higher triple prerelease still never satisfies a stable minimum
 		{"1.4.9", false},
 	}
 	for _, c := range cases {

@@ -49,38 +49,20 @@ const (
 	mdOfflineUnknown    = "offline_unknown"
 )
 
-var mdStateKo = map[string]string{
-	mdIneligible:         "비대상 (자격/호환 불가)",
-	mdEntitled:           "자격 부여됨",
-	mdAwaitingApproval:   "고객 승인 대기",
-	mdScheduled:          "예약됨",
-	mdDownloading:        "다운로드 중",
-	mdVerifying:          "검증 중",
-	mdStaged:             "스테이징됨",
-	mdLoading:            "로드 중",
-	mdCanary:             "카나리",
-	mdActive:             "활성",
-	mdPaused:             "일시중지",
-	mdFailed:             "실패",
-	mdRollbackInProgress: "롤백 진행 중",
-	mdRolledBack:         "롤백됨",
-	mdBlockedRecalled:    "차단 (리콜)",
-	mdOfflineUnknown:     "오프라인/알 수 없음",
-}
-
 // mdAgentReportTransitions restricts observed-state reporting to the
 // legal reconciler flow.
-var mdAgentReportTransitions = map[string][]string{
-	mdEntitled:         {mdDownloading},
-	mdScheduled:        {mdDownloading, mdVerifying},
-	mdDownloading:      {mdVerifying, mdFailed},
-	mdVerifying:        {mdStaged, mdFailed},
-	mdStaged:           {mdLoading, mdCanary, mdFailed},
-	mdLoading:          {mdActive, mdFailed},
-	mdCanary:           {mdActive, mdFailed, mdRollbackInProgress},
-	mdActive:           {mdRollbackInProgress, mdPaused},
-	mdRollbackInProgress: {mdRolledBack, mdFailed},
-}
+	var mdAgentReportTransitions = map[string][]string{
+		mdEntitled:         {mdDownloading},
+		mdScheduled:        {mdDownloading, mdVerifying},
+		mdDownloading:      {mdVerifying, mdFailed},
+		mdVerifying:        {mdStaged, mdFailed},
+		mdStaged:           {mdLoading, mdCanary, mdFailed},
+		mdLoading:          {mdActive, mdFailed},
+		mdCanary:           {mdActive, mdFailed, mdRollbackInProgress},
+		mdActive:           {mdRollbackInProgress, mdPaused},
+		mdPaused:           {mdDownloading, mdVerifying, mdFailed}, // resume path
+		mdRollbackInProgress: {mdRolledBack, mdFailed},
+	}
 
 func mdCanTransition(from, to string) bool {
 	for _, t := range mdAgentReportTransitions[from] {
@@ -121,10 +103,10 @@ func (s *Server) handleMDEntitle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: req.OrganizationID, EventType: "cp.model.entitled", ActorType: "admin",
 		Action: "entitle_package", ResourceType: "model_package", ResourceID: req.PackageID,
-		Details: fmt.Sprintf(`{"reason":"%s"}`, req.Reason), Result: "success",
+		Details: fmt.Sprintf(`{"reason":%q}`, req.Reason), Result: "success",
 		OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusCreated, ent)
@@ -152,10 +134,10 @@ func (s *Server) handleMDEntitleRevoke(w http.ResponseWriter, r *http.Request) {
 		Where("organization_id = ? AND observed_state IN ?", ent.OrganizationID,
 			[]string{mdEntitled, mdDownloading, mdVerifying, mdScheduled}).
 		Updates(map[string]interface{}{"observed_state": mdBlockedRecalled, "reason_code": "entitlement_revoked"})
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: ent.OrganizationID, EventType: "cp.model.entitlement_revoked", ActorType: "admin",
 		Action: "revoke_entitlement", ResourceType: "model_package", ResourceID: ent.PackageID,
-		Details: fmt.Sprintf(`{"reason":"%s"}`, req.Reason), Result: "success",
+		Details: fmt.Sprintf(`{"reason":%q}`, req.Reason), Result: "success",
 		OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
@@ -227,15 +209,16 @@ func (s *Server) handleMDCampaignCreate(w http.ResponseWriter, r *http.Request) 
 		req.DelegationJSON = `{"auto":false}`
 	}
 	req.CreatedBy = getOperatorEmail(r)
+	req.OrganizationID = getOrgID(r)
 	if err := s.db.Create(&req).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.mdMaterializeTargets(&req)
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: getOrgID(r), EventType: "cp.model.campaign_created", ActorType: "admin",
 		Action: "create_model_campaign", ResourceType: "model_campaign", ResourceID: fmt.Sprint(req.ID),
-		Details: fmt.Sprintf(`{"package":"%s","reason":"%s"}`, req.PackageID, req.Reason),
+		Details: fmt.Sprintf(`{"package":"%s","reason":%q}`, req.PackageID, req.Reason),
 		Result: "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusCreated, req)
@@ -286,8 +269,12 @@ func (s *Server) mdMaterializeTargets(c *models.ModelDistributionCampaign) {
 }
 
 // handleMDCampaignPreview shows exact targets and ineligible ones before
-// activation.
+// activation. Admin-gated (eligibility oracle across tenants otherwise).
 func (s *Server) handleMDCampaignPreview(w http.ResponseWriter, r *http.Request) {
+	if !enterpriseRoleAdmin(getRole(r)) {
+		writeError(w, http.StatusForbidden, "미리보기 권한이 필요합니다")
+		return
+	}
 	var req struct {
 		PackageID   string `json:"package_id"`
 		TargetsJSON string `json:"targets_json"`
@@ -360,6 +347,10 @@ func (s *Server) handleMDCampaignMutate(w http.ResponseWriter, r *http.Request) 
 			Updates(map[string]interface{}{"observed_state": mdPaused, "reason_code": "campaign_paused"})
 	case "resume":
 		next = "active"
+		// Resume restores paused targets to a live re-walkable state.
+		s.db.Model(&models.ModelCampaignTarget{}).
+			Where("campaign_id = ? AND observed_state = ?", fmt.Sprint(c.ID), mdPaused).
+			Updates(map[string]interface{}{"observed_state": mdEntitled, "reason_code": "campaign_resumed"})
 	case "complete":
 		next = "completed"
 	case "cancel":
@@ -368,17 +359,14 @@ func (s *Server) handleMDCampaignMutate(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "알 수 없는 작업입니다")
 		return
 	}
-	res := s.db.Model(&models.ModelDistributionCampaign{}).
-		Where("id = ? AND expected_epoch = ?", c.ID, c.ExpectedEpoch).
-		Updates(map[string]interface{}{"state": next, "expected_epoch": c.ExpectedEpoch + 1})
-	if res.RowsAffected == 0 {
+	if !campaignEpochBump(s.db, &models.ModelDistributionCampaign{}, c.ID, c.ExpectedEpoch, map[string]interface{}{"state": next}) {
 		writeError(w, http.StatusConflict, "동시 변경이 감지되었습니다")
 		return
 	}
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: getOrgID(r), EventType: "cp.model.campaign_" + req.Action, ActorType: "admin",
 		Action: req.Action + "_model_campaign", ResourceType: "model_campaign", ResourceID: fmt.Sprint(c.ID),
-		Details: fmt.Sprintf(`{"reason":"%s","to":"%s"}`, req.Reason, next), Result: "success",
+		Details: fmt.Sprintf(`{"reason":%q,"to":"%s"}`, req.Reason, next), Result: "success",
 		OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": next})
@@ -424,19 +412,28 @@ func (s *Server) handleMDCampaignRollback(w http.ResponseWriter, r *http.Request
 		Where("campaign_id = ? AND observed_state IN ?", fmt.Sprint(c.ID),
 			[]string{mdCanary, mdActive, mdLoading, mdStaged}).
 		Updates(map[string]interface{}{"observed_state": mdRollbackInProgress, "reason_code": "operator_rollback", "previous_digest": req.RollbackTo})
-	s.db.Model(&c).Updates(map[string]interface{}{"expected_epoch": c.ExpectedEpoch + 1})
-	s.db.Create(&models.AuditEvent{
+	// Rollback bumps the epoch through the same CAS discipline as mutate
+	// so concurrent rollback/mutate cannot both land.
+	if !campaignEpochBump(s.db, &models.ModelDistributionCampaign{}, c.ID, c.ExpectedEpoch, nil) {
+		writeError(w, http.StatusConflict, "동시 변경이 감지되었습니다")
+		return
+	}
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: getOrgID(r), EventType: "cp.model.campaign_rollback", ActorType: "admin",
 		Action: "rollback_model_campaign", ResourceType: "model_campaign", ResourceID: fmt.Sprint(c.ID),
-		Details: fmt.Sprintf(`{"to":"%s","reason":"%s"}`, req.RollbackTo, req.Reason), Result: "success",
+		Details: fmt.Sprintf(`{"to":"%s","reason":%q}`, req.RollbackTo, req.Reason), Result: "success",
 		OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "rollback_in_progress", "to": req.RollbackTo})
 }
 
 func (s *Server) handleMDCampaignsList(w http.ResponseWriter, r *http.Request) {
+	if !enterpriseRoleAdmin(getRole(r)) {
+		writeError(w, http.StatusForbidden, "배포 캠페인 조회 권한이 필요합니다")
+		return
+	}
 	var campaigns []models.ModelDistributionCampaign
-	q := s.db
+	q := s.db.Where("organization_id = ?", getOrgID(r))
 	if v := r.URL.Query().Get("state"); v != "" {
 		q = q.Where("state = ?", v)
 	}
@@ -543,9 +540,8 @@ func (s *Server) handleMDApprove(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "campaign_id가 필요합니다")
 		return
 	}
-	if req.OrganizationID == "" {
-		req.OrganizationID = getOrgID(r)
-	}
+	// Approvals are tenant-bound: org always comes from the session.
+	req.OrganizationID = getOrgID(r)
 	var t models.ModelCampaignTarget
 	if err := s.db.Where("campaign_id = ? AND organization_id = ? AND environment = ?",
 		campaignID, req.OrganizationID, req.Environment).First(&t).Error; err != nil {
@@ -565,7 +561,7 @@ func (s *Server) handleMDApprove(w http.ResponseWriter, r *http.Request) {
 		"approval_state": "granted", "approved_by": getOperatorEmail(r),
 		"observed_state": mdEntitled, "reason_code": "",
 	})
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: req.OrganizationID, EventType: "cp.model.deployment_approved", ActorType: "admin",
 		Action: "approve_deployment", ResourceType: "model_campaign_target", ResourceID: fmt.Sprint(t.ID),
 		Details: fmt.Sprintf(`{"campaign":"%s","environment":"%s"}`, campaignID, req.Environment),
@@ -592,26 +588,40 @@ func (s *Server) handleMDAgentReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "campaign_id와 observed_state가 필요합니다")
 		return
 	}
-	if req.OrganizationID == "" {
-		req.OrganizationID = getOrgID(r)
-	}
+	// Org identity is always the authenticated tenant — a client-supplied
+	// organization_id must never steer another tenant's rollout state.
+	req.OrganizationID = getOrgID(r)
 	var t models.ModelCampaignTarget
 	if err := s.db.Where("campaign_id = ? AND organization_id = ? AND environment = ?",
 		req.CampaignID, req.OrganizationID, req.Environment).First(&t).Error; err != nil {
 		writeError(w, http.StatusNotFound, "타깃을 찾을 수 없습니다")
 		return
 	}
-	// Unattended activation requires the campaign's explicit delegation.
-	if req.ObservedState == mdActive && t.ObservedState != mdCanary && t.ObservedState != mdLoading {
-		var c models.ModelDistributionCampaign
-		if err := s.db.Where("id = ?", req.CampaignID).First(&c).Error; err == nil {
-			var deleg map[string]interface{}
-			json.Unmarshal([]byte(c.DelegationJSON), &deleg)
-			if deleg["auto"] != true {
-				writeError(w, http.StatusForbidden, "자동 활성화는 명시적 위임이 있는 캠페인에서만 허용됩니다")
+	// Unattended activation requires authority: the campaign's explicit
+	// delegation OR the target's granted customer approval (PAT-1444).
+	// The operator-driven promote gate is a separate path.
+	if req.ObservedState == mdActive {
+		authorized := t.ApprovalState == "granted"
+		if !authorized {
+			var c models.ModelDistributionCampaign
+			if err := s.db.Where("id = ?", req.CampaignID).First(&c).Error; err != nil {
+				writeError(w, http.StatusNotFound, "캠페인을 찾을 수 없습니다")
 				return
 			}
+			var deleg map[string]interface{}
+			json.Unmarshal([]byte(c.DelegationJSON), &deleg)
+			authorized = deleg["auto"] == true
 		}
+		if !authorized {
+			writeError(w, http.StatusForbidden, "활성화는 고객 승인 또는 명시적 위임이 필요합니다")
+			return
+		}
+	}
+	// Terminal/blocked states are terminal: `failed` is only reachable
+	// from live states, never from blocked_recalled/rolled_back/etc.
+	if _, isLive := mdAgentReportTransitions[t.ObservedState]; !isLive {
+		writeError(w, http.StatusConflict, fmt.Sprintf("종결된 상태(%s)에서는 보고할 수 없습니다", t.ObservedState))
+		return
 	}
 	if !mdCanTransition(t.ObservedState, req.ObservedState) && req.ObservedState != mdFailed {
 		writeError(w, http.StatusConflict, fmt.Sprintf("불법 전환: %s → %s", t.ObservedState, req.ObservedState))
@@ -711,10 +721,10 @@ func (s *Server) handleMDRecall(w http.ResponseWriter, r *http.Request) {
 		Updates(map[string]interface{}{"observed_state": mdBlockedRecalled, "reason_code": "package_recalled"})
 	s.db.Model(&models.ModelPackageEntitlement{}).Where("package_id = ?", req.PackageID).
 		Updates(map[string]interface{}{"revoked": true, "revoked_at": time.Now().UTC().Format(time.RFC3339)})
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: getOrgID(r), EventType: "cp.model.recalled", ActorType: "admin",
 		Action: "recall_package", ResourceType: "model_package", ResourceID: req.PackageID,
-		Details: fmt.Sprintf(`{"reason":"%s","targets_blocked":%d}`, req.Reason, res.RowsAffected),
+		Details: fmt.Sprintf(`{"reason":%q,"targets_blocked":%d}`, req.Reason, res.RowsAffected),
 		Result: "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{"blocked_targets": res.RowsAffected})

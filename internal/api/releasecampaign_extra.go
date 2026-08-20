@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"gorm.io/gorm"
 
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/version"
@@ -55,6 +56,21 @@ var hvStateKo = map[string]string{
 	hvRollbackRequired:    "롤백 필요",
 	hvRepairRequired:      "복구 필요",
 	hvUnknownTampered:     "검증 불가 (변조 의심)",
+}
+
+// campaignEpochBump performs the shared compare-and-set epoch advance
+// used by harness-release and model-distribution campaign mutations —
+// concurrent operator actions cannot both land. The extra updates ride
+// the same conditional statement.
+func campaignEpochBump(db *gorm.DB, model interface{}, id uint, fromEpoch int, extra map[string]interface{}) bool {
+	updates := map[string]interface{}{"expected_epoch": fromEpoch + 1}
+	for k, v := range extra {
+		updates[k] = v
+	}
+	res := db.Model(model).
+		Where("id = ? AND expected_epoch = ?", id, fromEpoch).
+		Updates(updates)
+	return res.RowsAffected > 0
 }
 
 // hvCohortMember deterministically decides whether a harness falls inside
@@ -95,8 +111,16 @@ func hvDeriveState(rep *models.HarnessHeartbeatReport, releases []models.Harness
 	if matched == nil {
 		return hvUnknownTampered, "unknown_release"
 	}
+	// Identity = catalog entry AND digest AND build-profile match. A
+	// missing attestation field is a non-match, never a pass.
+	if matched.ArtifactDigest != "" && rep.ExecutableDigest == "" {
+		return hvUnknownTampered, "no_attestation"
+	}
 	if matched.ArtifactDigest != "" && rep.ExecutableDigest != "" && matched.ArtifactDigest != rep.ExecutableDigest {
 		return hvUnknownTampered, "digest_mismatch"
+	}
+	if matched.BuildProfile != "" && rep.BuildProfile == "" {
+		return hvUnknownTampered, "no_attestation"
 	}
 	if matched.BuildProfile != "" && rep.BuildProfile != "" && matched.BuildProfile != rep.BuildProfile {
 		return hvUnknownTampered, "profile_mismatch"
@@ -137,10 +161,11 @@ func hvDeriveState(rep *models.HarnessHeartbeatReport, releases []models.Harness
 	if effectiveMin != "" {
 		minV, _ := version.Parse(effectiveMin)
 		if !repVer.SatisfiesMinimum(minV) {
-			// An active, unexpired exception can defer an ordinary
-			// deadline — never a revoked/unknown state (already handled).
+			// An active, unexpired exception can DEFER an ordinary
+			// customer-controlled deadline — it never grants full support
+			// and never bypasses revoked/unknown states (handled above).
 			if hvActiveException(exceptions, rep.HarnessID, now) {
-				return hvSupported, "exception_active"
+				return hvUpdateRequiredGrace, "exception_deferred"
 			}
 			// Below the floor: grace until the campaign deadline, then
 			// restricted.
@@ -193,21 +218,17 @@ func hvCampaignAppliesTo(c *models.HarnessUpdateCampaign, rep *models.HarnessHea
 }
 
 func hvActiveException(exceptions []models.HarnessVersionException, harnessID string, now time.Time) bool {
-	var ids []string
 	for _, ex := range exceptions {
 		if ex.Revoked {
 			continue
 		}
-		if ex.ExpiresAt != "" {
-			exp, err := time.Parse(time.RFC3339, ex.ExpiresAt)
-			if err != nil || now.After(exp) {
-				continue
-			}
-		} else {
+		if ex.ExpiresAt == "" {
 			continue // no expiry = invalid
 		}
-		ids = append(ids, harnessID)
-		_ = ids
+		exp, err := time.Parse(time.RFC3339, ex.ExpiresAt)
+		if err != nil || now.After(exp) {
+			continue
+		}
 		var covered []string
 		if err := json.Unmarshal([]byte(ex.HarnessIDsJSON), &covered); err == nil {
 			for _, h := range covered {
@@ -253,7 +274,7 @@ func (s *Server) handleHVReleaseRegister(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: getOrgID(r), EventType: "cp.release.registered", ActorType: "admin",
 		Action: "register_release", ResourceType: "harness_release", ResourceID: req.ReleaseID,
 		Details: fmt.Sprintf(`{"version":"%s","profile":"%s","digest":"%s"}`, req.Version, req.BuildProfile, req.ArtifactDigest),
@@ -283,10 +304,10 @@ func (s *Server) handleHVReleaseRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	s.db.Model(&rel).Updates(map[string]interface{}{"revoked": true, "revoked_at": now, "revoked_reason": req.Reason})
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: getOrgID(r), EventType: "cp.release.revoked", ActorType: "admin",
 		Action: "revoke_release", ResourceType: "harness_release", ResourceID: rel.ReleaseID,
-		Details: fmt.Sprintf(`{"reason":"%s"}`, req.Reason), Result: "success", OccurredAt: now,
+		Details: fmt.Sprintf(`{"reason":%q}`, req.Reason), Result: "success", OccurredAt: now,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked", "release_id": rel.ReleaseID})
 }
@@ -360,10 +381,10 @@ func (s *Server) handleHVCampaignCreate(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: getOrgID(r), EventType: "cp.campaign.created", ActorType: "admin",
 		Action: "create_campaign", ResourceType: "harness_campaign", ResourceID: fmt.Sprint(req.ID),
-		Details: fmt.Sprintf(`{"target":"%s","min":"%s","ring":"%s","pct":%d,"reason":"%s"}`,
+		Details: fmt.Sprintf(`{"target":"%s","min":"%s","ring":"%s","pct":%d,"reason":%q}`,
 			req.TargetVersion, req.MinVersion, req.Ring, req.Percentage, req.Reason),
 		Result: "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
@@ -420,17 +441,14 @@ func (s *Server) handleHVCampaignMutate(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "알 수 없는 작업입니다")
 		return
 	}
-	res := s.db.Model(&models.HarnessUpdateCampaign{}).
-		Where("id = ? AND expected_epoch = ?", c.ID, c.ExpectedEpoch).
-		Updates(map[string]interface{}{"state": next, "expected_epoch": c.ExpectedEpoch + 1})
-	if res.RowsAffected == 0 {
+	if !campaignEpochBump(s.db, &models.HarnessUpdateCampaign{}, c.ID, c.ExpectedEpoch, map[string]interface{}{"state": next}) {
 		writeError(w, http.StatusConflict, "동시 변경이 감지되었습니다")
 		return
 	}
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: getOrgID(r), EventType: "cp.campaign." + req.Action, ActorType: "admin",
 		Action: req.Action + "_campaign", ResourceType: "harness_campaign", ResourceID: fmt.Sprint(c.ID),
-		Details: fmt.Sprintf(`{"reason":"%s","from":"%s","to":"%s"}`, req.Reason, c.State, next),
+		Details: fmt.Sprintf(`{"reason":%q,"from":"%s","to":"%s"}`, req.Reason, c.State, next),
 		Result: "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": next})
@@ -447,14 +465,19 @@ func (s *Server) handleHVCampaignsList(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleHVCampaignPreview computes affected/ineligible/unknown counts
-// BEFORE launch or floor advancement (PAT-1449).
+// BEFORE launch or floor advancement (PAT-1449). Admin-gated and
+// org-scoped.
 func (s *Server) handleHVCampaignPreview(w http.ResponseWriter, r *http.Request) {
+	if !enterpriseRoleAdmin(getRole(r)) {
+		writeError(w, http.StatusForbidden, "미리보기 권한이 필요합니다")
+		return
+	}
 	var req struct {
 		MinVersion string `json:"min_version"`
 		TargetVersion string `json:"target_version"`
-		Percentage int    `json:"percentage"`
-		CohortSeed string `json:"cohort_seed"`
-		Deadline   string `json:"deadline"`
+		Percentage  int    `json:"percentage"`
+		CohortSeed  string `json:"cohort_seed"`
+		Deadline    string `json:"deadline"`
 	}
 	if err := decodeJSON(r, &req); err != nil || req.MinVersion == "" {
 		writeError(w, http.StatusBadRequest, "min_version가 필요합니다")
@@ -466,15 +489,8 @@ func (s *Server) handleHVCampaignPreview(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var reports []models.HarnessHeartbeatReport
-	s.db.Find(&reports)
-	// Latest report per harness.
-	latest := map[string]*models.HarnessHeartbeatReport{}
-	for i := range reports {
-		rep := &reports[i]
-		if cur, ok := latest[rep.HarnessID]; !ok || rep.ReportedAt > cur.ReportedAt {
-			latest[rep.HarnessID] = rep
-		}
-	}
+	s.db.Where("organization_id = ?", getOrgID(r)).Find(&reports)
+	latest := hvLatestReports(reports)
 	var releases []models.HarnessRelease
 	s.db.Find(&releases)
 	counts := map[string]int{"affected": 0, "already_compliant": 0, "excluded_by_cohort": 0, "ineligible_unknown": 0, "revoked_or_tampered": 0}
@@ -504,7 +520,8 @@ func (s *Server) handleHVCampaignPreview(w http.ResponseWriter, r *http.Request)
 
 // handleHVHeartbeatReport ingests a verifiable build identity report and
 // derives the harness's effective state against catalog + campaigns +
-// floor + exceptions.
+// floor + exceptions. Organization identity always comes from the
+// authenticated session, never the request body.
 func (s *Server) handleHVHeartbeatReport(w http.ResponseWriter, r *http.Request) {
 	var req models.HarnessHeartbeatReport
 	if err := decodeJSON(r, &req); err != nil || req.HarnessID == "" || req.Version == "" {
@@ -512,9 +529,7 @@ func (s *Server) handleHVHeartbeatReport(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	req.ReportedAt = time.Now().UTC().Format(time.RFC3339)
-	if req.OrganizationID == "" {
-		req.OrganizationID = getOrgID(r)
-	}
+	req.OrganizationID = getOrgID(r)
 	if err := s.db.Create(&req).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -546,12 +561,9 @@ func (s *Server) hvComputeState(rep *models.HarnessHeartbeatReport, now time.Tim
 	return hvDeriveState(rep, append(releases, revoked...), campaigns, floor, exceptions, now)
 }
 
-// handleHVFleetVersionStates lists per-harness derived states for the
-// fleet inventory view (PAT-1449 fleet UI).
-func (s *Server) handleHVFleetVersionStates(w http.ResponseWriter, r *http.Request) {
-	orgID := getOrgID(r)
-	var reports []models.HarnessHeartbeatReport
-	s.db.Where("organization_id = ?", orgID).Find(&reports)
+// hvLatestReports folds reports to the latest per harness (shared by
+// preview + fleet states).
+func hvLatestReports(reports []models.HarnessHeartbeatReport) map[string]*models.HarnessHeartbeatReport {
 	latest := map[string]*models.HarnessHeartbeatReport{}
 	for i := range reports {
 		rep := &reports[i]
@@ -559,6 +571,16 @@ func (s *Server) handleHVFleetVersionStates(w http.ResponseWriter, r *http.Reque
 			latest[rep.HarnessID] = rep
 		}
 	}
+	return latest
+}
+
+// handleHVFleetVersionStates lists per-harness derived states for the
+// fleet inventory view (PAT-1449 fleet UI).
+func (s *Server) handleHVFleetVersionStates(w http.ResponseWriter, r *http.Request) {
+	orgID := getOrgID(r)
+	var reports []models.HarnessHeartbeatReport
+	s.db.Where("organization_id = ?", orgID).Find(&reports)
+	latest := hvLatestReports(reports)
 	now := time.Now().UTC()
 	out := make([]map[string]interface{}, 0, len(latest))
 	dist := map[string]int{}
@@ -644,10 +666,10 @@ func (s *Server) handleHVExceptionCreate(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: ex.OrganizationID, EventType: "cp.version_exception.created", ActorType: "admin",
 		Action: "create_version_exception", ResourceType: "harness_version_exception", ResourceID: fmt.Sprint(ex.ID),
-		Details: fmt.Sprintf(`{"harnesses":%s,"expires_at":"%s","reason":"%s"}`, ex.HarnessIDsJSON, ex.ExpiresAt, ex.Reason),
+		Details: fmt.Sprintf(`{"harnesses":%s,"expires_at":"%s","reason":%q}`, ex.HarnessIDsJSON, ex.ExpiresAt, ex.Reason),
 		Result: "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusCreated, ex)
@@ -671,10 +693,10 @@ func (s *Server) handleHVExceptionRevoke(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, "예외를 찾을 수 없습니다")
 		return
 	}
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: getOrgID(r), EventType: "cp.version_exception.revoked", ActorType: "admin",
 		Action: "revoke_version_exception", ResourceType: "harness_version_exception", ResourceID: id,
-		Details: fmt.Sprintf(`{"reason":"%s"}`, req.Reason), Result: "success",
+		Details: fmt.Sprintf(`{"reason":%q}`, req.Reason), Result: "success",
 		OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})

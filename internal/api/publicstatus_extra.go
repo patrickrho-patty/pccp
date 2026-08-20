@@ -17,7 +17,6 @@ package api
 import (
 	"crypto/ed25519"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -458,7 +457,7 @@ func (s *Server) handlePSComponentActivate(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "구성 요소를 찾을 수 없습니다")
 		return
 	}
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: getOrgID(r), EventType: "cp.publicstatus.component_updated",
 		ActorType: "admin", Action: "update_component", ResourceType: "public_status_component",
 		ResourceID: id, Details: fmt.Sprintf(`{"active":%t}`, req.Active), Result: "success",
@@ -493,7 +492,8 @@ func (s *Server) handlePSObservationIngest(w http.ResponseWriter, r *http.Reques
 	}
 	s.psSeedRegistry()
 	now := time.Now().UTC()
-	drafted := []string{}
+	// Validate the whole batch before writing anything — a bad item
+	// mid-batch must not leave half the batch applied.
 	for _, o := range req {
 		switch o.Impact {
 		case "none", "partial", "severe", "widespread":
@@ -501,6 +501,9 @@ func (s *Server) handlePSObservationIngest(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusBadRequest, "impact must be none|partial|severe|widespread")
 			return
 		}
+	}
+	drafted := []string{}
+	for _, o := range req {
 		if o.Source == "" {
 			o.Source = "synthetic"
 		}
@@ -553,7 +556,7 @@ func (s *Server) handlePSObservationIngest(w http.ResponseWriter, r *http.Reques
 				}
 				s.db.Create(&inc)
 				drafted = append(drafted, slug)
-				s.db.Create(&models.AuditEvent{
+				models.CreateAuditEvent(s.db, &models.AuditEvent{
 					OrganizationID: getOrgID(r), EventType: "cp.publicstatus.oncall_paged",
 					ActorType: "system", Action: "page_oncall", ResourceType: "public_status_component",
 					ResourceID: o.ComponentID,
@@ -623,11 +626,11 @@ func (s *Server) handlePSOverride(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, res.Error.Error())
 		return
 	}
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: getOrgID(r), EventType: "cp.publicstatus.override",
 		ActorType: "admin", Action: "override_status", ResourceType: "public_status_component",
 		ResourceID: id,
-		Details: fmt.Sprintf(`{"color":"%s","reason":"%s","expires_at":"%s","measured_color":"%s","false_positive_ack":%t}`,
+		Details: fmt.Sprintf(`{"color":"%s","reason":%q,"expires_at":"%s","measured_color":"%s","false_positive_ack":%t}`,
 			req.Color, req.Reason, req.ExpiresAt, c.MeasuredColor, req.FalsePositiveAck),
 		Result: "success", OccurredAt: time.Now().Format(time.RFC3339),
 	})
@@ -668,7 +671,7 @@ func (s *Server) handlePSIncidentCreate(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: getOrgID(r), EventType: "cp.publicstatus.incident_created",
 		ActorType: "admin", Action: "create_incident", ResourceType: "public_incident",
 		ResourceID: slug, Details: fmt.Sprintf(`{"major":%t}`, req.Major), Result: "success",
@@ -730,7 +733,7 @@ func (s *Server) handlePSIncidentUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.db.Model(&inc).Updates(updates)
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: getOrgID(r), EventType: "cp.publicstatus.incident_updated",
 		ActorType: "admin", Action: "update_incident", ResourceType: "public_incident",
 		ResourceID: inc.Slug, Details: fmt.Sprintf(`{"updates":%q}`, fmt.Sprint(updates)),
@@ -980,7 +983,7 @@ func (s *Server) handlePSSnapshotPublish(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: getOrgID(r), EventType: "cp.publicstatus.snapshot_published",
 		ActorType: "admin", Action: "publish_snapshot", ResourceType: "public_status_snapshot",
 		ResourceID: fmt.Sprint(snap.ID), Details: fmt.Sprintf(`{"version":%d}`, version),
@@ -1051,8 +1054,11 @@ func (s *Server) handlePSNotifyDispatch(w http.ResponseWriter, r *http.Request) 
 			s.db.Model(&n).Updates(map[string]interface{}{"state": "suppressed"})
 			continue
 		}
-		// Channel adapters plug in here (SMTP/SMS provider). The webhook
-		// channel is fully implemented with its signed versioned payload.
+		// Channel adapters (SMTP/SMS provider/HTTP webhook delivery) plug
+		// in here. Until one is configured, the honest state is queued —
+		// a subscriber notification must never be recorded as sent while
+		// nothing was delivered. The webhook channel's signed versioned
+		// payload construction is exercised above.
 		if sub.Channel == "webhook" {
 			payload, _ := json.Marshal(map[string]interface{}{
 				"schema": "patty.status.v1", "transition": n.Transition,
@@ -1065,22 +1071,14 @@ func (s *Server) handlePSNotifyDispatch(w http.ResponseWriter, r *http.Request) 
 			_ = base64.StdEncoding.EncodeToString(mac.Sum(nil))
 		}
 		s.db.Model(&n).Updates(map[string]interface{}{
-			"state": "sent", "sent_at": time.Now().UTC().Format(time.RFC3339), "attempts": n.Attempts + 1,
+			"state": "queued", "attempts": n.Attempts + 1,
+			"last_error": "delivery adapter not configured",
 		})
-		s.db.Model(&models.PublicStatusSubscriber{}).Where("id = ?", sub.ID).
-			Update("last_notified_at", time.Now().UTC().Format(time.RFC3339))
-		sent++
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"sent": sent, "failed": failed})
 }
 
-func psRandomToken(prefix string) string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
-	}
-	return fmt.Sprintf("%s-%s", prefix, base64.RawURLEncoding.EncodeToString(b))
-}
+func psRandomToken(prefix string) string { return apiRandomToken(prefix, 16) }
 
 func escapeXMLText(s string) string {
 	repl := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&apos;")

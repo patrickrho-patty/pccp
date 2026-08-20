@@ -35,8 +35,10 @@ type ObservedRepositoryEvent struct {
 	OrganizationID   string `gorm:"index" json:"organization_id"`
 	ConnectionID     uint   `gorm:"index" json:"connection_id"`
 	Provider         string `json:"provider"`
-	ProviderEventID  string `gorm:"uniqueIndex:idx_ore_provider_event" json:"provider_event_id"`
-	ProviderDeliveryID string `gorm:"uniqueIndex:idx_ore_provider_event" json:"provider_delivery_id"`
+	// Dedup is scoped per connection: provider event IDs are not
+	// globally unique across self-hosted instances (PAT-1453).
+	ProviderEventID  string `gorm:"uniqueIndex:idx_ore_conn_event" json:"provider_event_id"`
+	ProviderDeliveryID string `gorm:"uniqueIndex:idx_ore_conn_event" json:"provider_delivery_id"`
 	ProviderRepoID   string `gorm:"index" json:"provider_repo_id"`
 	EventType        string `json:"event_type"` // push|force_push|branch_create|branch_delete|pr_opened|pr_merged|review|check|default_branch_change|repo_transferred|access_revoked
 	Actor            string `json:"actor"`

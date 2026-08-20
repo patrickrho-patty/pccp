@@ -40,6 +40,10 @@ type ScheduleOccurrence struct {
 	IntendedAt  string `gorm:"index" json:"intended_at"`
 	IdempotencyKey string `gorm:"uniqueIndex" json:"idempotency_key"`
 	State       string `json:"state"` // pending|admitted|running|waiting_for_authorization|succeeded|failed|denied|expired|cancelled|coalesced
+	// Frozen task/context snapshot copied at admission — an edit landing
+	// mid-flight never changes what this run executes (PAT-1437).
+	TaskSpecJSON       string `gorm:"type:text" json:"task_spec_json"`
+	ContextSnapshotJSON string `gorm:"type:text" json:"context_snapshot_json"`
 	Attempts    int    `json:"attempts"`
 	NextRetryAt string `json:"next_retry_at"`
 	RunSessionRef string `json:"run_session_ref"`

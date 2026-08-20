@@ -212,17 +212,17 @@ func (s *Server) trGraph(orgID string, q trGraphQuery) (map[string]interface{}, 
 	if q.To != "" {
 		nq = nq.Where("occurred_at <= ?", q.To)
 	}
+	// Type filters apply INSIDE the query so the budget truncation never
+	// hides matching nodes behind a page of filtered-out rows.
+	if len(q.NodeTypes) > 0 {
+		types := make([]string, 0, len(q.NodeTypes))
+		for t := range q.NodeTypes {
+			types = append(types, t)
+		}
+		nq = nq.Where("node_type IN ?", types)
+	}
 	var nodes []models.TrailNode
 	nq.Order("occurred_at ASC").Limit(limit).Find(&nodes)
-	if len(q.NodeTypes) > 0 {
-		filtered := nodes[:0]
-		for _, n := range nodes {
-			if q.NodeTypes[n.NodeType] {
-				filtered = append(filtered, n)
-			}
-		}
-		nodes = filtered
-	}
 	// Collapsed grouping: same grouping key collapses to one visible node
 	// with a count (bounded summaries, no canvas flooding).
 	visible := make([]models.TrailNode, 0, len(nodes))
@@ -239,10 +239,8 @@ func (s *Server) trGraph(orgID string, q trGraphQuery) (map[string]interface{}, 
 		visible = append(visible, n)
 	}
 	// Edges within window (bounded to visible node set).
-	key := func(st, sid string) string { return st + ":" + sid }
 	nodeSet := map[string]bool{}
 	for _, n := range nodes {
-		key(key(n.SourceType, n.SourceID), "")
 		nodeSet[n.SourceType+":"+n.SourceID] = true
 	}
 	var edges []models.TrailEdge
@@ -424,15 +422,22 @@ func (s *Server) handleTrailsNeighbors(w http.ResponseWriter, r *http.Request) {
 	depth := 3
 	var edges []models.TrailEdge
 	s.db.Where("organization_id = ?", orgID).Limit(2000).Find(&edges)
-	adj := map[string][]map[string]string{}
+	// Directional adjacency: downstream follows from→to, upstream follows
+	// to→from. A direction request must not return the wrong side.
+	downstream := map[string][]map[string]string{}
+	upstream := map[string][]map[string]string{}
 	for _, e := range edges {
 		from := e.FromSourceType + ":" + e.FromSourceID
 		if e.FromSourceType == "action-set" {
 			from = "session:" + e.FromSourceID
 		}
 		to := e.ToSourceType + ":" + e.ToSourceID
-		adj[from] = append(adj[from], map[string]string{"to": to, "type": e.EdgeType})
-		adj[to] = append(adj[to], map[string]string{"to": from, "type": e.EdgeType})
+		downstream[from] = append(downstream[from], map[string]string{"to": to, "type": e.EdgeType})
+		upstream[to] = append(upstream[to], map[string]string{"to": from, "type": e.EdgeType})
+	}
+	adj := downstream
+	if direction == "upstream" {
+		adj = upstream
 	}
 	start := st + ":" + sid
 	seen := map[string]bool{start: true}

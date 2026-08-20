@@ -317,3 +317,54 @@ func TestINTenantIsolation(t *testing.T) {
 		}
 	}
 }
+
+// The critical floor includes ack_required — dropping it is a weakening.
+func TestINCriticalAckFloorNotWeakenable(t *testing.T) {
+	srv, _ := inTestServer(t)
+	routing := `{"critical":{"channels":["sms","email","slack"],"ack_required":false},"high":{"channels":["email"]},"medium":{"channels":["email"]},"low":{"channels":[]}}`
+	body := fmt.Sprintf(`{"routing_json":%q,"managed_by_json":"{\"email\":\"customer\"}"}`, routing)
+	if w := inJSON(t, srv, "PUT", "/api/incidentnotify/policy", body, "admin"); w.Code != http.StatusBadRequest {
+		t.Fatalf("ack-less critical accepted: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// Escalation advances past step 1 on later sweeps.
+func TestINEscalationMultiStep(t *testing.T) {
+	srv, db := inTestServer(t)
+	inSetupTenant(t, srv, db)
+	// Two groups for two escalation steps.
+	db.Create(&models.IncidentNotifyRecipientGroup{
+		OrganizationID: "org-in", Name: "2차 온콜", EscalationOrder: 2,
+		MembersJSON: `[{"kind":"email","target":"esc2@a.io","verified":true}]`,
+	})
+	inJSON(t, srv, "POST", "/api/incidentnotify/sources",
+		`{"source_type":"outage","service":"core","rule":"R","severity":"critical","title_ko":"장애","safe_summary_ko":"x"}`, "admin")
+	var inc models.IncidentNotifyIncident
+	db.First(&inc)
+	// Backdate far beyond two deadlines.
+	db.Model(&inc).Update("first_seen_at", time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
+	inJSON(t, srv, "POST", "/api/incidentnotify/escalation-sweep", `{}`, "admin")
+	db.First(&inc)
+	if inc.EscalationStep != 1 {
+		t.Fatalf("first sweep step = %d", inc.EscalationStep)
+	}
+	inJSON(t, srv, "POST", "/api/incidentnotify/escalation-sweep", `{}`, "admin")
+	db.First(&inc)
+	if inc.EscalationStep != 2 {
+		t.Fatalf("second sweep step = %d, want 2 (multi-step escalation)", inc.EscalationStep)
+	}
+	// Material severity-rose repeats re-notify (severity in the key).
+	inJSON(t, srv, "POST", "/api/incidentnotify/sources",
+		`{"source_type":"outage","service":"core2","rule":"R2","severity":"high","title_ko":"x","safe_summary_ko":"x"}`, "admin")
+	var inc2 models.IncidentNotifyIncident
+	db.Where("fingerprint = ?", inFingerprint("org-in", "outage", "core2", "R2")).First(&inc2)
+	var jobs1 int64
+	db.Model(&models.IncidentNotifyJob{}).Where("incident_id = ?", inc2.ID).Count(&jobs1)
+	inJSON(t, srv, "POST", "/api/incidentnotify/sources",
+		`{"source_type":"outage","service":"core2","rule":"R2","severity":"critical","title_ko":"x","safe_summary_ko":"x"}`, "admin")
+	var jobs2 int64
+	db.Model(&models.IncidentNotifyJob{}).Where("incident_id = ?", inc2.ID).Count(&jobs2)
+	if jobs2 <= jobs1 {
+		t.Fatalf("severity-rose repeat did not re-notify: %d → %d", jobs1, jobs2)
+	}
+}

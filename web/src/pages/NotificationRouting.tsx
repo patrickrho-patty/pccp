@@ -45,7 +45,12 @@ export default function NotificationRouting() {
     api.inChannels().then((d: Channel[]) => setChannels(Array.isArray(d) ? d : [])).catch(() => {})
     api.inIncidents().then((d: Incident[]) => setIncidents(Array.isArray(d) ? d : [])).catch(() => {})
     api.inJobs().then((d: Job[]) => setJobs(Array.isArray(d) ? d : [])).catch(() => {})
-    api.inHealth().then(setHealth).catch(() => {})
+    api.inHealth().then((h: any) => {
+      // unhealthy_channels arrives as a JSON string; parse for the count.
+      let unhealthy: string[] = []
+      try { unhealthy = JSON.parse(h?.unhealthy_channels || '[]') } catch { /* keep [] */ }
+      setHealth({ ...h, unhealthy_channels: unhealthy })
+    }).catch(() => {})
   }
   useEffect(load, [])
 

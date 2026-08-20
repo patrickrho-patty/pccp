@@ -42,6 +42,7 @@ export default function ModelCampaigns() {
   const [ent, setEnt] = useState({ organization_id: '', package_id: '', reason: '' })
   const [action, setAction] = useState<{ row: Row; kind: 'pause' | 'activate' | 'rollback' | 'recall'; label: string } | null>(null)
   const [reason, setReason] = useState('')
+  const [rollbackTo, setRollbackTo] = useState('')
   const [approveFor, setApproveFor] = useState<{ c: Campaign; t: Target } | null>(null)
 
   const load = () => {
@@ -64,7 +65,11 @@ export default function ModelCampaigns() {
     if (a.kind === 'recall') {
       api.mdRecall({ package_id: a.row.campaign.package_id, reason }).then(done).catch(fail)
     } else if (a.kind === 'rollback') {
-      api.mdRollback(a.row.campaign.id, { reason, rollback_to: '', expected_epoch: a.row.campaign.expected_epoch }).then(done).catch(fail)
+      if (!rollbackTo.trim()) {
+        showToast('롤백 대상 패키지 ID가 필요합니다')
+        return
+      }
+      api.mdRollback(a.row.campaign.id, { reason, rollback_to: rollbackTo.trim(), expected_epoch: a.row.campaign.expected_epoch }).then(done).catch(fail)
     } else {
       api.mdMutate(a.row.campaign.id, { action: a.kind, reason, expected_epoch: a.row.campaign.expected_epoch }).then(done).catch(fail)
     }
@@ -207,21 +212,36 @@ export default function ModelCampaigns() {
       </Modal>
 
       {/* Governed campaign action */}
-      {action && (
-        <GovernedActionModal
-          open
-          danger={action.kind === 'recall' || action.kind === 'rollback'}
-          requireConfirmPhrase={action.kind === 'recall'}
-          confirmPhraseLabel="리콜이 모든 타깃의 새 선택을 즉시 차단함을 확인했습니다"
-          title={`캠페인 ${action.label} · ${action.row.campaign.package_id}`}
-          preview={<p className="text-sm">현재 상태 {CAMP_STATE_KO[action.row.campaign.state]} · 타깃 {action.row.targets.length}개 · epoch {action.row.campaign.expected_epoch}</p>}
-          confirmLabel={`${action.label} 실행`}
-          reason={reason}
-          onReasonChange={setReason}
-          onCancel={() => setAction(null)}
-          onConfirm={doAction}
-        />
-      )}
+      {action && (() => {
+        const a = action
+        return (
+          <GovernedActionModal
+            open
+            danger={a.kind === 'recall' || a.kind === 'rollback'}
+            requireConfirmPhrase={a.kind === 'recall'}
+            confirmPhraseLabel="리콜이 모든 타깃의 새 선택을 즉시 차단함을 확인했습니다"
+            title={`캠페인 ${a.label} · ${a.row.campaign.package_id}`}
+            preview={
+              <div className="space-y-2">
+                <p className="text-sm">현재 상태 {CAMP_STATE_KO[a.row.campaign.state]} · 타깃 {a.row.targets.length}개 · epoch {a.row.campaign.expected_epoch}</p>
+                {a.kind === 'rollback' && (
+                  <div>
+                    <label className="label">롤백 대상 패키지 ID (사전 검증 · 허용된 버전)</label>
+                    <input className="input font-mono text-xs" value={rollbackTo}
+                      onChange={(e) => setRollbackTo(e.target.value)} placeholder="pmp_…" />
+                  </div>
+                )}
+              </div>
+            }
+            confirmLabel={`${a.label} 실행`}
+            reason={reason}
+            onReasonChange={setReason}
+            onCancel={() => setAction(null)}
+            onConfirm={doAction}
+            canConfirm={a.kind !== 'rollback' || rollbackTo.trim().length > 0}
+          />
+        )
+      })()}
 
       {/* Customer approve/decline */}
       {approveFor && (() => {

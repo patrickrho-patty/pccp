@@ -43,7 +43,9 @@ func csTestServer(t *testing.T) (*Server, *gorm.DB) {
 func csJSON(t *testing.T, srv *Server, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, bytes.NewReader([]byte(body)))
-	req = req.WithContext(contextWithClaims(req.Context(), &identity.Claims{OrganizationID: "org-cs", Email: "user@pub.dev", Role: "viewer"}))
+	// Admin role so dispatch-sweep (operator-gated) is callable; owner
+	// scoping is by the claims email, matching csOwner.
+	req = req.WithContext(contextWithClaims(req.Context(), &identity.Claims{OrganizationID: "org-cs", Email: "user@pub.dev", Role: "admin"}))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
@@ -271,5 +273,48 @@ func TestCSCapabilityMetadataAndDelegation(t *testing.T) {
 	db.First(&cap2)
 	if cap2.State != "authorization_required" {
 		t.Fatalf("connect flow state: %s", cap2.State)
+	}
+}
+
+// Cross-user protection: another user cannot report on someone else's
+// occurrence (ownership join on the parent schedule).
+func TestCSReportOwnership(t *testing.T) {
+	srv, db := csTestServer(t)
+	id := csCreateSchedule(t, srv, "소유권 검증")
+	csJSON(t, srv, "POST", "/api/schedules/dispatch-sweep", `{}`)
+	var occ models.ScheduleOccurrence
+	db.Where("schedule_id = ? AND state = ?", id, soAdmitted).First(&occ)
+	// A different authenticated user's report is rejected.
+	req := httptest.NewRequest("POST", "/api/schedules/report",
+		bytes.NewReader([]byte(fmt.Sprintf(`{"occurrence_id":%d,"state":"succeeded"}`, occ.ID))))
+	req = req.WithContext(contextWithClaims(req.Context(), &identity.Claims{OrganizationID: "org-cs", Email: "attacker@pub.dev", Role: "admin"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("cross-user report accepted: %d", w.Code)
+	}
+}
+
+// Retries actually re-dispatch: a due retry becomes runnable again.
+func TestCSRetryReDispatch(t *testing.T) {
+	srv, db := csTestServer(t)
+	id := csCreateSchedule(t, srv, "재시도 재실행")
+	csJSON(t, srv, "POST", "/api/schedules/dispatch-sweep", `{}`)
+	var occ models.ScheduleOccurrence
+	db.Where("schedule_id = ? AND state = ?", id, soAdmitted).First(&occ)
+	// Fail once → retry scheduled.
+	csJSON(t, srv, "POST", "/api/schedules/report",
+		fmt.Sprintf(`{"occurrence_id":%d,"state":"failed"}`, occ.ID))
+	db.First(&occ, "id = ?", occ.ID)
+	if occ.State != soPending || occ.NextRetryAt == "" {
+		t.Fatalf("retry not scheduled: %+v", occ)
+	}
+	// Sweep with a due retry re-admits it.
+	db.Model(&occ).Update("next_retry_at", time.Now().UTC().Add(-time.Minute).Format(time.RFC3339))
+	csJSON(t, srv, "POST", "/api/schedules/dispatch-sweep", `{}`)
+	db.First(&occ, "id = ?", occ.ID)
+	if occ.State != soAdmitted {
+		t.Fatalf("due retry not re-admitted: %s", occ.State)
 	}
 }

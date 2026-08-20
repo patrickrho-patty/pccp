@@ -242,3 +242,32 @@ func TestLGConnectionMaskingAndStaleness(t *testing.T) {
 		t.Fatalf("lagging connection not marked stale: %s", conn.Health)
 	}
 }
+
+// The webhook endpoint is publicly routable (no console auth) and
+// signature verification still applies.
+func TestLGWebhookPublicRoute(t *testing.T) {
+	srv, db := lgTestServer(t)
+	conn := models.SCMProviderConnection{OrganizationID: "org-lg", Provider: "patty_git", WebhookSecret: "whsec-p", Health: "healthy"}
+	db.Create(&conn)
+	body := `{"event_id":"evt-pub","type":"push","actor":"patrick","ref":"refs/heads/main","after":"aaa"}`
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/scm/observation/webhooks/%d", conn.ID), bytes.NewReader([]byte(body)))
+	// No claims attached — provider deliveries carry none.
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unsigned public webhook: %d (want 400 signature reject)", w.Code)
+	}
+	req2 := httptest.NewRequest("POST", fmt.Sprintf("/api/scm/observation/webhooks/%d", conn.ID), bytes.NewReader([]byte(body)))
+	req2.Header.Set("X-Patty-Signature", lgHMAC("whsec-p", body))
+	w2 := httptest.NewRecorder()
+	srv.router.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusCreated {
+		t.Fatalf("signed public webhook rejected: %d %s", w2.Code, w2.Body.String())
+	}
+	// Patty Git event type parsed (exported field fix).
+	var ev models.ObservedRepositoryEvent
+	db.Where("provider_event_id = ?", "evt-pub").First(&ev)
+	if ev.EventType != "push" {
+		t.Fatalf("patty git event type empty: %q", ev.EventType)
+	}
+}

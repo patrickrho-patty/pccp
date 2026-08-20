@@ -146,20 +146,15 @@ func comparePrerelease(a, b string) int {
 }
 
 // SatisfiesMinimum reports whether v meets the floor with the locked
-// canary rule: a prerelease artifact can satisfy a minimum only when
-// that exact artifact triple was promoted as a stable release — i.e. the
-// minimum itself must be stable, and prereleases never satisfy it.
+// canary rule: the minimum itself must be stable, and a prerelease
+// artifact NEVER satisfies a stable minimum — regardless of triple.
 func (v Version) SatisfiesMinimum(min Version) bool {
 	if !min.IsStable() {
 		// A prerelease floor is nonsensical; reject in parsing elsewhere.
 		return false
 	}
 	if !v.IsStable() {
-		// 1.2.3-beta < 1.2.3 stable: prerelease never satisfies.
-		if v.Major == min.Major && v.Minor == min.Minor && v.Patch == min.Patch {
-			return false
-		}
-		return v.Compare(min) > 0
+		return false
 	}
 	return v.Compare(min) >= 0
 }

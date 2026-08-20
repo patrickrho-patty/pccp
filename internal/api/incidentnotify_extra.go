@@ -18,7 +18,6 @@ package api
 //     dead-letter state; dispatch is idempotent.
 
 import (
-	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -68,17 +67,9 @@ type inSafeEnvelope struct {
 func inBuildSMSenvelope(tenant, incidentID, severity, title, eventTime, link string, isTest bool) inSafeEnvelope {
 	return inSafeEnvelope{
 		Schema: "patty.incident.v1", TenantDisplay: tenant, IncidentID: incidentID,
-		Severity: severity, TitleKo: inTruncateRunes(title, 40), EventTime: eventTime,
+		Severity: severity, TitleKo: apiTruncateRunes(title, 40), EventTime: eventTime,
 		PccpLink: link, IsTest: isTest,
 	}
-}
-
-func inTruncateRunes(s string, max int) string {
-	r := []rune(s)
-	if len(r) <= max {
-		return s
-	}
-	return string(r[:max]) + "…"
 }
 
 // inFingerprint derives the stable incident identity from correlation
@@ -152,6 +143,12 @@ func (s *Server) handleINPolicyPut(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The critical floor also includes acknowledgement — a policy that
+	// drops ack_required weakens the floor just as removing a channel does.
+	if crit["ack_required"] != true {
+		writeError(w, http.StatusBadRequest, "critical은 확인(Ack) 필수가 기본 정책입니다 (약화 불가)")
+		return
+	}
 	// Patty-managed delivery is never implicit: each channel choosing
 	// "patty" is an explicit opt-in recorded here and audited below.
 	var managed map[string]string
@@ -216,6 +213,15 @@ func (s *Server) handleINGroupUpsert(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(r, &req); err != nil || strings.TrimSpace(req.Name) == "" {
 		writeError(w, http.StatusBadRequest, "그룹 이름이 필요합니다")
 		return
+	}
+	if req.ID != 0 {
+		// Tenant ownership check on update — an org's admin must not be
+		// able to re-home or overwrite another org's recipient group.
+		var existing models.IncidentNotifyRecipientGroup
+		if err := s.db.Where("id = ? AND organization_id = ?", req.ID, getOrgID(r)).First(&existing).Error; err != nil {
+			writeError(w, http.StatusNotFound, "그룹을 찾을 수 없습니다")
+			return
+		}
 	}
 	req.OrganizationID = getOrgID(r)
 	if req.ID == 0 {
@@ -457,7 +463,9 @@ func (s *Server) inEnqueueNotifications(inc *models.IncidentNotifyIncident, kind
 	var tenant models.Organization
 	s.db.First(&tenant, "id = ?", inc.OrganizationID)
 	for _, t := range targets {
-		key := fmt.Sprintf("in-%d-%s-%s-%s", inc.ID, kind, t.Channel, t.Target)
+		// Idempotency includes severity so a MATERIAL change (severity
+		// rose) re-notifies; unchanged repeats stay suppressed.
+		key := fmt.Sprintf("in-%d-%s-%s-%s-%s", inc.ID, kind, t.Channel, t.Target, inc.Severity)
 		var dup int64
 		s.db.Model(&models.IncidentNotifyJob{}).Where("idempotency_key = ?", key).Count(&dup)
 		if dup > 0 {
@@ -729,16 +737,20 @@ func (s *Server) handleINEscalationSweep(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	var open []models.IncidentNotifyIncident
-	s.db.Where("organization_id = ? AND severity = ? AND state = ?", orgID, "critical", "open").Find(&open)
+	// Escalated-but-still-unacked incidents keep escalating on later
+	// sweeps; acknowledged/resolved ones exit via AckedAt/state below.
+	s.db.Where("organization_id = ? AND severity = ? AND state IN ?", orgID, "critical",
+		[]string{"open", "escalated"}).Find(&open)
 	escalated := 0
 	for _, inc := range open {
-		ackedAt := inc.AckedAt
+		// Each escalation step is due one ack-deadline after the previous
+		// one: step N at FirstSeenAt + deadline×(N).
 		anchor := inc.FirstSeenAt
-		if ackedAt != "" {
+		t, err := time.Parse(time.RFC3339, anchor)
+		if err != nil || now.Sub(t) < time.Duration(deadline)*time.Duration(inc.EscalationStep+1)*time.Minute {
 			continue
 		}
-		t, err := time.Parse(time.RFC3339, anchor)
-		if err != nil || now.Sub(t) < time.Duration(deadline)*time.Minute {
+		if inc.AckedAt != "" {
 			continue
 		}
 		if inc.EscalationStep >= maxSteps {
@@ -867,12 +879,26 @@ func (s *Server) handleINHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sum)
 }
 
-func inRandomToken(prefix string) string {
-	b := make([]byte, 12)
+func inRandomToken(prefix string) string { return apiRandomToken(prefix, 12) }
+
+// apiRandomToken is the shared prefixed-random-token helper for the
+// wave domains (subscriber/verify tokens, ack tokens, artifact leases).
+func apiRandomToken(prefix string, n int) string {
+	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
 		return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 	}
 	return fmt.Sprintf("%s-%s", prefix, base64.RawURLEncoding.EncodeToString(b))
+}
+
+// apiTruncateRunes bounds a display string to max runes with an ellipsis
+// (shared by incident envelopes and evidence excerpts).
+func apiTruncateRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
 }
 
 func inRandInt(n int) int {
@@ -899,12 +925,4 @@ func inStringSlice(v interface{}) []string {
 		return out
 	}
 	return nil
-}
-
-// inHMAC computes the signature used for protected ack links (replay
-// resistant via single-use token rows).
-func inHMAC(secret, data string) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(data))
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }

@@ -125,7 +125,8 @@ func TestHVStateMachine(t *testing.T) {
 	if st != hvRestricted {
 		t.Fatalf("past deadline = %s, want restricted", st)
 	}
-	// 3. Active exception defers the floor.
+	// 3. Active exception defers the floor as grace — never full support
+	// (PAT-1449: exceptions cannot grant `supported` below a floor).
 	ex := models.HarnessVersionException{
 		OrganizationID: "org-hv", HarnessIDsJSON: `["h3"]`, CurrentVersion: "1.4.0", TargetVersion: "1.5.0",
 		Reason: "결제일 이후 적용", Owner: "ops", ApprovedBy: "ciso", CompensatingControls: "네트워크 격리 강화",
@@ -133,8 +134,8 @@ func TestHVStateMachine(t *testing.T) {
 	}
 	db.Create(&ex)
 	st, reason = hvDeriveState(mk("h3", "1.4.0", "rel-1.4.0", "sha256:aaa"), releases, campaigns, "", []models.HarnessVersionException{ex}, now)
-	if st != hvSupported || reason != "exception_active" {
-		t.Fatalf("exception not honored: %s (%s)", st, reason)
+	if st != hvUpdateRequiredGrace || reason != "exception_deferred" {
+		t.Fatalf("exception not deferring: %s (%s)", st, reason)
 	}
 	// 4. Expired exception no longer defers.
 	ex.ExpiresAt = now.Add(-time.Minute).Format(time.RFC3339)
@@ -162,10 +163,16 @@ func TestHVStateMachine(t *testing.T) {
 	if st != hvUnknownTampered {
 		t.Fatalf("unknown release = %s, want unknown_or_tampered", st)
 	}
-	// 8. Compliant newer version → update offered? target same → supported.
-	st, _ = hvDeriveState(mk("h7", "1.5.0", "rel-1.5.0", ""), releases, campaigns, "", nil, now)
+	// 8. At target with full attestation → supported.
+	st, _ = hvDeriveState(mk("h7", "1.5.0", "rel-1.5.0", "sha256:bbb"), releases, campaigns, "", nil, now)
 	if st != hvSupported {
 		t.Fatalf("at target = %s, want supported", st)
+	}
+	// 9. Known release with MISSING digest attestation → tampered
+	// (identity = catalog + digest + profile; absence is a non-match).
+	st, reason = hvDeriveState(mk("h8", "1.5.0", "rel-1.5.0", ""), releases, campaigns, "", nil, now)
+	if st != hvUnknownTampered || reason != "no_attestation" {
+		t.Fatalf("missing attestation = %s (%s), want unknown_or_tampered", st, reason)
 	}
 }
 

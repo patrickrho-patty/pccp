@@ -46,13 +46,6 @@ var scmProviderKo = map[string]string{
 	scmProviderGitHub:   "GitHub",
 }
 
-var scmEventKo = map[string]string{
-	"push": "푸시", "force_push": "강제 푸시 (재작성)", "branch_create": "브랜치 생성",
-	"branch_delete": "브랜치 삭제", "pr_opened": "MR/PR 생성", "pr_merged": "MR/PR 병합",
-	"review": "리뷰", "check": "검사/파이프라인", "default_branch_change": "기본 브랜치 변경",
-	"repo_transferred": "저장소 이전", "access_revoked": "접근 철회",
-}
-
 var scmLineageKo = map[string]string{
 	"ai_created": "AI 작성", "human_created": "사람 작성",
 	"human_modified_ai": "사람이 AI 코드 수정", "ai_modified_human": "AI가 사람 코드 수정",
@@ -80,7 +73,7 @@ func (pattyGitAdapter) VerifyWebhook(secret string, h http.Header, body []byte) 
 func (pattyGitAdapter) ParseEvent(body []byte) (string, string, string, string, string, string, error) {
 	var e struct {
 		EventID string `json:"event_id"`
-		etype   string `json:"type"`
+		Type    string `json:"type"`
 		Actor   string `json:"actor"`
 		Ref     string `json:"ref"`
 		After   string `json:"after"`
@@ -88,7 +81,7 @@ func (pattyGitAdapter) ParseEvent(body []byte) (string, string, string, string, 
 	if err := json.Unmarshal(body, &e); err != nil {
 		return "", "", "", "", "", "", err
 	}
-	return e.EventID, e.EventID, e.etype, e.Actor, e.Ref, e.After, nil
+	return e.EventID, e.EventID, e.Type, e.Actor, e.Ref, e.After, nil
 }
 
 // GitLab: x-gitlab-token shared-secret comparison (constant-time).
@@ -99,7 +92,7 @@ func (gitLabAdapter) VerifyWebhook(secret string, h http.Header, body []byte) bo
 func (gitLabAdapter) ParseEvent(body []byte) (string, string, string, string, string, string, error) {
 	var e struct {
 		ObjectKind string `json:"object_kind"`
-		EventUUID  string `json":"event_uuid"`
+		EventUUID  string `json:"event_uuid"`
 		Before     string `json:"before"`
 		After      string `json:"after"`
 		Ref        string `json:"ref"`
@@ -129,6 +122,11 @@ func (gitHubAdapter) ParseEvent(body []byte) (string, string, string, string, st
 	}
 	if err := json.Unmarshal(body, &e); err != nil {
 		return "", "", "", "", "", "", err
+	}
+	// Only push-like deliveries (carrying a ref) are classified as push;
+	// other event kinds stay neutral rather than mislabeled.
+	if e.Ref == "" {
+		return e.DeliveryID, e.DeliveryID, "observed", e.Sender.Login, "", "", nil
 	}
 	etype := "push"
 	if e.After == "0000000000000000000000000000000000000000" {
@@ -193,7 +191,7 @@ func (s *Server) handleSCMConnectionCreate(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: conn.OrganizationID, EventType: "cp.lineage.connection_created",
 		ActorType: "admin", Action: "create_scm_connection", ResourceType: "scm_provider_connection",
 		ResourceID: fmt.Sprint(conn.ID), Details: fmt.Sprintf(`{"provider":"%s","base_url":"%s"}`, req.Provider, req.BaseURL),
@@ -201,7 +199,7 @@ func (s *Server) handleSCMConnectionCreate(w http.ResponseWriter, r *http.Reques
 	})
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"id": conn.ID, "provider": conn.Provider, "base_url": conn.BaseURL,
-		"webhook_url": "/api/scm/observation/" + fmt.Sprint(conn.ID) + "/webhook",
+		"webhook_url": "/api/scm/observation/webhooks/" + fmt.Sprint(conn.ID),
 	})
 }
 
@@ -235,7 +233,7 @@ func (s *Server) handleSCMConnectionRevoke(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "연결을 찾을 수 없습니다")
 		return
 	}
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: getOrgID(r), EventType: "cp.lineage.connection_revoked", ActorType: "admin",
 		Action: "revoke_scm_connection", ResourceType: "scm_provider_connection", ResourceID: id,
 		Result: "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
@@ -273,10 +271,12 @@ func (s *Server) handleSCMObservationWebhook(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "이벤트를 해석할 수 없습니다")
 		return
 	}
-	// Idempotency: duplicate delivery/event → acknowledged, inert.
+	// Idempotency per connection: duplicate delivery/event → inert.
+	// (Provider IDs are not globally unique across self-hosted
+	// instances, so dedup must be connection-scoped.)
 	var dup int64
 	s.db.Model(&models.ObservedRepositoryEvent{}).
-		Where("provider = ? AND (provider_event_id = ? OR provider_delivery_id = ?)", conn.Provider, eventID, deliveryID).
+		Where("connection_id = ? AND (provider_event_id = ? OR provider_delivery_id = ?)", conn.ID, eventID, deliveryID).
 		Count(&dup)
 	if dup > 0 {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "duplicate_ignored"})
@@ -290,7 +290,13 @@ func (s *Server) handleSCMObservationWebhook(w http.ResponseWriter, r *http.Requ
 		PayloadDigest: hex.EncodeToString(sum[:12]), IngestedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := s.db.Create(&ev).Error; err != nil {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "duplicate_ignored"})
+		// Only unique-constraint races are duplicate deliveries; real
+		// failures surface as errors instead of silent success.
+		if strings.Contains(strings.ToLower(err.Error()), "unique") || strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "duplicate_ignored"})
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "이벤트 저장 실패")
 		return
 	}
 	// Force pushes are recorded as ref rewrites (evidence preserved).
@@ -369,7 +375,7 @@ func (s *Server) handleSCMBindAttribution(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: orgID, EventType: "cp.lineage.attribution_bound", ActorType: "admin",
 		Action: "bind_attribution", ResourceType: "commit_attribution", ResourceID: attr.CommitSHA,
 		Details: fmt.Sprintf(`{"authoritative":%t,"lineage":"%s"}`, attr.Authoritative, attr.Lineage),
@@ -393,11 +399,12 @@ func (s *Server) handleSCMLineage(w http.ResponseWriter, r *http.Request) {
 	}
 	var attrs []models.CommitAttribution
 	q.Order("observed_at DESC").Limit(200).Find(&attrs)
-	// Per-file current-line view from commit-pinned spans.
+	// Per-file current-line view from commit-pinned spans, scoped to the
+	// requested repository.
 	fileFilter := r.URL.Query().Get("path")
 	spans := []models.ProvenanceSpan{}
 	if repoID != "" {
-		sq := s.db.Where("organization_id = ?", orgID)
+		sq := s.db.Where("organization_id = ? AND repository_id = ?", orgID, repoID)
 		if fileFilter != "" {
 			sq = sq.Where("file_path LIKE ?", "%"+fileFilter+"%")
 		}

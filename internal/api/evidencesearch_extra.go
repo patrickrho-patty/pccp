@@ -59,15 +59,9 @@ func (s *Server) esGrantFor(orgID, email string) *models.EvidenceSearchGrant {
 }
 
 func esMaskExcerpt(text string, n int) string {
-	clean := strings.TrimSpace(text)
+	clean := apiTruncateRunes(strings.TrimSpace(text), n)
 	if clean == "" {
 		return ""
-	}
-	if len(clean) > n {
-		r := []rune(clean)
-		if len(r) > n {
-			clean = string(r[:n]) + "…"
-		}
 	}
 	// Mask likely-sensitive tokens in the excerpt itself.
 	for _, pat := range []string{"sk-", "ghp_", "AKIA", "BEGIN "} {
@@ -289,6 +283,10 @@ func (s *Server) handleESOpen(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "위치를 찾을 수 없습니다")
 			return
 		}
+		s.db.Create(&models.EvidenceSearchAudit{
+			OrganizationID: orgID, AdminEmail: getOperatorEmail(r), Kind: "open",
+			Query: domain + "/" + id, OccurredAt: time.Now().UTC().Format(time.RFC3339),
+		})
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"repository_id": sp.RepositoryID, "commit_sha": sp.CommitSHA,
 			"file_path": sp.FilePath, "lines": fmt.Sprintf("%d-%d", sp.StartLine, sp.EndLine),
@@ -344,7 +342,7 @@ func (s *Server) handleESReveal(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleESGrantCreate(w http.ResponseWriter, r *http.Request) {
 	if getRole(r) != "super_admin" && getRole(r) != "admin" {
-		writeError(w, http.StatusForbidden, "증거 검색 권한 부여는 최고 관리자만 가능합니다")
+		writeError(w, http.StatusForbidden, "증거 검색 권한 부여는 관리자만 가능합니다")
 		return
 	}
 	var req models.EvidenceSearchGrant
@@ -364,7 +362,7 @@ func (s *Server) handleESGrantCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.db.Create(&models.AuditEvent{
+	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: req.OrganizationID, EventType: "cp.evidencesearch.grant_created",
 		ActorType: "admin", Action: "grant_evidence_search", ResourceType: "evidence_search_grant",
 		ResourceID: fmt.Sprint(req.ID), Details: fmt.Sprintf(`{"admin":"%s","can_reveal":%t}`, req.AdminEmail, req.CanReveal),
