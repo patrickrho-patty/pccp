@@ -804,4 +804,18 @@ export const api = {
     request<any>(`/api/skills/assignments/${id}`, { method: 'DELETE' }),
   deliverSkillEpoch: () =>
     request<any>('/api/skills/epochs/deliver', { method: 'POST', body: JSON.stringify({}) }),
+
+  // Managed system-prompt additions (PAT-1455)
+  listSystemPrompts: (q: string) => request<any>(`/api/prompts${q}`),
+  systemPromptEffective: (scope: string, scopeId: string) =>
+    request<any>(`/api/prompts/effective?scope=${encodeURIComponent(scope)}&scope_id=${encodeURIComponent(scopeId || '')}`),
+  saveSystemPrompt: (data: any) =>
+    request<any>('/api/prompts/', { method: 'PUT', body: JSON.stringify(data) }),
+  listSystemPromptVersions: (id: string) => request<any>(`/api/prompts/${id}/versions`),
+  setSystemPromptEnabled: (id: string, enabled: boolean) =>
+    request<any>(`/api/prompts/${id}/enabled?enabled=${enabled}`, { method: 'POST' }),
+  restoreSystemPrompt: (id: string, version: number) =>
+    request<any>(`/api/prompts/${id}/restore/${version}`, { method: 'POST' }),
+  deliverSystemPromptEpoch: () =>
+    request<any>('/api/prompts/epochs/deliver', { method: 'POST', body: JSON.stringify({}) }),
 };

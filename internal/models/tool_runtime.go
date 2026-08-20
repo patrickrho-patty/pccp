@@ -177,6 +177,10 @@ func AllModels() []interface{} {
 		&SkillPolicyAssignment{},
 		&HarnessSkillReport{},
 		&SkillPolicyEpoch{},
+		// Managed system-prompt additions (PAT-1455)
+		&SystemPromptDocument{},
+		&SystemPromptVersion{},
+		&SystemPromptEpoch{},
 		// Model distribution campaigns (PAT-1444)
 		&ModelPackageEntitlement{},
 		&ModelDistributionCampaign{},

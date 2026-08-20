@@ -792,6 +792,17 @@ func (s *Server) setupRouter() {
 			r.Post("/report", s.handleHarnessSkillReport)
 		})
 
+		// Managed system-prompt additions (PAT-1455)
+		r.Route("/prompts", func(r chi.Router) {
+			r.Get("/", s.handleListSystemPrompts)
+			r.Get("/effective", s.handleSystemPromptEffective)
+			r.Put("/", s.handleSaveSystemPrompt)
+			r.Get("/{id}/versions", s.handleListSystemPromptVersions)
+			r.Post("/{id}/enabled", s.handleSetSystemPromptEnabled)
+			r.Post("/{id}/restore/{version}", s.handleRestoreSystemPrompt)
+			r.Post("/epochs/deliver", s.handleSystemPromptEpochDeliver)
+		})
+
 		// Audit
 		r.Route("/audit", func(r chi.Router) {
 			r.Get("/", s.handleListAuditEventsExtended)
