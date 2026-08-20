@@ -596,7 +596,7 @@ func (s *Server) handleADEventIngest(w http.ResponseWriter, r *http.Request) {
 			// Rejected by the accounting gate: remove the event row so
 			// only counted events persist (a later legitimate retry of
 			// the same event_id can still count if eligibility returns).
-			s.db.Delete(&models.AdMeasurementEvent{}, ev.ID)
+			s.db.Unscoped().Delete(&models.AdMeasurementEvent{}, ev.ID)
 			writeJSON(w, http.StatusOK, map[string]string{"status": "not_billable"})
 			return
 		}

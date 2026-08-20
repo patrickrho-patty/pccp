@@ -126,7 +126,7 @@ func TestBGTaskLifecycle(t *testing.T) {
 	srv, db := bgTestServer(t)
 	// No tabs → 400 (privacy boundary: explicit attachment only).
 	if w := bgJSON(t, srv, "POST", "/api/browsergov/tasks",
-		`{"harness_id":"h1","goal_ko":"양말 구매","tabs":[]}`, "viewer"); w.Code != http.StatusBadRequest {
+		`{"harness_id":"h1","user_id":"u1","goal_ko":"양말 구매","tabs":[]}`, "viewer"); w.Code != http.StatusBadRequest {
 		t.Fatalf("tab-less task accepted: %d", w.Code)
 	}
 	w := bgJSON(t, srv, "POST", "/api/browsergov/tasks",
