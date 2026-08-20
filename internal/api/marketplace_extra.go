@@ -308,13 +308,16 @@ func (s *Server) handleMKAddVersion(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "목록을 찾을 수 없습니다")
 		return
 	}
-	// Ownership on version submission too.
+	// Ownership on version submission too — fail CLOSED when the
+	// publisher row cannot be resolved.
 	var owner models.MarketPublisher
-	if err := s.db.Where("publisher_id = ?", listing.PublisherID).First(&owner).Error; err == nil {
-		if owner.OrganizationID != getOrgID(r) && !enterpriseRoleAdmin(getRole(r)) {
-			writeError(w, http.StatusForbidden, "게시자 소유 조직만 버전을 추가할 수 있습니다")
-			return
-		}
+	if err := s.db.Where("publisher_id = ?", listing.PublisherID).First(&owner).Error; err != nil {
+		writeError(w, http.StatusForbidden, "게시자 신원을 확인할 수 없습니다")
+		return
+	}
+	if owner.OrganizationID != getOrgID(r) && !enterpriseRoleAdmin(getRole(r)) {
+		writeError(w, http.StatusForbidden, "게시자 소유 조직만 버전을 추가할 수 있습니다")
+		return
 	}
 	if listing.Status != "active" {
 		writeError(w, http.StatusForbidden, "차단/제거된 목록에는 버전을 추가할 수 없습니다")

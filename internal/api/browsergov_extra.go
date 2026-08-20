@@ -294,6 +294,11 @@ func (s *Server) handleBGTaskCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "harness_id와 목표가 필요합니다")
 		return
 	}
+	// Tasks bind to the initiating user — approvals key on this binding.
+	if strings.TrimSpace(req.UserID) == "" {
+		writeError(w, http.StatusBadRequest, "user_id가 필요합니다 — 과업은 시작 사용자에게 귀속됩니다")
+		return
+	}
 	if len(req.Tabs) == 0 {
 		writeError(w, http.StatusBadRequest, "명시적으로 연결된 탭이 필요합니다 — 무연결 탭 캡처는 불가능합니다")
 		return

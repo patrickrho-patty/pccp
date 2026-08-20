@@ -39,7 +39,6 @@ import (
 const (
 	adMaxCampaigns = 50
 	adCatalogTTL   = 1 * time.Hour
-	adFieldMax     = 120
 )
 
 // adOperatorOnly is the Patty platform-operator gate — deliberately
@@ -564,13 +563,10 @@ func (s *Server) handleADEventIngest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "unknown_campaign"})
 		return
 	}
-	// Revision mismatch (stale/unknown creative) → not counted.
+	// Revision mismatch (stale/unknown creative) → not counted, and NOT
+	// persisted — only COUNTED events occupy rows (bounded anonymous
+	// growth; dedup applies to counted events).
 	if req.CreativeRevision != c.CreativeRevision {
-		s.db.Create(&models.AdMeasurementEvent{
-			EventID: req.EventID, CampaignID: req.CampaignID,
-			CreativeRevision: req.CreativeRevision, Type: req.Type,
-			Timestamp: req.Timestamp, CatalogRevision: req.CatalogRevision, Counted: false,
-		})
 		writeJSON(w, http.StatusOK, map[string]string{"status": "stale_revision"})
 		return
 	}
@@ -597,6 +593,10 @@ func (s *Server) handleADEventIngest(w http.ResponseWriter, r *http.Request) {
 				c.ID, "active", now.Format(time.RFC3339), now.Format(time.RFC3339)).
 			UpdateColumn("validated_impressions", gorm.Expr("validated_impressions + 1"))
 		if res.RowsAffected == 0 {
+			// Rejected by the accounting gate: remove the event row so
+			// only counted events persist (a later legitimate retry of
+			// the same event_id can still count if eligibility returns).
+			s.db.Delete(&models.AdMeasurementEvent{}, ev.ID)
 			writeJSON(w, http.StatusOK, map[string]string{"status": "not_billable"})
 			return
 		}

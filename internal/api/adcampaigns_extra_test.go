@@ -395,3 +395,28 @@ func TestADCampaignsListOperatorOnly(t *testing.T) {
 		t.Fatalf("super_admin list rejected: %d", w.Code)
 	}
 }
+
+// Only COUNTED events persist: stale-revision and accounting-gate
+// rejections leave no measurement rows (bounded anonymous growth).
+func TestADRejectedEventsNotPersisted(t *testing.T) {
+	srv, db := adTestServer(t)
+	id := adCreateCampaign(t, srv, 2, 1000, 100000) // ceiling 2
+	adJSON(t, srv, "POST", fmt.Sprintf("/api/adcampaigns/%d/lifecycle", id), `{"action":"activate","reason":"go"}`, "super_admin")
+	// Fill the ceiling.
+	adEvent(t, srv, "r-1", id, 1, "impression")
+	adEvent(t, srv, "r-2", id, 1, "impression")
+	// Beyond the ceiling → not_billable, no row.
+	adEvent(t, srv, "r-3", id, 1, "impression")
+	// Stale revision → stale_revision, no row.
+	adEvent(t, srv, "r-4", id, 99, "impression")
+	var count int64
+	db.Model(&models.AdMeasurementEvent{}).Count(&count)
+	if count != 2 {
+		t.Fatalf("measurement rows = %d, want exactly the 2 counted events", count)
+	}
+	var c models.AdCampaign
+	db.First(&c, "id = ?", id)
+	if c.ValidatedImpressions != 2 {
+		t.Fatalf("impressions = %d, want 2", c.ValidatedImpressions)
+	}
+}

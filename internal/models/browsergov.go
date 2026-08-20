@@ -14,8 +14,10 @@ import (
 // driver boundary; neither user nor model may expand it.
 type BrowserPolicy struct {
 	gorm.Model
-	OrganizationID string `gorm:"index" json:"organization_id"`
-	Version        int    `json:"version"`
+	// (organization, version) is UNIQUE — concurrent versioning cannot
+	// mint duplicates even under multi-writer databases.
+	OrganizationID string `gorm:"uniqueIndex:idx_bgp_org_version" json:"organization_id"`
+	Version        int    `gorm:"uniqueIndex:idx_bgp_org_version" json:"version"`
 	// Canonical JSON: {"destinations":[{scheme,host,port,path_prefix,
 	//   allow_redirect,expires_at}],"actions":{name:allowed|blocked|
 	//   approval|takeover},"capture":{screenshot,dom,a11y,console,
@@ -23,11 +25,11 @@ type BrowserPolicy struct {
 	//   "retention_days":30,"limits":{max_task_minutes,max_requests,
 	//   max_concurrent_tabs},"layout":{tabs,side_by_side},
 	//   "overrides":[{scope,kind,ref,policy}]}
-	PolicyJSON  string `gorm:"type:text" json:"policy_json"`
-	Signature   string `json:"signature"`
-	KeyID       string `json:"key_id"`
-	CreatedBy   string `json:"created_by"`
-	Active      bool   `json:"active"`
+	PolicyJSON string `gorm:"type:text" json:"policy_json"`
+	Signature  string `json:"signature"`
+	KeyID      string `json:"key_id"`
+	CreatedBy  string `json:"created_by"`
+	Active     bool   `json:"active"`
 }
 
 // BrowserTask is one delegated browser task: the initiating user,
@@ -42,14 +44,14 @@ type BrowserTask struct {
 	SessionID      string `json:"session_id"`
 	// Explicitly attached tabs only — unrelated tabs are never implicit
 	// task scope (PAT-1448 privacy boundary).
-	TabsJSON       string `gorm:"type:text" json:"tabs_json"`
-	GoalKo         string `json:"goal_ko"`
-	LeaseID        string `json:"lease_id"`
-	PolicyVersion  int    `json:"policy_version"`
-	State          string `json:"state"` // active|waiting_approval|completed|cancelled|failed|taken_over
-	Outcome        string `json:"outcome"`
-	CreatedAt2     string `json:"created_at_2"`
-	ClosedAt       string `json:"closed_at"`
+	TabsJSON      string `gorm:"type:text" json:"tabs_json"`
+	GoalKo        string `json:"goal_ko"`
+	LeaseID       string `json:"lease_id"`
+	PolicyVersion int    `json:"policy_version"`
+	State         string `json:"state"` // active|waiting_approval|completed|cancelled|failed|taken_over
+	Outcome       string `json:"outcome"`
+	CreatedAt2    string `json:"created_at_2"`
+	ClosedAt      string `json:"closed_at"`
 }
 
 // BrowserApproval is bound to ONE exact proposed effect via its
@@ -81,17 +83,17 @@ type BrowserApproval struct {
 // digest only.
 type BrowserActionEvent struct {
 	gorm.Model
-	OrganizationID string `gorm:"index" json:"organization_id"`
-	TaskID         string `gorm:"index" json:"task_id"`
-	Action         string `json:"action"`
-	RiskClass      string `json:"risk_class"` // read_only|reversible|high_impact|mandatory_takeover
-	TargetSummary  string `gorm:"type:varchar(255)" json:"target_summary"`
-	Origin         string `gorm:"type:varchar(255)" json:"origin"` // redacted URL/origin
-	Result         string `json:"result"`                          // ok|blocked|failed|denied|paused|taken_over
-	PolicyVersion  int    `json:"policy_version"`
-	GrantDigest    string `json:"grant_digest"`
-	ApprovalID     uint   `json:"approval_id"`
-	EffectOpID     string `json:"effect_op_id"` // idempotency key for effect checkpoints
-	OccurredAt     string `gorm:"index" json:"occurred_at"`
+	OrganizationID  string `gorm:"index" json:"organization_id"`
+	TaskID          string `gorm:"index" json:"task_id"`
+	Action          string `json:"action"`
+	RiskClass       string `json:"risk_class"` // read_only|reversible|high_impact|mandatory_takeover
+	TargetSummary   string `gorm:"type:varchar(255)" json:"target_summary"`
+	Origin          string `gorm:"type:varchar(255)" json:"origin"` // redacted URL/origin
+	Result          string `json:"result"`                          // ok|blocked|failed|denied|paused|taken_over
+	PolicyVersion   int    `json:"policy_version"`
+	GrantDigest     string `json:"grant_digest"`
+	ApprovalID      uint   `json:"approval_id"`
+	EffectOpID      string `json:"effect_op_id"` // idempotency key for effect checkpoints
+	OccurredAt      string `gorm:"index" json:"occurred_at"`
 	IntegrityDigest string `json:"integrity_digest"`
 }
