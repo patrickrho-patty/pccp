@@ -92,6 +92,17 @@ var (
 	ErrBandLimit   = errors.New("queue: priority-band capacity limit exceeded")
 )
 
+// CacheIdentity is the request's cache compatibility identity (mirrors
+// the scheduler's CacheIdentity; the queue package must not import the
+// scheduler). Zero value = no identity = legacy routing path.
+type CacheIdentity struct {
+	ModelPackage string
+	TokenizerID  string
+	TemplateID   string
+	AdapterID    string
+	PolicyEpoch  string
+}
+
 // Request is one admission candidate. Token fields feed the DRR debit
 // (input + expected output); Deadline/Ordering feed item selection; TTL
 // bounds queue residency.
@@ -99,10 +110,12 @@ type Request struct {
 	ID                   string
 	Tenant               string
 	Class                Class
-	Region               string // residency constraint from tenant policy (empty = unconstrained)
-	ProgramID            string // opaque WS3 program identifier (empty = none)
-	TurnSeq              int    // program turn sequence
-	ToolPaused           bool   // the request ended waiting on a tool (WS3)
+	Region               string        // residency constraint from tenant policy (empty = unconstrained)
+	ProgramID            string        // opaque WS3 program identifier (empty = none)
+	TurnSeq              int           // program turn sequence
+	ToolPaused           bool          // the request ended waiting on a tool (WS3)
+	Cache                CacheIdentity // cache compatibility identity from the model package (WS1)
+	PrefixHash           string        // tenant-keyed prefix identity from the governed caller (never computed from content here)
 	InputTokens          int
 	CachedInputTokens    int
 	ExpectedOutputTokens int

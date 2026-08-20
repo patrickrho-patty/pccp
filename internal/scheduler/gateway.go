@@ -66,6 +66,7 @@ type Gateway struct {
 	queueTTL   time.Duration
 	classes    *ClassResolver  // nil = no issuer configured (fail-closed to batch)
 	residency  ResidencyPolicy // nil = no residency rules (unconstrained)
+	packages   PackageSource   // nil = no package identity source (legacy path)
 }
 
 // NewGateway builds the ingress over a dispatcher and optional rewriter.
@@ -101,6 +102,11 @@ type ResidencyPolicy interface {
 
 // SetResidencyPolicy installs the tenant residency lookup.
 func (g *Gateway) SetResidencyPolicy(p ResidencyPolicy) { g.residency = p }
+
+// SetPackageSource installs the model-package identity source (PAT-1445
+// B3.2): requests for packaged models are stamped with their cache
+// compatibility identity; unpackaged models stay on the legacy path.
+func (g *Gateway) SetPackageSource(s PackageSource) { g.packages = s }
 
 // chatRequest is the OpenAI/Anthropic-common request shape.
 type chatRequest struct {
@@ -213,6 +219,21 @@ func (g *Gateway) handleIngress(w http.ResponseWriter, r *http.Request, anthropi
 		qr.ToolPaused = env.Program.ToolPaused
 		if env.Program.TaskSLOMs > 0 {
 			qr.SLOBudget = time.Duration(env.Program.TaskSLOMs) * time.Millisecond
+		}
+	}
+	// Cache compatibility identity from the model's signed package
+	// (PAT-1445 B3.2): unknown models keep the zero identity and stay on
+	// the legacy routing path.
+	if g.packages != nil {
+		if pkg, ok := g.packages.PackageFor(resolved); ok {
+			id := pkg.CacheIdentity()
+			qr.Cache = queue.CacheIdentity{
+				ModelPackage: id.ModelPackage,
+				TokenizerID:  id.TokenizerID,
+				TemplateID:   id.TemplateID,
+				AdapterID:    id.AdapterID,
+				PolicyEpoch:  id.PolicyEpoch,
+			}
 		}
 	}
 	if req.Stream {

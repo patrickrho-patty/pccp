@@ -29,24 +29,26 @@ const (
 
 // TraceEvent is one content-free scheduling measurement.
 type TraceEvent struct {
-	AtUnixMs             int64      `json:"at_unix_ms"`
-	RequestID            string     `json:"request_id"`
-	Tenant               string     `json:"tenant"`
-	Model                string     `json:"model"`
-	Class                string     `json:"class"`
-	Region               string     `json:"region,omitempty"`
-	ProgramID            string     `json:"program_id,omitempty"`
-	Stage                TraceStage `json:"stage"`
-	InputTokens          int        `json:"input_tokens"`
-	CachedTokens         int        `json:"cached_tokens,omitempty"`
-	ExpectedOutputTokens int        `json:"expected_output_tokens"`
-	MediaTokens          int        `json:"media_tokens,omitempty"`
-	QueueWaitMs          int64      `json:"queue_wait_ms,omitempty"`
-	WorkerID             string     `json:"worker_id,omitempty"`
-	OutputTokens         int        `json:"output_tokens,omitempty"`
-	PlanMode             string     `json:"plan_mode,omitempty"`
-	TransferMs           float64    `json:"transfer_ms,omitempty"`
-	Err                  string     `json:"err,omitempty"`
+	AtUnixMs             int64         `json:"at_unix_ms"`
+	RequestID            string        `json:"request_id"`
+	Tenant               string        `json:"tenant"`
+	Model                string        `json:"model"`
+	Class                string        `json:"class"`
+	Region               string        `json:"region,omitempty"`
+	ProgramID            string        `json:"program_id,omitempty"`
+	Cache                CacheIdentity `json:"cache,omitempty"`
+	PrefixHash           string        `json:"prefix_hash,omitempty"`
+	Stage                TraceStage    `json:"stage"`
+	InputTokens          int           `json:"input_tokens"`
+	CachedTokens         int           `json:"cached_tokens,omitempty"`
+	ExpectedOutputTokens int           `json:"expected_output_tokens"`
+	MediaTokens          int           `json:"media_tokens,omitempty"`
+	QueueWaitMs          int64         `json:"queue_wait_ms,omitempty"`
+	WorkerID             string        `json:"worker_id,omitempty"`
+	OutputTokens         int           `json:"output_tokens,omitempty"`
+	PlanMode             string        `json:"plan_mode,omitempty"`
+	TransferMs           float64       `json:"transfer_ms,omitempty"`
+	Err                  string        `json:"err,omitempty"`
 }
 
 // traceEventFor adapts a queued request into an event for the given
@@ -63,6 +65,8 @@ func traceEventFor(r queue.Request, stage TraceStage) TraceEvent {
 		Class:                string(r.Class),
 		Region:               r.Region,
 		ProgramID:            r.ProgramID,
+		Cache:                cacheIdentityFor(r.Cache),
+		PrefixHash:           r.PrefixHash,
 		Stage:                stage,
 		InputTokens:          r.InputTokens,
 		CachedTokens:         r.CachedInputTokens,

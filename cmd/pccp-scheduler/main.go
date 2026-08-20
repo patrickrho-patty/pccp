@@ -77,6 +77,18 @@ func main() {
 		log.Printf("scheduler: traffic-envelope issuer configured")
 	}
 
+	// Model-package identities: requests for packaged models carry their
+	// cache compatibility identity into WS1 directory routing (PAT-1445
+	// B3.2). Optional — without it, the legacy namespace path applies.
+	if cfg.PackagesFile != "" {
+		pkgs, err := scheduler.LoadPackageFile(cfg.PackagesFile)
+		if err != nil {
+			log.Fatalf("scheduler: load packages: %v", err)
+		}
+		svc.Serving.Gateway.SetPackageSource(pkgs)
+		log.Printf("scheduler: model-package identities loaded from %s", cfg.PackagesFile)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

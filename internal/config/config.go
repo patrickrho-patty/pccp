@@ -165,6 +165,8 @@ type SchedulerConfig struct {
 	ConfigPublicKeyHex string `json:"config_public_key_hex"`
 	// Tenant policy (optional; static file in S1)
 	PolicyFile string `json:"policy_file"`
+	// Model-package identities (optional; static file, PAT-1445 B3.2)
+	PackagesFile string `json:"packages_file"`
 	// Leases
 	LeaseTTLSeconds   int `json:"lease_t_t_l_seconds"`
 	LeaseGraceSeconds int `json:"lease_grace_seconds"`
@@ -181,6 +183,7 @@ func LoadSchedulerFromEnv() SchedulerConfig {
 		CAPublicKeyHex:     os.Getenv("PCCP_SCHED_CA_PUBKEY_HEX"),
 		ConfigPublicKeyHex: os.Getenv("PCCP_SCHED_CONFIG_PUBKEY_HEX"),
 		PolicyFile:         os.Getenv("PCCP_SCHED_POLICY_FILE"),
+		PackagesFile:       os.Getenv("PCCP_SCHED_PACKAGES_FILE"),
 		LeaseTTLSeconds:    getenvInt("PCCP_SCHED_LEASE_TTL_SECONDS", 30),
 		LeaseGraceSeconds:  getenvInt("PCCP_SCHED_LEASE_GRACE_SECONDS", 60),
 		AdminToken:         os.Getenv("PCCP_SCHED_ADMIN_TOKEN"),

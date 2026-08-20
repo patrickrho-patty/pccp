@@ -28,6 +28,8 @@ func routeRequestFor(e TraceEvent) RouteRequest {
 		Model:                e.Model,
 		Namespace:            e.Tenant,
 		Region:               e.Region,
+		Cache:                e.Cache,
+		PrefixHash:           e.PrefixHash,
 		InputTokens:          e.InputTokens,
 		CachedTokens:         e.CachedTokens,
 		ExpectedOutputTokens: e.ExpectedOutputTokens,

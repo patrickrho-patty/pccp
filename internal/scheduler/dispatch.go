@@ -245,6 +245,8 @@ func (d *Dispatcher) assignLocked(workerID string) *Dispatch {
 			Model:                model,
 			Namespace:            out.Request.Tenant,
 			Region:               out.Request.Region,
+			Cache:                cacheIdentityFor(out.Request.Cache),
+			PrefixHash:           out.Request.PrefixHash,
 			InputTokens:          out.Request.InputTokens,
 			CachedTokens:         out.Request.CachedInputTokens,
 			ExpectedOutputTokens: out.Request.ExpectedOutputTokens,
@@ -440,5 +442,17 @@ func requestClassFor(c queue.Class) string {
 		return "batch"
 	default:
 		return "interactive"
+	}
+}
+
+// cacheIdentityFor converts the queue package's identity mirror to the
+// scheduler's directory identity.
+func cacheIdentityFor(c queue.CacheIdentity) CacheIdentity {
+	return CacheIdentity{
+		ModelPackage: c.ModelPackage,
+		TokenizerID:  c.TokenizerID,
+		TemplateID:   c.TemplateID,
+		AdapterID:    c.AdapterID,
+		PolicyEpoch:  c.PolicyEpoch,
 	}
 }
