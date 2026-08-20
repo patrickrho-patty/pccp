@@ -134,7 +134,9 @@ func (r *ProgramRegistry) ToolPaused(programID string) KVAction {
 	}
 	// Short (or unestimated) pause: retain residence but keep the
 	// directory's last-use fresh so the sweep cannot reap it mid-pause.
-	r.dir.Hit(p.namespace, p.prefixHash, p.identity)
+	// Touch, not Hit: a pause-hold is not reuse and must not inflate the
+	// hot-prefix replication signal.
+	r.dir.Touch(p.namespace, p.prefixHash, p.identity)
 	return KVActionRetain
 }
 
@@ -147,7 +149,7 @@ func (r *ProgramRegistry) Paused(programID string) bool {
 }
 
 // Stats exposes bounded registry counters for observability.
-func (r *ProgramRegistry) Stats() (programs, paused, predictErrs int) {
+func (r *ProgramRegistry) Stats() (programs, paused, predictErrs, turns int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	programs = len(r.programs)
@@ -156,6 +158,7 @@ func (r *ProgramRegistry) Stats() (programs, paused, predictErrs int) {
 			paused++
 		}
 		predictErrs += p.predictErrs
+		turns += p.turns
 	}
-	return programs, paused, predictErrs
+	return programs, paused, predictErrs, turns
 }

@@ -587,10 +587,9 @@ func (g *Gateway) serveStream(w http.ResponseWriter, r *http.Request, model stri
 // header is rejected as tampering rather than trusted. Without an
 // envelope the request keeps the header/default tenant but is pinned to
 // the batch class — the gateway's internal-caller path (the relay always
-// signs).
-// resolveTenantClass returns the verified tenant, its class, and the
-// verified envelope (nil when absent or unverified — callers must treat
-// nil as "no trusted metadata").
+// signs). It returns the verified tenant, its class, and the verified
+// envelope (nil when absent or unverified — callers must treat nil as
+// "no trusted metadata").
 func (g *Gateway) resolveTenantClass(r *http.Request) (tenant string, class string, verified *TrafficEnvelope, err error) {
 	tenant = r.Header.Get("X-Tenant-ID")
 	if tenant == "" {

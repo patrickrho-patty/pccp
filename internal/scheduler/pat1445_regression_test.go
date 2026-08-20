@@ -1,0 +1,93 @@
+package scheduler
+
+import (
+	"errors"
+	"testing"
+	"time"
+)
+
+// TestSyncRouterFeedsTopology covers the WS2 wiring: registered workers'
+// signed card node/zone populate the oracle's static fallback.
+func TestSyncRouterFeedsTopology(t *testing.T) {
+	fx := newWorkerFixture(t)
+	s := NewScheduler(fx.trust, nil, 30*time.Second, 60*time.Second, testEvidenceKey(t))
+
+	c1 := fx.card
+	c1.WorkerID = "w-a"
+	c1.NodeID = "node-1"
+	c1.Zone = "z1"
+	c2 := fx.card
+	c2.WorkerID = "w-b"
+	c2.NodeID = "node-2"
+	c2.Zone = "z1"
+	now := time.Now()
+	if _, err := s.Registry.Register(c1, fx.subjectPub, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Registry.Register(c2, fx.subjectPub, now); err != nil {
+		t.Fatal(err)
+	}
+	s.SyncRouter()
+
+	oracle := NewStaticTopologyOracle(s.Topology)
+	// Same node prices NVLink-grade.
+	if ms, ok := oracle.TransferCostMs("w-a", "w-a", 1<<20); !ok || ms > 1.0 {
+		t.Fatalf("same-node transfer = %v,%v", ms, ok)
+	}
+	// Cross-node prices the conservative ethernet grade (no rack telemetry).
+	ms, ok := oracle.TransferCostMs("w-a", "w-b", 1<<30)
+	if !ok {
+		t.Fatal("cross-node transfer must be priced from topology")
+	}
+	if ms < 100 {
+		t.Fatalf("cross-node transfer = %vms, want conservative ethernet grade", ms)
+	}
+}
+
+// TestToolPausedErrorDoesNotPause: an errored completion is not a tool
+// pause — the program did not end waiting on a tool.
+func TestToolPausedErrorDoesNotPause(t *testing.T) {
+	reg := NewProgramRegistry(nil)
+	d := NewDispatcher(nil)
+	d.SetPrograms(reg)
+	d.SetForwarder(&fakeForwarder{err: errors.New("worker exploded")})
+	sel := NewWorkerSelector()
+	sel.Upsert(mkWorker("w1", "model-a", 4), 1)
+	d.SetSelector(sel)
+	startLoop(t, d)
+
+	qr := queueRequest("r1", "tenant-1", "interactive-paid", "model-a")
+	qr.ProgramID = "p-err"
+	qr.ToolPaused = true
+	ch, err := d.Submit(qr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out")
+	}
+	if reg.Paused("p-err") {
+		t.Fatal("errored tool-paused completion must not pause the program")
+	}
+}
+
+// TestPauseRetainDoesNotInflateHits: a pause-hold refreshes last-use
+// without counting as reuse — the hot-prefix signal stays clean.
+func TestPauseRetainDoesNotInflateHits(t *testing.T) {
+	dir := NewKVDirectory()
+	dir.SetNow(func() int64 { return 0 })
+	dir.Add("w1", L1GPU, dirBlock("tenant-a", "ph", 1000), testIdentity, true)
+	reg := NewProgramRegistry(dir)
+	now := time.Now()
+	reg.SetNow(func() time.Time { return now })
+
+	reg.Turn("p1", "tenant-a", "ph", testIdentity, "w1", 1)
+	if act := reg.ToolPaused("p1"); act != KVActionRetain {
+		t.Fatalf("first pause = %s, want retain", act)
+	}
+	if hot := dir.HotPrefixes(1, 4); len(hot) != 0 {
+		t.Fatalf("pause-hold inflated the hot-prefix signal: %+v", hot)
+	}
+}

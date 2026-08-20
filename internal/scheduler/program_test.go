@@ -107,7 +107,7 @@ func TestProgramRegistryCalibrationCounter(t *testing.T) {
 	r.ToolPaused("p1")
 	now = now.Add(500 * time.Millisecond)
 	r.Turn("p1", "tenant-a", "ph", testIdentity, "w1", 3)
-	_, _, errs := r.Stats()
+	_, _, errs, _ := r.Stats()
 	if errs != 1 {
 		t.Fatalf("prediction errors = %d, want 1 (early continuation)", errs)
 	}
@@ -141,8 +141,11 @@ func TestDispatcherProgramHooks(t *testing.T) {
 	if !reg.Paused("p7") {
 		t.Fatal("tool-paused completion must pause the program")
 	}
-	programs, paused, _ := reg.Stats()
+	programs, paused, _, turns := reg.Stats()
 	if programs != 1 || paused != 1 {
 		t.Fatalf("stats = %d/%d, want 1/1", programs, paused)
+	}
+	if turns != 1 {
+		t.Fatalf("turns = %d, want 1", turns)
 	}
 }

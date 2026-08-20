@@ -19,6 +19,7 @@ type Scheduler struct {
 	Trace     *TraceRecorder
 	PD        *PDController
 	Programs  *ProgramRegistry
+	Topology  *TopologyInventory
 }
 
 // NewScheduler assembles the full S1–S12 scheduler with the given trust
@@ -37,6 +38,7 @@ func NewScheduler(trust Trust, policy PolicySource, ttl, grace time.Duration, ev
 		Trace:     NewTraceRecorder(4096),
 		PD: NewPDController(NewPDPlanner(),
 			NewLatencyPredictorPair(DefaultPredictorConfig())),
+		Topology: NewTopologyInventory(),
 	}
 	svc.Programs = NewProgramRegistry(svc.KVDir)
 	svc.wireServingStack()
@@ -67,9 +69,8 @@ func (s *Scheduler) wireServingStack() {
 	// WS2 stage planning: every binding records its execution path as
 	// trace evidence; execution stays co-located until the PIA stage
 	// protocol lands (PAT-1445 rollout: decide in shadow first).
-	topology := NewTopologyInventory()
 	s.Serving.Dispatcher.SetStagePlanner(
-		NewStagePlanner(s.PD.planner, NewStaticTopologyOracle(topology), s.PD))
+		NewStagePlanner(s.PD.planner, NewStaticTopologyOracle(s.Topology), s.PD))
 	s.Serving.Dispatcher.SetPrograms(s.Programs)
 }
 
@@ -89,6 +90,14 @@ func (s *Scheduler) SyncRouter() {
 		})
 		if gang != nil {
 			gang.Upsert(e)
+		}
+		// Feed the network oracle's static fallback from signed cards.
+		// Rack is pinned to the node ID: with no rack telemetry, distinct
+		// nodes never price as PCIe — cross-node transfers stay at the
+		// conservative ethernet grade (WS2 conservative fallback).
+		if e.Card.NodeID != "" {
+			s.Topology.AddNode(e.Card.NodeID, TopologyNode{Zone: e.Card.Zone, Rack: e.Card.NodeID})
+			s.Topology.AddWorker(e.Card.WorkerID, e.Card.NodeID)
 		}
 	}
 }

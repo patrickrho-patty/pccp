@@ -19,6 +19,21 @@ const (
 	L4Remote    KVTier = 4
 )
 
+// String labels the tier for observability views.
+func (t KVTier) String() string {
+	switch t {
+	case L1GPU:
+		return "L1-hbm"
+	case L2CPU:
+		return "L2-host"
+	case L3LocalDisk:
+		return "L3-disk"
+	case L4Remote:
+		return "L4-remote"
+	}
+	return "unknown"
+}
+
 // tieredBlock is one block's residence on one worker.
 type tieredBlock struct {
 	tier       KVTier

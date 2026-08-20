@@ -221,10 +221,27 @@ func (d *KVDirectory) Hit(namespace, hash string, id CacheIdentity) {
 	key := dirKey{namespace: namespace, hash: hash, id: id}
 	if ext, ok := d.extents[key]; ok {
 		ext.Hits++
-		now := d.now()
-		for _, loc := range ext.Locations {
-			loc.LastUseUnix = now
-		}
+		d.touchLocked(ext)
+	}
+}
+
+// Touch refreshes an extent's last-use stamp WITHOUT counting a reuse
+// hit — retention protection (e.g. tool-pause holds) must not inflate
+// the hot-prefix replication signal.
+func (d *KVDirectory) Touch(namespace, hash string, id CacheIdentity) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	key := dirKey{namespace: namespace, hash: hash, id: id}
+	if ext, ok := d.extents[key]; ok {
+		d.touchLocked(ext)
+	}
+}
+
+// touchLocked refreshes every location's last-use (lock held).
+func (d *KVDirectory) touchLocked(ext *CacheExtent) {
+	now := d.now()
+	for _, loc := range ext.Locations {
+		loc.LastUseUnix = now
 	}
 }
 
@@ -415,7 +432,7 @@ func (d *KVDirectory) Summary(hotMinHits int64, hotLimit int) DirectorySummary {
 	for _, ext := range d.extents {
 		sum.Extents++
 		for _, loc := range ext.Locations {
-			sum.ByTier[tierName(loc.Tier)]++
+			sum.ByTier[loc.Tier.String()]++
 			if loc.Verified {
 				sum.LocationsVerified++
 			} else {
@@ -429,19 +446,4 @@ func (d *KVDirectory) Summary(hotMinHits int64, hotLimit int) DirectorySummary {
 	}
 	sum.HotPrefixes = hot
 	return sum
-}
-
-// tierName labels a tier for views.
-func tierName(t KVTier) string {
-	switch t {
-	case L1GPU:
-		return "L1-hbm"
-	case L2CPU:
-		return "L2-host"
-	case L3LocalDisk:
-		return "L3-disk"
-	case L4Remote:
-		return "L4-remote"
-	}
-	return "unknown"
 }

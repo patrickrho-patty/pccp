@@ -73,8 +73,8 @@ func (d *Dispatcher) Submit(qr queue.Request) (<-chan InferenceResult, error) {
 		return nil, err
 	}
 	d.recordTrace(traceEventFor(qr, TraceArrived))
-	if d.programs != nil && qr.ProgramID != "" {
-		d.programs.Turn(qr.ProgramID, qr.Tenant, "", CacheIdentity{}, "", qr.TurnSeq)
+	if p := d.programsFor(); p != nil && qr.ProgramID != "" {
+		p.Turn(qr.ProgramID, qr.Tenant, "", CacheIdentity{}, "", qr.TurnSeq)
 	}
 	w := &pendingWaiter{
 		ch:     make(chan InferenceResult, 1),
@@ -264,8 +264,10 @@ func (d *Dispatcher) execute(ctx context.Context, bound *Dispatch) {
 		}
 	}
 	d.recordTrace(completed)
-	if d.programs != nil && req.ProgramID != "" && req.ToolPaused {
-		d.programs.ToolPaused(req.ProgramID)
+	// A tool pause is only a pause when the request actually completed —
+	// an errored turn did not end waiting on a tool.
+	if p := d.programsFor(); p != nil && req.ProgramID != "" && req.ToolPaused && res.Err == "" {
+		p.ToolPaused(req.ProgramID)
 	}
 	d.submitResult(req.ID, res)
 	if waiter != nil {

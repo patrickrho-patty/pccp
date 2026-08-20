@@ -256,11 +256,12 @@ func (o *Observability) ProgramsView() interface{} {
 	if o.svc == nil || o.svc.Programs == nil {
 		return map[string]interface{}{}
 	}
-	programs, paused, predictErrs := o.svc.Programs.Stats()
+	programs, paused, predictErrs, turns := o.svc.Programs.Stats()
 	return map[string]interface{}{
 		"programs":                programs,
 		"tool_paused":             paused,
 		"pause_prediction_errors": predictErrs,
+		"turns":                   turns,
 	}
 }
 

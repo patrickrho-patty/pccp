@@ -336,6 +336,14 @@ func (d *Dispatcher) SetPrograms(p *ProgramRegistry) {
 	d.mu.Unlock()
 }
 
+// programsFor returns the installed registry (nil = WS3 off) with the
+// dispatcher lock held — Submit/execute read it off the hot path.
+func (d *Dispatcher) programsFor() *ProgramRegistry {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.programs
+}
+
 // recordTrace appends one event when a recorder is installed.
 func (d *Dispatcher) recordTrace(e TraceEvent) {
 	d.fwMu.Lock()
