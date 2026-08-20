@@ -155,10 +155,39 @@ func (pl *DARIListener) handleAIRequests(ctx context.Context, conn *dari.Transpo
 			}
 			completePayload, _ := json.Marshal(resp)
 			conn.SendMessage(dari.MsgAIComplete, nil, completePayload, record.LaneID, record.LaneSequence+1)
+		case dari.MsgAIPrefillOpen:
+			pl.handlePrefillOpen(conn, record)
+		case dari.MsgAIDecodeOpen:
+			pl.handleDecodeOpen(conn, record)
 		case dari.MsgPing:
 			conn.SendControl(dari.MsgPong, nil, []byte("pong"))
 		}
 	}
+}
+
+// handlePrefillOpen answers a stage prefill request (PAT-1445 WS2).
+// Stage execution requires engine-advertised P/D capability (the issue:
+// role changes only when the engine and model package explicitly
+// advertise support). Without it the worker declines and the scheduler
+// falls back to co-located execution — never a silent misroute.
+func (pl *DARIListener) handlePrefillOpen(conn *dari.TransportConn, record *dari.Record) {
+	if !pl.svc.SupportsStages() {
+		payload, _ := json.Marshal(map[string]string{"error": "stage execution not supported by this engine"})
+		conn.SendMessage(dari.MsgAIPrefillComplete, nil, payload, record.LaneID, record.LaneSequence+1)
+		return
+	}
+	// Engines advertising P/D capability execute the prefill stage here
+	// and return the opaque KV handle for the paired decode.
+	payload, _ := json.Marshal(map[string]string{"error": "stage execution not implemented for this engine"})
+	conn.SendMessage(dari.MsgAIPrefillComplete, nil, payload, record.LaneID, record.LaneSequence+1)
+}
+
+// handleDecodeOpen answers a stage decode request (PAT-1445 WS2): same
+// capability rule as prefill — unsupported engines decline and the
+// scheduler falls back to co-located execution.
+func (pl *DARIListener) handleDecodeOpen(conn *dari.TransportConn, record *dari.Record) {
+	payload, _ := json.Marshal(map[string]string{"error": "stage execution not supported by this engine"})
+	conn.SendMessage(dari.MsgAIComplete, nil, payload, record.LaneID, record.LaneSequence+1)
 }
 
 func (pl *DARIListener) ActiveConnections() int {

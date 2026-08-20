@@ -21,6 +21,9 @@ type TraceStage string
 const (
 	TraceArrived   TraceStage = "arrived"
 	TraceBound     TraceStage = "bound"
+	TracePrefill   TraceStage = "prefill"
+	TraceTransfer  TraceStage = "transfer"
+	TraceDecode    TraceStage = "decode"
 	TraceCompleted TraceStage = "completed"
 	TraceExpired   TraceStage = "expired"
 	TraceDrained   TraceStage = "drained"

@@ -677,7 +677,7 @@ func (s *Server) handleFileTransferDownload(w http.ResponseWriter, r *http.Reque
 	now := time.Now().Format(time.RFC3339)
 	actor := getOperatorEmail(r)
 	s.db.Model(&transfer).Updates(map[string]interface{}{
-		"downloaded_at": now,
+		"downloaded_at":  now,
 		"download_count": gorm.Expr("download_count + 1"),
 	})
 	s.db.Create(&models.AuditEvent{

@@ -185,6 +185,15 @@ func (s *Service) RequestLease(ctx context.Context) error {
 
 // HasValidLease checks if the PIA currently holds a valid lease.
 // It checks in-memory state first, then falls back to the database.
+// SupportsStages reports whether the engine advertises disaggregated
+// prefill/decode capability (PAT-1445 WS2: roles and stage execution
+// only when the engine and model package explicitly advertise support).
+// No current engine in this deployment advertises it, so stage requests
+// are declined and the scheduler falls back to co-located execution.
+func (s *Service) SupportsStages() bool {
+	return false
+}
+
 func (s *Service) HasValidLease() bool {
 	s.mu.RLock()
 	lease := s.lease

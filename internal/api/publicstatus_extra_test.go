@@ -101,10 +101,10 @@ func TestPSEvaluatorAntiFlap(t *testing.T) {
 // no-data excluded from denominator.
 func TestPSDailyRollupRules(t *testing.T) {
 	obs := []models.PublicStatusObservation{
-		{Success: true, Impact: "none", WindowSeconds: 40000},                  // up
-		{Success: false, Impact: "partial", WindowSeconds: 10000},              // 50% weighted down
-		{Success: false, Impact: "widespread", WindowSeconds: 5000},            // full down
-		{Maintenance: true, WindowSeconds: 20000},                              // 50% weighted
+		{Success: true, Impact: "none", WindowSeconds: 40000},       // up
+		{Success: false, Impact: "partial", WindowSeconds: 10000},   // 50% weighted down
+		{Success: false, Impact: "widespread", WindowSeconds: 5000}, // full down
+		{Maintenance: true, WindowSeconds: 20000},                   // 50% weighted
 	}
 	av, impacted, maint, noData := psDeriveDailyRollup(obs)
 	if impacted != 15000 || maint != 20000 {

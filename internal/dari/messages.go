@@ -59,9 +59,14 @@ const (
 	MsgInferenceRequest MessageType = 0x0401
 	MsgAITokenChunk     MessageType = 0x0402
 	MsgAIComplete       MessageType = 0x0403
-	MsgPIAEnroll        MessageType = 0x0410
-	MsgEndpointRegister MessageType = 0x0411
-	MsgEndpointLease    MessageType = 0x0412
+	// Disaggregated prefill/decode stage execution (PAT-1445 WS2):
+	// prefill returns an opaque KV handle; decode consumes it.
+	MsgAIPrefillOpen     MessageType = 0x0404
+	MsgAIPrefillComplete MessageType = 0x0405
+	MsgAIDecodeOpen      MessageType = 0x0406
+	MsgPIAEnroll         MessageType = 0x0410
+	MsgEndpointRegister  MessageType = 0x0411
+	MsgEndpointLease     MessageType = 0x0412
 )
 
 // Context / repository (0x0500–0x05FF)
@@ -202,6 +207,12 @@ func (mt MessageType) String() string {
 		return "AI_TOKEN_CHUNK"
 	case MsgAIComplete:
 		return "AI_COMPLETE"
+	case MsgAIPrefillOpen:
+		return "AI_PREFILL_OPEN"
+	case MsgAIPrefillComplete:
+		return "AI_PREFILL_COMPLETE"
+	case MsgAIDecodeOpen:
+		return "AI_DECODE_OPEN"
 	case MsgPIAEnroll:
 		return "PIA_ENROLL"
 	case MsgEndpointRegister:

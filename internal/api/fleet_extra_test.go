@@ -33,7 +33,7 @@ func TestApprovalEnrichmentContractPAT1497(t *testing.T) {
 	arr := models.Approval{
 		OrganizationID: org.ID, SessionID: sess.SessionID, ActionID: tool.ID,
 		ApprovalType: "tool_use_bash", RequestedBy: user.ID, Decision: "pending",
-		Base:     models.Base{CreatedAt: time.Now().Add(-5 * time.Minute)},
+		Base:      models.Base{CreatedAt: time.Now().Add(-5 * time.Minute)},
 		ExpiresAt: time.Now().Add(2 * time.Hour).Format(time.RFC3339),
 	}
 	db.Create(&arr)

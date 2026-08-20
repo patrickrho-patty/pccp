@@ -307,11 +307,11 @@ func TestDashboardFindingKPIScopeReconcilesWithList(t *testing.T) {
 	db.Create(&org)
 
 	seed := []models.SecurityFinding{
-		{OrganizationID: org.ID, FindingType: "secret", Severity: "critical", Title: "c1", Status: "open",       OccurredAt: "2026-01-01T00:00:00Z"},
-		{OrganizationID: org.ID, FindingType: "secret", Severity: "high",    Title: "h1", Status: "investigating", OccurredAt: "2026-01-01T00:00:01Z"},
-		{OrganizationID: org.ID, FindingType: "secret", Severity: "critical", Title: "c2", Status: "resolved",    OccurredAt: "2026-01-01T00:00:02Z"}, // excluded: resolved
-		{OrganizationID: org.ID, FindingType: "secret", Severity: "medium",  Title: "m1", Status: "open",       OccurredAt: "2026-01-01T00:00:03Z"}, // excluded: not critical/high
-		{OrganizationID: org.ID, FindingType: "secret", Severity: "high",    Title: "h2", Status: "suppressed",  OccurredAt: "2026-01-01T00:00:04Z"}, // included: != resolved
+		{OrganizationID: org.ID, FindingType: "secret", Severity: "critical", Title: "c1", Status: "open", OccurredAt: "2026-01-01T00:00:00Z"},
+		{OrganizationID: org.ID, FindingType: "secret", Severity: "high", Title: "h1", Status: "investigating", OccurredAt: "2026-01-01T00:00:01Z"},
+		{OrganizationID: org.ID, FindingType: "secret", Severity: "critical", Title: "c2", Status: "resolved", OccurredAt: "2026-01-01T00:00:02Z"}, // excluded: resolved
+		{OrganizationID: org.ID, FindingType: "secret", Severity: "medium", Title: "m1", Status: "open", OccurredAt: "2026-01-01T00:00:03Z"},       // excluded: not critical/high
+		{OrganizationID: org.ID, FindingType: "secret", Severity: "high", Title: "h2", Status: "suppressed", OccurredAt: "2026-01-01T00:00:04Z"},   // included: != resolved
 	}
 	for _, f := range seed {
 		db.Create(&f)

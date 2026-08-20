@@ -113,8 +113,12 @@ func imageAllowlistedForOrg(orgID, image string, srv *Server) bool {
 		} else if colon := strings.LastIndex(entry, ":"); colon >= 0 {
 			eTag = entry[colon+1:]
 		}
-		if eRepo != imgRepo { continue }
-		if eTag == "" || eTag == "*" || eTag == imgTag { return true }
+		if eRepo != imgRepo {
+			continue
+		}
+		if eTag == "" || eTag == "*" || eTag == imgTag {
+			return true
+		}
 	}
 	return canonicalImageAllows(srv, orgID, image)
 }
@@ -138,16 +142,22 @@ func canonicalImageAllows(srv *Server, orgID, image string) bool {
 		imgDigest = strings.TrimPrefix(image[at+1:], "sha256:")
 	}
 	for _, e := range entries {
-		if e.Repository != imgRepo { continue }
+		if e.Repository != imgRepo {
+			continue
+		}
 		if e.IsRaw {
 			var digests []string
 			_ = json.Unmarshal([]byte(e.ExpandedDigests), &digests)
 			for _, d := range digests {
-				if d == imgDigest { return true }
+				if d == imgDigest {
+					return true
+				}
 			}
 			continue
 		}
-		if imgDigest != "" && e.DigestSHA256 == imgDigest { return true }
+		if imgDigest != "" && e.DigestSHA256 == imgDigest {
+			return true
+		}
 	}
 	return false
 }

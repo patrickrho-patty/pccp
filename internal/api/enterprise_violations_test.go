@@ -115,7 +115,9 @@ func TestEnterpriseViolationListCountsByFeature(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &rows)
 	gotF1 := 0
 	for _, r := range rows {
-		if r["feature_key"] == "f1" { gotF1 = int(r["open"].(float64)) }
+		if r["feature_key"] == "f1" {
+			gotF1 = int(r["open"].(float64))
+		}
 	}
 	if gotF1 != 2 {
 		t.Fatalf("expected 2 open f1, got %d (rows: %+v)", gotF1, rows)

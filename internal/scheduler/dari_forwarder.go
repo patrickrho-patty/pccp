@@ -36,14 +36,13 @@ func NewDARIForwarder(tlsConfig *tls.Config, timeout time.Duration) *DARIForward
 	return &DARIForwarder{tlsConfig: tlsConfig, timeout: timeout}
 }
 
-// Send performs one inference round trip to workerAddr.
-func (f *DARIForwarder) Send(workerAddr string, payload InferencePayload) (InferenceResult, error) {
+// connect dials a worker and performs the DARI handshake + auth proof —
+// the shared preamble for every request kind (inference, stages).
+func (f *DARIForwarder) connect(workerAddr string) (*dari.TransportConn, error) {
 	conn, err := dari.DialTCP(workerAddr, f.tlsConfig, dari.DefaultTransportConfig())
 	if err != nil {
-		return InferenceResult{}, fmt.Errorf("scheduler: dial worker %s: %w", workerAddr, err)
+		return nil, fmt.Errorf("scheduler: dial worker %s: %w", workerAddr, err)
 	}
-	defer conn.Close()
-
 	hello := &dari.HelloMessage{
 		CoreVersions:       []uint8{1},
 		PeerProfile:        dari.ProfileRelay,
@@ -54,11 +53,13 @@ func (f *DARIForwarder) Send(workerAddr string, payload InferencePayload) (Infer
 		ImplementationName: "pccp-scheduler",
 	}
 	if _, err := conn.Handshake(hello); err != nil {
-		return InferenceResult{}, fmt.Errorf("scheduler: worker handshake: %w", err)
+		conn.Close()
+		return nil, fmt.Errorf("scheduler: worker handshake: %w", err)
 	}
 	challenge, err := conn.RecvAuthChallenge()
 	if err != nil {
-		return InferenceResult{}, fmt.Errorf("scheduler: worker auth challenge: %w", err)
+		conn.Close()
+		return nil, fmt.Errorf("scheduler: worker auth challenge: %w", err)
 	}
 	proof := &dari.AuthProofMessage{
 		Credential:   []byte("scheduler-dispatch"),
@@ -67,8 +68,19 @@ func (f *DARIForwarder) Send(workerAddr string, payload InferencePayload) (Infer
 		ChallengeID:  challenge.ChallengeID,
 	}
 	if err := conn.AuthProof(proof); err != nil {
-		return InferenceResult{}, fmt.Errorf("scheduler: worker auth proof: %w", err)
+		conn.Close()
+		return nil, fmt.Errorf("scheduler: worker auth proof: %w", err)
 	}
+	return conn, nil
+}
+
+// Send performs one inference round trip to workerAddr.
+func (f *DARIForwarder) Send(workerAddr string, payload InferencePayload) (InferenceResult, error) {
+	conn, err := f.connect(workerAddr)
+	if err != nil {
+		return InferenceResult{}, err
+	}
+	defer conn.Close()
 
 	requestBody := map[string]interface{}{
 		"model":       payload.Model,
@@ -83,7 +95,12 @@ func (f *DARIForwarder) Send(workerAddr string, payload InferencePayload) (Infer
 	if err := conn.SendMessage(dari.MsgAIOpen, nil, reqJSON, 1, 1); err != nil {
 		return InferenceResult{}, fmt.Errorf("scheduler: send AI_OPEN: %w", err)
 	}
+	return f.recvInference(conn, workerAddr)
+}
 
+// recvInference reads records until the worker's completion (or timeout)
+// and normalizes the OpenAI-compatible response into InferenceResult.
+func (f *DARIForwarder) recvInference(conn *dari.TransportConn, workerAddr string) (InferenceResult, error) {
 	deadline := time.Now().Add(f.timeout)
 	for time.Now().Before(deadline) {
 		record, err := conn.RecvRecord()
@@ -143,4 +160,82 @@ func (f *DARIForwarder) Send(workerAddr string, payload InferencePayload) (Infer
 		}
 	}
 	return InferenceResult{}, fmt.Errorf("scheduler: worker %s timeout", workerAddr)
+}
+
+// SendPrefill runs the prefill stage on a worker and returns the opaque
+// KV handle for the paired decode (WS2 disaggregated execution). A
+// worker-level error (unsupported stages, engine failure) is an ordinary
+// error — the dispatcher falls back to co-located execution.
+func (f *DARIForwarder) SendPrefill(workerAddr string, payload InferencePayload) (string, error) {
+	conn, err := f.connect(workerAddr)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	reqJSON, err := json.Marshal(map[string]interface{}{
+		"model":       payload.Model,
+		"messages":    json.RawMessage(payload.Messages),
+		"max_tokens":  payload.MaxTokens,
+		"temperature": payload.Temperature,
+	})
+	if err != nil {
+		return "", fmt.Errorf("scheduler: marshal prefill request: %w", err)
+	}
+	if err := conn.SendMessage(dari.MsgAIPrefillOpen, nil, reqJSON, 1, 1); err != nil {
+		return "", fmt.Errorf("scheduler: send AI_PREFILL_OPEN: %w", err)
+	}
+
+	deadline := time.Now().Add(f.timeout)
+	for time.Now().Before(deadline) {
+		record, err := conn.RecvRecord()
+		if err != nil {
+			return "", fmt.Errorf("scheduler: recv prefill: %w", err)
+		}
+		switch dari.MessageType(record.MessageType) {
+		case dari.MsgAIPrefillComplete:
+			var resp struct {
+				KVHandle string `json:"kv_handle"`
+				Err      string `json:"error"`
+			}
+			if err := json.Unmarshal(record.Payload, &resp); err != nil {
+				return "", fmt.Errorf("scheduler: decode prefill completion: %w", err)
+			}
+			if resp.Err != "" {
+				return "", fmt.Errorf("scheduler: worker prefill error: %s", resp.Err)
+			}
+			if resp.KVHandle == "" {
+				return "", fmt.Errorf("scheduler: worker returned no KV handle")
+			}
+			return resp.KVHandle, nil
+		case dari.MsgPing:
+			conn.SendControl(dari.MsgPong, nil, []byte("pong"))
+		}
+	}
+	return "", fmt.Errorf("scheduler: worker %s prefill timeout", workerAddr)
+}
+
+// SendDecode runs the decode stage against a KV handle produced by
+// SendPrefill (WS2 disaggregated execution).
+func (f *DARIForwarder) SendDecode(workerAddr, kvHandle string, payload InferencePayload) (InferenceResult, error) {
+	conn, err := f.connect(workerAddr)
+	if err != nil {
+		return InferenceResult{}, err
+	}
+	defer conn.Close()
+
+	reqJSON, err := json.Marshal(map[string]interface{}{
+		"model":       payload.Model,
+		"messages":    json.RawMessage(payload.Messages),
+		"max_tokens":  payload.MaxTokens,
+		"temperature": payload.Temperature,
+		"kv_handle":   kvHandle,
+	})
+	if err != nil {
+		return InferenceResult{}, fmt.Errorf("scheduler: marshal decode request: %w", err)
+	}
+	if err := conn.SendMessage(dari.MsgAIDecodeOpen, nil, reqJSON, 1, 1); err != nil {
+		return InferenceResult{}, fmt.Errorf("scheduler: send AI_DECODE_OPEN: %w", err)
+	}
+	return f.recvInference(conn, workerAddr)
 }

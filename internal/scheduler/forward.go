@@ -44,6 +44,17 @@ type StreamForwarder interface {
 	SendStream(workerAddr string, payload InferencePayload, onDelta func(string)) (InferenceResult, error)
 }
 
+// StageForwarder executes a two-stage disaggregated plan (WS2): prefill
+// on one worker returns an opaque KV handle; decode consumes it on the
+// router's chosen worker. The transfer between stages is engine-internal
+// and priced by the NetworkOracle. A plan that fails mid-stage falls
+// back to co-located execution on the decode worker (conservative).
+type StageForwarder interface {
+	Forwarder
+	SendPrefill(workerAddr string, payload InferencePayload) (kvHandle string, err error)
+	SendDecode(workerAddr, kvHandle string, payload InferencePayload) (InferenceResult, error)
+}
+
 // pendingWaiter is a submitter blocked on completion or cancellation.
 // deltas (optional) delivers streamed token deltas; it is closed exactly
 // once when the request terminates.
@@ -234,19 +245,30 @@ func (d *Dispatcher) execute(ctx context.Context, bound *Dispatch) {
 	}
 
 	// Streaming when the submitter wants deltas AND the forwarder speaks
-	// StreamForwarder; otherwise one-shot Send.
+	// StreamForwarder; otherwise one-shot Send. A disaggregated plan runs
+	// the two-stage path first; any stage failure falls back to
+	// co-located execution on the decode worker.
 	waiter := d.waiterFor(req.ID)
 	var res InferenceResult
 	var err error
-	if sf, ok := fw.(StreamForwarder); ok && waiter != nil && waiter.deltas != nil {
-		res, err = sf.SendStream(addr, payload, func(delta string) {
-			select {
-			case waiter.deltas <- delta:
-			default: // bounded buffer full: drop, keep streaming
-			}
-		})
-	} else {
-		res, err = fw.Send(addr, payload)
+	staged := false
+	if bound.Plan.Mode == StageDisaggregated {
+		if stagedRes, ok := d.executeStaged(bound, fw, payload); ok {
+			res = stagedRes
+			staged = true
+		}
+	}
+	if !staged {
+		if sf, ok := fw.(StreamForwarder); ok && waiter != nil && waiter.deltas != nil {
+			res, err = sf.SendStream(addr, payload, func(delta string) {
+				select {
+				case waiter.deltas <- delta:
+				default: // bounded buffer full: drop, keep streaming
+				}
+			})
+		} else {
+			res, err = fw.Send(addr, payload)
+		}
 	}
 	d.selector.ReleaseLoad(workerID)
 	if err != nil {
@@ -273,6 +295,48 @@ func (d *Dispatcher) execute(ctx context.Context, bound *Dispatch) {
 	if waiter != nil {
 		d.closeDeltas(waiter)
 	}
+}
+
+// executeStaged runs a disaggregated plan: prefill on the plan's prefill
+// worker, KV transfer (engine-internal, priced on the plan), decode on
+// the router's chosen worker. Returns ok=false when the forwarder cannot
+// stage or any stage fails — the caller then falls back to co-located
+// execution on the decode worker (conservative, never a misroute).
+func (d *Dispatcher) executeStaged(bound *Dispatch, fw Forwarder, payload InferencePayload) (InferenceResult, bool) {
+	sf, ok := fw.(StageForwarder)
+	if !ok {
+		return InferenceResult{}, false
+	}
+	plan := bound.Plan
+	prefillAddr, ok := d.selector.WorkerAddr(plan.PrefillWorker)
+	if !ok || plan.PrefillWorker == "" {
+		return InferenceResult{}, false
+	}
+	d.recordTrace(stageEventFor(bound, TracePrefill, plan.PrefillWorker))
+	kvHandle, err := sf.SendPrefill(prefillAddr, payload)
+	if err != nil {
+		return InferenceResult{}, false
+	}
+	decodeAddr, ok := d.selector.WorkerAddr(plan.DecodeWorker)
+	if !ok {
+		return InferenceResult{}, false
+	}
+	d.recordTrace(stageEventFor(bound, TraceTransfer, plan.DecodeWorker))
+	res, err := sf.SendDecode(decodeAddr, kvHandle, payload)
+	if err != nil {
+		return InferenceResult{}, false
+	}
+	d.recordTrace(stageEventFor(bound, TraceDecode, plan.DecodeWorker))
+	return res, true
+}
+
+// stageEventFor builds a stage-boundary trace event for a plan step.
+func stageEventFor(bound *Dispatch, stage TraceStage, workerID string) TraceEvent {
+	e := traceEventFor(bound.Request, stage)
+	e.WorkerID = workerID
+	e.PlanMode = bound.Plan.Mode
+	e.TransferMs = bound.Plan.TransferMs
+	return e
 }
 
 // waiterFor returns the pending waiter for a request (nil when the

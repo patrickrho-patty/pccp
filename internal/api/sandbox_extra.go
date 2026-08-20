@@ -28,9 +28,9 @@ func (s *Server) handleSandboxImageAllowlist(w http.ResponseWriter, r *http.Requ
 	switch r.Method {
 	case http.MethodGet:
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"images":     s.sandboxImageAllowlist(orgID),
-			"canonical":  s.sandboxCanonicalImageEntries(orgID),
-			"enforced":   len(s.sandboxImageAllowlist(orgID)) > 0 || len(s.sandboxCanonicalImageEntries(orgID)) > 0,
+			"images":    s.sandboxImageAllowlist(orgID),
+			"canonical": s.sandboxCanonicalImageEntries(orgID),
+			"enforced":  len(s.sandboxImageAllowlist(orgID)) > 0 || len(s.sandboxCanonicalImageEntries(orgID)) > 0,
 		})
 	case http.MethodPut:
 		var req struct {

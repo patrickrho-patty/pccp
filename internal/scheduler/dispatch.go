@@ -95,11 +95,14 @@ func (s *WorkerSelector) Count() int {
 	return len(s.fleet.List())
 }
 
-// Dispatch is a binding of one queued request to one worker.
+// Dispatch is a binding of one queued request to one worker. Plan is the
+// request's execution path (co-located by default; a disaggregated plan
+// carries the prefill worker and priced transfer).
 type Dispatch struct {
 	Request  queue.Request
 	WorkerID string
 	Model    string
+	Plan     StagePlan
 }
 
 // RequestPayload is what a queued gateway request carries: the resolved
@@ -287,13 +290,14 @@ func (d *Dispatcher) assignLocked(workerID string) *Dispatch {
 	boundEvent := traceEventFor(*out.Request, TraceBound)
 	boundEvent.WorkerID = selected
 	boundEvent.QueueWaitMs = time.Since(out.Request.ArrivedAt).Milliseconds()
+	var plan StagePlan
 	if d.planner != nil {
-		plan := d.planner.Plan(model, selected, out.Request.InputTokens)
+		plan = d.planner.Plan(model, selected, out.Request.InputTokens)
 		boundEvent.PlanMode = plan.Mode
 		boundEvent.TransferMs = plan.TransferMs
 	}
 	d.recordTrace(boundEvent)
-	return &Dispatch{Request: *out.Request, WorkerID: selected, Model: model}
+	return &Dispatch{Request: *out.Request, WorkerID: selected, Model: model, Plan: plan}
 }
 
 // SetRouter installs the S3 cost-model router; selection switches from
