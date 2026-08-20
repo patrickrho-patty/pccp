@@ -120,6 +120,9 @@ function AppContent() {
 		  <Route path="/models/:id" element={<ModelDetail />} />
           <Route path="/security" element={<Security />} />
           <Route path="/audit" element={<Audit />} />
+          <Route path="/sre/qos" element={<QosOps />} />
+          <Route path="/sso" element={<SSOMigrate />} />
+          <Route path="/reference" element={<ReferenceAdmin />} />
         </>)}
 
         {/* Customer Console routes */}

@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -35,10 +37,36 @@ func (s *Server) handleReferenceSources(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusOK, sources)
 		return
 	}
-	var src models.ReferenceSource
-	if err := json.NewDecoder(r.Body).Decode(&src); err != nil {
+	// Normalize aliases into the model's JSON-string column: the web sends a
+	// raw JSON array, while legacy callers may send a pre-encoded JSON string.
+	var raw struct {
+		models.ReferenceSource
+		Aliases json.RawMessage `json:"aliases"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
+	}
+	src := raw.ReferenceSource
+	switch {
+	case len(raw.Aliases) == 0 || string(raw.Aliases) == "null":
+		// no aliases — leave empty
+	case strings.HasPrefix(strings.TrimSpace(string(raw.Aliases)), "["):
+		// raw JSON array → marshal to the column's JSON-string form
+		var a []string
+		if err := json.Unmarshal(raw.Aliases, &a); err != nil {
+			writeError(w, http.StatusBadRequest, "aliases must be an array of strings")
+			return
+		}
+		b, _ := json.Marshal(a)
+		src.Aliases = string(b)
+	default:
+		// pre-encoded JSON string (legacy) — keep as-is
+		if s, err := strconv.Unquote(string(raw.Aliases)); err == nil {
+			src.Aliases = s
+		} else {
+			src.Aliases = string(raw.Aliases)
+		}
 	}
 	created, err := s.refSV.RegisterSource(orgID, src)
 	if err != nil {

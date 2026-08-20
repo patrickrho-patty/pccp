@@ -36,6 +36,15 @@ const navSections = [
     titleEn: 'Risk & Security',
     items: [
       { path: '/security', label: '플랫폼 보안', labelEn: 'Platform Security', icon: '🛡' },
+      { path: '/sre/qos', label: 'GPU 대기열', labelEn: 'GPU QoS', icon: '📶' },
+    ]
+  },
+  {
+    title: '엔터프라이즈 이동 관리',
+    titleEn: 'Enterprise Migration',
+    items: [
+      { path: '/sso', label: 'SSO 마이그레이션', labelEn: 'SSO Migration', icon: '🔐' },
+      { path: '/reference', label: '레퍼런스', labelEn: 'Reference', icon: '📚' },
     ]
   },
   {

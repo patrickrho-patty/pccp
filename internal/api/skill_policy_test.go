@@ -268,3 +268,22 @@ func TestSkillEpochDeliverSignsAndSupersedes(t *testing.T) {
 		t.Fatalf("old epoch not superseded: %s", status)
 	}
 }
+
+// Governance write endpoints require a tenant admin role (not just auth).
+// A non-admin caller must be rejected 403 before any mutation — the
+// admin-only contract shared across skill policy, prompts, leaderboard,
+// reference, SSO migration, QoS, and sandbox lifecycle.
+func TestSkillPolicyRequiresAdminRole(t *testing.T) {
+	srv, db := skillTestServer(t)
+	_ = db
+	// Member role → 403 on assignment upsert.
+	if w := skJSON(t, srv, "PUT", "/api/skills/assignments",
+		`{"skill_identity":"x@k","scope":"org","state":"blocked"}`, "member"); w.Code != http.StatusForbidden {
+		t.Fatalf("member must not set skill policy: %d %s", w.Code, w.Body.String())
+	}
+	// Admin role → allowed.
+	if w := skJSON(t, srv, "PUT", "/api/skills/assignments",
+		`{"skill_identity":"y@k","scope":"org","state":"blocked"}`, "admin"); w.Code != http.StatusOK {
+		t.Fatalf("admin should be allowed: %d %s", w.Code, w.Body.String())
+	}
+}

@@ -51,6 +51,8 @@ const navSections = [
     titleEn: 'Governance',
     items: [
       { path: '/policy', label: '정책', labelEn: 'Policy', icon: '⚖' },
+      { path: '/skills', label: '스킬', labelEn: 'Skills', icon: '🧩' },
+      { path: '/prompts', label: '시스템 프롬프트', labelEn: 'System Prompts', icon: '📝' },
       { path: '/security', label: '보안', labelEn: 'Security', icon: '🛡' },
       { path: '/compliance', label: '컴플라이언스', labelEn: 'Compliance', icon: '📋' },
       { path: '/tools', label: '도구', labelEn: 'Tools', icon: '🔧' },
@@ -60,8 +62,12 @@ const navSections = [
     title: '운영',
     titleEn: 'Operations',
     items: [
+      { path: '/leaderboard', label: '리더보드', labelEn: 'Leaderboard', icon: '🏆' },
+      { path: '/reference', label: '레퍼런스', labelEn: 'Reference', icon: '📚' },
+      { path: '/sso', label: 'SSO 마이그레이션', labelEn: 'SSO Migration', icon: '🔐' },
       { path: '/communications', label: '커뮤니케이션', labelEn: 'Comms', icon: '💬' },
       { path: '/sandboxes', label: '샌드박스', labelEn: 'Sandboxes', icon: '📦' },
+      { path: '/sandboxes/life', label: '샌드박스 라이프사이클', labelEn: 'Sandbox Lifecycle', icon: '🏗' },
     ]
   },
   {
