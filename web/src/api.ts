@@ -446,6 +446,14 @@ export const api = {
     request<any>('/api/marketplace/moderate', { method: 'POST', body: JSON.stringify(data) }),
   mkPlacement: (slug: string, featured: boolean) =>
     request<any>('/api/marketplace/placement', { method: 'POST', body: JSON.stringify({ slug, featured }) }),
+
+  // PAT-1435: terminal ad campaigns (platform-operator).
+  adCampaigns: () => request<any[]>('/api/adcampaigns/'),
+  adCreate: (campaign: any) => request<any>('/api/adcampaigns/', { method: 'POST', body: JSON.stringify(campaign) }),
+  adUpdate: (id: number, patch: any) => request<any>(`/api/adcampaigns/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
+  adLifecycle: (id: number, action: string, reason: string) =>
+    request<any>(`/api/adcampaigns/${id}/lifecycle`, { method: 'POST', body: JSON.stringify({ action, reason }) }),
+  adPublishCatalog: () => request<any>('/api/adcampaigns/catalog/publish', { method: 'POST', body: '{}' }),
   getPolicyException: (id: string) => request<any>(`/api/policy/exceptions/${id}`),
   createPolicyException: (data: any) =>
     request<any>('/api/policy/exceptions', { method: 'POST', body: JSON.stringify(data) }),

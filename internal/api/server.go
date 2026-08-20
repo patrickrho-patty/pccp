@@ -270,6 +270,15 @@ func (s *Server) setupRouter() {
 		r.Handle("/scim/v2/*", s.wrapSSOSCIM(ext))
 	}
 
+	// Terminal ads (PAT-1435): public catalog + anonymous measurement +
+	// click redirect are unauthenticated (public harness builds carry no
+	// console JWT); mutation is platform-operator-gated in handlers.
+	r.Route("/api/public/ads", func(r chi.Router) {
+		r.Get("/catalog", s.handleADCatalogGet)
+		r.Post("/events", s.handleADEventIngest)
+		r.Get("/go/{id}", s.handleADClickRedirect)
+	})
+
 	// SCM lineage observation webhooks (PAT-1453): unauthenticated like
 	// real provider webhooks — each delivery is signature-verified
 	// against the connection's secret before any state is touched.
@@ -552,6 +561,15 @@ func (s *Server) setupRouter() {
 			r.Get("/approvals", s.handleFleetApprovals)
 			r.Get("/impact", s.handleFleetImpactPreview)
 			r.Get("/status", s.handleFleetStatus)
+		})
+
+		// Terminal ad campaign operations (PAT-1435) — super_admin only.
+		r.Route("/adcampaigns", func(r chi.Router) {
+			r.Post("/", s.handleADCampaignCreate)
+			r.Get("/", s.handleADCampaignsList)
+			r.Put("/{id}", s.handleADCampaignUpdate)
+			r.Post("/{id}/lifecycle", s.handleADCampaignLifecycle)
+			r.Post("/catalog/publish", s.handleADCatalogPublish)
 		})
 
 		// Marketplace registry (PAT-1438)

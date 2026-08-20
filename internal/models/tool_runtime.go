@@ -141,6 +141,10 @@ func AllModels() []interface{} {
 		&PublicStatusSnapshot{},
 		&PublicStatusSubscriber{},
 		&PublicStatusNotification{},
+		// Terminal ad campaigns (PAT-1435)
+		&AdCampaign{},
+		&AdMeasurementEvent{},
+		&AdCatalogSnapshot{},
 		// Marketplace registry (PAT-1438)
 		&MarketPublisher{},
 		&MarketListing{},
