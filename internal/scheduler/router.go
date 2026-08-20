@@ -101,7 +101,7 @@ type CostRouter struct {
 	maxSLORisk float64           // placements above this P(SLO violation) are rejected
 	lora       *LoRaLifecycle
 	pools      *ModelPoolManager
-	shadow     Router            // candidate evaluated alongside (PAT-1445 shadow mode)
+	shadow     Router // candidate evaluated alongside (PAT-1445 shadow mode)
 }
 
 // NewCostRouter builds a router with the given config.

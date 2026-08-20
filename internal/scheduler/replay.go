@@ -23,6 +23,7 @@ func routeRequestFor(e TraceEvent) RouteRequest {
 	return RouteRequest{
 		Model:                e.Model,
 		Namespace:            e.Tenant,
+		Region:               e.Region,
 		InputTokens:          e.InputTokens,
 		CachedTokens:         e.CachedTokens,
 		ExpectedOutputTokens: e.ExpectedOutputTokens,

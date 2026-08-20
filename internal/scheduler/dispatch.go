@@ -250,6 +250,7 @@ func (d *Dispatcher) assignLocked(workerID string) *Dispatch {
 		decision, err := d.router.Route(RouteRequest{
 			Model:                model,
 			Namespace:            out.Request.Tenant,
+			Region:               out.Request.Region,
 			InputTokens:          out.Request.InputTokens,
 			CachedTokens:         out.Request.CachedInputTokens,
 			ExpectedOutputTokens: out.Request.ExpectedOutputTokens,

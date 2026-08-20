@@ -99,6 +99,7 @@ type Request struct {
 	ID                   string
 	Tenant               string
 	Class                Class
+	Region               string // residency constraint from tenant policy (empty = unconstrained)
 	InputTokens          int
 	CachedInputTokens    int
 	ExpectedOutputTokens int

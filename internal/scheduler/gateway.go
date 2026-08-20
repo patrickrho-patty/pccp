@@ -64,7 +64,8 @@ type Gateway struct {
 	rewriter   *ModelRewriter
 	media      MediaControl
 	queueTTL   time.Duration
-	classes    *ClassResolver // nil = no issuer configured (fail-closed to batch)
+	classes    *ClassResolver  // nil = no issuer configured (fail-closed to batch)
+	residency  ResidencyPolicy // nil = no residency rules (unconstrained)
 }
 
 // NewGateway builds the ingress over a dispatcher and optional rewriter.
@@ -88,6 +89,18 @@ func (g *Gateway) SetTrafficIssuer(pub ed25519.PublicKey) {
 // SetQueueTTL bounds how long a request may park in the global queue
 // before the gateway expires it with a retryable 503. Default 1 minute.
 func (g *Gateway) SetQueueTTL(d time.Duration) { g.queueTTL = d }
+
+// ResidencyPolicy resolves a tenant's region constraint (PAT-1445 Phase 1:
+// governance/residency rules live in the policy plane, never in client
+// input). The tenant identity is already verified via the signed traffic
+// envelope, so the lookup key is trustworthy; a nil policy means the
+// deployment has no residency rules (unconstrained).
+type ResidencyPolicy interface {
+	ResidencyRegion(tenantID string) (region string, constrained bool)
+}
+
+// SetResidencyPolicy installs the tenant residency lookup.
+func (g *Gateway) SetResidencyPolicy(p ResidencyPolicy) { g.residency = p }
 
 // chatRequest is the OpenAI/Anthropic-common request shape.
 type chatRequest struct {
@@ -184,6 +197,13 @@ func (g *Gateway) handleIngress(w http.ResponseWriter, r *http.Request, anthropi
 		ArrivedAt:            time.Now(),
 		TTL:                  g.queueTTL,
 		Payload:              RequestPayload{Model: resolved, Messages: req.Messages},
+	}
+	// Residency constraint from the policy plane (PAT-1445): the verified
+	// tenant keys the lookup; constrained requests route only in-region.
+	if g.residency != nil {
+		if region, constrained := g.residency.ResidencyRegion(tenant); constrained {
+			qr.Region = region
+		}
 	}
 	if req.Stream {
 		ch, deltas, err := g.dispatcher.SubmitStream(qr)
