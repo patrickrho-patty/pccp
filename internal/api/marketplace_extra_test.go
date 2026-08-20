@@ -194,13 +194,13 @@ func TestMKInstallLifecycle(t *testing.T) {
 	mkJSON(t, srv, "POST", "/api/marketplace/versions",
 		`{"slug":"life-tool","version":"2.0.0","content_hash":"sha256:v2hash","manifest_json":"{\"capabilities\":[\"mcp_tools\"]}"}`, "viewer")
 	if w := mkJSON(t, srv, "POST", "/api/marketplace/installs/update",
-		fmt.Sprintf(`{"record_id":%d,"version":"2.0.0","hash":"sha256:v2hash"}`, rec.ID), "viewer"); w.Code != http.StatusOK {
-		t.Fatalf("update: %d", w.Code)
+		fmt.Sprintf(`{"record_id":%d,"version":"2.0.0","content_hash":"sha256:v2hash"}`, rec.ID), "viewer"); w.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", w.Code, w.Body.String())
 	}
 	// Pin + attempted update → conflict.
 	mkJSON(t, srv, "POST", fmt.Sprintf("/api/marketplace/installs/%d/lifecycle", rec.ID), `{"action":"pin"}`, "viewer")
 	if w := mkJSON(t, srv, "POST", "/api/marketplace/installs/update",
-		fmt.Sprintf(`{"record_id":%d,"version":"3.0.0"}`, rec.ID), "viewer"); w.Code != http.StatusConflict {
+		fmt.Sprintf(`{"record_id":%d,"version":"3.0.0","content_hash":"sha256:x"}`, rec.ID), "viewer"); w.Code != http.StatusConflict {
 		t.Fatalf("pinned update allowed: %d", w.Code)
 	}
 	// Rollback to the previous verified version.
@@ -219,7 +219,7 @@ func TestMKFullTrustNeedsApproval(t *testing.T) {
 	pub := mkPublisher(t, srv)
 	mkPublish(t, srv, pub, "full-tool", `{"capabilities":["full_trust"]}`)
 	w := mkJSON(t, srv, "POST", "/api/marketplace/installs",
-		`{"harness_id":"h1","slug":"full-tool","version":"1.0.0"}`, "viewer")
+		`{"harness_id":"h1","slug":"full-tool","version":"1.0.0","content_hash":"sha256:full-toolhash"}`, "viewer")
 	if w.Code != http.StatusCreated {
 		t.Fatalf("install: %d", w.Code)
 	}
@@ -270,7 +270,7 @@ func TestMKModerationCriticalDisable(t *testing.T) {
 	pub := mkPublisher(t, srv)
 	mkPublish(t, srv, pub, "evil-tool", `{"capabilities":["none"]}`)
 	mkJSON(t, srv, "POST", "/api/marketplace/installs",
-		`{"harness_id":"h1","slug":"evil-tool","version":"1.0.0"}`, "viewer")
+		`{"harness_id":"h1","slug":"evil-tool","version":"1.0.0","content_hash":"sha256:evil-toolhash"}`, "viewer")
 	// Viewer cannot moderate.
 	if w := mkJSON(t, srv, "POST", "/api/marketplace/moderate",
 		`{"action":"critical_disable","slug":"evil-tool","reason":"x"}`, "viewer"); w.Code != http.StatusForbidden {
@@ -290,9 +290,10 @@ func TestMKModerationCriticalDisable(t *testing.T) {
 	if rec.State != "quarantined" || !rec.Warned {
 		t.Fatalf("install not quarantined/warned: %+v", rec)
 	}
-	// Install attempt on the quarantined version → rejected.
+	// Install attempt on the quarantined version → rejected (hash sent
+	// so the quarantine — not the missing-hash — rejection is exercised).
 	if w := mkJSON(t, srv, "POST", "/api/marketplace/installs",
-		`{"harness_id":"h2","slug":"evil-tool","version":"1.0.0"}`, "viewer"); w.Code != http.StatusForbidden {
+		`{"harness_id":"h2","slug":"evil-tool","version":"1.0.0","content_hash":"sha256:evil-toolhash"}`, "viewer"); w.Code != http.StatusForbidden {
 		t.Fatalf("quarantined install allowed: %d", w.Code)
 	}
 	// Quarantined package cannot be re-enabled by the user.
@@ -303,5 +304,86 @@ func TestMKModerationCriticalDisable(t *testing.T) {
 	db.Model(&models.AuditEvent{}).Where("event_type = ?", "cp.marketplace.moderated").Count(&audits)
 	if audits == 0 {
 		t.Fatal("moderation not audited")
+	}
+}
+
+// Publisher ownership: a foreign org cannot publish or add versions to
+// another org's publisher/listing (trust-chain takeover prevention).
+func TestMKPublisherOwnership(t *testing.T) {
+	srv, db := mkTestServer(t)
+	pub := mkPublisher(t, srv) // owned by org-mk
+	mkPublish(t, srv, pub, "own-tool", `{"capabilities":["none"]}`)
+	// Foreign org's viewer tries to add a version → 403.
+	foreign := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, bytes.NewReader([]byte(body)))
+		req = req.WithContext(contextWithClaims(req.Context(), &identity.Claims{OrganizationID: "org-evil", Email: "evil@x", Role: "viewer"}))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		srv.router.ServeHTTP(w, req)
+		return w
+	}
+	if w := foreign("POST", "/api/marketplace/versions",
+		`{"slug":"own-tool","version":"2.0.0","content_hash":"sha256:evilhash","manifest_json":"{}"}`); w.Code != http.StatusForbidden {
+		t.Fatalf("foreign version submission accepted: %d", w.Code)
+	}
+	// Foreign org tries to publish under the victim publisher_id → 403.
+	if w := foreign("POST", "/api/marketplace/publish",
+		fmt.Sprintf(`{"publisher_id":%q,"slug":"evil-clone","name":"Clone","type":"skill","version":"1.0.0","content_hash":"sha256:clone","manifest_json":"{}"}`, pub),
+	); w.Code != http.StatusForbidden {
+		t.Fatalf("foreign publish accepted: %d", w.Code)
+	}
+	_ = db
+}
+
+// Rollback cannot resurrect a since-quarantined previous version.
+func TestMKRollbackQuarantineGuard(t *testing.T) {
+	srv, db := mkTestServer(t)
+	pub := mkPublisher(t, srv)
+	mkPublish(t, srv, pub, "rq-tool", `{"capabilities":["none"]}`)
+	w := mkJSON(t, srv, "POST", "/api/marketplace/installs",
+		`{"harness_id":"h1","slug":"rq-tool","version":"1.0.0","content_hash":"sha256:rq-toolhash"}`, "viewer")
+	if w.Code != http.StatusCreated {
+		t.Fatalf("install: %d", w.Code)
+	}
+	// Update to v2, then quarantine v1 (the rollback target).
+	mkJSON(t, srv, "POST", "/api/marketplace/versions",
+		`{"slug":"rq-tool","version":"2.0.0","content_hash":"sha256:rq2","manifest_json":"{}"}`, "viewer")
+	mkJSON(t, srv, "POST", "/api/marketplace/installs/update",
+		`{"record_id":1,"version":"2.0.0","content_hash":"sha256:rq2"}`, "viewer")
+	mkJSON(t, srv, "POST", "/api/marketplace/moderate",
+		`{"action":"quarantine_version","slug":"rq-tool","version":"1.0.0","reason":"취약점"}`, "admin")
+	if w := mkJSON(t, srv, "POST", "/api/marketplace/installs/1/lifecycle", `{"action":"rollback"}`, "viewer"); w.Code != http.StatusForbidden {
+		t.Fatalf("quarantined rollback accepted: %d %s", w.Code, w.Body.String())
+	}
+	var rec models.MarketInstallRecord
+	db.First(&rec, "id = ?", 1)
+	if rec.Version != "2.0.0" {
+		t.Fatalf("rollback mutated state: %+v", rec)
+	}
+}
+
+// installs/update enforces registry gating: unknown version, hash
+// mismatch, and non-active target are rejected.
+func TestMKRecordUpdateGating(t *testing.T) {
+	srv, db := mkTestServer(t)
+	pub := mkPublisher(t, srv)
+	mkPublish(t, srv, pub, "ru-tool", `{"capabilities":["none"]}`)
+	mkJSON(t, srv, "POST", "/api/marketplace/installs",
+		`{"harness_id":"h1","slug":"ru-tool","version":"1.0.0","content_hash":"sha256:ru-toolhash"}`, "viewer")
+	// Unknown version → 404.
+	if w := mkJSON(t, srv, "POST", "/api/marketplace/installs/update",
+		`{"record_id":1,"version":"9.9.9","content_hash":"sha256:x"}`, "viewer"); w.Code != http.StatusNotFound {
+		t.Fatalf("unknown version update: %d", w.Code)
+	}
+	// Hash mismatch → 409.
+	if w := mkJSON(t, srv, "POST", "/api/marketplace/installs/update",
+		`{"record_id":1,"version":"1.0.0","content_hash":"sha256:wrong"}`, "viewer"); w.Code != http.StatusConflict {
+		t.Fatalf("mismatched hash update: %d", w.Code)
+	}
+	// Quarantined record frozen.
+	db.Model(&models.MarketInstallRecord{}).Where("id = ?", 1).Update("state", "quarantined")
+	if w := mkJSON(t, srv, "POST", "/api/marketplace/installs/update",
+		`{"record_id":1,"version":"1.0.0","content_hash":"sha256:ru-toolhash"}`, "viewer"); w.Code != http.StatusForbidden {
+		t.Fatalf("quarantined record updated: %d", w.Code)
 	}
 }

@@ -68,7 +68,7 @@ func adCreateCampaign(t *testing.T, srv *Server, ceiling int, cpm, budget int64)
 		"advertiser": "Acme", "category": "dev-tools",
 		"headline_en": "Ship faster with Acme", "body_en": "Try Acme Pro today",
 		"destination_url": "https://acme.example.com/pro",
-		"weight": 1, "impression_ceiling": ceiling,
+		"weight":          1, "impression_ceiling": ceiling,
 		"cpm_minor": cpm, "budget_minor": budget, "currency": "KRW",
 	})
 	w := adJSON(t, srv, "POST", "/api/adcampaigns/", string(body), "super_admin")
@@ -219,34 +219,42 @@ func TestADSignedCatalog(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("catalog: %d", w.Code)
 	}
-	var payload struct {
-		Schema     string `json:"schema"`
-		Revision   int    `json:"catalog_revision"`
-		Signature  string `json:"signature"`
-		KeyID      string `json:"key_id"`
-		Campaigns  []map[string]interface{} `json:"campaigns"`
+	var envelope struct {
+		Catalog   json.RawMessage `json:"catalog"`
+		Signature string          `json:"signature"`
+		KeyID     string          `json:"key_id"`
 	}
-	json.Unmarshal(w.Body.Bytes(), &payload)
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("envelope: %v", err)
+	}
+	var payload struct {
+		Schema    string                   `json:"schema"`
+		Revision  int                      `json:"catalog_revision"`
+		Campaigns []map[string]interface{} `json:"campaigns"`
+	}
+	if err := json.Unmarshal(envelope.Catalog, &payload); err != nil {
+		t.Fatalf("catalog payload: %v", err)
+	}
 	if payload.Schema != "patty.ads.catalog.v1" || len(payload.Campaigns) != 1 {
-		t.Fatalf("catalog wrong: %s", w.Body.String())
+		t.Fatalf("catalog wrong: %s", envelope.Catalog)
 	}
 	if float64(payload.Campaigns[0]["campaign_id"].(float64)) != float64(id1) {
 		t.Fatalf("draft campaign leaked into catalog")
 	}
-	// Signature verifies against the ad-catalog key over the exact bytes.
+	// The signature verifies over the EXACT served catalog bytes —
+	// no re-canonicalization round-trip.
 	priv, err := keys.LoadOrCreate(db, "ad-catalog")
 	if err != nil {
 		t.Fatal(err)
 	}
 	pub := priv.Public().(ed25519.PublicKey)
-	sig, _ := base64.StdEncoding.DecodeString(payload.Signature)
-	// Rebuild the exact stored payload bytes from the snapshot row.
-	var snap models.AdCatalogSnapshot
-	db.Order("revision DESC").First(&snap)
-	if !ed25519.Verify(pub, []byte(snap.PayloadJSON), sig) {
-		t.Fatal("catalog signature does not verify")
+	sig, _ := base64.StdEncoding.DecodeString(envelope.Signature)
+	if !ed25519.Verify(pub, []byte(envelope.Catalog), sig) {
+		t.Fatal("catalog signature does not verify over the served bytes")
 	}
 	// Expired catalog → empty + expired flag.
+	var snap models.AdCatalogSnapshot
+	db.Order("revision DESC").First(&snap)
 	db.Model(&snap).Update("expires_at", time.Now().UTC().Add(-time.Minute).Format(time.RFC3339))
 	w = adPublic(t, srv, "GET", "/api/public/ads/catalog", "")
 	var expired struct {
@@ -299,5 +307,91 @@ func TestADValidationAndLifecycle(t *testing.T) {
 	before := c.ValidatedImpressions
 	if before != 20 {
 		t.Fatalf("baseline drifted: %d", before)
+	}
+}
+
+// Window normalization: non-UTC offsets are normalized on write so the
+// lexicographic SQL gate agrees with parsed-time eligibility.
+func TestADWindowNormalization(t *testing.T) {
+	srv, db := adTestServer(t)
+	body, _ := json.Marshal(map[string]interface{}{
+		"advertiser": "Acme", "headline_en": "H", "body_en": "B",
+		"destination_url": "https://acme.example.com", "weight": 1,
+		"cpm_minor": 1000, "budget_minor": 100000,
+		// +09:00 offset: 2026-08-20T12:00+09:00 = 03:00Z — in the past.
+		"end_at": "2026-08-20T12:00:00+09:00",
+	})
+	w := adJSON(t, srv, "POST", "/api/adcampaigns/", string(body), "super_admin")
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	var c models.AdCampaign
+	db.First(&c)
+	if c.EndAt != "2026-08-20T03:00:00Z" {
+		t.Fatalf("end_at not normalized to UTC Z-form: %q", c.EndAt)
+	}
+	// Unparseable timestamps rejected.
+	bad, _ := json.Marshal(map[string]interface{}{
+		"advertiser": "Acme", "headline_en": "H", "body_en": "B",
+		"destination_url": "https://acme.example.com", "weight": 1,
+		"cpm_minor": 1000, "budget_minor": 100000, "start_at": "not-a-time",
+	})
+	if w := adJSON(t, srv, "POST", "/api/adcampaigns/", string(bad), "super_admin"); w.Code != http.StatusBadRequest {
+		t.Fatalf("garbage timestamp accepted: %d", w.Code)
+	}
+}
+
+// Post-increment budget bound: with CPM 1999 and budget 1000 the 501st
+// impression must be refused (pre-increment logic would overshoot to
+// 1001 > 1000).
+func TestADPostIncrementBudgetBound(t *testing.T) {
+	srv, db := adTestServer(t)
+	id := adCreateCampaign(t, srv, 0, 1999, 1000)
+	adJSON(t, srv, "POST", fmt.Sprintf("/api/adcampaigns/%d/lifecycle", id), `{"action":"activate","reason":"go"}`, "super_admin")
+	for i := 0; i < 501; i++ {
+		adEvent(t, srv, fmt.Sprintf("pi-%d", i), id, 1, "impression")
+	}
+	var c models.AdCampaign
+	db.First(&c, "id = ?", id)
+	if spend := adSpendMinor(c.ValidatedImpressions, c.CpmMinor); spend > c.BudgetMinor {
+		t.Fatalf("spend %d exceeded budget %d (post-increment bound broken)", spend, c.BudgetMinor)
+	}
+	if c.ValidatedImpressions != 500 {
+		t.Fatalf("impressions = %d, want 500 (501st must be refused)", c.ValidatedImpressions)
+	}
+}
+
+// Click redirect: active campaigns increment atomically and forward;
+// inactive campaigns 404 with no increment.
+func TestADClickRedirectGating(t *testing.T) {
+	srv, db := adTestServer(t)
+	id := adCreateCampaign(t, srv, 0, 1000, 100000)
+	// Draft → 404, no click.
+	if w := adPublic(t, srv, "GET", fmt.Sprintf("/api/public/ads/go/%d", id), ""); w.Code != http.StatusNotFound {
+		t.Fatalf("draft campaign redirected: %d", w.Code)
+	}
+	var c models.AdCampaign
+	db.First(&c, "id = ?", id)
+	if c.Clicks != 0 {
+		t.Fatalf("draft campaign click counted: %d", c.Clicks)
+	}
+	adJSON(t, srv, "POST", fmt.Sprintf("/api/adcampaigns/%d/lifecycle", id), `{"action":"activate","reason":"go"}`, "super_admin")
+	if w := adPublic(t, srv, "GET", fmt.Sprintf("/api/public/ads/go/%d", id), ""); w.Code != http.StatusFound {
+		t.Fatalf("active redirect: %d", w.Code)
+	}
+	db.First(&c, "id = ?", id)
+	if c.Clicks != 1 {
+		t.Fatalf("click not counted: %d", c.Clicks)
+	}
+}
+
+// Campaigns list is operator-only.
+func TestADCampaignsListOperatorOnly(t *testing.T) {
+	srv, _ := adTestServer(t)
+	if w := adJSON(t, srv, "GET", "/api/adcampaigns/", "", "admin"); w.Code != http.StatusForbidden {
+		t.Fatalf("tenant admin listed campaigns: %d", w.Code)
+	}
+	if w := adJSON(t, srv, "GET", "/api/adcampaigns/", "", "super_admin"); w.Code != http.StatusOK {
+		t.Fatalf("super_admin list rejected: %d", w.Code)
 	}
 }

@@ -15,7 +15,6 @@ package api
 //     probes, tenant metrics, regions, vendors, or topology.
 
 import (
-	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -28,7 +27,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/patrickrho-patty/pccp/internal/keys"
 	"github.com/patrickrho-patty/pccp/internal/models"
 )
 
@@ -968,15 +966,14 @@ func (s *Server) handlePSSnapshotPublish(w http.ResponseWriter, r *http.Request)
 		"schema": "patty.status.v1",
 	}
 	raw, _ := json.Marshal(payload)
-	priv, err := keys.LoadOrCreate(s.db, "status-publisher")
+	sigB64, err := apiSignPayload(s.db, "status-publisher", raw)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "signing key unavailable")
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	sigRaw := ed25519.Sign(priv, raw)
 	snap := models.PublicStatusSnapshot{
 		Version: version, PayloadJSON: string(raw),
-		Signature: base64.StdEncoding.EncodeToString(sigRaw),
+		Signature: sigB64,
 		KeyID:     "status-publisher", GeneratedAt: now.Format(time.RFC3339),
 	}
 	if err := s.db.Create(&snap).Error; err != nil {

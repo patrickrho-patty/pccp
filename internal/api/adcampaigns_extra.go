@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,9 +37,9 @@ import (
 )
 
 const (
-	adMaxCampaigns   = 50
-	adCatalogTTL     = 1 * time.Hour
-	adFieldMax       = 120
+	adMaxCampaigns = 50
+	adCatalogTTL   = 1 * time.Hour
+	adFieldMax     = 120
 )
 
 // adOperatorOnly is the Patty platform-operator gate — deliberately
@@ -93,12 +94,32 @@ func adExpectedImpressions(ceiling int, budgetMinor, cpmMinor int64) int64 {
 	return capacity
 }
 
+// adNormalizeRFC3339 parses and re-stores timestamps in UTC Z-form so
+// lexicographic SQL comparisons in the transactional accounting gate
+// are sound (PAT-1435 window correctness).
+func adNormalizeRFC3339(v string) (string, error) {
+	if v == "" {
+		return "", nil
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return "", fmt.Errorf("시각은 RFC3339 형식이어야 합니다: %q", v)
+	}
+	return t.UTC().Format(time.RFC3339), nil
+}
+
+// adFieldLimits mirror the model column limits exactly.
+const (
+	adHeadlineMax = 120
+	adBodyMax     = 200
+)
+
 func adValidateCreative(headline, body, destURL string) error {
 	if strings.TrimSpace(headline) == "" || strings.TrimSpace(body) == "" {
 		return fmt.Errorf("영어 헤드라인과 본문은 필수입니다")
 	}
-	if len(headline) > adFieldMax || len(body) > adFieldMax*2 {
-		return fmt.Errorf("헤드라인은 120자, 본문은 240자 이내여야 합니다")
+	if len(headline) > adHeadlineMax || len(body) > adBodyMax {
+		return fmt.Errorf("헤드라인은 120자, 본문은 200자 이내여야 합니다")
 	}
 	u, err := url.Parse(destURL)
 	if err != nil || u.Scheme != "https" || u.Host == "" {
@@ -116,17 +137,58 @@ func adNormalizeDomain(destURL string) string {
 
 // ---------- operator campaign CRUD ----------
 
+// apiSignPayload signs raw bytes with the named service key — the one
+// shared sign-and-encode path for snapshots/policies/catalogs.
+func apiSignPayload(db *gorm.DB, service string, raw []byte) (string, error) {
+	priv, err := keys.LoadOrCreate(db, service)
+	if err != nil {
+		return "", fmt.Errorf("서명 키를 사용할 수 없습니다")
+	}
+	return base64.StdEncoding.EncodeToString(ed25519.Sign(priv, raw)), nil
+}
+
 func (s *Server) handleADCampaignCreate(w http.ResponseWriter, r *http.Request) {
 	if !adOperatorOnly(r) {
 		writeError(w, http.StatusForbidden, "광고 캠페인 관리는 Patty 플랫폼 운영자 전용입니다")
 		return
 	}
-	var req models.AdCampaign
+	// Whitelisted DTO: accounting fields (impressions/clicks/spend) and
+	// audit fields are never client-settable.
+	var req struct {
+		Advertiser        string `json:"advertiser"`
+		Category          string `json:"category"`
+		HeadlineEn        string `json:"headline_en"`
+		BodyEn            string `json:"body_en"`
+		HeadlineKo        string `json:"headline_ko"`
+		BodyKo            string `json:"body_ko"`
+		DestinationURL    string `json:"destination_url"`
+		StartAt           string `json:"start_at"`
+		EndAt             string `json:"end_at"`
+		Weight            int    `json:"weight"`
+		ImpressionCeiling int    `json:"impression_ceiling"`
+		CpmMinor          int64  `json:"cpm_minor"`
+		BudgetMinor       int64  `json:"budget_minor"`
+		Currency          string `json:"currency"`
+	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if err := adValidateCreative(req.HeadlineEn, req.BodyEn, req.DestinationURL); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(req.HeadlineKo) > adHeadlineMax || len(req.BodyKo) > adBodyMax {
+		writeError(w, http.StatusBadRequest, "한국어 헤드라인은 120자, 본문은 200자 이내여야 합니다")
+		return
+	}
+	startAt, err := adNormalizeRFC3339(req.StartAt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	endAt, err := adNormalizeRFC3339(req.EndAt)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -148,15 +210,21 @@ func (s *Server) handleADCampaignCreate(w http.ResponseWriter, r *http.Request) 
 	if req.ImpressionCeiling < 0 {
 		req.ImpressionCeiling = 0
 	}
-	req.State = "draft"
-	req.DisplayDomain = adNormalizeDomain(req.DestinationURL)
-	req.CreativeRevision = 1
-	req.CreatedBy = getOperatorEmail(r)
-	if err := s.db.Create(&req).Error; err != nil {
+	c := models.AdCampaign{
+		Advertiser: req.Advertiser, Category: req.Category, State: "draft",
+		HeadlineEn: req.HeadlineEn, BodyEn: req.BodyEn,
+		HeadlineKo: req.HeadlineKo, BodyKo: req.BodyKo,
+		DestinationURL: req.DestinationURL, DisplayDomain: adNormalizeDomain(req.DestinationURL),
+		CreativeRevision: 1, StartAt: startAt, EndAt: endAt,
+		Weight: req.Weight, ImpressionCeiling: req.ImpressionCeiling,
+		CpmMinor: req.CpmMinor, BudgetMinor: req.BudgetMinor, Currency: req.Currency,
+		CreatedBy: getOperatorEmail(r),
+	}
+	if err := s.db.Create(&c).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, s.adCampaignView(&req))
+	writeJSON(w, http.StatusCreated, s.adCampaignView(&c))
 }
 
 func (s *Server) handleADCampaignUpdate(w http.ResponseWriter, r *http.Request) {
@@ -171,17 +239,17 @@ func (s *Server) handleADCampaignUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req struct {
-		HeadlineEn  *string `json:"headline_en"`
-		BodyEn      *string `json:"body_en"`
-		HeadlineKo  *string `json:"headline_ko"`
-		BodyKo      *string `json:"body_ko"`
-		DestinationURL *string `json:"destination_url"`
-		Weight      *int    `json:"weight"`
-		ImpressionCeiling *int `json:"impression_ceiling"`
-		CpmMinor    *int64  `json:"cpm_minor"`
-		BudgetMinor *int64  `json:"budget_minor"`
-		StartAt     *string `json:"start_at"`
-		EndAt       *string `json:"end_at"`
+		HeadlineEn        *string `json:"headline_en"`
+		BodyEn            *string `json:"body_en"`
+		HeadlineKo        *string `json:"headline_ko"`
+		BodyKo            *string `json:"body_ko"`
+		DestinationURL    *string `json:"destination_url"`
+		Weight            *int    `json:"weight"`
+		ImpressionCeiling *int    `json:"impression_ceiling"`
+		CpmMinor          *int64  `json:"cpm_minor"`
+		BudgetMinor       *int64  `json:"budget_minor"`
+		StartAt           *string `json:"start_at"`
+		EndAt             *string `json:"end_at"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -207,7 +275,9 @@ func (s *Server) handleADCampaignUpdate(w http.ResponseWriter, r *http.Request) 
 	creativeChanged := req.HeadlineEn != nil || req.BodyEn != nil ||
 		req.HeadlineKo != nil || req.BodyKo != nil || req.DestinationURL != nil
 	if creativeChanged {
-		updates["creative_revision"] = c.CreativeRevision + 1
+		// Atomic increment — concurrent creative edits cannot collide on
+		// the same revision (billing keys on revision identity).
+		updates["creative_revision"] = gorm.Expr("creative_revision + 1")
 	}
 	if req.HeadlineEn != nil {
 		updates["headline_en"] = *req.HeadlineEn
@@ -247,18 +317,34 @@ func (s *Server) handleADCampaignUpdate(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusBadRequest, "예산은 양의 정수여야 합니다")
 			return
 		}
-		// Budget may never drop below already-spent.
-		if *req.BudgetMinor < adSpendMinor(c.ValidatedImpressions, c.CpmMinor) {
-			writeError(w, http.StatusUnprocessableEntity, "예산을 이미 지출된 금액 below로 낮출 수 없습니다")
+		// Budget may never drop below already-spent — computed with the
+		// EFFECTIVE CPM (a combined CPM-raise + budget-cut must not
+		// leave spend > budget after the change).
+		cpm := c.CpmMinor
+		if req.CpmMinor != nil {
+			cpm = *req.CpmMinor
+		}
+		if *req.BudgetMinor < adSpendMinor(c.ValidatedImpressions, cpm) {
+			writeError(w, http.StatusUnprocessableEntity, "예산을 이미 지출된 금액 이하로 낮출 수 없습니다")
 			return
 		}
 		updates["budget_minor"] = *req.BudgetMinor
 	}
 	if req.StartAt != nil {
-		updates["start_at"] = *req.StartAt
+		normalized, err := adNormalizeRFC3339(*req.StartAt)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		updates["start_at"] = normalized
 	}
 	if req.EndAt != nil {
-		updates["end_at"] = *req.EndAt
+		normalized, err := adNormalizeRFC3339(*req.EndAt)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		updates["end_at"] = normalized
 	}
 	if len(updates) == 0 {
 		writeError(w, http.StatusBadRequest, "변경 내용이 없습니다")
@@ -320,6 +406,10 @@ func (s *Server) handleADCampaignLifecycle(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleADCampaignsList(w http.ResponseWriter, r *http.Request) {
+	if !adOperatorOnly(r) {
+		writeError(w, http.StatusForbidden, "광고 캠페인 조회는 Patty 플랫폼 운영자 전용입니다")
+		return
+	}
 	var campaigns []models.AdCampaign
 	s.db.Order("created_at DESC").Limit(200).Find(&campaigns)
 	out := make([]map[string]interface{}, 0, len(campaigns))
@@ -348,11 +438,11 @@ func (s *Server) adCampaignView(c *models.AdCampaign) map[string]interface{} {
 		"creative_revision": c.CreativeRevision, "start_at": c.StartAt, "end_at": c.EndAt,
 		"weight": c.Weight, "impression_ceiling": c.ImpressionCeiling,
 		"cpm_minor": c.CpmMinor, "currency": c.Currency, "budget_minor": c.BudgetMinor,
-		"expected_impressions": expected,
+		"expected_impressions":  expected,
 		"validated_impressions": c.ValidatedImpressions, "clicks": c.Clicks,
 		"spend_minor": spend, "remaining_budget_minor": c.BudgetMinor - spend,
 		"delivery_pct": deliveryPct,
-		"eligible": adEligibleAt(c, time.Now().UTC()),
+		"eligible":     adEligibleAt(c, time.Now().UTC()),
 	}
 }
 
@@ -377,20 +467,11 @@ func (s *Server) handleADCatalogGet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Serve the stored payload with the signature/key appended at the
-	// top level; the signature covers the canonical stored bytes.
-	var payload map[string]interface{}
-	if err := json.Unmarshal([]byte(snap.PayloadJSON), &payload); err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"schema": "patty.ads.catalog.v1", "campaigns": []interface{}{},
-		})
-		return
-	}
-	payload["signature"] = snap.Signature
-	payload["key_id"] = snap.KeyID
+	// Serve an envelope whose "catalog" field carries the SIGNED bytes
+	// verbatim — a verifier checks the signature over exactly those
+	// bytes, with no re-canonicalization round-trip.
 	w.Header().Set("Content-Type", "application/json")
-	out, _ := json.Marshal(payload)
-	w.Write(out)
+	w.Write([]byte(`{"catalog":` + snap.PayloadJSON + `,"signature":` + strconv.Quote(snap.Signature) + `,"key_id":` + strconv.Quote(snap.KeyID) + `}`))
 }
 
 // handleADCatalogPublish builds + signs the catalog from currently
@@ -428,20 +509,20 @@ func (s *Server) handleADCatalogPublish(w http.ResponseWriter, r *http.Request) 
 	}
 	payload := map[string]interface{}{
 		"schema": "patty.ads.catalog.v1", "catalog_revision": revision,
-		"issued_at": now.Format(time.RFC3339),
+		"issued_at":  now.Format(time.RFC3339),
 		"expires_at": now.Add(adCatalogTTL).Format(time.RFC3339),
-		"campaigns": entries,
+		"campaigns":  entries,
 	}
 	raw, _ := json.Marshal(payload)
-	priv, err := keys.LoadOrCreate(s.db, "ad-catalog")
+	sig, err := apiSignPayload(s.db, "ad-catalog", raw)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "서명 키를 사용할 수 없습니다")
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	snap := models.AdCatalogSnapshot{
 		Revision: revision, PayloadJSON: string(raw),
-		Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(priv, raw)),
-		KeyID: "ad-catalog", GeneratedAt: now.Format(time.RFC3339),
+		Signature: sig,
+		KeyID:     "ad-catalog", GeneratedAt: now.Format(time.RFC3339),
 		ExpiresAt: now.Add(adCatalogTTL).Format(time.RFC3339),
 	}
 	if err := s.db.Create(&snap).Error; err != nil {
@@ -459,12 +540,12 @@ func (s *Server) handleADCatalogPublish(w http.ResponseWriter, r *http.Request) 
 // spine). Idempotent by event_id; validates campaign/revision/window.
 func (s *Server) handleADEventIngest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		EventID     string `json:"event_id"`
-		CampaignID  uint   `json:"campaign_id"`
-		CreativeRevision int `json:"creative_revision"`
-		Type        string `json:"type"` // impression|click
-		Timestamp   string `json:"timestamp"`
-		CatalogRevision int `json:"catalog_revision"`
+		EventID          string `json:"event_id"`
+		CampaignID       uint   `json:"campaign_id"`
+		CreativeRevision int    `json:"creative_revision"`
+		Type             string `json:"type"` // impression|click
+		Timestamp        string `json:"timestamp"`
+		CatalogRevision  int    `json:"catalog_revision"`
 	}
 	if err := decodeJSON(r, &req); err != nil || req.EventID == "" || req.CampaignID == 0 {
 		writeError(w, http.StatusBadRequest, "event_id와 campaign_id가 필요합니다")
@@ -508,16 +589,14 @@ func (s *Server) handleADEventIngest(w http.ResponseWriter, r *http.Request) {
 	case "impression":
 		// THE transactional accounting gate: eligibility (active window +
 		// ceiling + budget) is enforced inside the UPDATE with an atomic
-		// increment, so concurrent events can neither exceed the ceiling
-		// nor overspend.
+		// increment; the budget term uses the POST-increment bound so
+		// floor() overshoot can never exceed the budget. Rejected events
+		// are not persisted (no unbounded anonymous table growth).
 		res := s.db.Model(&models.AdCampaign{}).
-			Where("id = ? AND state = ? AND (? = '' OR ? <= ?) AND (? = '' OR ? >= ?) AND (impression_ceiling = 0 OR validated_impressions < impression_ceiling) AND (validated_impressions * cpm_minor / 1000) < budget_minor",
-				c.ID, "active",
-				c.StartAt, c.StartAt, now.Format(time.RFC3339),
-				c.EndAt, c.EndAt, now.Format(time.RFC3339)).
+			Where("id = ? AND state = ? AND (start_at = '' OR start_at <= ?) AND (end_at = '' OR end_at >= ?) AND (impression_ceiling = 0 OR validated_impressions < impression_ceiling) AND ((validated_impressions + 1) * cpm_minor / 1000) <= budget_minor",
+				c.ID, "active", now.Format(time.RFC3339), now.Format(time.RFC3339)).
 			UpdateColumn("validated_impressions", gorm.Expr("validated_impressions + 1"))
 		if res.RowsAffected == 0 {
-			s.db.Model(&ev).Update("counted", false)
 			writeJSON(w, http.StatusOK, map[string]string{"status": "not_billable"})
 			return
 		}
@@ -529,16 +608,22 @@ func (s *Server) handleADEventIngest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "counted"})
 }
 
-// handleADClickRedirect records an aggregate click and forwards to the
-// reviewed destination (no cookies/identity params).
+// handleADClickRedirect forwards to the reviewed destination for
+// ACTIVE campaigns only, with an atomic aggregate click increment (no
+// cookies/identity params). Inactive/unknown campaigns 404.
 func (s *Server) handleADClickRedirect(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	res := s.db.Model(&models.AdCampaign{}).
+		Where("id = ? AND state = ?", id, "active").
+		UpdateColumn("clicks", gorm.Expr("clicks + 1"))
+	if res.RowsAffected == 0 {
+		writeError(w, http.StatusNotFound, "캠페인을 찾을 수 없습니다")
+		return
+	}
 	var c models.AdCampaign
 	if err := s.db.Where("id = ?", id).First(&c).Error; err != nil {
 		writeError(w, http.StatusNotFound, "캠페인을 찾을 수 없습니다")
 		return
 	}
-	s.db.Model(&models.AdCampaign{}).Where("id = ?", c.ID).
-		UpdateColumn("clicks", c.Clicks+1)
 	http.Redirect(w, r, c.DestinationURL, http.StatusFound)
 }

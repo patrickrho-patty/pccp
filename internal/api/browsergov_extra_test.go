@@ -286,3 +286,66 @@ func bgCreateTask(t *testing.T, srv *Server) string {
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	return resp["task_id"].(string)
 }
+
+// Effect-gate expiry: an approved-but-aging approval cannot execute
+// past its TTL even though decide-time succeeded.
+func TestBGEffectGateExpiry(t *testing.T) {
+	srv, db := bgTestServer(t)
+	taskID := bgCreateTask(t, srv)
+	w := bgJSON(t, srv, "POST", "/api/browsergov/approvals",
+		fmt.Sprintf(`{"task_id":%q,"effect_type":"submit_form","details":{"form":"가입"}}`, taskID), "viewer")
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	id := uint(resp["approval_id"].(float64))
+	bgJSON(t, srv, "POST", fmt.Sprintf("/api/browsergov/approvals/%d/decide", id), `{"approve":true}`, "admin")
+	// Age the approval past its TTL, then attempt the gate.
+	var ap models.BrowserApproval
+	db.First(&ap, "id = ?", id)
+	db.Model(&ap).Update("expires_at", time.Now().UTC().Add(-time.Minute).Format(time.RFC3339))
+	if w := bgJSON(t, srv, "POST", "/api/browsergov/effects/gate",
+		fmt.Sprintf(`{"task_id":%q,"effect_type":"submit_form","details":{"form":"가입"},"approval_id":%d}`, taskID, id), "viewer"); w.Code != http.StatusConflict {
+		t.Fatalf("expired approval executed: %d", w.Code)
+	}
+}
+
+// Approval decide authorization: the delegating user or an admin —
+// not any org member.
+func TestBGApprovalDecideAuthorization(t *testing.T) {
+	srv, db := bgTestServer(t)
+	_ = db
+	taskID := bgCreateTask(t, srv) // created by br@patty.dev (claims email)
+	w := bgJSON(t, srv, "POST", "/api/browsergov/approvals",
+		fmt.Sprintf(`{"task_id":%q,"effect_type":"submit_form","details":{"form":"x"}}`, taskID), "viewer")
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	id := uint(resp["approval_id"].(float64))
+	// Another org member's viewer tries to decide → 403.
+	other := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", path, bytes.NewReader([]byte(body)))
+		req = req.WithContext(contextWithClaims(req.Context(), &identity.Claims{OrganizationID: "org-bg", Email: "someoneelse@patty.dev", Role: "viewer"}))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		srv.router.ServeHTTP(w, req)
+		return w
+	}
+	if w := other(fmt.Sprintf("/api/browsergov/approvals/%d/decide", id), `{"approve":true}`); w.Code != http.StatusForbidden {
+		t.Fatalf("non-delegating user decided: %d", w.Code)
+	}
+	// Admin still can.
+	if w := bgJSON(t, srv, "POST", fmt.Sprintf("/api/browsergov/approvals/%d/decide", id), `{"approve":true}`, "admin"); w.Code != http.StatusOK {
+		t.Fatalf("admin decide rejected: %d", w.Code)
+	}
+}
+
+// Origin redaction drops userinfo credentials via net/url.
+func TestBGOriginUserInfoRedaction(t *testing.T) {
+	srv, db := bgTestServer(t)
+	taskID := bgCreateTask(t, srv)
+	bgJSON(t, srv, "POST", "/api/browsergov/events",
+		fmt.Sprintf(`{"task_id":%q,"action":"navigate","origin":"https://user:secretpass@shop.example.com/p?x=1","result":"ok"}`, taskID), "viewer")
+	var ev models.BrowserActionEvent
+	db.First(&ev, "task_id = ?", taskID)
+	if ev.Origin != "https://shop.example.com" {
+		t.Fatalf("userinfo leaked into evidence: %q", ev.Origin)
+	}
+}

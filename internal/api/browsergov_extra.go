@@ -18,36 +18,36 @@ package api
 //     approval + effect op id — attributable, tamper-evident chain.
 
 import (
-	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"gorm.io/gorm"
 
-	"github.com/patrickrho-patty/pccp/internal/keys"
 	"github.com/patrickrho-patty/pccp/internal/models"
 )
 
 // Canonical browser action taxonomy (PAT-1448 locked risk classes).
 const (
-	brRiskReadOnly    = "read_only"
-	brRiskReversible  = "reversible"
-	brRiskHighImpact  = "high_impact"
-	brRiskTakeover    = "mandatory_takeover"
+	brRiskReadOnly   = "read_only"
+	brRiskReversible = "reversible"
+	brRiskHighImpact = "high_impact"
+	brRiskTakeover   = "mandatory_takeover"
 )
 
 // bgTaxonomyV1 is the versioned action taxonomy shared with the harness.
 // Risk classes determine the approval boundary:
-//   read_only    → allowed under task grant
-//   reversible   → allowed when clearly implied by the task grant
-//   high_impact  → fresh terminal approval bound to the exact effect
-//   mandatory_takeover → user takeover ONLY; never delegated to the model
+//
+//	read_only    → allowed under task grant
+//	reversible   → allowed when clearly implied by the task grant
+//	high_impact  → fresh terminal approval bound to the exact effect
+//	mandatory_takeover → user takeover ONLY; never delegated to the model
 var bgTaxonomyV1 = map[string]string{
 	"navigate": brRiskReadOnly, "read_dom": brRiskReadOnly, "read_a11y": brRiskReadOnly,
 	"screenshot": brRiskReadOnly, "scroll": brRiskReadOnly, "wait": brRiskReadOnly,
@@ -57,7 +57,7 @@ var bgTaxonomyV1 = map[string]string{
 	"send_message": brRiskHighImpact, "post_content": brRiskHighImpact,
 	"make_reservation": brRiskHighImpact, "start_subscription": brRiskHighImpact,
 	"delete_data": brRiskHighImpact, "change_account_settings": brRiskHighImpact,
-	"place_order": brRiskHighImpact,
+	"place_order":    brRiskHighImpact,
 	"password_entry": brRiskTakeover, "payment_entry": brRiskTakeover,
 	"captcha": brRiskTakeover, "mfa": brRiskTakeover, "identity_verification": brRiskTakeover,
 }
@@ -182,24 +182,31 @@ func (s *Server) handleBGPolicyPut(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var prev models.BrowserPolicy
-	version := 1
-	if err := s.db.Where("organization_id = ?", getOrgID(r)).Order("version DESC").First(&prev).Error; err == nil {
-		version = prev.Version + 1
-		s.db.Model(&models.BrowserPolicy{}).Where("id = ?", prev.ID).Update("active", false)
-	}
-	priv, err := keys.LoadOrCreate(s.db, "browser-policy")
+	sig, err := apiSignPayload(s.db, "browser-policy", []byte(req.PolicyJSON))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "서명 키를 사용할 수 없습니다")
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	sig := ed25519.Sign(priv, []byte(req.PolicyJSON))
 	pol := models.BrowserPolicy{
-		OrganizationID: getOrgID(r), Version: version, PolicyJSON: req.PolicyJSON,
-		Signature: base64.StdEncoding.EncodeToString(sig), KeyID: "browser-policy",
+		OrganizationID: getOrgID(r), Version: 0, PolicyJSON: req.PolicyJSON,
+		Signature: sig, KeyID: "browser-policy",
 		CreatedBy: getOperatorEmail(r), Active: true,
 	}
-	if err := s.db.Create(&pol).Error; err != nil {
+	var prev models.BrowserPolicy
+	version := 1
+	// Transactional versioning: concurrent PUTs cannot mint duplicate
+	// versions, and a failed create leaves the previous policy active.
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("organization_id = ?", getOrgID(r)).Order("version DESC").First(&prev).Error; err == nil {
+			version = prev.Version + 1
+			if err := tx.Model(&models.BrowserPolicy{}).Where("id = ?", prev.ID).Update("active", false).Error; err != nil {
+				return err
+			}
+		}
+		pol.Version = version
+		return tx.Create(&pol).Error
+	})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -218,7 +225,7 @@ func (s *Server) handleBGPolicyPut(w http.ResponseWriter, r *http.Request) {
 // harness compiles against.
 func (s *Server) handleBGTaxonomy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"schema": "patty.browser.actions.v1",
+		"schema":  "patty.browser.actions.v1",
 		"actions": bgTaxonomyV1, "risk_ko": bgRiskKo,
 		"approval_ttl_minutes": int(bgApprovalTTL.Minutes()),
 	})
@@ -314,12 +321,12 @@ func (s *Server) handleBGTaskCreate(w http.ResponseWriter, r *http.Request) {
 		Base: models.Base{}, OrganizationID: orgID,
 		LeaseID:       "cl-" + apiRandomToken("", 12),
 		SubjectPeerID: req.HarnessID, UserID: req.UserID, SessionID: req.SessionID,
-		ToolClasses:        toolClasses,
+		ToolClasses:         toolClasses,
 		NetworkDestinations: destinations,
-		NotBefore:          time.Now().UTC().Format(time.RFC3339),
-		NotAfter:           time.Now().UTC().Add(2 * time.Hour).Format(time.RFC3339),
-		IssuedAt:           time.Now().UTC().Format(time.RFC3339),
-		Status:             "active",
+		NotBefore:           time.Now().UTC().Format(time.RFC3339),
+		NotAfter:            time.Now().UTC().Add(2 * time.Hour).Format(time.RFC3339),
+		IssuedAt:            time.Now().UTC().Format(time.RFC3339),
+		Status:              "active",
 	}
 	if err := s.db.Create(&lease).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -352,7 +359,11 @@ func (s *Server) handleBGTaskClose(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Outcome string `json:"outcome"` // completed|cancelled|failed|taken_over
 	}
-	if err := decodeJSON(r, &req); err != nil || req.Outcome == "" {
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Outcome == "" {
 		req.Outcome = "completed"
 	}
 	if req.Outcome != "completed" && req.Outcome != "cancelled" && req.Outcome != "failed" && req.Outcome != "taken_over" {
@@ -409,6 +420,12 @@ func (s *Server) handleBGApprovalRequest(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, "과업을 찾을 수 없습니다")
 		return
 	}
+	// Approvals exist only for LIVE tasks — a closed/cancelled/taken-
+	// over task cannot be flipped back into waiting_approval.
+	if task.State != "active" && task.State != "waiting_approval" {
+		writeError(w, http.StatusConflict, "종결된 과업에는 승인을 요청할 수 없습니다")
+		return
+	}
 	digest := bgEffectDigest(req.EffectType, req.Details)
 	detailsJSON, _ := json.Marshal(req.Details)
 	approval := models.BrowserApproval{
@@ -453,6 +470,15 @@ func (s *Server) handleBGApprovalDecide(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusConflict, "만료된 승인입니다 — 과업이 일시정지되었습니다")
 		return
 	}
+	// Terminal-authoritative decision: the approver must be the task's
+	// delegating user or an administrator — not any org member.
+	var parentTask models.BrowserTask
+	if err := s.db.Where("task_id = ?", approval.TaskID).First(&parentTask).Error; err == nil {
+		if parentTask.UserID != "" && getOperatorEmail(r) != parentTask.UserID && !enterpriseRoleAdmin(getRole(r)) {
+			writeError(w, http.StatusForbidden, "과업을 위임한 사용자 또는 관리자만 승인할 수 있습니다")
+			return
+		}
+	}
 	state := "denied"
 	if req.Approve {
 		state = "approved"
@@ -474,8 +500,8 @@ func (s *Server) handleBGApprovalDecide(w http.ResponseWriter, r *http.Request) 
 		OrganizationID: approval.OrganizationID, EventType: "cp.browsergov.approval_decided",
 		ActorType: "admin", Action: "decide_browser_effect", ResourceType: "browser_approval",
 		ResourceID: fmt.Sprint(approval.ID),
-		Details: fmt.Sprintf(`{"effect_type":%q,"approve":%t,"effect_digest":%q}`, approval.EffectType, req.Approve, approval.EffectDigest),
-		Result: state, OccurredAt: time.Now().UTC().Format(time.RFC3339),
+		Details:    fmt.Sprintf(`{"effect_type":%q,"approve":%t,"effect_digest":%q}`, approval.EffectType, req.Approve, approval.EffectDigest),
+		Result:     state, OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": state})
 }
@@ -514,6 +540,23 @@ func (s *Server) handleBGEffectGate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "승인되지 않은 효과입니다")
 		return
 	}
+	// Expiry is enforced at the GATE too, not only at decision time —
+	// an approved effect cannot execute past its TTL.
+	if exp, err := time.Parse(time.RFC3339, approval.ExpiresAt); err != nil || time.Now().UTC().After(exp) {
+		s.db.Model(&approval).Update("state", "expired")
+		writeError(w, http.StatusConflict, "만료된 승인입니다")
+		return
+	}
+	// The parent task must still be live.
+	var task models.BrowserTask
+	if err := s.db.Where("task_id = ? AND organization_id = ?", req.TaskID, getOrgID(r)).First(&task).Error; err != nil {
+		writeError(w, http.StatusNotFound, "과업을 찾을 수 없습니다")
+		return
+	}
+	if task.State != "active" && task.State != "waiting_approval" {
+		writeError(w, http.StatusConflict, "종결된 과업의 효과는 실행될 수 없습니다")
+		return
+	}
 	if approval.UsedAt != "" {
 		writeError(w, http.StatusConflict, "이미 사용된 승인입니다 — 일회성입니다")
 		return
@@ -525,9 +568,15 @@ func (s *Server) handleBGEffectGate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "효과 세부 내용이 승인 시점과 다릅니다 — 승인이 무효화되었습니다. 새 승인이 필요합니다")
 		return
 	}
-	// Mark used + derive a deterministic effect op id (idempotent retries
-	// of the same approved effect return the same id).
-	s.db.Model(&approval).Update("used_at", time.Now().UTC().Format(time.RFC3339))
+	// Atomic single-use: only ONE concurrent gate call can flip
+	// used_at; the loser sees 0 rows and gets 409.
+	markUsed := s.db.Model(&models.BrowserApproval{}).
+		Where("id = ? AND used_at = ''", approval.ID).
+		Update("used_at", time.Now().UTC().Format(time.RFC3339))
+	if markUsed.Error != nil || markUsed.RowsAffected == 0 {
+		writeError(w, http.StatusConflict, "이미 사용된 승인입니다 — 일회성입니다")
+		return
+	}
 	opID := fmt.Sprintf("bgo-%s", current)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"effect_op_id": opID, "status": "authorized_once",
@@ -541,13 +590,13 @@ func (s *Server) handleBGEffectGate(w http.ResponseWriter, r *http.Request) {
 // server-side from the taxonomy (client claims are not trusted).
 func (s *Server) handleBGEventIngest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TaskID       string `json:"task_id"`
-		Action       string `json:"action"`
+		TaskID        string `json:"task_id"`
+		Action        string `json:"action"`
 		TargetSummary string `json:"target_summary"`
-		Origin       string `json:"origin"`
-		Result       string `json:"result"`
-		ApprovalID   uint   `json:"approval_id"`
-		EffectOpID   string `json:"effect_op_id"`
+		Origin        string `json:"origin"`
+		Result        string `json:"result"`
+		ApprovalID    uint   `json:"approval_id"`
+		EffectOpID    string `json:"effect_op_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil || req.TaskID == "" || req.Action == "" {
 		writeError(w, http.StatusBadRequest, "task_id와 action이 필요합니다")
@@ -564,14 +613,11 @@ func (s *Server) handleBGEventIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	occurred := time.Now().UTC().Format(time.RFC3339)
-	// Redact the origin to scheme://host (path/query/session refs dropped).
+	// Redact the origin via net/url: scheme://hostname only — path,
+	// query, fragment, AND userinfo credentials are all dropped.
 	origin := req.Origin
-	if at := strings.Index(origin, "://"); at > 0 {
-		rest := origin[at+3:]
-		if slash := strings.IndexAny(rest, "/?#"); slash >= 0 {
-			rest = rest[:slash]
-		}
-		origin = origin[:at+3] + rest
+	if u, err := url.Parse(req.Origin); err == nil && u.Scheme != "" && u.Host != "" {
+		origin = u.Scheme + "://" + u.Host
 	}
 	target := apiTruncateRunes(req.TargetSummary, 200)
 	sum := sha256.Sum256([]byte(fmt.Sprint(req.TaskID, req.Action, target, origin, occurred)))
@@ -598,7 +644,12 @@ func (s *Server) handleBGTimeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var events []models.BrowserActionEvent
-	s.db.Where("task_id = ?", task.TaskID).Order("occurred_at ASC").Limit(500).Find(&events)
+	// Newest 500 events (DESC), reversed for chronological display —
+	// the most recent evidence must never be silently dropped.
+	s.db.Where("task_id = ?", task.TaskID).Order("occurred_at DESC").Limit(500).Find(&events)
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"task": task, "events": events,
 	})

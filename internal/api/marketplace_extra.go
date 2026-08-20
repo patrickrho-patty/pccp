@@ -18,7 +18,6 @@ package api
 //   - Per-harness install inventory with pin + one-version rollback.
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -119,7 +118,7 @@ func (s *Server) handleMKPublisherRegister(w http.ResponseWriter, r *http.Reques
 	}
 	pub := models.MarketPublisher{
 		PublisherID: "pub-" + apiRandomToken("", 10), DisplayName: req.DisplayName,
-		Email: req.Email, TrustState: "unverified",
+		Email: req.Email, OrganizationID: getOrgID(r), TrustState: "unverified",
 	}
 	if err := s.db.Create(&pub).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -158,23 +157,12 @@ func (s *Server) handleMKPublisherVerify(w http.ResponseWriter, r *http.Request)
 		updates["verified_at"] = time.Now().UTC().Format(time.RFC3339)
 	}
 	s.db.Model(&pub).Updates(updates)
-	// Trust downgrade/revocation re-derives every listing's label.
-	if req.TrustState == "revoked" || req.TrustState == "unverified" {
-		var listings []models.MarketListing
-		s.db.Where("publisher_id = ?", pub.PublisherID).Find(&listings)
-		for _, l := range listings {
-			s.db.Model(&l).Updates(map[string]interface{}{
-				"trust_label": mkDeriveTrustLabel(req.TrustState),
-			})
-		}
-	} else {
-		var listings []models.MarketListing
-		s.db.Where("publisher_id = ?", pub.PublisherID).Find(&listings)
-		for _, l := range listings {
-			s.db.Model(&l).Updates(map[string]interface{}{
-				"trust_label": mkDeriveTrustLabel(req.TrustState),
-			})
-		}
+	// Trust state changes re-derive every listing's label (both upgrade
+	// and downgrade paths).
+	var listings []models.MarketListing
+	s.db.Where("publisher_id = ?", pub.PublisherID).Find(&listings)
+	for _, l := range listings {
+		s.db.Model(&l).Update("trust_label", mkDeriveTrustLabel(req.TrustState))
 	}
 	models.CreateAuditEvent(s.db, &models.AuditEvent{
 		OrganizationID: getOrgID(r), EventType: "cp.marketplace.publisher_trust",
@@ -186,6 +174,20 @@ func (s *Server) handleMKPublisherVerify(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleMKPublishersList(w http.ResponseWriter, r *http.Request) {
+	// Publisher emails are contact data for registry operators only.
+	if !enterpriseRoleAdmin(getRole(r)) {
+		var pubs []models.MarketPublisher
+		s.db.Order("created_at DESC").Limit(200).Find(&pubs)
+		out := make([]map[string]interface{}, 0, len(pubs))
+		for _, p := range pubs {
+			out = append(out, map[string]interface{}{
+				"publisher_id": p.PublisherID, "display_name": p.DisplayName,
+				"trust_state": p.TrustState,
+			})
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
 	var pubs []models.MarketPublisher
 	s.db.Order("created_at DESC").Limit(200).Find(&pubs)
 	writeJSON(w, http.StatusOK, pubs)
@@ -197,17 +199,17 @@ func (s *Server) handleMKPublishersList(w http.ResponseWriter, r *http.Request) 
 // checks gate discovery: a failing version never becomes active.
 func (s *Server) handleMKPublish(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PublisherID   string `json:"publisher_id"`
-		Slug          string `json:"slug"`
-		Name          string `json:"name"`
-		NameKo        string `json:"name_ko"`
-		Type          string `json:"type"`
-		Category      string `json:"category"`
-		Description   string `json:"description"`
-		Version       string `json:"version"`
-		ContentHash   string `json:"content_hash"`
-		ManifestJSON  string `json:"manifest_json"`
-		Changelog     string `json:"changelog"`
+		PublisherID  string `json:"publisher_id"`
+		Slug         string `json:"slug"`
+		Name         string `json:"name"`
+		NameKo       string `json:"name_ko"`
+		Type         string `json:"type"`
+		Category     string `json:"category"`
+		Description  string `json:"description"`
+		Version      string `json:"version"`
+		ContentHash  string `json:"content_hash"`
+		ManifestJSON string `json:"manifest_json"`
+		Changelog    string `json:"changelog"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -226,6 +228,13 @@ func (s *Server) handleMKPublish(w http.ResponseWriter, r *http.Request) {
 	var pub models.MarketPublisher
 	if err := s.db.Where("publisher_id = ?", req.PublisherID).First(&pub).Error; err != nil {
 		writeError(w, http.StatusNotFound, "게시자를 찾을 수 없습니다")
+		return
+	}
+	// Ownership: publishing requires the publisher's owning organization
+	// (or a registry admin) — the trust chain cannot be ridden by
+	// third parties (PAT-1438).
+	if pub.OrganizationID != getOrgID(r) && !enterpriseRoleAdmin(getRole(r)) {
+		writeError(w, http.StatusForbidden, "게시자 소유 조직만 발행할 수 있습니다")
 		return
 	}
 	if pub.TrustState == "revoked" {
@@ -298,6 +307,14 @@ func (s *Server) handleMKAddVersion(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.Where("slug = ?", req.Slug).First(&listing).Error; err != nil {
 		writeError(w, http.StatusNotFound, "목록을 찾을 수 없습니다")
 		return
+	}
+	// Ownership on version submission too.
+	var owner models.MarketPublisher
+	if err := s.db.Where("publisher_id = ?", listing.PublisherID).First(&owner).Error; err == nil {
+		if owner.OrganizationID != getOrgID(r) && !enterpriseRoleAdmin(getRole(r)) {
+			writeError(w, http.StatusForbidden, "게시자 소유 조직만 버전을 추가할 수 있습니다")
+			return
+		}
 	}
 	if listing.Status != "active" {
 		writeError(w, http.StatusForbidden, "차단/제거된 목록에는 버전을 추가할 수 없습니다")
@@ -475,13 +492,19 @@ func (s *Server) handleMKInstall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "harness_id, slug, version이 필요합니다")
 		return
 	}
+	// The applied artifact's hash is REQUIRED — omitting it must not
+	// skip the assessed-hash verification (PAT-1438).
+	if req.ContentHash == "" {
+		writeError(w, http.StatusBadRequest, "content_hash가 필요합니다 — 적용 아티팩트 검증은 생략될 수 없습니다")
+		return
+	}
 	var ver models.MarketListingVersion
 	if err := s.db.Where("slug = ? AND version = ?", req.Slug, req.Version).First(&ver).Error; err != nil {
 		writeError(w, http.StatusNotFound, "버전을 찾을 수 없습니다")
 		return
 	}
 	// Artifact must match the assessed immutable hash (PAT-1438).
-	if req.ContentHash != "" && req.ContentHash != ver.ContentHash {
+	if req.ContentHash != ver.ContentHash {
 		writeError(w, http.StatusConflict, "적용된 아티팩트가 평가된 콘텐츠 해시와 일치하지 않습니다")
 		return
 	}
@@ -499,9 +522,11 @@ func (s *Server) handleMKInstall(w http.ResponseWriter, r *http.Request) {
 	var manifest map[string]interface{}
 	json.Unmarshal([]byte(ver.ManifestJSON), &manifest)
 	state := "installed"
-	for _, c := range manifest["capabilities"].([]interface{}) {
-		if cs, _ := c.(string); cs == "full_trust" {
-			state = "needs_approval"
+	if caps, ok := manifest["capabilities"].([]interface{}); ok {
+		for _, c := range caps {
+			if cs, _ := c.(string); cs == "full_trust" {
+				state = "needs_approval"
+			}
 		}
 	}
 	rec := models.MarketInstallRecord{
@@ -555,9 +580,20 @@ func (s *Server) handleMKInstallLifecycle(w http.ResponseWriter, r *http.Request
 	case "unpin":
 		s.db.Model(&rec).Update("pinned", false)
 	case "rollback":
-		// One-version rollback to the previous verified version.
+		// One-version rollback to the previous verified version — only
+		// if that version is STILL active in the registry (a since-
+		// quarantined previous version must not resurrect).
 		if rec.PreviousVersion == "" {
 			writeError(w, http.StatusUnprocessableEntity, "되돌릴 이전 검증 버전이 없습니다")
+			return
+		}
+		if rec.State == "quarantined" {
+			writeError(w, http.StatusForbidden, "검역 중인 패키지는 롤백할 수 없습니다")
+			return
+		}
+		var prevVer models.MarketListingVersion
+		if err := s.db.Where("slug = ? AND version = ?", rec.Slug, rec.PreviousVersion).First(&prevVer).Error; err != nil || prevVer.State != "active" {
+			writeError(w, http.StatusForbidden, "이전 버전이 더 이상 활성 상태가 아닙니다 (검역/제거)")
 			return
 		}
 		s.db.Model(&rec).Updates(map[string]interface{}{
@@ -573,15 +609,18 @@ func (s *Server) handleMKInstallLifecycle(w http.ResponseWriter, r *http.Request
 }
 
 // handleMKRecordUpdate applies a successful update to an install
-// record, preserving the previous verified version for rollback.
+// record, preserving the previous verified version for rollback. The
+// update path enforces the SAME install gating rules: target version
+// must exist + be active, the hash must match the registry, quarantined
+// records are frozen, and full_trust requires approval.
 func (s *Server) handleMKRecordUpdate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RecordID uint   `json:"record_id"`
 		Version  string `json:"version"`
 		Hash     string `json:"content_hash"`
 	}
-	if err := decodeJSON(r, &req); err != nil || req.RecordID == 0 || req.Version == "" {
-		writeError(w, http.StatusBadRequest, "record_id와 version이 필요합니다")
+	if err := decodeJSON(r, &req); err != nil || req.RecordID == 0 || req.Version == "" || req.Hash == "" {
+		writeError(w, http.StatusBadRequest, "record_id, version, content_hash가 필요합니다")
 		return
 	}
 	var rec models.MarketInstallRecord
@@ -593,9 +632,36 @@ func (s *Server) handleMKRecordUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "고정된 버전은 업데이트되지 않습니다")
 		return
 	}
+	if rec.State == "quarantined" {
+		writeError(w, http.StatusForbidden, "검역 중인 패키지는 업데이트할 수 없습니다")
+		return
+	}
+	var ver models.MarketListingVersion
+	if err := s.db.Where("slug = ? AND version = ?", rec.Slug, req.Version).First(&ver).Error; err != nil {
+		writeError(w, http.StatusNotFound, "대상 버전을 레지스트리에서 찾을 수 없습니다")
+		return
+	}
+	if ver.State != "active" {
+		writeError(w, http.StatusForbidden, "대상 버전이 활성 상태가 아닙니다")
+		return
+	}
+	if req.Hash != ver.ContentHash {
+		writeError(w, http.StatusConflict, "적용된 아티팩트가 레지스트리 해시와 일치하지 않습니다")
+		return
+	}
+	nextState := "installed"
+	var manifest map[string]interface{}
+	json.Unmarshal([]byte(ver.ManifestJSON), &manifest)
+	if caps, ok := manifest["capabilities"].([]interface{}); ok {
+		for _, c := range caps {
+			if cs, _ := c.(string); cs == "full_trust" {
+				nextState = "needs_approval"
+			}
+		}
+	}
 	s.db.Model(&rec).Updates(map[string]interface{}{
 		"previous_version": rec.Version, "previous_hash": rec.ContentHash,
-		"version": req.Version, "content_hash": req.Hash, "state": "installed",
+		"version": req.Version, "content_hash": req.Hash, "state": nextState,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
@@ -614,10 +680,10 @@ func (s *Server) handleMKInstalledList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMKReport(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Slug     string `json:"slug"`
-		Version  string `json:"version"`
-		Kind     string `json:"kind"`
-		Detail   string `json:"detail"`
+		Slug    string `json:"slug"`
+		Version string `json:"version"`
+		Kind    string `json:"kind"`
+		Detail  string `json:"detail"`
 	}
 	if err := decodeJSON(r, &req); err != nil || req.Slug == "" || req.Kind == "" {
 		writeError(w, http.StatusBadRequest, "slug와 kind가 필요합니다")
@@ -641,13 +707,26 @@ func (s *Server) handleMKReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMKReportsList(w http.ResponseWriter, r *http.Request) {
+	// Reporter identities are visible to moderation operators only.
+	operator := enterpriseRoleAdmin(getRole(r))
 	var reports []models.MarketReport
 	q := s.db
 	if v := r.URL.Query().Get("state"); v != "" {
 		q = q.Where("state = ?", v)
 	}
 	q.Order("created_at DESC").Limit(200).Find(&reports)
-	writeJSON(w, http.StatusOK, reports)
+	out := make([]map[string]interface{}, 0, len(reports))
+	for _, rep := range reports {
+		row := map[string]interface{}{
+			"id": rep.ID, "slug": rep.Slug, "version": rep.Version,
+			"kind": rep.Kind, "detail": rep.Detail, "state": rep.State,
+		}
+		if operator {
+			row["reporter"] = rep.Reporter
+		}
+		out = append(out, row)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleMKModerate performs quarantine/block/publisher-revoke/critical
@@ -658,10 +737,10 @@ func (s *Server) handleMKModerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Action string `json:"action"` // quarantine_version|block_listing|resolve_report|critical_disable
-		Slug   string `json:"slug"`
+		Action  string `json:"action"` // quarantine_version|block_listing|resolve_report|critical_disable
+		Slug    string `json:"slug"`
 		Version string `json:"version"`
-		Reason string `json:"reason"`
+		Reason  string `json:"reason"`
 	}
 	if err := decodeJSON(r, &req); err != nil || req.Action == "" || strings.TrimSpace(req.Reason) == "" {
 		writeError(w, http.StatusBadRequest, "작업과 사유가 필요합니다")
@@ -701,10 +780,10 @@ func (s *Server) handleMKModerate(w http.ResponseWriter, r *http.Request) {
 		s.db.Model(&models.MarketInstallRecord{}).Where("slug = ?", req.Slug).
 			Updates(map[string]interface{}{"state": "quarantined", "warned": true})
 	case "resolve_report":
-		var open models.MarketReport
-		if s.db.Where("slug = ? AND state = ?", req.Slug, "open").First(&open).Error == nil {
-			s.db.Model(&open).Update("state", "resolved")
-		}
+		// Resolves ALL open reports for the slug (the console's resolve
+		// action reviews the listing, not one arbitrary report row).
+		s.db.Model(&models.MarketReport{}).
+			Where("slug = ? AND state = ?", req.Slug, "open").Update("state", "resolved")
 	default:
 		writeError(w, http.StatusBadRequest, "알 수 없는 작업입니다")
 		return
@@ -726,9 +805,9 @@ func (s *Server) handleMKPlacement(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Slug     string `json:"slug"`
-		Featured *bool  `json:"featured"`
-		Sponsored *bool `json:"sponsored"`
+		Slug      string `json:"slug"`
+		Featured  *bool  `json:"featured"`
+		Sponsored *bool  `json:"sponsored"`
 	}
 	if err := decodeJSON(r, &req); err != nil || req.Slug == "" {
 		writeError(w, http.StatusBadRequest, "slug가 필요합니다")
@@ -755,8 +834,6 @@ func (s *Server) handleMKPlacement(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"slug": fresh.Slug, "featured": fresh.Featured, "sponsored": fresh.Sponsored,
 		"trust_label": fresh.TrustLabel,
-		"note_ko": "큐레이션·후원은 표시 필드일 뿐 신뢰 등급과 무관합니다.",
+		"note_ko":     "큐레이션·후원은 표시 필드일 뿐 신뢰 등급과 무관합니다.",
 	})
 }
-
-var _ = sha256.Sum256

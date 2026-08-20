@@ -106,7 +106,7 @@ export default function BrowserGov() {
                 <span className={`text-[11px] px-1.5 py-0.5 rounded ${t.state === 'active' ? 'bg-emerald-100 text-emerald-700' : t.state === 'waiting_approval' ? 'bg-amber-100 text-amber-800' : 'bg-gray-100'}`}>
                   {STATE_KO[t.state] || t.state}
                 </span>
-                <span className="text-[11px] text-gray-400">정책 v{t.policy_version} · 탭 {(JSON.parse(t.tabs_json || '[]')).length}개 연결</span>
+                <span className="text-[11px] text-gray-400">정책 v{t.policy_version} · 탭 {(() => { try { return JSON.parse(t.tabs_json || '[]').length } catch { return '?' } })()}개 연결</span>
               </div>
               <div className="text-[11px] text-gray-400 mt-0.5 font-mono">
                 {t.task_id.slice(0, 18)}… · 하네스 {t.harness_id.slice(0, 10)}… · 리스 {t.lease_id.slice(0, 12)}…

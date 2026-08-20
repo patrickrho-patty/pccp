@@ -14,9 +14,12 @@ import (
 // MarketPublisher is a verifiable publisher identity.
 type MarketPublisher struct {
 	gorm.Model
-	PublisherID  string `gorm:"uniqueIndex" json:"publisher_id"`
-	DisplayName  string `json:"display_name"`
-	Email        string `json:"email"`
+	PublisherID string `gorm:"uniqueIndex" json:"publisher_id"`
+	DisplayName string `json:"display_name"`
+	Email       string `json:"email"`
+	// Owning organization: publishing and version submission verify
+	// ownership against this binding (PAT-1438 trust-chain protection).
+	OrganizationID string `gorm:"index" json:"organization_id"`
 	// Verified publishers have completed identity verification; official
 	// is Patty itself. Trust flows from publisher state → listing label.
 	TrustState string `json:"trust_state"` // unverified|verified|official|revoked
@@ -37,11 +40,11 @@ type MarketListing struct {
 	// NEVER influenced by featured/sponsored (PAT-1438 anti-corruption).
 	TrustLabel string `json:"trust_label"` // community|verified_publisher|reviewed|official
 	// Editorial featuring and sponsored placement are separate fields.
-	Featured    bool `json:"featured"`
-	Sponsored   bool `json:"sponsored"`
-	Status      string `json:"status"` // active|blocked|removed
+	Featured      bool   `json:"featured"`
+	Sponsored     bool   `json:"sponsored"`
+	Status        string `json:"status"` // active|blocked|removed
 	LatestVersion string `json:"latest_version"`
-	InstallCount int64 `json:"install_count"`
+	InstallCount  int64  `json:"install_count"`
 }
 
 // MarketListingVersion is an immutable content-addressed release: the
@@ -49,8 +52,10 @@ type MarketListing struct {
 // new version is mandatory.
 type MarketListingVersion struct {
 	gorm.Model
-	Slug        string `gorm:"index:idx_mlv_slug_ver" json:"slug"`
-	Version     string `gorm:"index:idx_mlv_slug_ver" json:"version"`
+	// (slug, version) is UNIQUE — the immutability invariant is enforced
+	// at the schema level, not just check-then-insert.
+	Slug        string `gorm:"uniqueIndex:idx_mlv_slug_ver" json:"slug"`
+	Version     string `gorm:"uniqueIndex:idx_mlv_slug_ver" json:"version"`
 	ContentHash string `gorm:"uniqueIndex" json:"content_hash"`
 	// Versioned manifest with the shared capability/permission vocabulary.
 	ManifestJSON string `gorm:"type:text" json:"manifest_json"`
@@ -65,12 +70,12 @@ type MarketListingVersion struct {
 // MarketReport is a user abuse/broken report against a listing/version.
 type MarketReport struct {
 	gorm.Model
-	Slug    string `gorm:"index" json:"slug"`
-	Version string `json:"version"`
-	Kind    string `json:"kind"` // malicious|deceptive|abandoned|impersonating|broken
-	Detail  string `json:"detail"`
+	Slug     string `gorm:"index" json:"slug"`
+	Version  string `json:"version"`
+	Kind     string `json:"kind"` // malicious|deceptive|abandoned|impersonating|broken
+	Detail   string `json:"detail"`
 	Reporter string `json:"reporter"`
-	State   string `json:"state"` // open|resolved|dismissed
+	State    string `json:"state"` // open|resolved|dismissed
 }
 
 // MarketInstallRecord is the governed per-harness install inventory.
