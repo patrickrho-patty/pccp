@@ -91,7 +91,7 @@ export default function Leaderboard() {
   }
   useEffect(() => { loadRows() }, [periodId])
 
-  const cohorts = useMemo(() => Array.from(new Set(rows.map(r => r.cohort || 'org')).values().map(v => v)), [rows])
+  const cohorts = useMemo(() => Array.from(new Set(rows.map(r => r.cohort || 'org'))), [rows])
 
   const generate = async () => {
     if (!periodId) return

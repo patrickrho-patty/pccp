@@ -24,6 +24,9 @@ func (s *Server) handleSandboxLifePolicy(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusForbidden, "organization context required")
 		return
 	}
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	if r.Method == http.MethodGet {
 		var policies []models.SandboxLifecyclePolicy
 		s.db.Where("organization_id = ?", orgID).Order("priority").Find(&policies)
@@ -66,6 +69,9 @@ func (s *Server) handleSandboxLifeTemplates(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusForbidden, "organization context required")
 		return
 	}
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	if r.Method == http.MethodGet {
 		var tpls []models.SandboxEnvironmentTemplate
 		s.db.Where("organization_id = ?", orgID).Order("template_id, version DESC").Find(&tpls)
@@ -92,6 +98,9 @@ func (s *Server) handleSandboxLifeRunners(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusForbidden, "organization context required")
 		return
 	}
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	if r.Method == http.MethodGet {
 		var runners []models.SandboxRunner
 		s.db.Where("organization_id = ?", orgID).Find(&runners)
@@ -116,6 +125,9 @@ func (s *Server) handleSandboxLifePrepare(w http.ResponseWriter, r *http.Request
 	orgID := getOrgID(r)
 	if orgID == "" {
 		writeError(w, http.StatusForbidden, "organization context required")
+		return
+	}
+	if !requireGovernanceAdmin(w, r) {
 		return
 	}
 	var req struct {
@@ -166,6 +178,10 @@ func (s *Server) handleSandboxLifeAction(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "organization context, environment id, and action required")
 		return
 	}
+
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	if err := s.sandboxLife.Action(orgID, envID, action, getActorID(r)); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -193,6 +209,10 @@ func (s *Server) handleSandboxLifeDrift(w http.ResponseWriter, r *http.Request) 
 	}
 	if orgID == "" || envID == "" {
 		writeError(w, http.StatusBadRequest, "organization context and environment id required")
+		return
+	}
+
+	if !requireGovernanceAdmin(w, r) {
 		return
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)

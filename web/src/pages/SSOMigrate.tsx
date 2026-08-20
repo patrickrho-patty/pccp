@@ -52,9 +52,9 @@ export default function SSOMigrate() {
       setBridgeResult(out)
       showToast(out.new_session_issued ? '새 세션 발급 (토큰 미복사)' : `브리지 결과: ${out.decision}`, out.new_session_issued ? 'success' : 'error')
     } catch (e: any) {
-      // 422 = fail closed decision.
-      if (e.message && e.detail) setBridgeResult(e.detail)
-      showToast(e.message || '브리지 실패', 'error')
+      // 422 = fail-closed decision (message carries the decision, never a secret).
+      setBridgeResult(bridgeForm)
+      showToast(e.message || '브리지 실패(클로즈드)', 'error')
     } finally { setBusy(false) }
   }
 

@@ -38,6 +38,9 @@ func (s *Server) handleLeaderboardRubrics(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusForbidden, "organization context required")
 		return
 	}
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	if r.Method == http.MethodGet {
 		var rubrics []models.ScorecardRubric
 		s.db.Where("organization_id = ?", orgID).Order("version DESC").Find(&rubrics)
@@ -64,10 +67,10 @@ func (s *Server) handleLeaderboardRubrics(w http.ResponseWriter, r *http.Request
 		Version: version, Name: req.Name, NameKo: req.NameKo,
 		WeightDelivery: req.WeightDelivery, WeightQuality: req.WeightQuality,
 		WeightSecurity: req.WeightSecurity, WeightEfficiency: req.WeightEfficiency,
-		CriticalCeiling: leaderboard.DefaultRubric.CriticalCeiling,
+		CriticalCeiling:     leaderboard.DefaultRubric.CriticalCeiling,
 		MinAcceptedOutcomes: leaderboard.DefaultRubric.MinAcceptedOutcomes,
 		MinGovernedActions:  leaderboard.DefaultRubric.MinGovernedActions,
-		Status: "active", CreatedBy: getActorID(r),
+		Status:              "active", CreatedBy: getActorID(r),
 		Supersedes: max.Version, EffectiveAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := s.db.Create(rubric).Error; err != nil {
@@ -98,6 +101,9 @@ func (s *Server) handleLeaderboardPeriods(w http.ResponseWriter, r *http.Request
 	orgID := getOrgID(r)
 	if orgID == "" {
 		writeError(w, http.StatusForbidden, "organization context required")
+		return
+	}
+	if !requireGovernanceAdmin(w, r) {
 		return
 	}
 	if r.Method == http.MethodGet {
@@ -140,6 +146,14 @@ func (s *Server) handleLeaderboardFreeze(w http.ResponseWriter, r *http.Request)
 	periodID := chi.URLParam(r, "id")
 	if orgID == "" || periodID == "" {
 		writeError(w, http.StatusBadRequest, "organization context and period id required")
+		return
+	}
+
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
+
+	if !requireGovernanceAdmin(w, r) {
 		return
 	}
 	var period models.ScorecardPeriod
@@ -206,6 +220,9 @@ func (s *Server) handleLeaderboardObjective(w http.ResponseWriter, r *http.Reque
 	orgID := getOrgID(r)
 	if orgID == "" {
 		writeError(w, http.StatusForbidden, "organization context required")
+		return
+	}
+	if !requireGovernanceAdmin(w, r) {
 		return
 	}
 	var req struct {
@@ -309,6 +326,9 @@ func (s *Server) handleLeaderboardCorrection(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusForbidden, "organization context required")
 		return
 	}
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	var req struct {
 		PeriodID    string `json:"period_id"`
 		SubjectID   string `json:"subject_id"`
@@ -346,6 +366,9 @@ func (s *Server) handleLeaderboardReview(w http.ResponseWriter, r *http.Request)
 	orgID := getOrgID(r)
 	if orgID == "" {
 		writeError(w, http.StatusForbidden, "organization context required")
+		return
+	}
+	if !requireGovernanceAdmin(w, r) {
 		return
 	}
 	var req struct {

@@ -34,6 +34,9 @@ func (s *Server) handleSSOMigrateLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "organization context required")
 		return
 	}
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	var req ssomigrate.IdentityLinkRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
@@ -60,6 +63,9 @@ func (s *Server) handleSSOMigrateBridge(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusForbidden, "organization context required")
 		return
 	}
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	var req ssomigrate.BridgeEvent
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
@@ -71,7 +77,16 @@ func (s *Server) handleSSOMigrateBridge(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if !row.NewSessionIssued {
-		writeJSON(w, http.StatusUnprocessableEntity, row)
+		// Fail-closed decision with a readable, never-secret message so the
+		// client can show why no session was issued (unlinked/ambiguous/
+		// disabled → recoverable support flow, never guessed).
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]interface{}{
+			"error":              "브리지 인증 실패(클로즈드): " + row.Decision + " — 수동 해결이 필요합니다",
+			"decision":           row.Decision,
+			"legacy_issuer":      row.LegacyIssuer,
+			"legacy_subject":     row.LegacySubject,
+			"new_session_issued": false,
+		})
 		return
 	}
 	writeJSON(w, http.StatusOK, row)
@@ -82,6 +97,9 @@ func (s *Server) handleSSOMigrateManifests(w http.ResponseWriter, r *http.Reques
 	orgID := getOrgID(r)
 	if orgID == "" {
 		writeError(w, http.StatusForbidden, "organization context required")
+		return
+	}
+	if !requireGovernanceAdmin(w, r) {
 		return
 	}
 	if r.Method == http.MethodGet {
@@ -139,6 +157,9 @@ func (s *Server) handleSSOMigrateWaves(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "organization context required")
 		return
 	}
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	if r.Method == http.MethodGet {
 		var waves []models.SSOMigrationWave
 		s.db.Where("organization_id = ?", orgID).Order("wave").Find(&waves)
@@ -177,6 +198,10 @@ func (s *Server) handleSSOMigrateWaveSignOff(w http.ResponseWriter, r *http.Requ
 	}
 	if orgID == "" || id == "" {
 		writeError(w, http.StatusBadRequest, "organization context and wave id required")
+		return
+	}
+
+	if !requireGovernanceAdmin(w, r) {
 		return
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)

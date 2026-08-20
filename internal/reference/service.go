@@ -476,11 +476,21 @@ func (s *Service) SearchDocs(orgID, libraryID, query, version, locale string, li
 		rows = rows[:limit]
 	}
 	out := make([]SearchResult, 0, len(rows))
+	budget := maxResultTokens * 4 // rough bytes-to-token budget for returned bodies
+	used := 0
 	for _, r := range rows {
 		name := ""
 		if src, ok := sources[r.SourceID]; ok {
 			name = src.Name
 		}
+		bodyLen := len(r.Body) + len(r.Code)
+		if bodyLen > budget-used {
+			// Focused chunks under an explicit context budget: stop returning
+			// more full bodies once the budget is exhausted rather than silently
+			// truncating citations.
+			break
+		}
+		used += bodyLen
 		out = append(out, SearchResult{
 			ChunkID: r.ChunkID, SourceID: r.SourceID, SourceName: name, DocPath: r.DocPath,
 			Title:   firstNonEmpty(r.TitleKo, r.TitleEn, r.DocPath),

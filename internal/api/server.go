@@ -1241,6 +1241,20 @@ func getRole(r *http.Request) string {
 	return ""
 }
 
+// requireGovernanceAdmin gates governance write endpoints (managed skill policy,
+// system prompts, leaderboard, reference corpus, SSO migration, sandbox
+// lifecycle) to tenant administrators. Read-only retrieval/search endpoints may
+// remain authentication-only; every mutating surface in these features must
+// answer 403 for non-admin callers per the spec's admin-only contract.
+func requireGovernanceAdmin(w http.ResponseWriter, r *http.Request) bool {
+	switch getRole(r) {
+	case "admin", "owner", "super_admin", "security_admin":
+		return true
+	}
+	writeError(w, http.StatusForbidden, "조직 관리자 권한이 필요합니다")
+	return false
+}
+
 // --- Handlers ---
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

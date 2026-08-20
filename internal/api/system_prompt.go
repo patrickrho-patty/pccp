@@ -138,6 +138,10 @@ func (s *Server) handleListSystemPromptVersions(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "organization context and document id required")
 		return
 	}
+
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	var versions []models.SystemPromptVersion
 	s.db.Where("organization_id = ? AND document_id = ?", orgID, id).Order("version DESC").Find(&versions)
 	writeJSON(w, http.StatusOK, versions)
@@ -260,6 +264,9 @@ func (s *Server) handleSaveSystemPrompt(w http.ResponseWriter, r *http.Request) 
 	orgID := getOrgID(r)
 	if orgID == "" {
 		writeError(w, http.StatusForbidden, "organization context required")
+		return
+	}
+	if !requireGovernanceAdmin(w, r) {
 		return
 	}
 	var req promptDocRequest
@@ -413,6 +420,10 @@ func (s *Server) handleRestoreSystemPrompt(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "organization context, document id, and version required")
 		return
 	}
+
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	var doc models.SystemPromptDocument
 	if err := s.db.Where("organization_id = ? AND id = ?", orgID, id).First(&doc).Error; err != nil {
 		writeError(w, http.StatusNotFound, "prompt document not found")
@@ -454,6 +465,9 @@ func (s *Server) handleSystemPromptEpochDeliver(w http.ResponseWriter, r *http.R
 	orgID := getOrgID(r)
 	if orgID == "" {
 		writeError(w, http.StatusForbidden, "organization context required")
+		return
+	}
+	if !requireGovernanceAdmin(w, r) {
 		return
 	}
 	var docs []models.SystemPromptDocument
@@ -498,7 +512,7 @@ func (s *Server) handleSystemPromptEpochDeliver(w http.ResponseWriter, r *http.R
 			delivered++
 		}
 	}
-	s.db.Model(&models.SystemPromptDocument{}).Where("organization_id = ? AND epoch_id = '' OR epoch_id IS NULL", orgID).
+	s.db.Model(&models.SystemPromptDocument{}).Where("organization_id = ? AND (epoch_id = '' OR epoch_id IS NULL)", orgID).
 		Update("epoch_id", epoch.EpochID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"ok": true, "epoch_id": epoch.EpochID, "epoch_number": epoch.EpochNumber,

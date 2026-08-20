@@ -26,6 +26,9 @@ func (s *Server) handleReferenceSources(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusForbidden, "organization context required")
 		return
 	}
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	if r.Method == http.MethodGet {
 		var sources []models.ReferenceSource
 		s.db.Where("organization_id = ?", orgID).Order("tier, name").Find(&sources)
@@ -54,6 +57,10 @@ func (s *Server) handleReferenceSourceDelete(w http.ResponseWriter, r *http.Requ
 	id := chi.URLParam(r, "id")
 	if orgID == "" || id == "" {
 		writeError(w, http.StatusBadRequest, "organization context and source id required")
+		return
+	}
+
+	if !requireGovernanceAdmin(w, r) {
 		return
 	}
 	if err := s.refSV.RemoveSource(orgID, id, getActorID(r)); err != nil {
@@ -132,6 +139,9 @@ func (s *Server) handleReferencePackages(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusForbidden, "organization context required")
 		return
 	}
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	if r.Method == http.MethodGet {
 		var pkgs []models.ReferencePackage
 		s.db.Where("organization_id = ?", orgID).Order("created_at DESC").Limit(100).Find(&pkgs)
@@ -140,9 +150,9 @@ func (s *Server) handleReferencePackages(w http.ResponseWriter, r *http.Request)
 	}
 	// POST: import (body = raw manifest bytes) with headers for signature/publisher.
 	var req struct {
-		Manifest      string `json:"manifest"`
-		SignatureHex  string `json:"signature_hex"`
-		Publisher     string `json:"publisher"`
+		Manifest     string `json:"manifest"`
+		SignatureHex string `json:"signature_hex"`
+		Publisher    string `json:"publisher"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
@@ -167,6 +177,11 @@ func (s *Server) handleReferencePackageActivate(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "organization context and package id required")
 		return
 	}
+
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
+
 	var req struct {
 		Note string `json:"note"`
 	}
@@ -190,6 +205,10 @@ func (s *Server) handleReferencePackageRollback(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "organization context and package id required")
 		return
 	}
+
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	if err := s.refSV.RollbackPackage(orgID, id, getActorID(r)); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -203,6 +222,9 @@ func (s *Server) handleReferenceCatalog(w http.ResponseWriter, r *http.Request) 
 	orgID := getOrgID(r)
 	if orgID == "" {
 		writeError(w, http.StatusForbidden, "organization context required")
+		return
+	}
+	if !requireGovernanceAdmin(w, r) {
 		return
 	}
 	if r.Method == http.MethodGet {

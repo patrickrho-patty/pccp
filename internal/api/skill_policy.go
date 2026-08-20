@@ -165,24 +165,18 @@ func (s *Server) handleAdminSkillInventory(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Optional network-only skills (in the rollup but with zero affected
-	// harnesses) surface as missing so admins see them too (spec: PCCP shows
-	// affected/installed/missing/unverified/drifted states by harness).
+	// Skills that have a policy assignment but zero harness reports yet are
+	// shown as provisioned-but-not-seen so admins can act before first contact.
 	for _, a := range assignments {
-		if _, ok := rollup[a.SkillIdentity]; !ok {
-			if row, exists := rollup[a.SkillIdentity]; exists {
-				_ = row // already present
-				continue
-			}
-			row := &skillInventoryRow{SkillIdentity: a.SkillIdentity}
-			if a.State == skillpolicy.Required {
-				row.Missing = 1
-			}
-			// Assignments for skills with no reports yet are shown as
-			// provisioned-but-not-seen.
-			rollup[a.SkillIdentity] = row
-			order = append(order, a.SkillIdentity)
+		if _, ok := rollup[a.SkillIdentity]; ok {
+			continue
 		}
+		row := &skillInventoryRow{SkillIdentity: a.SkillIdentity}
+		if a.State == skillpolicy.Required {
+			row.Missing = 1
+		}
+		rollup[a.SkillIdentity] = row
+		order = append(order, a.SkillIdentity)
 	}
 
 	sort.Strings(order)
@@ -286,6 +280,9 @@ func (s *Server) handleAdminSkillAssignmentUpsert(w http.ResponseWriter, r *http
 		writeError(w, http.StatusForbidden, "organization context required")
 		return
 	}
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	var req skillAssignmentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
@@ -348,6 +345,10 @@ func (s *Server) handleAdminSkillAssignmentDelete(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, "organization context and assignment id required")
 		return
 	}
+
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	if err := s.db.Model(&models.SkillPolicyAssignment{}).Where("organization_id = ? AND id = ?", orgID, id).
 		Update("state", "deleted").Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "skill policy: "+err.Error())
@@ -372,6 +373,9 @@ func (s *Server) handleAdminSkillEpochDeliver(w http.ResponseWriter, r *http.Req
 	orgID := getOrgID(r)
 	if orgID == "" {
 		writeError(w, http.StatusForbidden, "organization context required")
+		return
+	}
+	if !requireGovernanceAdmin(w, r) {
 		return
 	}
 	assignments, err := s.listOrgSkillAssignments(orgID)

@@ -24,15 +24,20 @@ const (
 	traceTTL         = 24 * time.Hour
 	rollupRetention  = 90 * 24 * time.Hour
 	eventRetention   = 7 * 24 * time.Hour
+	// traceSweepThreshold bounds the in-memory correlator to the concurrent
+	// request population; anything older than traceTTL is dropped so a trace
+	// that never reaches a terminal boundary cannot leak memory.
+	traceSweepThreshold = 50_000
+	maxTraceAge         = 30 * time.Minute
 )
 
 // Service is the QoS analytics engine.
 type Service struct {
 	db *gorm.DB
 	mu sync.Mutex
-	// traceCorrelator maps a short-lived trace handle → StratumKey + lifecycle
+	// traces correlates a short-lived trace handle → StratumKey + lifecycle
 	// stage timestamps, so durations derive from monotonic deltas and never
-	// become negative. Rotated hourly.
+	// become negative. Opportunistically swept when it exceeds the threshold.
 	traces map[string]traceState
 }
 
@@ -41,7 +46,6 @@ type traceState struct {
 	queuedAt   time.Time
 	lastStage  string
 	lastAt     time.Time
-	headTokens int64
 }
 
 func New(db *gorm.DB) *Service {
@@ -60,6 +64,7 @@ func Stratum(deployment, model, region, workerPool, trafficClass, sizeBucket str
 func (s *Service) RecordLifecycle(ev models.QoSRequestEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.sweepTraces()
 	if ev.Lifecycle == "" || ev.OccurredAt.IsZero() {
 		return
 	}
@@ -99,6 +104,21 @@ func (s *Service) RecordLifecycle(ev models.QoSRequestEvent) {
 		s.traces[ev.TraceKey] = st
 	}
 	s.db.Create(&ev)
+}
+
+// sweepTraces drops trace correlation entries that are stale (never reached a
+// terminal boundary). Called while holding the mutex on each ingest when the
+// map exceeds the threshold, so memory stays bounded regardless of traffic.
+func (s *Service) sweepTraces() {
+	if len(s.traces) < traceSweepThreshold {
+		return
+	}
+	cutoff := time.Now().Add(-maxTraceAge)
+	for k, v := range s.traces {
+		if v.lastAt.Before(cutoff) || v.queuedAt.Before(cutoff) {
+			delete(s.traces, k)
+		}
+	}
 }
 
 // Percentile returns the p-th percentile of a SORTED distribution (correct

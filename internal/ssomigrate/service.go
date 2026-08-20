@@ -200,42 +200,34 @@ func (s *Service) Reconcile(orgID, manifestID string) (*models.SSOMigrationManif
 	}
 	s.db.Model(&models.SSOIdentityLink{}).Where("organization_id = ?", orgID).
 		Select("legacy_issuer, legacy_subject, status").Find(&users)
-	linked, ambiguous, excluded, conflicts := 0, 0, 0, 0
-	linkedSet := map[string]bool{}
+	linked, ambiguous, excluded := 0, 0, 0
 	for _, u := range users {
 		switch u.Status {
 		case "linked":
 			linked++
-			linkedSet[u.LegacyIssuer+"\x00"+u.LegacySubject] = true
 		case "ambiguous":
 			ambiguous++
 		case "disabled":
 			excluded++
 		}
 	}
-	_ = conflicts
-	// Items without a linked identity are pending migrations; identity counts
-	// use the same immutable keys to keep reconciliation deterministic.
-	for _, it := range items {
-		_ = it
-	}
 	manifest.SourceCount = len(items)
 	manifest.TargetCount = len(items)
-	manifest.LinkedCount = linked
-	manifest.AmbiguousCount = ambiguous
-	manifest.ExcludedCount = excluded
-	manifest.ConflictCount = conflicts
 	manifest.Status = "reconciled"
 	manifest.ReconciledAt = time.Now().UTC().Format(time.RFC3339)
-	manifest.ConflictCount = 0
+	// Persist deterministic reconciliation counts. (conflicts are resolved at
+	// identity-link time — an ambiguous link is not a silent conflict.)
 	if err := s.db.Model(&manifest).Updates(map[string]interface{}{
 		"source_count": len(items), "target_count": len(items),
 		"linked_count": linked, "ambiguous_count": ambiguous, "excluded_count": excluded,
-		"conflict_count": 0, "status": "reconciled", "reconciled_at": manifest.ReconciledAt,
+		"status": "reconciled", "reconciled_at": manifest.ReconciledAt,
 	}).Error; err != nil {
 		return nil, err
 	}
-	return &manifest, nil
+	// Reflect persisted counts back onto the returned manifest.
+	var refreshed models.SSOMigrationManifest
+	s.db.Where("organization_id = ? AND manifest_id = ?", orgID, manifestID).First(&refreshed)
+	return &refreshed, nil
 }
 
 // SignOffWave advances a wave to signed off (application-owner sign-off).
