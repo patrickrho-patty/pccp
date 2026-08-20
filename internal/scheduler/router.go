@@ -75,6 +75,7 @@ type RouteRequest struct {
 	RequestClass         string // agentic / interactive / batch (SLO scoping)
 	Pool                 string // model pool scope (spec §14 row 17)
 	LoRAAdapter          string // requested adapter (affinity, §14 row 18)
+	Region               string // residency constraint: only workers in this signed card region (empty = any)
 }
 
 // RouteDecision is one placement outcome.
@@ -193,7 +194,9 @@ func (r *CostRouter) RemoveWorker(workerID string) {
 	delete(r.state, workerID)
 }
 
-// Route picks the lowest-cost eligible worker per the locked cost model:
+// Route runs the two decision phases (PAT-1445 Phase 1): the eligibility
+// filter ladder first (governance, capability, risk, capacity — see
+// eligibility.go), then the locked cost model over the survivors:
 //
 //	cost = prefillScale × max(activePrefill + newPrompt − KVOverlapCredits, 0)
 //	     + projectedDecodeKV + w × activeRequests
@@ -206,55 +209,18 @@ func (r *CostRouter) Route(req RouteRequest) (RouteDecision, error) {
 
 	best := RouteDecision{Cost: 1e18}
 	found := false
+	elig := &EligibilityReport{Region: req.Region}
 
 	for id, e := range r.workers {
-		if e.Card.ModelName != req.Model {
-			continue
-		}
-		if r.pools != nil && !r.pools.Contains(req.Pool, id) {
-			continue
-		}
-		if e.Quarantined || e.Lapsed || !e.Card.Servable() {
-			continue
-		}
-		// Gang readiness: an incomplete parallel group serves nothing
-		// (spec §14 row 16).
-		if r.gang != nil && r.gang.MemberBlocked(id) {
-			continue
-		}
 		st := r.state[id]
-
-		// SLO gate (S5): reject placements whose predicted TTFT
-		// violates the objective with high probability.
-		if r.predictor != nil && r.slo != nil {
-			cfgID := r.workerCfg[id]
-			if cfgID == "" {
-				cfgID = id
+		if reason := r.ineligible(req, id, e, st); reason != "" {
+			if elig.Filtered == nil {
+				elig.Filtered = make(map[IneligibilityReason]int)
 			}
-			target := r.slo.ForRequest(req.Model, req.RequestClass)
-			if target.TTFTMs > 0 {
-				f := PredictorFeatures{
-					InputTokens:          req.InputTokens,
-					CachedTokens:         req.CachedTokens,
-					ExpectedOutputTokens: req.ExpectedOutputTokens,
-					ActivePrefill:        st.PrefillActive,
-					ActiveDecodeKV:       st.DecodeKV,
-					ActiveRequests:       st.ActiveRequests,
-				}
-				if risk := r.predictor.PSLOViolation(cfgID, f, float64(target.TTFTMs)); risk > r.maxSLORisk {
-					continue
-				}
-			}
-		}
-
-		// Overload filter (spec §12.3.1): a saturated worker is
-		// ineligible regardless of how cheap its cache would be.
-		if st.Load.MaxConcurrent > 0 && st.Load.Active >= st.Load.MaxConcurrent {
+			elig.Filtered[reason]++
 			continue
 		}
-		if r.cfg.MaxActiveRequests > 0 && st.ActiveRequests >= r.cfg.MaxActiveRequests {
-			continue
-		}
+		elig.Eligible++
 
 		// KV overlap credits: cached prefix tokens cancel prefill work.
 		overlap := 0
@@ -299,6 +265,7 @@ func (r *CostRouter) Route(req RouteRequest) (RouteDecision, error) {
 		return RouteDecision{}, fmt.Errorf("scheduler: no eligible worker for model %q", req.Model)
 	}
 	if r.receipts != nil {
+		st := r.state[best.WorkerID]
 		rec := RoutingReceipt{
 			Decision:      best,
 			Model:         req.Model,
@@ -306,6 +273,12 @@ func (r *CostRouter) Route(req RouteRequest) (RouteDecision, error) {
 			InputTokens:   req.InputTokens,
 			AtUnixMs:      timeNowUnixMs(),
 			PolicyVersion: r.Version(),
+			Eligibility:   elig,
+			Signals: &DecisionSignals{
+				PrefillActive:  st.PrefillActive,
+				DecodeKV:       st.DecodeKV,
+				ActiveRequests: st.ActiveRequests,
+			},
 		}
 		if r.predictor != nil {
 			rec.PredictorVersion = PredictorVersion
@@ -336,15 +309,17 @@ func containsStr(s []string, v string) bool {
 // shadow-candidate comparison. The scheduler signs with its evidence key;
 // the CP API queries them (S10).
 type RoutingReceipt struct {
-	Decision         RouteDecision `json:"decision"`
-	Model            string        `json:"model"`
-	Namespace        string        `json:"namespace"`
-	InputTokens      int           `json:"input_tokens"`
-	AtUnixMs         int64         `json:"at_unix_ms"`
-	PolicyVersion    string        `json:"policy_version,omitempty"`
-	PredictorVersion string        `json:"predictor_version,omitempty"`
-	Shadow           *ShadowRecord `json:"shadow,omitempty"`
-	SignatureHex     string        `json:"signature_hex,omitempty"`
+	Decision         RouteDecision      `json:"decision"`
+	Model            string             `json:"model"`
+	Namespace        string             `json:"namespace"`
+	InputTokens      int                `json:"input_tokens"`
+	AtUnixMs         int64              `json:"at_unix_ms"`
+	PolicyVersion    string             `json:"policy_version,omitempty"`
+	PredictorVersion string             `json:"predictor_version,omitempty"`
+	Eligibility      *EligibilityReport `json:"eligibility,omitempty"`
+	Signals          *DecisionSignals   `json:"signals,omitempty"`
+	Shadow           *ShadowRecord      `json:"shadow,omitempty"`
+	SignatureHex     string             `json:"signature_hex,omitempty"`
 }
 
 // Sign binds the receipt with the given key (canonical body = the JSON
@@ -358,6 +333,8 @@ func (r *RoutingReceipt) Sign(priv ed25519.PrivateKey) error {
 		AtUnixMs:         r.AtUnixMs,
 		PolicyVersion:    r.PolicyVersion,
 		PredictorVersion: r.PredictorVersion,
+		Eligibility:      r.Eligibility,
+		Signals:          r.Signals,
 		Shadow:           r.Shadow,
 	}
 	raw, err := json.Marshal(body)
@@ -385,6 +362,8 @@ func (r *RoutingReceipt) Verify(pub ed25519.PublicKey) bool {
 		AtUnixMs:         r.AtUnixMs,
 		PolicyVersion:    r.PolicyVersion,
 		PredictorVersion: r.PredictorVersion,
+		Eligibility:      r.Eligibility,
+		Signals:          r.Signals,
 		Shadow:           r.Shadow,
 	}
 	raw, _ := json.Marshal(body)
