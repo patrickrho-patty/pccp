@@ -40,6 +40,7 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/korean"
 	"github.com/patrickrho-patty/pccp/internal/leaderboard"
+	"github.com/patrickrho-patty/pccp/internal/reference"
 	"github.com/patrickrho-patty/pccp/internal/metering"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/policy"
@@ -72,6 +73,7 @@ type Server struct {
 	comms            *communications.Service
 	workintel        *workintel.Service
 	leaderboardSV    *leaderboard.Service
+	refSV            *reference.Service
 	events           *events.Service
 	gitscm           *gitscm.Service
 	impact           *impact.Service
@@ -120,6 +122,7 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 	commsSvc := communications.New(db)
 	wiSvc := workintel.New(db)
 	lbSvc := leaderboard.New(db)
+	refSvc := reference.New(db)
 	evtSvc, _ := events.New(db)
 	gitSvc := gitscm.New(db)
 	impactSvc := impact.New(db)
@@ -143,6 +146,7 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 		comms:            commsSvc,
 		workintel:        wiSvc,
 		leaderboardSV:    lbSvc,
+		refSV:            refSvc,
 		events:           evtSvc,
 		gitscm:           gitSvc,
 		impact:           impactSvc,
@@ -820,6 +824,22 @@ func (s *Server) setupRouter() {
 			r.Post("/corrections", s.handleLeaderboardCorrection)
 			r.Post("/reviews", s.handleLeaderboardReview)
 			r.Get("/export", s.handleLeaderboardExport)
+		})
+
+		// Patty Reference retrieval (PAT-1404)
+		r.Route("/reference", func(r chi.Router) {
+			r.Get("/sources", s.handleReferenceSources)
+			r.Post("/sources", s.handleReferenceSources)
+			r.Delete("/sources/{id}", s.handleReferenceSourceDelete)
+			r.Get("/resolve", s.handleReferenceResolve)
+			r.Get("/search", s.handleReferenceSearch)
+			r.Get("/versions", s.handleReferenceListVersions)
+			r.Get("/packages", s.handleReferencePackages)
+			r.Post("/packages", s.handleReferencePackages)
+			r.Post("/packages/{id}/activate", s.handleReferencePackageActivate)
+			r.Post("/packages/{id}/rollback", s.handleReferencePackageRollback)
+			r.Get("/catalog", s.handleReferenceCatalog)
+			r.Post("/catalog", s.handleReferenceCatalog)
 		})
 
 		// Audit

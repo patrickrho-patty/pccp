@@ -837,4 +837,24 @@ export const api = {
     request<any>('/api/leaderboard/corrections', { method: 'POST', body: JSON.stringify(data) }),
   submitLeaderboardReview: (data: any) =>
     request<any>('/api/leaderboard/reviews', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Patty Reference (PAT-1404)
+  referenceSources: (q: string) => request<any>(`/api/reference/sources${q}`),
+  saveReferenceSource: (data: any) =>
+    request<any>('/api/reference/sources', { method: 'POST', body: JSON.stringify(data) }),
+  deleteReferenceSource: (id: string) =>
+    request<any>(`/api/reference/sources/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  referenceResolve: (q: string, evidence: string, version: string) =>
+    request<any>(`/api/reference/resolve?q=${encodeURIComponent(q)}&project_evidence=${encodeURIComponent(evidence)}&requested_version=${encodeURIComponent(version || '')}`),
+  referenceSearch: (q: string, libraryId: string, version: string, locale: string) =>
+    request<any>(`/api/reference/search?q=${encodeURIComponent(q)}&library_id=${encodeURIComponent(libraryId || '')}&version=${encodeURIComponent(version || '')}&locale=${encodeURIComponent(locale || 'ko')}`),
+  referencePackages: () => request<any[]>('/api/reference/packages'),
+  importReferencePackage: (data: any) =>
+    request<any>('/api/reference/packages', { method: 'POST', body: JSON.stringify(data) }),
+  activateReferencePackage: (id: string, note: string) =>
+    request<any>(`/api/reference/packages/${encodeURIComponent(id)}/activate`, { method: 'POST', body: JSON.stringify({ note }) }),
+  rollbackReferencePackage: (id: string) =>
+    request<any>(`/api/reference/packages/${encodeURIComponent(id)}/rollback`, { method: 'POST', body: JSON.stringify({}) }),
+  referenceCatalog: (data: any) =>
+    data ? request<any>('/api/reference/catalog', { method: 'POST', body: JSON.stringify(data) }) : request<any>('/api/reference/catalog'),
 };

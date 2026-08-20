@@ -188,6 +188,12 @@ func AllModels() []interface{} {
 		&ScorecardSnapshot{},
 		&ScorecardCorrection{},
 		&ScorecardReview{},
+		// Patty Reference retrieval (PAT-1404)
+		&ReferenceSource{},
+		&ReferenceChunk{},
+		&ReferencePackage{},
+		&ReferenceCatalogState{},
+		&ReferenceAuditEvent{},
 		// Model distribution campaigns (PAT-1444)
 		&ModelPackageEntitlement{},
 		&ModelDistributionCampaign{},
