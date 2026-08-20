@@ -40,17 +40,18 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/korean"
 	"github.com/patrickrho-patty/pccp/internal/leaderboard"
-	"github.com/patrickrho-patty/pccp/internal/reference"
-	"github.com/patrickrho-patty/pccp/internal/ssomigrate"
-	"github.com/patrickrho-patty/pccp/internal/qos"
 	"github.com/patrickrho-patty/pccp/internal/metering"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/policy"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
+	"github.com/patrickrho-patty/pccp/internal/qos"
+	"github.com/patrickrho-patty/pccp/internal/reference"
 	"github.com/patrickrho-patty/pccp/internal/registry"
 	"github.com/patrickrho-patty/pccp/internal/sandbox"
+	"github.com/patrickrho-patty/pccp/internal/sandboxlife"
 	"github.com/patrickrho-patty/pccp/internal/security"
 	"github.com/patrickrho-patty/pccp/internal/sessionlifecycle"
+	"github.com/patrickrho-patty/pccp/internal/ssomigrate"
 	"github.com/patrickrho-patty/pccp/internal/workintel"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -78,6 +79,7 @@ type Server struct {
 	refSV            *reference.Service
 	ssoMigrate       *ssomigrate.Service
 	qosSV            *qos.Service
+	sandboxLife      *sandboxlife.Service
 	events           *events.Service
 	gitscm           *gitscm.Service
 	impact           *impact.Service
@@ -129,6 +131,7 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 	refSvc := reference.New(db)
 	ssoMigSvc := ssomigrate.New(db)
 	qosSvc := qos.New(db)
+	sbLifeSvc := sandboxlife.New(db)
 	evtSvc, _ := events.New(db)
 	gitSvc := gitscm.New(db)
 	impactSvc := impact.New(db)
@@ -155,6 +158,7 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 		refSV:            refSvc,
 		ssoMigrate:       ssoMigSvc,
 		qosSV:            qosSvc,
+		sandboxLife:      sbLifeSvc,
 		events:           evtSvc,
 		gitscm:           gitSvc,
 		impact:           impactSvc,
@@ -870,6 +874,22 @@ func (s *Server) setupRouter() {
 			r.Get("/outcomes", s.handleQoSOutcomes)
 			r.Get("/timeline", s.handleQoSTimeline)
 			r.Get("/forecast", s.handleQoSForecast)
+		})
+
+		// Hardened sandbox lifecycles (PAT-1452)
+		r.Route("/sandbox-life", func(r chi.Router) {
+			r.Get("/policy", s.handleSandboxLifePolicy)
+			r.Post("/policy", s.handleSandboxLifePolicy)
+			r.Get("/resolve", s.handleSandboxLifeResolve)
+			r.Get("/templates", s.handleSandboxLifeTemplates)
+			r.Post("/templates", s.handleSandboxLifeTemplates)
+			r.Get("/runners", s.handleSandboxLifeRunners)
+			r.Post("/runners", s.handleSandboxLifeRunners)
+			r.Post("/prepare", s.handleSandboxLifePrepare)
+			r.Get("/concurrency", s.handleSandboxLifeConcurrency)
+			r.Get("/environments", s.handleSandboxLifeEnvironments)
+			r.Post("/environments/{id}/{action}", s.handleSandboxLifeAction)
+			r.Post("/environments/{id}/drift", s.handleSandboxLifeDrift)
 		})
 
 		// Audit
@@ -7792,10 +7812,10 @@ func (s *Server) handleListEnterpriseViolations(w http.ResponseWriter, r *http.R
 	// PAT-1516: counts per feature for dashboard reconciliation.
 	if r.URL.Query().Get("counts") == "true" {
 		type row struct {
-		FeatureKey string `json:"feature_key"`
-		Open       int    `json:"open"`
-		Resolved   int    `json:"resolved"`
-	}
+			FeatureKey string `json:"feature_key"`
+			Open       int    `json:"open"`
+			Resolved   int    `json:"resolved"`
+		}
 		var rows []row
 		if err := s.db.Model(&models.EnterpriseFeatureViolation{}).
 			Select("feature_key, SUM(CASE WHEN resolved = false THEN 1 ELSE 0 END) as open, SUM(CASE WHEN resolved = true THEN 1 ELSE 0 END) as resolved").
@@ -7843,11 +7863,11 @@ func (s *Server) handleResolveViolation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req struct {
-		Disposition        string              `json:"disposition"`        // fixed | false_positive | risk_accepted | duplicate | suppressed
-		DispositionReason  string              `json:"disposition_reason"` // required
-		Evidence           []map[string]string `json:"evidence"`
-		OwnerID            string              `json:"owner_id"`
-		ExpiresAt          string              `json:"expires_at"` // required when disposition=risk_accepted
+		Disposition       string              `json:"disposition"`        // fixed | false_positive | risk_accepted | duplicate | suppressed
+		DispositionReason string              `json:"disposition_reason"` // required
+		Evidence          []map[string]string `json:"evidence"`
+		OwnerID           string              `json:"owner_id"`
+		ExpiresAt         string              `json:"expires_at"` // required when disposition=risk_accepted
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")

@@ -877,4 +877,23 @@ export const api = {
   qosOutcomes: (q: string) => request<any>(`/api/qos/outcomes${q}`),
   qosTimeline: (q: string) => request<any>(`/api/qos/timeline${q}`),
   qosForecast: (q: string) => request<any>(`/api/qos/forecast${q}`),
+
+  // Hardened sandbox lifecycles (PAT-1452)
+  sandboxLifePolicy: (data?: any) =>
+    data ? request<any>('/api/sandbox-life/policy', { method: 'POST', body: JSON.stringify(data) }) : request<any[]>('/api/sandbox-life/policy'),
+  sandboxLifeResolve: (targetId: string, scope: string) =>
+    request<any>(`/api/sandbox-life/resolve?target_id=${encodeURIComponent(targetId)}&scope=${encodeURIComponent(scope)}`),
+  sandboxLifeTemplates: (data?: any) =>
+    data ? request<any>('/api/sandbox-life/templates', { method: 'POST', body: JSON.stringify(data) }) : request<any[]>('/api/sandbox-life/templates'),
+  sandboxLifeRunners: (data?: any) =>
+    data ? request<any>('/api/sandbox-life/runners', { method: 'POST', body: JSON.stringify(data) }) : request<any[]>('/api/sandbox-life/runners'),
+  sandboxLifePrepare: (data: any) =>
+    request<any>('/api/sandbox-life/prepare', { method: 'POST', body: JSON.stringify(data) }),
+  sandboxLifeConcurrency: (envId: string, sessionId: string) =>
+    request<any>(`/api/sandbox-life/concurrency?environment_id=${encodeURIComponent(envId)}&session_id=${encodeURIComponent(sessionId)}`),
+  sandboxLifeEnvironments: () => request<any[]>('/api/sandbox-life/environments'),
+  sandboxLifeAction: (id: string, action: string) =>
+    request<any>(`/api/sandbox-life/environments/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: JSON.stringify({}) }),
+  sandboxLifeDrift: (id: string, kind: string, reason: string) =>
+    request<any>(`/api/sandbox-life/environments/${encodeURIComponent(id)}/drift`, { method: 'POST', body: JSON.stringify({ kind, reason }) }),
 };

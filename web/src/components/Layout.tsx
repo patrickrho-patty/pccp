@@ -75,6 +75,7 @@ const navSections: NavSection[] = [
       { path: '/reference', label: '레퍼런스', labelEn: 'Reference', icon: '📚' },
       { path: '/sso', label: 'SSO 마이그레이션', labelEn: 'SSO Migration', icon: '🔐' },
       { path: '/sre/qos', label: 'GPU 대기열', labelEn: 'GPU QoS', icon: '📶' },
+      { path: '/sandboxes/life', label: '샌드박스 라이프사이클', labelEn: 'Sandbox Lifecycle', icon: '🏗' },
       { path: '/communications', label: '커뮤니케이션', labelEn: 'Comms', icon: '💬' },
       { path: '/sandboxes', label: '샌드박스', labelEn: 'Sandboxes', icon: '📦' },
     ]

@@ -204,6 +204,11 @@ func AllModels() []interface{} {
 		&QoSRequestEvent{},
 		&QoSRollup{},
 		&QoSForecast{},
+		// Hardened sandbox lifecycles (PAT-1452)
+		&SandboxEnvironmentTemplate{},
+		&SandboxLifecyclePolicy{},
+		&SandboxRunner{},
+		&SandboxEnvironment{},
 		// Model distribution campaigns (PAT-1444)
 		&ModelPackageEntitlement{},
 		&ModelDistributionCampaign{},
