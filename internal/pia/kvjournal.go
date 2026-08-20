@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"sync"
+
+	"github.com/patrickrho-patty/pccp/internal/scheduler"
 )
 
 // kvjournal.go implements spec §13.11: the PIA owns the KV event broker
@@ -20,12 +22,32 @@ type KVJournalRecord struct {
 	Tokens int    `json:"tokens"`
 }
 
-// KVJournal is the append-only per-incarnation journal.
+// KVJournal is the append-only per-incarnation journal. The incarnation's
+// cache identity is journal-level: an identity change (model package,
+// tokenizer, template, policy epoch) IS a new incarnation — old blocks
+// can never be replayed under a new identity (PAT-1445 WS1).
 type KVJournal struct {
-	mu     sync.Mutex
-	path   string
-	seq    uint64
-	closed bool
+	mu       sync.Mutex
+	path     string
+	seq      uint64
+	closed   bool
+	identity scheduler.CacheIdentity
+}
+
+// SetIdentity binds the incarnation's cache identity (published with
+// every journal batch so the scheduler's directory keys extents exactly).
+func (j *KVJournal) SetIdentity(id scheduler.CacheIdentity) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.identity = id
+}
+
+// Identity returns the incarnation's cache identity (zero = unset: the
+// scheduler applies such batches to the legacy index only).
+func (j *KVJournal) Identity() scheduler.CacheIdentity {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.identity
 }
 
 // OpenKVJournal opens (or creates) the journal file at path and resumes

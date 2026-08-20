@@ -347,6 +347,9 @@ func (a *WorkerAgent) publishKVJournal(conn *dari.TransportConn) {
 	payload, err := json.Marshal(map[string]interface{}{
 		"seq":    lastSeq,
 		"blocks": blocks,
+		// The incarnation's cache identity travels with the batch so the
+		// scheduler's WS1 directory keys extents exactly (PAT-1445 B3.1).
+		"identity": a.cfg.KVJournal.Identity(),
 	})
 	if err != nil {
 		log.Printf("pia worker: marshal KV journal: %v", err)

@@ -234,14 +234,15 @@ func (l *DARIListener) handleConn(netConn net.Conn) {
 
 		case record.Kind == dari.KindMessage && msgType == dari.MsgKVJournal:
 			var journal struct {
-				Seq    uint64    `json:"seq"`
-				Blocks []KVBlock `json:"blocks"`
+				Seq      uint64        `json:"seq"`
+				Blocks   []KVBlock     `json:"blocks"`
+				Identity CacheIdentity `json:"identity,omitempty"`
 			}
 			if err := json.Unmarshal(record.Payload, &journal); err != nil {
 				log.Printf("scheduler: bad KV journal from %s", cred.SubjectPeerID)
 				continue
 			}
-			applied := l.svc.KV.ApplyJournal(cred.SubjectPeerID, journal.Seq, journal.Blocks)
+			applied := applyKVJournal(l.svc, cred.SubjectPeerID, journal.Seq, journal.Blocks, journal.Identity)
 			ack, _ := json.Marshal(map[string]interface{}{
 				"applied": applied,
 				"seq":     journal.Seq,
@@ -388,4 +389,16 @@ func generateListenerCert() (tls.Certificate, error) {
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 	return tls.X509KeyPair(certPEM, keyPEM)
+}
+
+// applyKVJournal applies one journal batch to the legacy namespace index
+// and — when the batch carries a cache identity — to the WS1 directory
+// (PAT-1445 B3.1). Identity-less batches stay legacy-only, so workers on
+// older journals keep the conservative namespace-scoped path.
+func applyKVJournal(svc *Scheduler, workerID string, seq uint64, blocks []KVBlock, id CacheIdentity) bool {
+	applied := svc.KV.ApplyJournal(workerID, seq, blocks)
+	if applied && id != (CacheIdentity{}) {
+		svc.KVDir.ApplyJournal(workerID, seq, blocks, id)
+	}
+	return applied
 }

@@ -127,3 +127,30 @@ func TestPauseRetainDoesNotInflateHits(t *testing.T) {
 		t.Fatalf("pause-hold inflated the hot-prefix signal: %+v", hot)
 	}
 }
+
+// TestJournalDualPublishesToDirectory: an identity-carrying journal batch
+// feeds both the legacy index and the WS1 directory; an identity-less
+// batch feeds only the legacy path.
+func TestJournalDualPublishesToDirectory(t *testing.T) {
+	fx := newWorkerFixture(t)
+	s := NewScheduler(fx.trust, nil, 30*time.Second, 60*time.Second, testEvidenceKey(t))
+	blocks := []KVBlock{{Namespace: "tenant-a", Hash: "h1", Tokens: 500}}
+
+	if !applyKVJournal(s, "w1", 1, blocks, testIdentity) {
+		t.Fatal("journal batch not applied")
+	}
+	if got := s.KV.OverlapTokens("w1", "tenant-a", "h1"); got != 500 {
+		t.Fatalf("legacy overlap = %d, want 500", got)
+	}
+	if got := s.KVDir.OverlapTokens("w1", "tenant-a", "h1", testIdentity); got != 500 {
+		t.Fatalf("directory overlap = %d, want 500", got)
+	}
+
+	// Identity-less batches never reach the directory.
+	if !applyKVJournal(s, "w1", 2, blocks, CacheIdentity{}) {
+		t.Fatal("identity-less batch not applied")
+	}
+	if got := s.KVDir.OverlapTokens("w1", "tenant-a", "h1", testIdentity); got != 500 {
+		t.Fatalf("directory state changed by identity-less batch: %d", got)
+	}
+}

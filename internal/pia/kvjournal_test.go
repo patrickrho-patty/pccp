@@ -3,6 +3,8 @@ package pia
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/patrickrho-patty/pccp/internal/scheduler"
 )
 
 func TestKVJournalAppendAndReplay(t *testing.T) {
@@ -54,5 +56,21 @@ func TestKVJournalSurvivesReopen(t *testing.T) {
 	}
 	if seq != 2 {
 		t.Fatalf("next seq = %d, want 2 (monotonic across incarnations)", seq)
+	}
+}
+
+func TestJournalIncarnationIdentity(t *testing.T) {
+	j, err := OpenKVJournal(filepath.Join(t.TempDir(), "kv.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	if got := j.Identity(); got != (scheduler.CacheIdentity{}) {
+		t.Fatalf("unset identity = %+v, want zero", got)
+	}
+	id := scheduler.CacheIdentity{ModelPackage: "m@1", TokenizerID: "tok", TemplateID: "tpl", PolicyEpoch: "e1"}
+	j.SetIdentity(id)
+	if got := j.Identity(); got != id {
+		t.Fatalf("identity = %+v, want %+v", got, id)
 	}
 }
