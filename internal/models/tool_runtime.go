@@ -194,6 +194,12 @@ func AllModels() []interface{} {
 		&ReferencePackage{},
 		&ReferenceCatalogState{},
 		&ReferenceAuditEvent{},
+		// SSO Keycloak→Authentik migration (PAT-1442)
+		&SSOIdentityLink{},
+		&SSOMigrationItem{},
+		&SSOMigrationManifest{},
+		&SSOMigrationWave{},
+		&SSOMigrationBridgeEvent{},
 		// Model distribution campaigns (PAT-1444)
 		&ModelPackageEntitlement{},
 		&ModelDistributionCampaign{},

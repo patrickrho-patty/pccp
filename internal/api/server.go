@@ -41,6 +41,7 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/korean"
 	"github.com/patrickrho-patty/pccp/internal/leaderboard"
 	"github.com/patrickrho-patty/pccp/internal/reference"
+	"github.com/patrickrho-patty/pccp/internal/ssomigrate"
 	"github.com/patrickrho-patty/pccp/internal/metering"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/policy"
@@ -74,6 +75,7 @@ type Server struct {
 	workintel        *workintel.Service
 	leaderboardSV    *leaderboard.Service
 	refSV            *reference.Service
+	ssoMigrate       *ssomigrate.Service
 	events           *events.Service
 	gitscm           *gitscm.Service
 	impact           *impact.Service
@@ -123,6 +125,7 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 	wiSvc := workintel.New(db)
 	lbSvc := leaderboard.New(db)
 	refSvc := reference.New(db)
+	ssoMigSvc := ssomigrate.New(db)
 	evtSvc, _ := events.New(db)
 	gitSvc := gitscm.New(db)
 	impactSvc := impact.New(db)
@@ -147,6 +150,7 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 		workintel:        wiSvc,
 		leaderboardSV:    lbSvc,
 		refSV:            refSvc,
+		ssoMigrate:       ssoMigSvc,
 		events:           evtSvc,
 		gitscm:           gitSvc,
 		impact:           impactSvc,
@@ -840,6 +844,19 @@ func (s *Server) setupRouter() {
 			r.Post("/packages/{id}/rollback", s.handleReferencePackageRollback)
 			r.Get("/catalog", s.handleReferenceCatalog)
 			r.Post("/catalog", s.handleReferenceCatalog)
+		})
+
+		// SSO Keycloak→Authentik migration (PAT-1442)
+		r.Route("/sso-migrate", func(r chi.Router) {
+			r.Get("/links", s.handleSSOMigrateLinks)
+			r.Post("/links", s.handleSSOMigrateLink)
+			r.Post("/bridge", s.handleSSOMigrateBridge)
+			r.Get("/manifests", s.handleSSOMigrateManifests)
+			r.Post("/manifests", s.handleSSOMigrateManifests)
+			r.Get("/manifests/{id}/reconcile", s.handleSSOMigrateReconcile)
+			r.Get("/waves", s.handleSSOMigrateWaves)
+			r.Post("/waves", s.handleSSOMigrateWaves)
+			r.Post("/waves/{id}/signoff", s.handleSSOMigrateWaveSignOff)
 		})
 
 		// Audit

@@ -73,6 +73,7 @@ const navSections: NavSection[] = [
       { path: '/analytics', label: '분석', labelEn: 'Analytics', icon: '📊' },
       { path: '/leaderboard', label: '리더보드', labelEn: 'Leaderboard', icon: '🏆' },
       { path: '/reference', label: '레퍼런스', labelEn: 'Reference', icon: '📚' },
+      { path: '/sso', label: 'SSO 마이그레이션', labelEn: 'SSO Migration', icon: '🔐' },
       { path: '/communications', label: '커뮤니케이션', labelEn: 'Comms', icon: '💬' },
       { path: '/sandboxes', label: '샌드박스', labelEn: 'Sandboxes', icon: '📦' },
     ]

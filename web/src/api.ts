@@ -857,4 +857,18 @@ export const api = {
     request<any>(`/api/reference/packages/${encodeURIComponent(id)}/rollback`, { method: 'POST', body: JSON.stringify({}) }),
   referenceCatalog: (data: any) =>
     data ? request<any>('/api/reference/catalog', { method: 'POST', body: JSON.stringify(data) }) : request<any>('/api/reference/catalog'),
+
+  // SSO Keycloak→Authentik migration (PAT-1442)
+  ssoMigrateLinks: () => request<any[]>('/api/sso-migrate/links'),
+  ssoMigrateLink: (data: any) =>
+    request<any>('/api/sso-migrate/links', { method: 'POST', body: JSON.stringify(data) }),
+  ssoMigrateBridge: (data: any) =>
+    request<any>('/api/sso-migrate/bridge', { method: 'POST', body: JSON.stringify(data) }),
+  ssoMigrateManifests: (data?: any) =>
+    data ? request<any>('/api/sso-migrate/manifests', { method: 'POST', body: JSON.stringify(data) }) : request<any[]>('/api/sso-migrate/manifests'),
+  ssoMigrateReconcile: (id: string) => request<any>(`/api/sso-migrate/manifests/${encodeURIComponent(id)}/reconcile`),
+  ssoMigrateWaves: (data?: any) =>
+    data ? request<any>('/api/sso-migrate/waves', { method: 'POST', body: JSON.stringify(data) }) : request<any[]>('/api/sso-migrate/waves'),
+  ssoMigrateSignOff: (id: string, rollbackWindow: string) =>
+    request<any>(`/api/sso-migrate/waves/${encodeURIComponent(id)}/signoff`, { method: 'POST', body: JSON.stringify({ rollback_window: rollbackWindow }) }),
 };
