@@ -234,10 +234,10 @@ func (o *Observability) PDView() interface{} {
 	}
 	out := []PDModelView{}
 	for m := range models {
-		pre, dec, agg := o.svc.PD.planner.RoleCounts(m)
+		pre, dec, agg := o.svc.PD.RoleCounts(m)
 		out = append(out, PDModelView{
 			Model:        m,
-			PrefillShare: o.svc.PD.planner.PrefillShare(m),
+			PrefillShare: o.svc.PD.PrefillShare(m),
 			Engaged:      o.svc.PD.Engaged(m),
 			Prefill:      pre,
 			Decode:       dec,

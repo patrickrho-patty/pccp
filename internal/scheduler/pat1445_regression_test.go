@@ -16,10 +16,14 @@ func TestSyncRouterFeedsTopology(t *testing.T) {
 	c1.WorkerID = "w-a"
 	c1.NodeID = "node-1"
 	c1.Zone = "z1"
+	c1.CardVersion = 2
+	c1.DariAddr = "10.0.0.1:9444"
 	c2 := fx.card
 	c2.WorkerID = "w-b"
 	c2.NodeID = "node-2"
 	c2.Zone = "z1"
+	c2.CardVersion = 2
+	c2.DariAddr = "10.0.0.2:9444"
 	now := time.Now()
 	if _, err := s.Registry.Register(c1, fx.subjectPub, now); err != nil {
 		t.Fatal(err)
@@ -28,6 +32,11 @@ func TestSyncRouterFeedsTopology(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.SyncRouter()
+
+	// The same card feed must reach the P/D role view (single fan-out point).
+	if pre, dec, agg := s.PD.RoleCounts(c1.ModelName); pre+dec+agg != 2 {
+		t.Fatalf("planner sees %d/%d/%d workers, want 2 total", pre, dec, agg)
+	}
 
 	oracle := NewStaticTopologyOracle(s.Topology)
 	// Same node prices NVLink-grade.

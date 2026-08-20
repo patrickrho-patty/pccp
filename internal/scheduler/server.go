@@ -91,6 +91,12 @@ func (s *Scheduler) SyncRouter() {
 		if gang != nil {
 			gang.Upsert(e)
 		}
+		// The card feed fans out to every worker-state consumer from this
+		// one point: the P/D role view drives stage planning and the S10
+		// capacity views.
+		if s.PD != nil {
+			s.PD.planner.Upsert(e, RouterWorkerState{})
+		}
 		// Feed the network oracle's static fallback from signed cards.
 		// Rack is pinned to the node ID: with no rack telemetry, distinct
 		// nodes never price as PCIe — cross-node transfers stay at the

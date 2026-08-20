@@ -53,6 +53,22 @@ func (c *PDController) SetNow(fn func() time.Time) { c.now = fn }
 // MinColocated returns the per-model co-located capacity floor.
 func (c *PDController) MinColocated() int { return c.minColocated }
 
+// PrefillShare returns the model's trailing prefill-share EMA (S10 view).
+func (c *PDController) PrefillShare(model string) float64 {
+	if c.planner == nil {
+		return 0
+	}
+	return c.planner.PrefillShare(model)
+}
+
+// RoleCounts returns the model's servable workers per role (S10 view).
+func (c *PDController) RoleCounts(model string) (prefill, decode, aggregated int) {
+	if c.planner == nil {
+		return 0, 0, 0
+	}
+	return c.planner.RoleCounts(model)
+}
+
 // Engaged reports whether disaggregation is currently engaged for a model.
 func (c *PDController) Engaged(model string) bool {
 	c.mu.Lock()
