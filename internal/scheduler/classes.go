@@ -17,17 +17,31 @@ import (
 // replaces).
 
 // TrafficEnvelopeDomain is the domain-separation prefix for the traffic
-// envelope's canonical signing body.
-const TrafficEnvelopeDomain = "DARI-TRAFFIC-ENVELOPE-v1\x00"
+// envelope's canonical signing body. v2 adds the WS3 program metadata.
+const TrafficEnvelopeDomain = "DARI-TRAFFIC-ENVELOPE-v2\x00"
+
+// ProgramMeta is the WS3 agent-program scheduling metadata carried by a
+// signed envelope: opaque, bounded identifiers and budgets only — never
+// conversation text, tool arguments, repository identifiers, or code
+// (PAT-1445 WS3 §program model). A client hint is never an authorization
+// or a resource guarantee; the signature binds it to the issuer.
+type ProgramMeta struct {
+	ProgramID  string `json:"program_id"`            // opaque program/task identifier
+	TurnSeq    uint32 `json:"turn_seq"`              // session turn sequence
+	ParentID   string `json:"parent_id,omitempty"`   // parent/continuation relationship
+	ToolPaused bool   `json:"tool_paused,omitempty"` // the request ended waiting on a tool
+	TaskSLOMs  uint64 `json:"task_slo_ms,omitempty"` // overall task budget (0 = none)
+}
 
 // TrafficEnvelope is a COSE-signed claim: which tenant this request
 // belongs to and which traffic class the tenant's issued capabilities
 // authorize for it.
 type TrafficEnvelope struct {
-	RequestID string    `json:"request_id"`
-	TenantID  string    `json:"tenant_id"`
-	Class     string    `json:"class"`
-	ExpiresAt time.Time `json:"expires_at"`
+	RequestID string       `json:"request_id"`
+	TenantID  string       `json:"tenant_id"`
+	Class     string       `json:"class"`
+	ExpiresAt time.Time    `json:"expires_at"`
+	Program   *ProgramMeta `json:"program,omitempty"`
 
 	SignatureHex string `json:"signature_hex,omitempty"`
 }
@@ -42,16 +56,31 @@ func NewTrafficEnvelope(requestID, tenantID, class string, ttl time.Duration) *T
 	}
 }
 
+// SetProgram attaches WS3 program metadata before signing (the signature
+// binds it — later mutation invalidates the envelope).
+func (e *TrafficEnvelope) SetProgram(m ProgramMeta) { e.Program = &m }
+
 // signingBytes renders the canonical body bound by the signature. Field
 // order is pinned; bump the domain on schema changes.
 func (e *TrafficEnvelope) signingBytes() []byte {
-	dst := make([]byte, 0, 160)
+	dst := make([]byte, 0, 192)
 	dst = append(dst, TrafficEnvelopeDomain...)
 	dst = lpString(dst, e.RequestID)
 	dst = lpString(dst, e.TenantID)
 	dst = lpString(dst, e.Class)
 	exp, _ := e.ExpiresAt.MarshalText()
 	dst = lpString(dst, string(exp))
+	if e.Program != nil {
+		dst = lpString(dst, e.Program.ProgramID)
+		dst = lpU32(dst, e.Program.TurnSeq)
+		dst = lpString(dst, e.Program.ParentID)
+		if e.Program.ToolPaused {
+			dst = append(dst, 1)
+		} else {
+			dst = append(dst, 0)
+		}
+		dst = lpU64(dst, e.Program.TaskSLOMs)
+	}
 	return dst
 }
 

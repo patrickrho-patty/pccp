@@ -35,6 +35,7 @@ type TraceEvent struct {
 	Model                string     `json:"model"`
 	Class                string     `json:"class"`
 	Region               string     `json:"region,omitempty"`
+	ProgramID            string     `json:"program_id,omitempty"`
 	Stage                TraceStage `json:"stage"`
 	InputTokens          int        `json:"input_tokens"`
 	CachedTokens         int        `json:"cached_tokens,omitempty"`
@@ -61,6 +62,7 @@ func traceEventFor(r queue.Request, stage TraceStage) TraceEvent {
 		Model:                model,
 		Class:                string(r.Class),
 		Region:               r.Region,
+		ProgramID:            r.ProgramID,
 		Stage:                stage,
 		InputTokens:          r.InputTokens,
 		CachedTokens:         r.CachedInputTokens,

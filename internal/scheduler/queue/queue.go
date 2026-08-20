@@ -100,6 +100,9 @@ type Request struct {
 	Tenant               string
 	Class                Class
 	Region               string // residency constraint from tenant policy (empty = unconstrained)
+	ProgramID            string // opaque WS3 program identifier (empty = none)
+	TurnSeq              int    // program turn sequence
+	ToolPaused           bool   // the request ended waiting on a tool (WS3)
 	InputTokens          int
 	CachedInputTokens    int
 	ExpectedOutputTokens int

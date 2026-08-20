@@ -18,6 +18,7 @@ type Scheduler struct {
 	KVDir     *KVDirectory
 	Trace     *TraceRecorder
 	PD        *PDController
+	Programs  *ProgramRegistry
 }
 
 // NewScheduler assembles the full S1–S12 scheduler with the given trust
@@ -37,6 +38,7 @@ func NewScheduler(trust Trust, policy PolicySource, ttl, grace time.Duration, ev
 		PD: NewPDController(NewPDPlanner(),
 			NewLatencyPredictorPair(DefaultPredictorConfig())),
 	}
+	svc.Programs = NewProgramRegistry(svc.KVDir)
 	svc.wireServingStack()
 	return svc
 }
@@ -68,6 +70,7 @@ func (s *Scheduler) wireServingStack() {
 	topology := NewTopologyInventory()
 	s.Serving.Dispatcher.SetStagePlanner(
 		NewStagePlanner(s.PD.planner, NewStaticTopologyOracle(topology), s.PD))
+	s.Serving.Dispatcher.SetPrograms(s.Programs)
 }
 
 // SyncRouter refreshes the router's worker/gang/load tables from the

@@ -162,7 +162,7 @@ func (g *Gateway) handleIngress(w http.ResponseWriter, r *http.Request, anthropi
 		return
 	}
 
-	tenant, class, err := g.resolveTenantClass(r)
+	tenant, class, env, err := g.resolveTenantClass(r)
 	if err != nil {
 		writeGatewayError(w, http.StatusForbidden, err.Error())
 		return
@@ -203,6 +203,16 @@ func (g *Gateway) handleIngress(w http.ResponseWriter, r *http.Request, anthropi
 	if g.residency != nil {
 		if region, constrained := g.residency.ResidencyRegion(tenant); constrained {
 			qr.Region = region
+		}
+	}
+	// WS3 program metadata from the verified envelope (opaque identifiers
+	// only; an unverified/absent envelope contributes nothing).
+	if env != nil && env.Program != nil {
+		qr.ProgramID = env.Program.ProgramID
+		qr.TurnSeq = int(env.Program.TurnSeq)
+		qr.ToolPaused = env.Program.ToolPaused
+		if env.Program.TaskSLOMs > 0 {
+			qr.SLOBudget = time.Duration(env.Program.TaskSLOMs) * time.Millisecond
 		}
 	}
 	if req.Stream {
@@ -454,7 +464,7 @@ func (g *Gateway) HandleEmbeddings(w http.ResponseWriter, r *http.Request) {
 		writeGatewayError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	tenant, class, terr := g.resolveTenantClass(r)
+	tenant, class, _, terr := g.resolveTenantClass(r)
 	if terr != nil {
 		writeGatewayError(w, http.StatusForbidden, terr.Error())
 		return
@@ -578,7 +588,10 @@ func (g *Gateway) serveStream(w http.ResponseWriter, r *http.Request, model stri
 // envelope the request keeps the header/default tenant but is pinned to
 // the batch class — the gateway's internal-caller path (the relay always
 // signs).
-func (g *Gateway) resolveTenantClass(r *http.Request) (tenant string, class string, err error) {
+// resolveTenantClass returns the verified tenant, its class, and the
+// verified envelope (nil when absent or unverified — callers must treat
+// nil as "no trusted metadata").
+func (g *Gateway) resolveTenantClass(r *http.Request) (tenant string, class string, verified *TrafficEnvelope, err error) {
 	tenant = r.Header.Get("X-Tenant-ID")
 	if tenant == "" {
 		tenant = "default"
@@ -586,23 +599,23 @@ func (g *Gateway) resolveTenantClass(r *http.Request) (tenant string, class stri
 	class = string(queue.ClassBatch)
 	env := decodeTrafficEnvelope(r)
 	if g.classes == nil || env == nil || env.SignatureHex == "" {
-		return tenant, class, nil
+		return tenant, class, nil, nil
 	}
 	if vErr := env.Verify(g.classes.issuerPub); vErr != nil {
 		// Invalid signature: fail closed to batch; the header tenant is
 		// untrusted metadata but still subject to its (own) allow-list.
-		return tenant, class, nil
+		return tenant, class, nil, nil
 	}
 	// A validly-signed envelope carries a non-empty tenant (the relay
 	// always binds one). An empty tenant on a valid envelope is
 	// malformed — refuse rather than silently trusting the header.
 	if env.TenantID == "" {
-		return "", "", fmt.Errorf("scheduler: signed envelope carries no tenant")
+		return "", "", nil, fmt.Errorf("scheduler: signed envelope carries no tenant")
 	}
 	if env.TenantID != tenant {
-		return "", "", fmt.Errorf("scheduler: tenant header %q conflicts with signed envelope tenant %q", tenant, env.TenantID)
+		return "", "", nil, fmt.Errorf("scheduler: tenant header %q conflicts with signed envelope tenant %q", tenant, env.TenantID)
 	}
-	return env.TenantID, env.Class, nil
+	return env.TenantID, env.Class, env, nil
 }
 
 func decodeTrafficEnvelope(r *http.Request) *TrafficEnvelope {

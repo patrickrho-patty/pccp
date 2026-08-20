@@ -129,6 +129,7 @@ type Dispatcher struct {
 	est      *OutputEstimator
 	router   *CostRouter
 	planner  *StagePlanner
+	programs *ProgramRegistry
 
 	fwMu      sync.Mutex
 	forwarder Forwarder
@@ -324,6 +325,14 @@ func (d *Dispatcher) SetTraceRecorder(t *TraceRecorder) {
 func (d *Dispatcher) SetStagePlanner(p *StagePlanner) {
 	d.mu.Lock()
 	d.planner = p
+	d.mu.Unlock()
+}
+
+// SetPrograms installs the WS3 program registry: turn arrivals and
+// tool-pause completions drive pause-aware KV residency decisions.
+func (d *Dispatcher) SetPrograms(p *ProgramRegistry) {
+	d.mu.Lock()
+	d.programs = p
 	d.mu.Unlock()
 }
 
