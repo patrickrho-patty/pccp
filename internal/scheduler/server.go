@@ -15,6 +15,7 @@ type Scheduler struct {
 	Evidence  *EvidenceLog
 	Serving   *Serving
 	KV        *KVIndex
+	KVDir     *KVDirectory
 	Trace     *TraceRecorder
 }
 
@@ -30,6 +31,7 @@ func NewScheduler(trust Trust, policy PolicySource, ttl, grace time.Duration, ev
 		Evidence:  NewEvidenceLog(evidenceKey),
 		Serving:   NewServing(),
 		KV:        NewKVIndex(),
+		KVDir:     NewKVDirectory(),
 		Trace:     NewTraceRecorder(4096),
 	}
 	svc.wireServingStack()
@@ -43,6 +45,7 @@ func NewScheduler(trust Trust, policy PolicySource, ttl, grace time.Duration, ev
 func (s *Scheduler) wireServingStack() {
 	router := NewCostRouter(DefaultRouterConfig())
 	router.SetKV(s.KV)
+	router.SetKVDirectory(s.KVDir)
 	receipts := NewReceiptStore(1024)
 	receipts.SetSigningKey(s.Evidence.key)
 	router.SetReceipts(receipts)
