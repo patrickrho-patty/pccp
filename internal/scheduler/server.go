@@ -123,9 +123,15 @@ func (s *Scheduler) UpdateRevocations(serials, peerIDs []string) {
 }
 
 // Sweep evicts expired workers and emits evidence for each eviction.
+// Removal propagates through the shared fleet (router, selector, P/D
+// planner all drop it) and the cache planes drop its state (PAT-1445 B1:
+// eviction is one event with total locality).
 func (s *Scheduler) Sweep(now time.Time) []string {
 	evicted := s.Registry.Sweep(now)
 	for _, id := range evicted {
+		s.Fleet.Remove(id)
+		s.KV.EvictWorker(id)
+		s.KVDir.EvictWorker(id)
 		s.Evidence.Emit(EventWorkerEvict, id, "lease expired")
 	}
 	return evicted

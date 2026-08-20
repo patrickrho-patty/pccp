@@ -82,6 +82,33 @@ func TestToolPausedErrorDoesNotPause(t *testing.T) {
 	}
 }
 
+// TestSweepEvictsFromFleet: lease expiry removes the worker from every
+// consumer through the shared fleet — the router cannot route to it.
+func TestSweepEvictsFromFleet(t *testing.T) {
+	fx := newWorkerFixture(t)
+	s := NewScheduler(fx.trust, nil, 30*time.Second, 60*time.Second, testEvidenceKey(t))
+	card := fx.card
+	card.CardVersion = 2
+	card.DariAddr = "10.0.0.1:9444"
+	if _, err := s.Registry.Register(card, fx.subjectPub, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	s.SyncRouter()
+	if _, ok := s.Fleet.Get(card.WorkerID); !ok {
+		t.Fatal("worker missing from fleet after sync")
+	}
+	evicted := s.Sweep(time.Now().Add(10 * time.Minute))
+	if len(evicted) != 1 {
+		t.Fatalf("evicted = %v", evicted)
+	}
+	if _, ok := s.Fleet.Get(card.WorkerID); ok {
+		t.Fatal("evicted worker still in fleet")
+	}
+	if _, err := s.Router().Route(RouteRequest{Model: card.ModelName, InputTokens: 10, ExpectedOutputTokens: 10}); err == nil {
+		t.Fatal("router still routes to the evicted worker")
+	}
+}
+
 // TestPauseRetainDoesNotInflateHits: a pause-hold refreshes last-use
 // without counting as reuse — the hot-prefix signal stays clean.
 func TestPauseRetainDoesNotInflateHits(t *testing.T) {
