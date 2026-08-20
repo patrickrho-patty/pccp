@@ -141,6 +141,11 @@ func AllModels() []interface{} {
 		&PublicStatusSnapshot{},
 		&PublicStatusSubscriber{},
 		&PublicStatusNotification{},
+		// Browser governance (PAT-1448)
+		&BrowserPolicy{},
+		&BrowserTask{},
+		&BrowserApproval{},
+		&BrowserActionEvent{},
 		// Public cloud schedules (PAT-1437)
 		&CloudSchedule{},
 		&ScheduleOccurrence{},

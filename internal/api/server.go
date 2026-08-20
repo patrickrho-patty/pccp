@@ -554,6 +554,22 @@ func (s *Server) setupRouter() {
 			r.Get("/status", s.handleFleetStatus)
 		})
 
+		// Browser governance control plane (PAT-1448)
+		r.Route("/browsergov", func(r chi.Router) {
+			r.Get("/policy", s.handleBGPolicyGet)
+			r.Put("/policy", s.handleBGPolicyPut)
+			r.Get("/policy/explain", s.handleBGPolicyExplain)
+			r.Get("/actions", s.handleBGTaxonomy)
+			r.Post("/tasks", s.handleBGTaskCreate)
+			r.Get("/tasks", s.handleBGTasksList)
+			r.Post("/tasks/{id}/close", s.handleBGTaskClose)
+			r.Get("/tasks/{id}/timeline", s.handleBGTimeline)
+			r.Post("/approvals", s.handleBGApprovalRequest)
+			r.Post("/approvals/{id}/decide", s.handleBGApprovalDecide)
+			r.Post("/effects/gate", s.handleBGEffectGate)
+			r.Post("/events", s.handleBGEventIngest)
+		})
+
 		// Public cloud schedules (PAT-1437) — public-build capability.
 		r.Route("/schedules", func(r chi.Router) {
 			r.Post("/", s.handleCSCreate)

@@ -44,6 +44,7 @@ import Trails from './pages/Trails'
 import EvidenceSearch from './pages/EvidenceSearch'
 import LineageObservation from './pages/LineageObservation'
 import Schedules from './pages/Schedules'
+import BrowserGov from './pages/BrowserGov'
 import AccountPortal from './pages/AccountPortal'
 import LiveView from './pages/LiveView'
 import CodeExplorer from './pages/CodeExplorer'
@@ -154,6 +155,7 @@ function AppContent() {
         {profile === 'portal' && (<>
           <Route path="/portal" element={<AccountPortal />} />
           <Route path="/schedules" element={<Schedules />} />
+          <Route path="/browsergov" element={<BrowserGov />} />
           <Route path="/harnesses" element={<Harnesses />} />
         </>)}
 

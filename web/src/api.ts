@@ -425,6 +425,14 @@ export const api = {
   csCapabilities: () => request<any[]>('/api/schedules/capabilities'),
   csConnect: (capabilityId: string) =>
     request<any>('/api/schedules/capabilities/connect', { method: 'POST', body: JSON.stringify({ capability_id: capabilityId, initiated_from: 'web' }) }),
+
+  // PAT-1448: browser governance control plane.
+  bgPolicy: () => request<any>('/api/browsergov/policy'),
+  bgPutPolicy: (policyJSON: string) =>
+    request<any>('/api/browsergov/policy', { method: 'PUT', body: JSON.stringify({ policy_json: policyJSON }) }),
+  bgExplain: (action: string) => request<any>(`/api/browsergov/policy/explain?action=${encodeURIComponent(action)}`),
+  bgTasks: (state?: string) => request<any[]>(`/api/browsergov/tasks${state ? '?state=' + encodeURIComponent(state) : ''}`),
+  bgTaskTimeline: (taskId: string) => request<any>(`/api/browsergov/tasks/${encodeURIComponent(taskId)}/timeline`),
   getPolicyException: (id: string) => request<any>(`/api/policy/exceptions/${id}`),
   createPolicyException: (data: any) =>
     request<any>('/api/policy/exceptions', { method: 'POST', body: JSON.stringify(data) }),
