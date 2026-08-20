@@ -39,6 +39,7 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/impact"
 	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/korean"
+	"github.com/patrickrho-patty/pccp/internal/leaderboard"
 	"github.com/patrickrho-patty/pccp/internal/metering"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/policy"
@@ -70,6 +71,7 @@ type Server struct {
 	security         *security.Service
 	comms            *communications.Service
 	workintel        *workintel.Service
+	leaderboardSV    *leaderboard.Service
 	events           *events.Service
 	gitscm           *gitscm.Service
 	impact           *impact.Service
@@ -117,6 +119,7 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 	secSvc := security.New(db)
 	commsSvc := communications.New(db)
 	wiSvc := workintel.New(db)
+	lbSvc := leaderboard.New(db)
 	evtSvc, _ := events.New(db)
 	gitSvc := gitscm.New(db)
 	impactSvc := impact.New(db)
@@ -139,6 +142,7 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 		security:         secSvc,
 		comms:            commsSvc,
 		workintel:        wiSvc,
+		leaderboardSV:    lbSvc,
 		events:           evtSvc,
 		gitscm:           gitSvc,
 		impact:           impactSvc,
@@ -801,6 +805,21 @@ func (s *Server) setupRouter() {
 			r.Post("/{id}/enabled", s.handleSetSystemPromptEnabled)
 			r.Post("/{id}/restore/{version}", s.handleRestoreSystemPrompt)
 			r.Post("/epochs/deliver", s.handleSystemPromptEpochDeliver)
+		})
+
+		// Evidence-backed leaderboard (PAT-1440)
+		r.Route("/leaderboard", func(r chi.Router) {
+			r.Get("/", s.handleLeaderboardList)
+			r.Get("/rubrics", s.handleLeaderboardRubrics)
+			r.Put("/rubrics", s.handleLeaderboardRubrics)
+			r.Get("/periods", s.handleLeaderboardPeriods)
+			r.Post("/periods", s.handleLeaderboardPeriods)
+			r.Post("/periods/{id}/freeze", s.handleLeaderboardFreeze)
+			r.Post("/periods/{id}/generate", s.handleLeaderboardGenerate)
+			r.Put("/objectives", s.handleLeaderboardObjective)
+			r.Post("/corrections", s.handleLeaderboardCorrection)
+			r.Post("/reviews", s.handleLeaderboardReview)
+			r.Get("/export", s.handleLeaderboardExport)
 		})
 
 		// Audit

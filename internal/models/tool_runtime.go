@@ -181,6 +181,13 @@ func AllModels() []interface{} {
 		&SystemPromptDocument{},
 		&SystemPromptVersion{},
 		&SystemPromptEpoch{},
+		// Evidence-backed leaderboard (PAT-1440)
+		&WorkObjective{},
+		&ScorecardRubric{},
+		&ScorecardPeriod{},
+		&ScorecardSnapshot{},
+		&ScorecardCorrection{},
+		&ScorecardReview{},
 		// Model distribution campaigns (PAT-1444)
 		&ModelPackageEntitlement{},
 		&ModelDistributionCampaign{},

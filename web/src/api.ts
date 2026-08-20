@@ -818,4 +818,23 @@ export const api = {
     request<any>(`/api/prompts/${id}/restore/${version}`, { method: 'POST' }),
   deliverSystemPromptEpoch: () =>
     request<any>('/api/prompts/epochs/deliver', { method: 'POST', body: JSON.stringify({}) }),
+
+  // Evidence-backed leaderboard (PAT-1440)
+  listLeaderboard: (q: string) => request<any>(`/api/leaderboard${q}`),
+  listLeaderboardRubrics: () => request<any[]>('/api/leaderboard/rubrics'),
+  saveLeaderboardRubric: (data: any) =>
+    request<any>('/api/leaderboard/rubrics', { method: 'PUT', body: JSON.stringify(data) }),
+  listLeaderboardPeriods: () => request<any[]>('/api/leaderboard/periods'),
+  createLeaderboardPeriod: (data: any) =>
+    request<any>('/api/leaderboard/periods', { method: 'POST', body: JSON.stringify(data) }),
+  generateLeaderboard: (id: string) =>
+    request<any>(`/api/leaderboard/periods/${id}/generate`, { method: 'POST', body: JSON.stringify({}) }),
+  freezeLeaderboard: (id: string) =>
+    request<any>(`/api/leaderboard/periods/${id}/freeze`, { method: 'POST', body: JSON.stringify({}) }),
+  saveLeaderboardObjective: (data: any) =>
+    request<any>('/api/leaderboard/objectives', { method: 'PUT', body: JSON.stringify(data) }),
+  submitLeaderboardCorrection: (data: any) =>
+    request<any>('/api/leaderboard/corrections', { method: 'POST', body: JSON.stringify(data) }),
+  submitLeaderboardReview: (data: any) =>
+    request<any>('/api/leaderboard/reviews', { method: 'POST', body: JSON.stringify(data) }),
 };
