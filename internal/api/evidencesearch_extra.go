@@ -30,14 +30,14 @@ import (
 // esDomainResult is the shared evidence-result contract. Every result
 // carries its immutable locator and verification state.
 type esDomainResult struct {
-	Domain    string `json:"domain"`
-	SourceID  string `json:"source_id"`
-	ScopeRef  string `json:"scope_ref"`
-	Label     string `json:"label"` // masked excerpt
-	RankKind  string `json:"rank_kind"` // exact|lexical
-	Locator   map[string]interface{} `json:"locator"`
-	Verification string `json:"verification"` // verified|modified|unavailable|superseded|legacy-unverified
-	Masked    bool   `json:"masked"`
+	Domain       string                 `json:"domain"`
+	SourceID     string                 `json:"source_id"`
+	ScopeRef     string                 `json:"scope_ref"`
+	Label        string                 `json:"label"`     // masked excerpt
+	RankKind     string                 `json:"rank_kind"` // exact|lexical
+	Locator      map[string]interface{} `json:"locator"`
+	Verification string                 `json:"verification"` // verified|modified|unavailable|superseded|legacy-unverified
+	Masked       bool                   `json:"masked"`
 }
 
 // esGrantFor resolves the caller's live grant (expiry + revocation
@@ -210,7 +210,7 @@ func (s *Server) handleESSearch(w http.ResponseWriter, r *http.Request) {
 			results["conversations"] = append([]esDomainResult{{
 				Domain: "conversations", SourceID: sess.ID, ScopeRef: "session:" + sess.ID,
 				Label: "세션 정확 일치", RankKind: "exact",
-				Locator: map[string]interface{}{"session_id": sess.ID},
+				Locator:      map[string]interface{}{"session_id": sess.ID},
 				Verification: "verified", Masked: false,
 			}}, results["conversations"]...)
 			counts["conversations"]++
@@ -220,7 +220,7 @@ func (s *Server) handleESSearch(w http.ResponseWriter, r *http.Request) {
 			results["provenance"] = append([]esDomainResult{{
 				Domain: "provenance", SourceID: act.ActionID, ScopeRef: "session:" + act.SessionID,
 				Label: "조치 봉투 정확 일치 — " + act.ActionType, RankKind: "exact",
-				Locator: map[string]interface{}{"action_id": act.ActionID, "envelope_digest": act.EnvelopeDigest},
+				Locator:      map[string]interface{}{"action_id": act.ActionID, "envelope_digest": act.EnvelopeDigest},
 				Verification: "verified", Masked: false,
 			}}, results["provenance"]...)
 			counts["provenance"]++
@@ -236,7 +236,7 @@ func (s *Server) handleESSearch(w http.ResponseWriter, r *http.Request) {
 	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"results": results, "counts": counts,
-		"ranking_note": "정확 일치 > 어휘 일치. 도메인별 순위는 서로 비교되지 않습니다.",
+		"ranking_note":     "정확 일치 > 어휘 일치. 도메인별 순위는 서로 비교되지 않습니다.",
 		"export_available": false,
 	})
 }
@@ -329,7 +329,7 @@ func (s *Server) handleESReveal(w http.ResponseWriter, r *http.Request) {
 	}
 	s.db.Create(&models.EvidenceSearchAudit{
 		OrganizationID: orgID, AdminEmail: email, Kind: "reveal",
-		Query: fmt.Sprintf("%s/%s: %s", req.Domain, req.SourceID, req.Reason),
+		Query:      fmt.Sprintf("%s/%s: %s", req.Domain, req.SourceID, req.Reason),
 		OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{

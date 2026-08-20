@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -36,22 +37,22 @@ import (
 
 // Occurrence states (PAT-1437).
 const (
-	soPending  = "pending"
-	soAdmitted = "admitted"
-	soRunning  = "running"
+	soPending     = "pending"
+	soAdmitted    = "admitted"
+	soRunning     = "running"
 	soWaitingAuth = "waiting_for_authorization"
-	soSucceeded = "succeeded"
-	soFailed   = "failed"
-	soDenied   = "denied"
-	soExpired  = "expired"
-	soCancelled = "cancelled"
-	soCoalesced = "coalesced"
+	soSucceeded   = "succeeded"
+	soFailed      = "failed"
+	soDenied      = "denied"
+	soExpired     = "expired"
+	soCancelled   = "cancelled"
+	soCoalesced   = "coalesced"
 )
 
 // csDeniedClasses are the prohibited public-use classes. Matching is
 // deterministic over the compiled task objective (PAT-1437).
 var csDeniedPatterns = []struct {
-	Class  string
+	Class    string
 	Patterns []string
 }{
 	{"credential_theft", []string{"비밀번호 탈취", "토큰 탈취", "credential theft", "extract api keys", "api 키 추출"}},
@@ -146,8 +147,10 @@ func csNextCron(expr string, after time.Time) (time.Time, error) {
 
 func csCronField(field string, lo, hi int) ([]int, error) {
 	parsePart := func(part string) (int, error) {
-		var v int
-		if _, err := fmt.Sscanf(part, "%d", &v); err != nil {
+		// strconv.Atoi rejects trailing garbage ("5x") that Sscanf
+		// silently accepted as 5 — cron fields must be exactly numeric.
+		v, err := strconv.Atoi(part)
+		if err != nil {
 			return 0, fmt.Errorf("cron 필드에 숫자가 아닌 값: %q", part)
 		}
 		return v, nil
@@ -202,11 +205,11 @@ func toSet(vals []int) map[int]bool {
 
 func (s *Server) handleCSCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TaskSpec             json.RawMessage `json:"task_spec"`
-		ContextSnapshot      json.RawMessage `json:"context_snapshot"`
-		Trigger              json.RawMessage `json:"trigger"`
-		Timezone             string          `json:"timezone"`
-		CreatedFromConversation string       `json:"created_from_conversation"`
+		TaskSpec                json.RawMessage `json:"task_spec"`
+		ContextSnapshot         json.RawMessage `json:"context_snapshot"`
+		Trigger                 json.RawMessage `json:"trigger"`
+		Timezone                string          `json:"timezone"`
+		CreatedFromConversation string          `json:"created_from_conversation"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -259,7 +262,7 @@ func (s *Server) handleCSCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"id": sched.ID, "state": sched.State, "revision": sched.Revision,
 		"next_occurrence_at": sched.NextOccurrenceAt,
-		"ack_ko": "일정을 등록했습니다. 등록 시점의 문맥 스냅샷이 고정되며 이후 대화 내용은 자동 반영되지 않습니다.",
+		"ack_ko":             "일정을 등록했습니다. 등록 시점의 문맥 스냅샷이 고정되며 이후 대화 내용은 자동 반영되지 않습니다.",
 	})
 }
 
@@ -279,8 +282,8 @@ func (s *Server) handleCSList(w http.ResponseWriter, r *http.Request) {
 		s.db.Where("schedule_id = ?", sc.ID).Order("intended_at DESC").Limit(10).Find(&occs)
 		out = append(out, map[string]interface{}{
 			"id": sc.ID, "state": sc.State, "revision": sc.Revision,
-			"task_spec": json.RawMessage(sc.TaskSpecJSON),
-			"trigger":   json.RawMessage(sc.TriggerJSON),
+			"task_spec":          json.RawMessage(sc.TaskSpecJSON),
+			"trigger":            json.RawMessage(sc.TriggerJSON),
 			"next_occurrence_at": sc.NextOccurrenceAt, "timezone": sc.Timezone,
 			"occurrences": occs,
 		})
@@ -298,7 +301,7 @@ func (s *Server) handleCSMutate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Action string          `json:"action"` // pause|resume|revoke|delete|edit
+		Action   string          `json:"action"` // pause|resume|revoke|delete|edit
 		TaskSpec json.RawMessage `json:"task_spec"`
 		Trigger  json.RawMessage `json:"trigger"`
 	}
@@ -372,12 +375,18 @@ func (s *Server) handleCSDispatchSweep(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	// Retry pass first: pending occurrences with a due retry become
-	// runnable again (the ≤3 bound was enforced at report time).
+	// runnable again (the ≤3 bound was enforced at report time). The
+	// parent schedule must still be active — a paused or
+	// authorization-required schedule must not run retries.
 	var retries []models.ScheduleOccurrence
 	s.db.Where("state = ? AND next_retry_at != '' AND next_retry_at <= ?", soPending, now.Format(time.RFC3339)).
 		Limit(100).Find(&retries)
 	for i := range retries {
 		occ := &retries[i]
+		var parent models.CloudSchedule
+		if err := s.db.First(&parent, "id = ?", occ.ScheduleID).Error; err != nil || parent.State != "active" {
+			continue
+		}
 		var activeRuns int64
 		s.db.Model(&models.ScheduleOccurrence{}).
 			Where("schedule_id = ? AND state IN ?", occ.ScheduleID, []string{soAdmitted, soRunning}).Count(&activeRuns)
@@ -426,7 +435,7 @@ func (s *Server) handleCSDispatchSweep(w http.ResponseWriter, r *http.Request) {
 				// schedule row never change what this run executes.
 				TaskSpecJSON:        sc.TaskSpecJSON,
 				ContextSnapshotJSON: sc.ContextSnapshotJSON,
-				State: soAdmitted, StartedAt: now.UTC().Format(time.RFC3339),
+				State:               soAdmitted, StartedAt: now.UTC().Format(time.RFC3339),
 			}
 			s.db.Create(&occ)
 			admitted++
@@ -459,11 +468,11 @@ func (s *Server) handleCSDispatchSweep(w http.ResponseWriter, r *http.Request) {
 // never retry. Idempotent per state.
 func (s *Server) handleCSReport(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		OccurrenceID uint   `json:"occurrence_id"`
-		State        string `json:"state"` // succeeded|failed|denied|waiting_for_authorization|running
-		ResultSummaryKo string `json:"result_summary_ko"`
-		CostTokens   int    `json:"cost_tokens"`
-		DenyReason   string `json:"deny_reason"`
+		OccurrenceID           uint   `json:"occurrence_id"`
+		State                  string `json:"state"` // succeeded|failed|denied|waiting_for_authorization|running
+		ResultSummaryKo        string `json:"result_summary_ko"`
+		CostTokens             int    `json:"cost_tokens"`
+		DenyReason             string `json:"deny_reason"`
 		CredentialFingerprints string `json:"credential_fingerprints"`
 	}
 	if err := decodeJSON(r, &req); err != nil || req.OccurrenceID == 0 {
@@ -492,9 +501,9 @@ func (s *Server) handleCSReport(w http.ResponseWriter, r *http.Request) {
 		} else {
 			occ.Attempts++
 			s.db.Model(&occ).Updates(map[string]interface{}{
-				"attempts": occ.Attempts,
+				"attempts":      occ.Attempts,
 				"next_retry_at": time.Now().UTC().Add(time.Duration(occ.Attempts) * 5 * time.Minute).Format(time.RFC3339),
-				"state": soPending, "result_summary_ko": req.ResultSummaryKo,
+				"state":         soPending, "result_summary_ko": req.ResultSummaryKo,
 			})
 			writeJSON(w, http.StatusOK, map[string]interface{}{"status": "retry_scheduled", "attempts": occ.Attempts})
 			return
@@ -560,7 +569,7 @@ func (s *Server) handleCSCapabilitiesList(w http.ResponseWriter, r *http.Request
 // transcript; completion updates the same account-level connection.
 func (s *Server) handleCSConnectFlow(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		CapabilityID string `json:"capability_id"`
+		CapabilityID  string `json:"capability_id"`
 		InitiatedFrom string `json:"initiated_from"` // harness | web
 	}
 	if err := decodeJSON(r, &req); err != nil || req.CapabilityID == "" {
@@ -582,9 +591,9 @@ func (s *Server) handleCSConnectFlow(w http.ResponseWriter, r *http.Request) {
 		"state": "authorization_required", "connection_id": conn.ID,
 	})
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
-		"status": "authorization_required",
+		"status":      "authorization_required",
 		"connect_url": "/portal/integrations?capability=" + req.CapabilityID,
-		"note_ko": "연결 완료는 계정 수준 연결을 갱신합니다. 브라우저 인증은 대화 밖에서 진행됩니다.",
+		"note_ko":     "연결 완료는 계정 수준 연결을 갱신합니다. 브라우저 인증은 대화 밖에서 진행됩니다.",
 	})
 }
 
@@ -593,11 +602,11 @@ func (s *Server) handleCSConnectFlow(w http.ResponseWriter, r *http.Request) {
 // disclosed standing authorization for consequential actions.
 func (s *Server) handleCSDelegation(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ScheduleID   uint     `json:"schedule_id"`
-		CapabilityID string   `json:"capability_id"`
-		Scopes       []string `json:"scopes"`
-		Consequential bool    `json:"consequential"`
-		Disclosure   map[string]string `json:"disclosure"`
+		ScheduleID    uint              `json:"schedule_id"`
+		CapabilityID  string            `json:"capability_id"`
+		Scopes        []string          `json:"scopes"`
+		Consequential bool              `json:"consequential"`
+		Disclosure    map[string]string `json:"disclosure"`
 	}
 	if err := decodeJSON(r, &req); err != nil || req.ScheduleID == 0 || req.CapabilityID == "" {
 		writeError(w, http.StatusBadRequest, "schedule_id와 capability_id가 필요합니다")

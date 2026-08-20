@@ -130,7 +130,7 @@ export default function ModelCampaigns() {
               {row.campaign.state === 'draft' && <button className="btn-secondary text-xs" onClick={() => { setAction({ row, kind: 'activate', label: '활성화' }); setReason('') }}>활성화</button>}
               {row.campaign.state === 'active' && <button className="btn-secondary text-xs" onClick={() => { setAction({ row, kind: 'pause', label: '일시중지' }); setReason('') }}>일시중지</button>}
               <button className="btn-secondary text-xs" onClick={() => api.mdPromoteGate(row.campaign.id).then((r: any) => { showToast(`승격 ${r.promoted} · 차단 ${r.blocked} (증거 부족 시 차단)`); load() }).catch((e: any) => showToast(e.message))}>건강 게이트 승격</button>
-              <button className="btn-secondary text-xs" onClick={() => { setAction({ row, kind: 'rollback', label: '롤백' }); setReason('') }}>롤백</button>
+              <button className="btn-secondary text-xs" onClick={() => { setAction({ row, kind: 'rollback', label: '롤백' }); setReason(''); setRollbackTo('') }}>롤백</button>
               <button className="btn-secondary text-xs" onClick={() => { setAction({ row, kind: 'recall', label: '긴급 리콜' }); setReason('') }}>리콜</button>
             </div>
           </div>

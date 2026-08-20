@@ -271,3 +271,32 @@ func TestLGWebhookPublicRoute(t *testing.T) {
 		t.Fatalf("patty git event type empty: %q", ev.EventType)
 	}
 }
+
+// Cross-connection dedup: the same provider event ID on two connections
+// is two legitimate events, not a duplicate (self-hosted instances
+// share ID spaces).
+func TestLGWebhookCrossConnectionNotDropped(t *testing.T) {
+	srv, db := lgTestServer(t)
+	conn1 := models.SCMProviderConnection{OrganizationID: "org-lg", Provider: "patty_git", WebhookSecret: "s1", Health: "healthy"}
+	conn2 := models.SCMProviderConnection{OrganizationID: "org-lg", Provider: "patty_git", WebhookSecret: "s1", Health: "healthy"}
+	db.Create(&conn1)
+	db.Create(&conn2)
+	body := `{"event_id":"evt-shared-7","type":"push","actor":"a","ref":"refs/heads/main","after":"zzz"}`
+	sig := lgHMAC("s1", body)
+	// Same event on both connections — both must be stored.
+	if w := lgJSON(t, srv, "POST", fmt.Sprintf("/api/scm/observation/webhooks/%d", conn1.ID), body, map[string]string{"X-Patty-Signature": sig}); w.Code != http.StatusCreated {
+		t.Fatalf("conn1: %d %s", w.Code, w.Body.String())
+	}
+	if w := lgJSON(t, srv, "POST", fmt.Sprintf("/api/scm/observation/webhooks/%d", conn2.ID), body, map[string]string{"X-Patty-Signature": sig}); w.Code != http.StatusCreated {
+		t.Fatalf("conn2 cross-connection event dropped: %d %s", w.Code, w.Body.String())
+	}
+	var count int64
+	db.Model(&models.ObservedRepositoryEvent{}).Where("provider_event_id = ?", "evt-shared-7").Count(&count)
+	if count != 2 {
+		t.Fatalf("stored %d events, want 2 (one per connection)", count)
+	}
+	// Same connection replay is still a duplicate.
+	if w := lgJSON(t, srv, "POST", fmt.Sprintf("/api/scm/observation/webhooks/%d", conn1.ID), body, map[string]string{"X-Patty-Signature": sig}); w.Code != http.StatusOK {
+		t.Fatalf("same-connection replay not deduped: %d", w.Code)
+	}
+}

@@ -18,13 +18,13 @@ type SCMProviderConnection struct {
 	BaseURL        string `json:"base_url"`
 	// Credential material lives in the secret store; only a masked
 	// reference is exposed and it is never exportable via the UI.
-	CredentialRef    string `json:"credential_ref"`
-	WebhookSecret    string `json:"-"`
-	WebhookVerified  bool   `json:"webhook_verified"`
-	SyncCursor       string `json:"sync_cursor"`
+	CredentialRef      string `json:"credential_ref"`
+	WebhookSecret      string `json:"-"`
+	WebhookVerified    bool   `json:"webhook_verified"`
+	SyncCursor         string `json:"sync_cursor"`
 	LastReconciliation string `json:"last_reconciliation"`
-	Health            string `json:"health"` // healthy|stale|revoked|degraded
-	KnownGaps         string `json:"known_gaps"`
+	Health             string `json:"health"` // healthy|stale|revoked|degraded
+	KnownGaps          string `json:"known_gaps"`
 }
 
 // ObservedRepositoryEvent is a normalized provider event, deduplicated
@@ -32,20 +32,21 @@ type SCMProviderConnection struct {
 // are inert. Raw provider identity is preserved for audit/replay.
 type ObservedRepositoryEvent struct {
 	gorm.Model
-	OrganizationID   string `gorm:"index" json:"organization_id"`
-	ConnectionID     uint   `gorm:"index" json:"connection_id"`
-	Provider         string `json:"provider"`
-	// Dedup is scoped per connection: provider event IDs are not
-	// globally unique across self-hosted instances (PAT-1453).
-	ProviderEventID  string `gorm:"uniqueIndex:idx_ore_conn_event" json:"provider_event_id"`
-	ProviderDeliveryID string `gorm:"uniqueIndex:idx_ore_conn_event" json:"provider_delivery_id"`
-	ProviderRepoID   string `gorm:"index" json:"provider_repo_id"`
-	EventType        string `json:"event_type"` // push|force_push|branch_create|branch_delete|pr_opened|pr_merged|review|check|default_branch_change|repo_transferred|access_revoked
-	Actor            string `json:"actor"`
-	Ref              string `json:"ref"`
-	CommitSHA        string `json:"commit_sha"`
-	PayloadDigest    string `json:"payload_digest"`
-	IngestedAt       string `json:"ingested_at"`
+	OrganizationID string `gorm:"index" json:"organization_id"`
+	// Dedup is enforced at the DB level per connection: provider event
+	// IDs are not globally unique across self-hosted instances, so both
+	// unique constraints include the connection (PAT-1453).
+	ConnectionID       uint   `gorm:"uniqueIndex:idx_ore_conn_event;uniqueIndex:idx_ore_conn_delivery" json:"connection_id"`
+	Provider           string `json:"provider"`
+	ProviderEventID    string `gorm:"uniqueIndex:idx_ore_conn_event" json:"provider_event_id"`
+	ProviderDeliveryID string `gorm:"uniqueIndex:idx_ore_conn_delivery" json:"provider_delivery_id"`
+	ProviderRepoID     string `gorm:"index" json:"provider_repo_id"`
+	EventType          string `json:"event_type"` // push|force_push|branch_create|branch_delete|pr_opened|pr_merged|review|check|default_branch_change|repo_transferred|access_revoked
+	Actor              string `json:"actor"`
+	Ref                string `json:"ref"`
+	CommitSHA          string `json:"commit_sha"`
+	PayloadDigest      string `json:"payload_digest"`
+	IngestedAt         string `json:"ingested_at"`
 }
 
 // CommitAttribution binds a repository commit to Patty's recorded change

@@ -46,13 +46,13 @@ var inDefaultRouting = map[string]map[string]interface{}{
 // field is safe by construction; there is no code path that copies
 // evidence, payloads, logs, or secrets into it (PAT-1354 content boundary).
 type inSafeEnvelope struct {
-	Schema         string `json:"schema"`
-	TenantDisplay  string `json:"tenant_display"`
-	IncidentID     string `json:"incident_id"`
-	Severity       string `json:"severity"`
-	TitleKo        string `json:"title_ko"`
-	EventTime      string `json:"event_time"`
-	PccpLink       string `json:"pccp_link"`
+	Schema        string `json:"schema"`
+	TenantDisplay string `json:"tenant_display"`
+	IncidentID    string `json:"incident_id"`
+	Severity      string `json:"severity"`
+	TitleKo       string `json:"title_ko"`
+	EventTime     string `json:"event_time"`
+	PccpLink      string `json:"pccp_link"`
 	// Email/Slack only (SMS stops at the fields above).
 	ImpactSummaryKo string `json:"impact_summary_ko,omitempty"`
 	StatusKo        string `json:"status_ko,omitempty"`
@@ -99,7 +99,7 @@ func (s *Server) handleINPolicyGet(w http.ResponseWriter, r *http.Request) {
 		routing, _ := json.Marshal(inDefaultRouting)
 		writeJSON(w, http.StatusOK, models.IncidentNotifyPolicy{
 			OrganizationID: orgID, RoutingJSON: string(routing),
-			ManagedByJSON: `{"email":"customer","sms":"customer","slack":"customer"}`,
+			ManagedByJSON:      `{"email":"customer","sms":"customer","slack":"customer"}`,
 			AckDeadlineMinutes: 15, EscalationSteps: 3,
 		})
 		return
@@ -315,7 +315,7 @@ func (s *Server) handleINChannelUpsert(w http.ResponseWriter, r *http.Request) {
 	}
 	s.db.Create(&models.IncidentNotifyAudit{
 		OrganizationID: ch.OrganizationID, Action: "channel_upserted", ActorEmail: getOperatorEmail(r),
-		Detail: fmt.Sprintf("%s managed_by=%s endpoint=%s", ch.Channel, ch.ManagedBy, masked),
+		Detail:     fmt.Sprintf("%s managed_by=%s endpoint=%s", ch.Channel, ch.ManagedBy, masked),
 		OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{"id": ch.ID, "channel": ch.Channel, "verified": ch.Verified, "masked_endpoint": ch.MaskedEndpoint})
@@ -607,7 +607,7 @@ func (s *Server) handleINDispatch(w http.ResponseWriter, r *http.Request) {
 			s.db.Create(&models.IncidentNotifyReceipt{JobID: j.ID, State: "accepted", ProviderMessageID: messageID, OccurredAt: now.Format(time.RFC3339)})
 			s.db.Create(&models.IncidentNotifyAudit{
 				OrganizationID: j.OrganizationID, Action: "delivery_sent", IncidentID: j.IncidentID,
-				Detail: fmt.Sprintf("channel=%s managed_by=%s msg=%s", j.Channel, managedBy, messageID),
+				Detail:     fmt.Sprintf("channel=%s managed_by=%s msg=%s", j.Channel, managedBy, messageID),
 				OccurredAt: now.Format(time.RFC3339),
 			})
 			sent++
@@ -845,7 +845,7 @@ func (s *Server) handleINTest(w http.ResponseWriter, r *http.Request) {
 	s.db.Create(&job)
 	s.db.Create(&models.IncidentNotifyAudit{
 		OrganizationID: orgID, Action: "test_notification_queued", ActorEmail: getOperatorEmail(r),
-		Detail: fmt.Sprintf("channel=%s target=%s", req.Channel, inMaskEndpoint(req.Target)),
+		Detail:     fmt.Sprintf("channel=%s target=%s", req.Channel, inMaskEndpoint(req.Target)),
 		OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"job_id": job.ID, "is_test": true})

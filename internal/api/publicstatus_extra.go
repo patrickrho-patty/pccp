@@ -59,11 +59,11 @@ var psColorRank = map[string]int{
 
 // Public incident lifecycle states (Korean authoritative labels).
 var psIncidentStateKo = map[string]string{
-	"investigating":        "확인 중",
-	"mitigating":           "원인 확인 및 조치 중",
-	"monitoring":           "안정성 확인 중",
-	"resolved":             "정상화",
-	"maintenance_scheduled": "점검 예정",
+	"investigating":           "확인 중",
+	"mitigating":              "원인 확인 및 조치 중",
+	"monitoring":              "안정성 확인 중",
+	"resolved":                "정상화",
+	"maintenance_scheduled":   "점검 예정",
 	"maintenance_in_progress": "점검 진행 중",
 }
 
@@ -71,21 +71,21 @@ var psIncidentStateKo = map[string]string{
 // widespread failure may escalate immediately; recovery requires a
 // sustained healthy window rather than a single successful probe.
 type psThresholds struct {
-	Version              int
-	DegradePartialAfter  int // consecutive impacted(partial) samples → yellow
-	DegradeSevereAfter   int // consecutive severe samples → orange
-	EscalateWidespread   int // consecutive widespread samples → red (short)
-	RecoverAfter         int // consecutive clean samples → green
-	FreshnessWindowMins  int // older than this → gray (never falsely green)
+	Version             int
+	DegradePartialAfter int // consecutive impacted(partial) samples → yellow
+	DegradeSevereAfter  int // consecutive severe samples → orange
+	EscalateWidespread  int // consecutive widespread samples → red (short)
+	RecoverAfter        int // consecutive clean samples → green
+	FreshnessWindowMins int // older than this → gray (never falsely green)
 }
 
 var psThresholdsCurrent = psThresholds{
-	Version:              1,
-	DegradePartialAfter:  3,
-	DegradeSevereAfter:   3,
-	EscalateWidespread:   2,
-	RecoverAfter:         5,
-	FreshnessWindowMins:  10,
+	Version:             1,
+	DegradePartialAfter: 3,
+	DegradeSevereAfter:  3,
+	EscalateWidespread:  2,
+	RecoverAfter:        5,
+	FreshnessWindowMins: 10,
 }
 
 // psSnapshotTTLSeconds is how long a published snapshot may be served
@@ -228,13 +228,13 @@ func (s *Server) handlePublicStatusGet(w http.ResponseWriter, r *http.Request) {
 		// No snapshot published yet: serve an honest "측정 정보 부족" page
 		// rather than failing — the page must always load.
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-		"version": 0, "generated_at": "", "stale": true,
+			"version": 0, "generated_at": "", "stale": true,
 			"components": []map[string]string{{
 				"id": "patty_code", "name_ko": "Patty Code",
 				"color": psColorGray, "state_ko": psColorLabelKo[psColorGray],
 			}},
 			"incidents": []interface{}{},
-			"timezone": "Asia/Seoul",
+			"timezone":  "Asia/Seoul",
 		})
 		return
 	}
@@ -298,8 +298,8 @@ func (s *Server) handlePublicIncidentGet(w http.ResponseWriter, r *http.Request)
 func (s *Server) handlePublicSubscriberCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ComponentID string `json:"component_id"`
-		Channel      string `json:"channel"` // email|sms|webhook|rss
-		Destination  string `json:"destination"`
+		Channel     string `json:"channel"` // email|sms|webhook|rss
+		Destination string `json:"destination"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -426,10 +426,10 @@ func (s *Server) handlePSComponentsList(w http.ResponseWriter, r *http.Request) 
 			"override_color": c.OverrideColor, "override_reason": c.OverrideReason,
 			"override_expires_at": c.OverrideExpiresAt,
 			// Console-only monitoring disagreement for expiring overrides.
-			"override_disagrees": c.OverrideColor != "" && psColorRank[c.OverrideColor] < psColorRank[c.MeasuredColor],
-			"consecutive_failures": c.ConsecutiveFailures,
+			"override_disagrees":    c.OverrideColor != "" && psColorRank[c.OverrideColor] < psColorRank[c.MeasuredColor],
+			"consecutive_failures":  c.ConsecutiveFailures,
 			"consecutive_successes": c.ConsecutiveSuccesses,
-			"last_observation_at": c.LastObservationAt, "last_healthy_at": c.LastHealthyAt,
+			"last_observation_at":   c.LastObservationAt, "last_healthy_at": c.LastHealthyAt,
 			"registry_version": c.RegistryVersion,
 		})
 	}
@@ -561,7 +561,7 @@ func (s *Server) handlePSObservationIngest(w http.ResponseWriter, r *http.Reques
 					ActorType: "system", Action: "page_oncall", ResourceType: "public_status_component",
 					ResourceID: o.ComponentID,
 					Details:    fmt.Sprintf(`{"component":"%s","measured_color":"%s","draft_incident":"%s"}`, o.ComponentID, c.MeasuredColor, slug),
-					Result: "success", OccurredAt: now.Format(time.RFC3339),
+					Result:     "success", OccurredAt: now.Format(time.RFC3339),
 				})
 			}
 		}
@@ -580,10 +580,10 @@ func (s *Server) handlePSOverride(w http.ResponseWriter, r *http.Request) {
 	}
 	id := chi.URLParam(r, "id")
 	var req struct {
-		Color          string `json:"color"`
-		Reason         string `json:"reason"`
-		ExpiresAt      string `json:"expires_at"`
-		FalsePositiveAck bool `json:"false_positive_ack"`
+		Color            string `json:"color"`
+		Reason           string `json:"reason"`
+		ExpiresAt        string `json:"expires_at"`
+		FalsePositiveAck bool   `json:"false_positive_ack"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -645,11 +645,11 @@ func (s *Server) handlePSIncidentCreate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req struct {
-		TitleKo    string `json:"title_ko"`
-		Components []string `json:"components"`
-		Impact     string `json:"impact"`
-		Major      bool   `json:"major"`
-		Maintenance bool  `json:"maintenance"`
+		TitleKo     string   `json:"title_ko"`
+		Components  []string `json:"components"`
+		Impact      string   `json:"impact"`
+		Major       bool     `json:"major"`
+		Maintenance bool     `json:"maintenance"`
 	}
 	if err := decodeJSON(r, &req); err != nil || strings.TrimSpace(req.TitleKo) == "" || len(req.Components) == 0 {
 		writeError(w, http.StatusBadRequest, "제목과 대상 구성 요소가 필요합니다")
@@ -694,9 +694,9 @@ func (s *Server) handlePSIncidentUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req struct {
-		State     string `json:"state"`
-		Publish   *bool  `json:"publish"`
-		Major     *bool  `json:"major"`
+		State   string `json:"state"`
+		Publish *bool  `json:"publish"`
+		Major   *bool  `json:"major"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -977,7 +977,7 @@ func (s *Server) handlePSSnapshotPublish(w http.ResponseWriter, r *http.Request)
 	snap := models.PublicStatusSnapshot{
 		Version: version, PayloadJSON: string(raw),
 		Signature: base64.StdEncoding.EncodeToString(sigRaw),
-		KeyID: "status-publisher", GeneratedAt: now.Format(time.RFC3339),
+		KeyID:     "status-publisher", GeneratedAt: now.Format(time.RFC3339),
 	}
 	if err := s.db.Create(&snap).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

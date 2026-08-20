@@ -96,7 +96,9 @@ func (gitLabAdapter) ParseEvent(body []byte) (string, string, string, string, st
 		Before     string `json:"before"`
 		After      string `json:"after"`
 		Ref        string `json:"ref"`
-		User       struct{ Username string `json:"username"` } `json:"user"`
+		User       struct {
+			Username string `json:"username"`
+		} `json:"user"`
 	}
 	if err := json.Unmarshal(body, &e); err != nil {
 		return "", "", "", "", "", "", err
@@ -118,7 +120,9 @@ func (gitHubAdapter) ParseEvent(body []byte) (string, string, string, string, st
 		DeliveryID string `json:"delivery_id"`
 		After      string `json:"after"`
 		Ref        string `json:"ref"`
-		Sender     struct{ Login string `json:"login"` } `json:"sender"`
+		Sender     struct {
+			Login string `json:"login"`
+		} `json:"sender"`
 	}
 	if err := json.Unmarshal(body, &e); err != nil {
 		return "", "", "", "", "", "", err
@@ -362,9 +366,9 @@ func (s *Server) handleSCMBindAttribution(w http.ResponseWriter, r *http.Request
 		// Category derives from the change-set's recorded attribution
 		// state — never from message conventions or timing.
 		attr.Lineage = map[string]string{
-			"AI_GENERATED":        "ai_created",
-			"HUMAN_WRITTEN":       "human_created",
-			"AI_THEN_HUMAN_EDITED": "human_modified_ai",
+			"AI_GENERATED":           "ai_created",
+			"HUMAN_WRITTEN":          "human_created",
+			"AI_THEN_HUMAN_EDITED":   "human_modified_ai",
 			"HUMAN_THEN_AI_ASSISTED": "ai_modified_human",
 		}[cs.AttributionState]
 		if attr.Lineage == "" {
@@ -379,7 +383,7 @@ func (s *Server) handleSCMBindAttribution(w http.ResponseWriter, r *http.Request
 		OrganizationID: orgID, EventType: "cp.lineage.attribution_bound", ActorType: "admin",
 		Action: "bind_attribution", ResourceType: "commit_attribution", ResourceID: attr.CommitSHA,
 		Details: fmt.Sprintf(`{"authoritative":%t,"lineage":"%s"}`, attr.Authoritative, attr.Lineage),
-		Result: "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
+		Result:  "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"commit_sha": attr.CommitSHA, "lineage": attr.Lineage,
@@ -414,11 +418,11 @@ func (s *Server) handleSCMLineage(w http.ResponseWriter, r *http.Request) {
 	for _, a := range attrs {
 		row := map[string]interface{}{
 			"commit_sha": a.CommitSHA, "lineage": a.Lineage,
-			"lineage_ko": scmLineageKo[a.Lineage],
+			"lineage_ko":    scmLineageKo[a.Lineage],
 			"authoritative": a.Authoritative,
-			"git_author": a.GitAuthor, "git_committer": a.GitCommitter,
+			"git_author":    a.GitAuthor, "git_committer": a.GitCommitter,
 			"author_distinct": a.GitAuthor != "" && a.GitCommitter != "" && a.GitAuthor != a.GitCommitter,
-			"observed_at": a.ObservedAt,
+			"observed_at":     a.ObservedAt,
 		}
 		if a.Authoritative {
 			row["changeset_id"] = a.ChangeSetID

@@ -88,7 +88,7 @@ func (s *Server) trDeriveNodes(orgID string) (int, int, error) {
 			OrganizationID: orgID, SourceType: "session", SourceID: sess.ID,
 			NodeType: tnGoal, SessionID: sess.ID,
 			LabelKo: "세션 시작 — 사용자 요청", Status: "ok",
-			OccurredAt: sess.CreatedAt.UTC().Format(time.RFC3339),
+			OccurredAt:      sess.CreatedAt.UTC().Format(time.RFC3339),
 			IntegrityDigest: digest("session", sess.ID),
 		}
 		if err := s.db.Where("organization_id = ? AND source_type = ? AND source_id = ?",
@@ -166,7 +166,7 @@ func (s *Server) trDeriveNodes(orgID string) (int, int, error) {
 				FromSourceType: "action-set", FromSourceID: c.SessionID,
 				ToSourceType: "changeset", ToSourceID: fmt.Sprint(c.ID),
 				EdgeType: "produced", SourceEvidence: "changeset.session_id",
-				OccurredAt: c.CreatedAt.UTC().Format(time.RFC3339),
+				OccurredAt:      c.CreatedAt.UTC().Format(time.RFC3339),
 				IntegrityDigest: digest("e2", c.SessionID, fmt.Sprint(c.ID)),
 			}
 			if err := s.db.Where("organization_id = ? AND from_source_type = ? AND from_source_id = ? AND to_source_type = ? AND to_source_id = ?",

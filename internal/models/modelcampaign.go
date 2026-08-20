@@ -27,48 +27,48 @@ type ModelPackageEntitlement struct {
 type ModelDistributionCampaign struct {
 	gorm.Model
 	OrganizationID string `gorm:"index" json:"organization_id"` // campaign owner (Patty ops org)
-	PackageID       string `gorm:"index" json:"package_id"`
-	ManifestDigest  string `json:"manifest_digest"` // immutable content address
+	PackageID      string `gorm:"index" json:"package_id"`
+	ManifestDigest string `json:"manifest_digest"` // immutable content address
 	// JSON targets: [{"organization_id":"o1","environments":["prod-eu"]}]
-	TargetsJSON     string `gorm:"type:text" json:"targets_json"`
+	TargetsJSON string `gorm:"type:text" json:"targets_json"`
 	// JSON rings: {"canary":{"percentage":10,"membership":["o1"]},"beta":{},"stable":{"percentage":100}}
-	RingsJSON       string `gorm:"type:text" json:"rings_json"`
-	StartTime       string `json:"start_time"`
+	RingsJSON         string `gorm:"type:text" json:"rings_json"`
+	StartTime         string `json:"start_time"`
 	MaintenanceWindow string `json:"maintenance_window"`
-	Deadline        string `json:"deadline"`
-	State           string `json:"state"` // draft|active|paused|completed|cancelled
-	MaxConcurrent   int    `json:"max_concurrent_downloads"`
-	BandwidthPolicy string `json:"bandwidth_policy"`
+	Deadline          string `json:"deadline"`
+	State             string `json:"state"` // draft|active|paused|completed|cancelled
+	MaxConcurrent     int    `json:"max_concurrent_downloads"`
+	BandwidthPolicy   string `json:"bandwidth_policy"`
 	// Manual approval is the default; automatic rollout requires an
 	// explicit bounded delegation recorded here.
-	DelegationJSON  string `gorm:"type:text" json:"delegation_json"` // {"auto":false,"scope":"","expires_at":""}
+	DelegationJSON string `gorm:"type:text" json:"delegation_json"` // {"auto":false,"scope":"","expires_at":""}
 	// JSON health gates: {"error_rate":0.02,"load_success":1.0,"attested":true,"observation_minutes":30}
-	HealthGatesJSON string `gorm:"type:text" json:"health_gates_json"`
+	HealthGatesJSON      string `gorm:"type:text" json:"health_gates_json"`
 	RollbackVersionsJSON string `gorm:"type:text" json:"rollback_versions_json"`
-	Reason          string `json:"reason"`
-	CreatedBy       string `json:"created_by"`
-	ExpectedEpoch   int    `json:"expected_epoch"`
+	Reason               string `json:"reason"`
+	CreatedBy            string `json:"created_by"`
+	ExpectedEpoch        int    `json:"expected_epoch"`
 }
 
 // ModelCampaignTarget tracks desired vs observed state per target.
 // Silence is never success: stale agents appear offline_unknown.
 type ModelCampaignTarget struct {
 	gorm.Model
-	CampaignID      string `gorm:"index" json:"campaign_id"`
-	OrganizationID  string `gorm:"index" json:"organization_id"`
-	Environment     string `json:"environment"`
-	Ring            string `json:"ring"`
-	DesiredState    string `json:"desired_state"` // staged|canary|active|rolled_back
-	ObservedState   string `json:"observed_state"` // see mdObserved* states
-	ProgressBytes   int64  `json:"progress_bytes"`
-	ProgressShards  int    `json:"progress_shards"`
-	CurrentDigest   string `json:"current_digest"`
-	PreviousDigest  string `json:"previous_digest"`
-	ReasonCode      string `json:"reason_code"`
-	LastContact     string `json:"last_contact"`
-	AgentReceipt    string `json:"agent_receipt"` // signed receipt ref
-	ApprovalState   string `json:"approval_state"` // required|granted|declined
-	ApprovedBy      string `json:"approved_by"`
+	CampaignID     string `gorm:"index" json:"campaign_id"`
+	OrganizationID string `gorm:"index" json:"organization_id"`
+	Environment    string `json:"environment"`
+	Ring           string `json:"ring"`
+	DesiredState   string `json:"desired_state"`  // staged|canary|active|rolled_back
+	ObservedState  string `json:"observed_state"` // see mdObserved* states
+	ProgressBytes  int64  `json:"progress_bytes"`
+	ProgressShards int    `json:"progress_shards"`
+	CurrentDigest  string `json:"current_digest"`
+	PreviousDigest string `json:"previous_digest"`
+	ReasonCode     string `json:"reason_code"`
+	LastContact    string `json:"last_contact"`
+	AgentReceipt   string `json:"agent_receipt"`  // signed receipt ref
+	ApprovalState  string `json:"approval_state"` // required|granted|declined
+	ApprovedBy     string `json:"approved_by"`
 }
 
 // ModelArtifactLease is a short-lived artifact transfer authorization
@@ -89,11 +89,11 @@ type ModelArtifactLease struct {
 // closed for automatic promotion.
 type ModelCampaignHealthEvidence struct {
 	gorm.Model
-	CampaignID     string `gorm:"index" json:"campaign_id"`
-	OrganizationID string `json:"organization_id"`
-	LoadSuccess    float64 `json:"load_success"`
-	ErrorRate      float64 `json:"error_rate"`
-	Attested       bool    `json:"attested"`
-	ObservationMinutes int `json:"observation_minutes"`
-	RecordedAt     string `json:"recorded_at"`
+	CampaignID         string  `gorm:"index" json:"campaign_id"`
+	OrganizationID     string  `json:"organization_id"`
+	LoadSuccess        float64 `json:"load_success"`
+	ErrorRate          float64 `json:"error_rate"`
+	Attested           bool    `json:"attested"`
+	ObservationMinutes int     `json:"observation_minutes"`
+	RecordedAt         string  `json:"recorded_at"`
 }

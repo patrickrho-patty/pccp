@@ -33,16 +33,16 @@ import (
 
 // Harness version states (PAT-1449).
 const (
-	hvSupported         = "supported"
-	hvUpdateAvailable   = "update_available"
+	hvSupported           = "supported"
+	hvUpdateAvailable     = "update_available"
 	hvUpdateRequiredGrace = "update_required_grace"
-	hvRestricted        = "restricted"
-	hvRevoked           = "revoked"
-	hvUpdating          = "updating"
-	hvVerifying         = "verifying"
-	hvRollbackRequired  = "rollback_required"
-	hvRepairRequired    = "repair_required"
-	hvUnknownTampered   = "unknown_or_tampered"
+	hvRestricted          = "restricted"
+	hvRevoked             = "revoked"
+	hvUpdating            = "updating"
+	hvVerifying           = "verifying"
+	hvRollbackRequired    = "rollback_required"
+	hvRepairRequired      = "repair_required"
+	hvUnknownTampered     = "unknown_or_tampered"
 )
 
 var hvStateKo = map[string]string{
@@ -278,7 +278,7 @@ func (s *Server) handleHVReleaseRegister(w http.ResponseWriter, r *http.Request)
 		OrganizationID: getOrgID(r), EventType: "cp.release.registered", ActorType: "admin",
 		Action: "register_release", ResourceType: "harness_release", ResourceID: req.ReleaseID,
 		Details: fmt.Sprintf(`{"version":"%s","profile":"%s","digest":"%s"}`, req.Version, req.BuildProfile, req.ArtifactDigest),
-		Result: "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
+		Result:  "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusCreated, req)
 }
@@ -400,9 +400,9 @@ func (s *Server) handleHVCampaignMutate(w http.ResponseWriter, r *http.Request) 
 	}
 	id := chi.URLParam(r, "id")
 	var req struct {
-		Action         string `json:"action"` // activate|pause|resume|cancel|rollback
-		Reason         string `json:"reason"`
-		ExpectedEpoch  int    `json:"expected_epoch"`
+		Action        string `json:"action"` // activate|pause|resume|cancel|rollback
+		Reason        string `json:"reason"`
+		ExpectedEpoch int    `json:"expected_epoch"`
 	}
 	if err := decodeJSON(r, &req); err != nil || strings.TrimSpace(req.Reason) == "" {
 		writeError(w, http.StatusBadRequest, "작업과 사유가 필요합니다")
@@ -449,7 +449,7 @@ func (s *Server) handleHVCampaignMutate(w http.ResponseWriter, r *http.Request) 
 		OrganizationID: getOrgID(r), EventType: "cp.campaign." + req.Action, ActorType: "admin",
 		Action: req.Action + "_campaign", ResourceType: "harness_campaign", ResourceID: fmt.Sprint(c.ID),
 		Details: fmt.Sprintf(`{"reason":%q,"from":"%s","to":"%s"}`, req.Reason, c.State, next),
-		Result: "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
+		Result:  "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": next})
 }
@@ -473,11 +473,11 @@ func (s *Server) handleHVCampaignPreview(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req struct {
-		MinVersion string `json:"min_version"`
+		MinVersion    string `json:"min_version"`
 		TargetVersion string `json:"target_version"`
-		Percentage  int    `json:"percentage"`
-		CohortSeed  string `json:"cohort_seed"`
-		Deadline    string `json:"deadline"`
+		Percentage    int    `json:"percentage"`
+		CohortSeed    string `json:"cohort_seed"`
+		Deadline      string `json:"deadline"`
 	}
 	if err := decodeJSON(r, &req); err != nil || req.MinVersion == "" {
 		writeError(w, http.StatusBadRequest, "min_version가 필요합니다")
@@ -605,15 +605,15 @@ func (s *Server) handleHVExceptionCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req struct {
-		OrganizationID string `json:"organization_id"`
-		HarnessIDs     []string `json:"harness_ids"`
-		CurrentVersion string `json:"current_version"`
-		TargetVersion  string `json:"target_version"`
-		Reason         string `json:"reason"`
-		Owner          string `json:"owner"`
-		ApprovedBy     string `json:"approved_by"`
-		CompensatingControls string `json:"compensating_controls"`
-		ExpiresAt      string `json:"expires_at"`
+		OrganizationID       string   `json:"organization_id"`
+		HarnessIDs           []string `json:"harness_ids"`
+		CurrentVersion       string   `json:"current_version"`
+		TargetVersion        string   `json:"target_version"`
+		Reason               string   `json:"reason"`
+		Owner                string   `json:"owner"`
+		ApprovedBy           string   `json:"approved_by"`
+		CompensatingControls string   `json:"compensating_controls"`
+		ExpiresAt            string   `json:"expires_at"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -670,7 +670,7 @@ func (s *Server) handleHVExceptionCreate(w http.ResponseWriter, r *http.Request)
 		OrganizationID: ex.OrganizationID, EventType: "cp.version_exception.created", ActorType: "admin",
 		Action: "create_version_exception", ResourceType: "harness_version_exception", ResourceID: fmt.Sprint(ex.ID),
 		Details: fmt.Sprintf(`{"harnesses":%s,"expires_at":"%s","reason":%q}`, ex.HarnessIDsJSON, ex.ExpiresAt, ex.Reason),
-		Result: "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
+		Result:  "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusCreated, ex)
 }
@@ -681,7 +681,9 @@ func (s *Server) handleHVExceptionRevoke(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	id := chi.URLParam(r, "id")
-	var req struct{ Reason string `json:"reason"` }
+	var req struct {
+		Reason string `json:"reason"`
+	}
 	if err := decodeJSON(r, &req); err != nil || strings.TrimSpace(req.Reason) == "" {
 		writeError(w, http.StatusBadRequest, "철회 사유가 필요합니다")
 		return

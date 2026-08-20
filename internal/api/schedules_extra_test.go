@@ -318,3 +318,22 @@ func TestCSRetryReDispatch(t *testing.T) {
 		t.Fatalf("due retry not re-admitted: %s", occ.State)
 	}
 }
+
+// A paused schedule's due retry is NOT re-admitted.
+func TestCSRetryHonorsPausedSchedule(t *testing.T) {
+	srv, db := csTestServer(t)
+	id := csCreateSchedule(t, srv, "일시중지 중 재시도")
+	csJSON(t, srv, "POST", "/api/schedules/dispatch-sweep", `{}`)
+	var occ models.ScheduleOccurrence
+	db.Where("schedule_id = ? AND state = ?", id, soAdmitted).First(&occ)
+	csJSON(t, srv, "POST", "/api/schedules/report", fmt.Sprintf(`{"occurrence_id":%d,"state":"failed"}`, occ.ID))
+	db.First(&occ, "id = ?", occ.ID)
+	// Pause the parent, then make the retry due.
+	db.Model(&models.CloudSchedule{}).Where("id = ?", id).Update("state", "paused")
+	db.Model(&occ).Update("next_retry_at", time.Now().UTC().Add(-time.Minute).Format(time.RFC3339))
+	csJSON(t, srv, "POST", "/api/schedules/dispatch-sweep", `{}`)
+	db.First(&occ, "id = ?", occ.ID)
+	if occ.State != soPending {
+		t.Fatalf("paused schedule's retry re-admitted: %s", occ.State)
+	}
+}
