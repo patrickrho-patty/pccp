@@ -26,8 +26,9 @@ func TestRouterKVOverlapCredits(t *testing.T) {
 	// Spec §12.3.1: cached input tokens discount the prefill cost —
 	// a busy worker with a warm prefix can beat an idle cold worker.
 	r := NewCostRouter(DefaultRouterConfig())
-	r.SetKV(NewKVIndex())
-	r.kv.Add("w1", KVBlock{Namespace: "tenant-a", Hash: "prefix-h", Tokens: 800})
+	kv := NewKVIndex()
+	kv.Add("w1", KVBlock{Namespace: "tenant-a", Hash: "prefix-h", Tokens: 800})
+	r.SetKV(kv)
 	r.UpsertWorker(mkWorker("w1", "model-a", 8), RouterWorkerState{PrefillActive: 300, DecodeKV: 100, ActiveRequests: 1})
 	r.UpsertWorker(mkWorker("w2", "model-a", 8), RouterWorkerState{PrefillActive: 0, DecodeKV: 0, ActiveRequests: 0})
 
@@ -93,8 +94,9 @@ func TestRouterMediaHashPreference(t *testing.T) {
 	// Media-hash KV routing (§12.3.6): a repeated-image conversation must
 	// prefer the worker holding the warm encoder state.
 	r := NewCostRouter(DefaultRouterConfig())
-	r.SetKV(NewKVIndex())
-	r.kv.Add("w1", KVBlock{Namespace: "tenant-a", Hash: "ctx", Tokens: 50, MediaHash: "m1"})
+	kv := NewKVIndex()
+	kv.Add("w1", KVBlock{Namespace: "tenant-a", Hash: "ctx", Tokens: 50, MediaHash: "m1"})
+	r.SetKV(kv)
 	r.UpsertWorker(mkWorker("w1", "model-a", 8), RouterWorkerState{})
 	r.UpsertWorker(mkWorker("w2", "model-a", 8), RouterWorkerState{})
 

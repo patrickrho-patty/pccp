@@ -92,7 +92,7 @@ type CostRouter struct {
 	mu         sync.RWMutex
 	cfg        RouterConfig
 	fleet      *WorkerFleet
-	kv         *KVIndex
+	lookup     *KVLookup
 	receipts   *ReceiptStore
 	gang       *GangRegistry
 	predictor  *LatencyPredictor
@@ -101,8 +101,7 @@ type CostRouter struct {
 	maxSLORisk float64           // placements above this P(SLO violation) are rejected
 	lora       *LoRaLifecycle
 	pools      *ModelPoolManager
-	kvdir      *KVDirectory // WS1 cache-extent directory (identity-exact lookups)
-	shadow     Router       // candidate evaluated alongside (PAT-1445 shadow mode)
+	shadow     Router // candidate evaluated alongside (PAT-1445 shadow mode)
 }
 
 // NewCostRouter builds a router with the given config.
@@ -110,6 +109,7 @@ func NewCostRouter(cfg RouterConfig) *CostRouter {
 	return &CostRouter{
 		cfg:        cfg,
 		fleet:      NewWorkerFleet(),
+		lookup:     NewKVLookup(nil, nil),
 		workerCfg:  make(map[string]string),
 		maxSLORisk: 0.5,
 	}
@@ -125,16 +125,21 @@ func (r *CostRouter) SetFleet(f *WorkerFleet) {
 	r.fleet = f
 }
 
-// SetKV installs the fleet KV index (S3 §13.11).
-func (r *CostRouter) SetKV(kv *KVIndex) { r.kv = kv }
+// SetKV installs the fleet KV index as the lookup seam's legacy adapter
+// (S3 §13.11).
+func (r *CostRouter) SetKV(kv *KVIndex) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lookup.SetLegacy(kv)
+}
 
-// SetKVDirectory installs the WS1 cache-extent directory: requests
-// carrying cache identity get identity-exact overlap lookups; all others
-// keep the legacy namespace-scoped index path (conservative fallback).
+// SetKVDirectory installs the WS1 cache-extent directory as the lookup
+// seam's directory adapter: requests carrying cache identity get
+// identity-exact overlap lookups; all others keep the legacy path.
 func (r *CostRouter) SetKVDirectory(d *KVDirectory) {
 	r.mu.Lock()
-	r.kvdir = d
-	r.mu.Unlock()
+	defer r.mu.Unlock()
+	r.lookup.SetDirectory(d)
 }
 
 // SetLoRA installs the adapter-residency tracker: requests for an
@@ -236,14 +241,11 @@ func (r *CostRouter) Route(req RouteRequest) (RouteDecision, error) {
 		elig.Eligible++
 
 		// KV overlap credits: cached prefix tokens cancel prefill work.
-		// The WS1 directory answers identity-exact lookups when the
-		// request carries cache identity; the legacy namespace-scoped
-		// index is the fallback (no identity on the request/wire yet).
+		// The lookup seam owns the directory-vs-legacy policy (identity-
+		// exact when the request carries cache identity, legacy otherwise).
 		overlap := 0
-		if r.kvdir != nil && req.Cache != (CacheIdentity{}) && req.Namespace != "" && req.PrefixHash != "" {
-			overlap = r.kvdir.OverlapTokens(id, req.Namespace, req.PrefixHash, req.Cache)
-		} else if r.kv != nil && req.Namespace != "" && req.PrefixHash != "" {
-			overlap = r.kv.OverlapTokens(id, req.Namespace, req.PrefixHash)
+		if req.Namespace != "" && req.PrefixHash != "" {
+			overlap = r.lookup.OverlapTokens(id, req.Namespace, req.PrefixHash, req.Cache)
 		}
 
 		newPrompt := req.InputTokens - overlap
@@ -269,13 +271,7 @@ func (r *CostRouter) Route(req RouteRequest) (RouteDecision, error) {
 		// Media-hash routing (spec §12.3.6): warm encoder state discounts
 		// the worker holding the same media hash for this context.
 		if req.MediaHash != "" && req.PrefixHash != "" {
-			warmMedia := false
-			if r.kvdir != nil && req.Cache != (CacheIdentity{}) {
-				warmMedia = containsStr(r.kvdir.WorkersWithMedia(req.Namespace, req.PrefixHash, req.MediaHash, req.Cache), id)
-			} else if r.kv != nil {
-				warmMedia = containsStr(r.kv.WorkersWithMedia(req.Namespace, req.PrefixHash, req.MediaHash), id)
-			}
-			if warmMedia {
+			if containsStr(r.lookup.WorkersWithMedia(req.Namespace, req.PrefixHash, req.MediaHash, req.Cache), id) {
 				cost *= 1 - r.cfg.MediaDiscount
 			}
 		}
