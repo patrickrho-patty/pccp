@@ -306,6 +306,14 @@ func (s *Service) SeedDefaultTools(orgID string) error {
 		{"search.code", "코드 검색", "read", "search", "low", false},
 		{"test.run", "테스트 실행", "execute", "test", "low", false},
 		{"package.install", "패키지 설치", "execute", "install", "critical", true},
+		// Internal document tools (PAT-1403): HWP/HWPX parsing runs as
+		// harness-internal read-only tools. The parse engine is extracted
+		// from lawyerkit (@rho/editor) and vendored into patty-code; PCCP
+		// registers the governed tool identity so allowlist, approval, and
+		// audit govern these reads like any other tool. Read-only + no
+		// network ⇒ low danger, allowed by default.
+		{"doc.read_hwp", "HWP 문서 읽기", "read", "document", "low", false},
+		{"doc.read_hwpx", "HWPX 문서 읽기", "read", "document", "low", false},
 	}
 
 	for _, d := range defaults {
