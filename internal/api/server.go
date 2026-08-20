@@ -783,6 +783,15 @@ func (s *Server) setupRouter() {
 			r.Post("/submissions/{id}/reject", s.handleReviewChangeSubmission)
 		})
 
+		// Managed skill governance (PAT-1456)
+		r.Route("/skills", func(r chi.Router) {
+			r.Get("/", s.handleAdminSkillInventory)
+			r.Put("/assignments", s.handleAdminSkillAssignmentUpsert)
+			r.Delete("/assignments/{id}", s.handleAdminSkillAssignmentDelete)
+			r.Post("/epochs/deliver", s.handleAdminSkillEpochDeliver)
+			r.Post("/report", s.handleHarnessSkillReport)
+		})
+
 		// Audit
 		r.Route("/audit", func(r chi.Router) {
 			r.Get("/", s.handleListAuditEventsExtended)

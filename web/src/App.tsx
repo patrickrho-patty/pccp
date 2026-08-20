@@ -26,6 +26,7 @@ import ModelDetail from './pages/ModelDetail'
 import EndpointDetail from './pages/EndpointDetail'
 import FindingDetail from './pages/FindingDetail'
 import Policy from './pages/Policy'
+import Skills from './pages/Skills'
 import Provenance from './pages/Provenance'
 import Audit from './pages/Audit'
 import Fleet from './pages/Fleet'
@@ -142,6 +143,7 @@ function AppContent() {
           <Route path="/explorer" element={<CodeExplorer />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/policy" element={<Policy />} />
+          <Route path="/skills" element={<Skills />} />
           <Route path="/notifications" element={<NotificationRouting />} />
           <Route path="/security" element={<Security />} />
           <Route path="/compliance" element={<Compliance />} />

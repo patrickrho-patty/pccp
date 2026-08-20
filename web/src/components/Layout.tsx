@@ -59,6 +59,7 @@ const navSections: NavSection[] = [
     titleEn: 'Governance',
     items: [
       { path: '/policy', label: '정책', labelEn: 'Policy', icon: '⚖' },
+      { path: '/skills', label: '스킬', labelEn: 'Skills', icon: '🧩' },
       { path: '/security', label: '보안', labelEn: 'Security', icon: '🛡' },
       { path: '/compliance', label: '컴플라이언스', labelEn: 'Compliance', icon: '📋' },
       { path: '/tools', label: '도구', labelEn: 'Tools', icon: '🔧' },

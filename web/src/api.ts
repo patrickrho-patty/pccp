@@ -795,4 +795,13 @@ export const api = {
   // epoch the change was based on — the server rejects stale heads with 409.
   updateEnterpriseFeature: (id: string, data: { enabled: boolean; enforced: boolean; config: string; expected_epoch: number; reason: string }) =>
     request<any>(`/api/enterprise/features/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Managed skill governance (PAT-1456)
+  listSkills: (q: string) => request<any>(`/api/skills${q}`),
+  upsertSkillAssignment: (data: any) =>
+    request<any>('/api/skills/assignments', { method: 'PUT', body: JSON.stringify(data) }),
+  deleteSkillAssignment: (id: string) =>
+    request<any>(`/api/skills/assignments/${id}`, { method: 'DELETE' }),
+  deliverSkillEpoch: () =>
+    request<any>('/api/skills/epochs/deliver', { method: 'POST', body: JSON.stringify({}) }),
 };

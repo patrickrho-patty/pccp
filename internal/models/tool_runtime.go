@@ -173,6 +173,10 @@ func AllModels() []interface{} {
 		&TrailNode{},
 		&TrailEdge{},
 		&TrailViewerScope{},
+		// Managed skill governance (PAT-1456)
+		&SkillPolicyAssignment{},
+		&HarnessSkillReport{},
+		&SkillPolicyEpoch{},
 		// Model distribution campaigns (PAT-1444)
 		&ModelPackageEntitlement{},
 		&ModelDistributionCampaign{},
