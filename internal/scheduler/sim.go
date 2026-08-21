@@ -59,6 +59,22 @@ func (c contentionOracle) Freshness() time.Duration { return c.base.Freshness() 
 // simIdentity is the scenario fleet's shared cache identity.
 var simIdentity = CacheIdentity{ModelPackage: "model-a@1.0", TokenizerID: "tok", TemplateID: "tpl", PolicyEpoch: "e1"}
 
+// simWorker builds one synthetic worker for the scenario fleet (the
+// non-test constructor; mkWorker lives in test files).
+func simWorker(id, model string, seqs uint64) WorkerEntry {
+	return WorkerEntry{
+		Card: WorkerCard{
+			CardVersion:       2,
+			DariAddr:          id + ":9444",
+			WorkerID:          id,
+			ModelName:         model,
+			MaxConcurrentSeqs: seqs,
+			Status:            "ready",
+		},
+		LeasedUntil: time.Now().Add(time.Hour),
+	}
+}
+
 // simFleet builds the mixed synthetic fleet: H100 and A100 workers in two
 // regions, one prefill + one decode role pair when disaggregating.
 func simFleet(disaggregate bool) (*WorkerFleet, *TopologyInventory) {
@@ -67,10 +83,9 @@ func simFleet(disaggregate bool) (*WorkerFleet, *TopologyInventory) {
 	inv.AddNode("n-kr", TopologyNode{Zone: "z1", Rack: "r1"})
 	inv.AddNode("n-us", TopologyNode{Zone: "z2", Rack: "r9"})
 	add := func(id, gpu, node string, seqs uint64) {
-		e := mkWorker(id, "model-a", seqs)
+		e := simWorker(id, "model-a", seqs)
 		e.Card.GPUSKU = gpu
 		e.Card.NodeID = node
-		e.Card.DariAddr = id + ":9444"
 		inv.AddWorker(id, node)
 		fleet.Upsert(e, RouterWorkerState{Load: WorkerLoad{MaxConcurrent: int(seqs)}})
 	}
