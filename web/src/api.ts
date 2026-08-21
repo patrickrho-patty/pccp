@@ -896,4 +896,10 @@ export const api = {
     request<any>(`/api/sandbox-life/environments/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: JSON.stringify({}) }),
   sandboxLifeDrift: (id: string, kind: string, reason: string) =>
     request<any>(`/api/sandbox-life/environments/${encodeURIComponent(id)}/drift`, { method: 'POST', body: JSON.stringify({ kind, reason }) }),
+
+  // Scheduler traffic-director views (PAT-1445; CP-proxied scheduler admin views)
+  schedulerKVDir: () => request<any>('/api/scheduler/views/kvdir'),
+  schedulerPD: () => request<any[]>('/api/scheduler/views/pd'),
+  schedulerPrograms: () => request<any>('/api/scheduler/views/programs'),
+  schedulerShadow: () => request<any>('/api/scheduler/views/shadow'),
 };

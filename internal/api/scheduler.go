@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/scheduler"
@@ -77,12 +78,42 @@ func (s *Server) handleSchedulerRevocations(w http.ResponseWriter, r *http.Reque
 // handleSchedulerWorkersProxy is the CP read-through to the scheduler's
 // worker registry (DARI scheduler §9).
 func (s *Server) handleSchedulerWorkersProxy(w http.ResponseWriter, r *http.Request) {
+	s.proxySchedulerView(w, r, "workers")
+}
+
+// schedulerProxyViews is the allow-list of scheduler admin views the CP
+// proxies (bounded — no arbitrary path proxying). Includes the PAT-1445
+// traffic-director views.
+var schedulerProxyViews = map[string]bool{
+	"workers":  true,
+	"fleet":    true,
+	"queue":    true,
+	"routing":  true,
+	"kvdir":    true,
+	"pd":       true,
+	"programs": true,
+	"shadow":   true,
+}
+
+// handleSchedulerViewProxy proxies an allow-listed scheduler view
+// (read-only; the scheduler process owns the data).
+func (s *Server) handleSchedulerViewProxy(w http.ResponseWriter, r *http.Request) {
+	view := chi.URLParam(r, "view")
+	if !schedulerProxyViews[view] {
+		writeError(w, http.StatusNotFound, "unknown scheduler view")
+		return
+	}
+	s.proxySchedulerView(w, r, view)
+}
+
+// proxySchedulerView forwards one GET to the scheduler's admin API.
+func (s *Server) proxySchedulerView(w http.ResponseWriter, r *http.Request, view string) {
 	schedAddr := os.Getenv("PCCP_SCHED_HTTP_ADDR")
 	if schedAddr == "" {
 		writeError(w, http.StatusBadGateway, "scheduler not configured (PCCP_SCHED_HTTP_ADDR)")
 		return
 	}
-	target := "http://" + schedAddr + "/api/v1/workers"
+	target := "http://" + schedAddr + "/api/v1/" + view
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "proxy error")

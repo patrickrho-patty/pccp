@@ -43,6 +43,7 @@ const navSections: NavSection[] = [
       { path: '/live', label: '실시간 뷰', labelEn: 'Live Wall', icon: '🔴' },
       { path: '/sessions', label: '세션', labelEn: 'Sessions', icon: '◐' },
       { path: '/fleet', label: '플릿 관리', labelEn: 'Fleet', icon: '⛶' },
+      { path: '/scheduler', label: '스케줄러', labelEn: 'Scheduler', icon: '⌁' },
     ]
   },
   {

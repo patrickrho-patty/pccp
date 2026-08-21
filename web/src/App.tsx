@@ -109,6 +109,7 @@ function AppContent() {
           <Route path="/status" element={<StatusCenter />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/fleet" element={<Fleet />} />
+          <Route path="/scheduler" element={<SchedulerViews />} />
 		  <Route path="/live" element={<LiveView />} />
 		  <Route path="/harnesses/:id" element={<HarnessDetail />} />
 		  <Route path="/users/:id" element={<UserDetail />} />

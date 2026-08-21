@@ -467,6 +467,7 @@ func (s *Server) setupRouter() {
 			r.Post("/configs", s.handleSignWorkerConfig)
 			r.Get("/revocations", s.handleSchedulerRevocations)
 			r.Get("/workers", s.handleSchedulerWorkersProxy)
+			r.Get("/views/{view}", s.handleSchedulerViewProxy)
 		})
 
 		// Policy
