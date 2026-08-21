@@ -21,6 +21,7 @@ type Scheduler struct {
 	Programs  *ProgramRegistry
 	Topology  *TopologyInventory
 	Fleet     *WorkerFleet
+	Canary    *CanaryController
 }
 
 // NewScheduler assembles the full S1–S12 scheduler with the given trust
@@ -109,6 +110,31 @@ func (s *Scheduler) SyncRouter() {
 // Router exposes the composed cost router (admin/telemetry wiring).
 func (s *Scheduler) Router() *CostRouter {
 	return s.Serving.Dispatcher.router
+}
+
+// EnableCanary installs a candidate router in shadow and arms its canary
+// controller (PAT-1445 B4: one independent capability at a time; the
+// candidate computes in shadow until the controller promotes it).
+func (s *Scheduler) EnableCanary(cfg CanaryConfig) {
+	router := s.Serving.Dispatcher.router
+	if router == nil || cfg.Candidate == nil {
+		return
+	}
+	router.SetShadow(cfg.Candidate)
+	s.Canary = NewCanaryController(cfg, s.Evidence)
+}
+
+// EvaluateCanary drives one canary evaluation over the recent receipt
+// stream (the binary or an operator endpoint runs it periodically).
+func (s *Scheduler) EvaluateCanary() string {
+	if s.Canary == nil {
+		return ""
+	}
+	router := s.Serving.Dispatcher.router
+	if router == nil || router.Receipts() == nil {
+		return ""
+	}
+	return s.Canary.Evaluate(router.Receipts().Recent())
 }
 
 // Admit runs the admission ladder for a registration/heartbeat request.

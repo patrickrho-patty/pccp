@@ -154,3 +154,47 @@ func TestJournalDualPublishesToDirectory(t *testing.T) {
 		t.Fatalf("directory state changed by identity-less batch: %d", got)
 	}
 }
+
+// TestCanaryEndToEndPromotion: a shadowed candidate that agrees with the
+// baseline promotes through the scheduler's evaluation path.
+func TestCanaryEndToEndPromotion(t *testing.T) {
+	fx := newWorkerFixture(t)
+	s := NewScheduler(fx.trust, nil, 30*time.Second, 60*time.Second, testEvidenceKey(t))
+	card := fx.card
+	card.CardVersion = 2
+	card.DariAddr = "10.0.0.1:9444"
+	if _, err := s.Registry.Register(card, fx.subjectPub, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	s.SyncRouter()
+
+	candidate := &stubRouter{version: "cand/v1", decision: RouteDecision{WorkerID: card.WorkerID, Cost: 1}}
+	s.EnableCanary(CanaryConfig{
+		Capability:   "stage-planner/v1",
+		Candidate:    candidate,
+		MinSamples:   3,
+		MinAgreement: 0.9,
+		Window:       time.Hour,
+	})
+	for i := 0; i < 3; i++ {
+		if _, err := s.Router().Route(RouteRequest{Model: card.ModelName, InputTokens: 10, ExpectedOutputTokens: 5}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := s.EvaluateCanary(); got != CanaryActive {
+		t.Fatalf("canary state = %s, want active", got)
+	}
+	if !s.Canary.Active() {
+		t.Fatal("candidate should be active after promotion")
+	}
+	// The promotion is audited on the signed evidence log.
+	found := false
+	for _, e := range s.Evidence.Events() {
+		if e.EventType == EventCanaryActive && e.WorkerID == "stage-planner/v1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("promotion not audited")
+	}
+}

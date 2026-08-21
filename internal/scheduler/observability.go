@@ -311,5 +311,12 @@ func (o *Observability) ShadowView() interface{} {
 	out["agreement_rate"] = rate
 	out["policy_versions"] = versions
 	out["filtered"] = filtered
+	if o.svc != nil && o.svc.Canary != nil {
+		out["canary"] = map[string]interface{}{
+			"capability": o.svc.Canary.Capability(),
+			"state":      o.svc.Canary.State(),
+			"active":     o.svc.Canary.Active(),
+		}
+	}
 	return out
 }
