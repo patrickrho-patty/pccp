@@ -236,12 +236,13 @@ func (d *Dispatcher) AssignAnyFreeWorker() *Dispatch {
 	return nil
 }
 
-// execute forwards one bound request and completes its waiter.
+// execute forwards one bound request and completes its waiter. Decode
+// accounting wraps admission+execution on every path (co-located or
+// staged); prefill/transfer are measured inside the staged path.
 func (d *Dispatcher) execute(ctx context.Context, bound *Dispatch) {
 	req := bound.Request
 	workerID := bound.WorkerID
-	coLocated := bound.Plan.Mode != StageDisaggregated
-	if q := d.stageQueuesFor(); q != nil && coLocated {
+	if q := d.stageQueuesFor(); q != nil {
 		q.Enter(StageDecode, req.ID)
 		defer q.Leave(StageDecode, req.ID)
 	}
@@ -362,11 +363,6 @@ func (d *Dispatcher) executeStaged(bound *Dispatch, fw Forwarder, payload Infere
 	res, err := sf.SendDecode(decodeAddr, kvHandle, payload)
 	if q := d.stageQueuesFor(); q != nil {
 		q.Leave(StageTransfer, bound.Request.ID)
-		if err == nil {
-			// Decode admission through completion rides the decode stage.
-			q.Enter(StageDecode, bound.Request.ID)
-			q.Leave(StageDecode, bound.Request.ID)
-		}
 	}
 	if err != nil {
 		return InferenceResult{}, false

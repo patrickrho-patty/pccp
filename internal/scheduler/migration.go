@@ -87,11 +87,11 @@ func (m *MigrationCoordinator) replicate(cand HotPrefix) bool {
 		if !w.State.Load.CanAccept() {
 			continue
 		}
-		// The replica must be able to serve the extent's model package
-		// (card model is the package prefix, e.g. "model-a" in
-		// "model-a@1.0"); an empty package id imposes no constraint.
-		if cand.Identity.ModelPackage != "" &&
-			!strings.HasPrefix(cand.Identity.ModelPackage, w.Entry.Card.ModelName) {
+		// The replica must be able to serve the extent's model package:
+		// match on the model@version boundary so "model-a" never matches
+		// "model-ab@1.0". An empty package id imposes no constraint.
+		pkg, modelName := cand.Identity.ModelPackage, w.Entry.Card.ModelName
+		if pkg != "" && pkg != modelName && !strings.HasPrefix(pkg, modelName+"@") {
 			continue
 		}
 		if w.Entry.Quarantined || w.Entry.Lapsed || !w.Entry.Card.Servable() {

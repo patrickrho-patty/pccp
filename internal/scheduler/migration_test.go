@@ -83,4 +83,28 @@ func TestMigrationSkipsUnpriceableAndModelMismatch(t *testing.T) {
 	if res.Placed != 0 {
 		t.Fatalf("model-mismatched replica placed: %+v", res)
 	}
+
+	// Prefix confusion: a "model-ab" worker must not receive "model-a"
+	// package replicas (the match is on the model@ boundary, not a raw
+	// string prefix).
+	dir3, fleet3, oracle3 := migrationFixture()
+	fleet3.Mutate("w2", func(w *FleetWorker) { w.Entry.Card.ModelName = "model-ab" })
+	m3 := NewMigrationCoordinator(dir3, oracle3, fleet3)
+	if res := m3.ReplicateOnce(); res.Placed != 0 {
+		t.Fatalf("model-ab worker received model-a replica: %+v", res)
+	}
+	// Exact package match still replicates.
+	dir4, fleet4, oracle4 := migrationFixture()
+	fleet4.Mutate("w2", func(w *FleetWorker) { w.Entry.Card.ModelName = "model-ab" })
+	dir4.InvalidateIf(func(id CacheIdentity) bool { return true })
+	samePkg := testIdentity
+	samePkg.ModelPackage = "model-ab@2.0"
+	dir4.Add("w1", L1GPU, dirBlock("tenant-a", "viral", 1024), samePkg, true)
+	for i := 0; i < 5; i++ {
+		dir4.Hit("tenant-a", "viral", samePkg)
+	}
+	m4 := NewMigrationCoordinator(dir4, oracle4, fleet4)
+	if res := m4.ReplicateOnce(); res.Placed != 1 {
+		t.Fatalf("exact package match did not replicate: %+v", res)
+	}
 }
