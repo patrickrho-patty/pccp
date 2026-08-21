@@ -23,6 +23,7 @@ type Scheduler struct {
 	Fleet     *WorkerFleet
 	Canary    *CanaryController
 	Regions   *RegionRegistry
+	Migration *MigrationCoordinator
 }
 
 // NewScheduler assembles the full S1–S12 scheduler with the given trust
@@ -46,6 +47,8 @@ func NewScheduler(trust Trust, policy PolicySource, ttl, grace time.Duration, ev
 	svc.PD = NewPDController(NewPDPlanner(svc.Fleet),
 		NewLatencyPredictorPair(DefaultPredictorConfig()))
 	svc.Programs = NewProgramRegistry(svc.KVDir)
+	svc.Migration = NewMigrationCoordinator(svc.KVDir,
+		NewStaticTopologyOracle(svc.Topology), svc.Fleet)
 	svc.wireServingStack()
 	return svc
 }
