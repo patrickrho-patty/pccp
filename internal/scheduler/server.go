@@ -22,6 +22,7 @@ type Scheduler struct {
 	Topology  *TopologyInventory
 	Fleet     *WorkerFleet
 	Canary    *CanaryController
+	Regions   *RegionRegistry
 }
 
 // NewScheduler assembles the full S1–S12 scheduler with the given trust
@@ -40,6 +41,7 @@ func NewScheduler(trust Trust, policy PolicySource, ttl, grace time.Duration, ev
 		Trace:     NewTraceRecorder(4096),
 		Topology:  NewTopologyInventory(),
 		Fleet:     NewWorkerFleet(),
+		Regions:   NewRegionRegistry(),
 	}
 	svc.PD = NewPDController(NewPDPlanner(svc.Fleet),
 		NewLatencyPredictorPair(DefaultPredictorConfig()))
@@ -63,6 +65,7 @@ func (s *Scheduler) wireServingStack() {
 	router.SetGang(NewGangRegistry())
 	router.SetSLOResolver(NewSLOResolver())
 	router.SetPredictor(NewLatencyPredictor(DefaultPredictorConfig()))
+	router.SetRegions(s.Regions)
 	s.Serving.Dispatcher.SetRouter(router)
 	// PAT-1445 governed trace capture: versioned, content-free decisions
 	// for replay/shadow evaluation.

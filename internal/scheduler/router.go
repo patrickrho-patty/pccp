@@ -79,6 +79,14 @@ type RouteRequest struct {
 	Cache                CacheIdentity // cache compatibility identity (WS1; zero = legacy index path)
 }
 
+// RoutePath is the hierarchical placement path a receipt explains
+// (PAT-1445: region → pool → worker).
+type RoutePath struct {
+	Region string `json:"region,omitempty"`
+	Pool   string `json:"pool,omitempty"`
+	Worker string `json:"worker"`
+}
+
 // RouteDecision is one placement outcome.
 type RouteDecision struct {
 	WorkerID      string
@@ -101,7 +109,8 @@ type CostRouter struct {
 	maxSLORisk float64           // placements above this P(SLO violation) are rejected
 	lora       *LoRaLifecycle
 	pools      *ModelPoolManager
-	shadow     Router // candidate evaluated alongside (PAT-1445 shadow mode)
+	regions    *RegionRegistry // global stage: region health + preauthorized failover
+	shadow     Router          // candidate evaluated alongside (PAT-1445 shadow mode)
 }
 
 // NewCostRouter builds a router with the given config.
@@ -123,6 +132,14 @@ func (r *CostRouter) SetFleet(f *WorkerFleet) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.fleet = f
+}
+
+// SetRegions installs the region registry (PAT-1445 global stage).
+// Nil = single-region deployments: no failover, no behavior change.
+func (r *CostRouter) SetRegions(reg *RegionRegistry) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.regions = reg
 }
 
 // SetKV installs the fleet KV index as the lookup seam's legacy adapter
@@ -223,6 +240,21 @@ func (r *CostRouter) Route(req RouteRequest) (RouteDecision, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
+	// Global stage (PAT-1445): region health and preauthorized failover
+	// resolve before any cluster/worker scoring. Failure is a clear
+	// availability error, never a silent cross-region route.
+	if r.regions != nil && req.Region != "" {
+		resolved, ok := r.regions.SelectRegion(req.Region)
+		if !ok {
+			return RouteDecision{}, &RouteError{
+				Model:       req.Model,
+				Permanent:   true,
+				Eligibility: &EligibilityReport{Region: req.Region},
+			}
+		}
+		req.Region = resolved
+	}
+
 	best := RouteDecision{Cost: 1e18}
 	found := false
 	elig := &EligibilityReport{Region: req.Region}
@@ -297,6 +329,11 @@ func (r *CostRouter) Route(req RouteRequest) (RouteDecision, error) {
 			AtUnixMs:      timeNowUnixMs(),
 			PolicyVersion: r.Version(),
 			Eligibility:   elig,
+			Path: &RoutePath{
+				Region: req.Region,
+				Pool:   req.Pool,
+				Worker: best.WorkerID,
+			},
 			Signals: &DecisionSignals{
 				PrefillActive:  st.PrefillActive,
 				DecodeKV:       st.DecodeKV,
@@ -358,6 +395,7 @@ type RoutingReceipt struct {
 	PolicyVersion    string             `json:"policy_version,omitempty"`
 	PredictorVersion string             `json:"predictor_version,omitempty"`
 	Eligibility      *EligibilityReport `json:"eligibility,omitempty"`
+	Path             *RoutePath         `json:"path,omitempty"`
 	Signals          *DecisionSignals   `json:"signals,omitempty"`
 	Shadow           *ShadowRecord      `json:"shadow,omitempty"`
 	SignatureHex     string             `json:"signature_hex,omitempty"`
@@ -375,6 +413,7 @@ func (r *RoutingReceipt) Sign(priv ed25519.PrivateKey) error {
 		PolicyVersion:    r.PolicyVersion,
 		PredictorVersion: r.PredictorVersion,
 		Eligibility:      r.Eligibility,
+		Path:             r.Path,
 		Signals:          r.Signals,
 		Shadow:           r.Shadow,
 	}
@@ -404,6 +443,7 @@ func (r *RoutingReceipt) Verify(pub ed25519.PublicKey) bool {
 		PolicyVersion:    r.PolicyVersion,
 		PredictorVersion: r.PredictorVersion,
 		Eligibility:      r.Eligibility,
+		Path:             r.Path,
 		Signals:          r.Signals,
 		Shadow:           r.Shadow,
 	}
