@@ -27,6 +27,7 @@ type InferenceResult struct {
 	Finish    string
 	Usage     map[string]int
 	Cancelled bool
+	Retryable bool // the error is safe to retry later (bounded early rejection)
 	Err       string
 }
 

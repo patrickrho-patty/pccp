@@ -29,6 +29,33 @@ type EligibilityReport struct {
 	Filtered map[IneligibilityReason]int `json:"filtered,omitempty"`
 }
 
+// permanentReason reports whether an ineligibility cause is structural
+// (no amount of queue waiting fixes it within a TTL): the model, region,
+// pool, gang, or servable state does not change by waiting. Overload and
+// SLO risk are transient — waiting legitimately helps (late binding).
+func permanentReason(r IneligibilityReason) bool {
+	switch r {
+	case ReasonModelMismatch, ReasonRegionMismatch, ReasonPoolMismatch, ReasonGangIncomplete, ReasonNotServable:
+		return true
+	}
+	return false
+}
+
+// Permanent reports whether the filter pass excluded every worker for
+// structural reasons only — the bounded-early-rejection signal (WS3: an
+// honest retryable reason instead of parking the request to TTL).
+func (r *EligibilityReport) Permanent() bool {
+	if r.Eligible > 0 {
+		return false
+	}
+	for reason := range r.Filtered {
+		if !permanentReason(reason) {
+			return false
+		}
+	}
+	return true
+}
+
 // DecisionSignals records the chosen worker's measured load at decision
 // time (PAT-1445: receipts record the decisive measured signals).
 type DecisionSignals struct {

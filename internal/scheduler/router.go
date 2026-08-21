@@ -282,7 +282,7 @@ func (r *CostRouter) Route(req RouteRequest) (RouteDecision, error) {
 		}
 	}
 	if !found {
-		return RouteDecision{}, fmt.Errorf("scheduler: no eligible worker for model %q", req.Model)
+		return RouteDecision{}, &RouteError{Model: req.Model, Permanent: elig.Permanent(), Eligibility: elig}
 	}
 	if r.receipts != nil {
 		st := RouterWorkerState{}
@@ -312,6 +312,24 @@ func (r *CostRouter) Route(req RouteRequest) (RouteDecision, error) {
 		r.receipts.Add(rec)
 	}
 	return best, nil
+}
+
+// RouteError reports a no-placement outcome with the eligibility
+// evidence (WS3 §bounded early rejection: honest, retryable reasons).
+// Permanent means no eligible path exists at any load level — the caller
+// rejects early instead of requeueing to TTL.
+type RouteError struct {
+	Model       string
+	Permanent   bool
+	Eligibility *EligibilityReport
+}
+
+// Error renders the reason with its permanence class.
+func (e *RouteError) Error() string {
+	if e.Permanent {
+		return fmt.Sprintf("scheduler: no eligible worker for model %q (permanent: no serving path)", e.Model)
+	}
+	return fmt.Sprintf("scheduler: no eligible worker for model %q (transient: capacity may free)", e.Model)
 }
 
 // timeNowUnixMs is a tiny clock indirection for deterministic tests.

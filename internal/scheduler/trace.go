@@ -28,6 +28,7 @@ const (
 	TraceExpired   TraceStage = "expired"
 	TraceDrained   TraceStage = "drained"
 	TraceCancelled TraceStage = "cancelled"
+	TraceRejected  TraceStage = "rejected"
 )
 
 // TraceEvent is one content-free scheduling measurement.

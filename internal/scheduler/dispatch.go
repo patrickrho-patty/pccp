@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -257,8 +258,16 @@ func (d *Dispatcher) assignLocked(workerID string) *Dispatch {
 			RequestClass:         requestClassFor(out.Request.Class),
 		})
 		if err != nil {
-			// No eligible worker for the head request: requeue and wait
-			// (late binding).
+			// Bounded early rejection (WS3): a structurally unroutable
+			// request (no model/region/pool path at any load level) gets an
+			// honest retryable answer now instead of parking to TTL. A
+			// transient miss keeps late binding and requeues.
+			var rerr *RouteError
+			if errors.As(err, &rerr) && rerr.Permanent {
+				d.recordTrace(traceEventFor(*out.Request, TraceRejected))
+				d.submitResult(out.Request.ID, InferenceResult{Err: err.Error(), Retryable: true})
+				return nil
+			}
 			d.queue.Enqueue(*out.Request)
 			return nil
 		}

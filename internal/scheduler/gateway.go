@@ -275,6 +275,10 @@ func (g *Gateway) writeCompletion(w http.ResponseWriter, model string, res Infer
 		return
 	}
 	if res.Err != "" {
+		if res.Retryable {
+			writeGatewayError(w, http.StatusServiceUnavailable, res.Err)
+			return
+		}
 		writeGatewayError(w, http.StatusInternalServerError, res.Err)
 		return
 	}
