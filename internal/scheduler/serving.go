@@ -71,6 +71,7 @@ func NewServingHandler(svc *Scheduler, adminToken string) http.Handler {
 	mux.Handle("/api/v1/pd", views)
 	mux.Handle("/api/v1/programs", views)
 	mux.Handle("/api/v1/shadow", views)
+	mux.Handle("/api/v1/stages", views)
 
 	// S9 batch gateway: submit/status/cancel (slack-gated dispatch).
 	batch := svc.Serving.Batch()

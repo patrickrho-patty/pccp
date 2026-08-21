@@ -93,6 +93,7 @@ var schedulerProxyViews = map[string]bool{
 	"pd":       true,
 	"programs": true,
 	"shadow":   true,
+	"stages":   true,
 }
 
 // handleSchedulerViewProxy proxies an allow-listed scheduler view

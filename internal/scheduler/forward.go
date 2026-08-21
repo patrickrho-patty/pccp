@@ -99,6 +99,9 @@ func (d *Dispatcher) Submit(qr queue.Request) (<-chan InferenceResult, error) {
 		return nil, err
 	}
 	d.recordTrace(traceEventFor(qr, TraceArrived))
+	if q := d.stageQueuesFor(); q != nil {
+		q.Enter(StageLookup, qr.ID)
+	}
 	if p := d.programsFor(); p != nil && qr.ProgramID != "" {
 		p.Turn(qr.ProgramID, qr.Tenant, "", CacheIdentity{}, "", qr.TurnSeq)
 	}
@@ -142,6 +145,9 @@ func (d *Dispatcher) Cancel(id string) bool {
 	d.fwMu.Unlock()
 	if removed || ok {
 		d.recordTrace(TraceEvent{RequestID: id, Stage: TraceCancelled})
+		if q := d.stageQueuesFor(); q != nil {
+			q.Leave(StageLookup, id)
+		}
 	}
 	if w != nil {
 		select {
@@ -234,6 +240,11 @@ func (d *Dispatcher) AssignAnyFreeWorker() *Dispatch {
 func (d *Dispatcher) execute(ctx context.Context, bound *Dispatch) {
 	req := bound.Request
 	workerID := bound.WorkerID
+	coLocated := bound.Plan.Mode != StageDisaggregated
+	if q := d.stageQueuesFor(); q != nil && coLocated {
+		q.Enter(StageDecode, req.ID)
+		defer q.Leave(StageDecode, req.ID)
+	}
 
 	fw := d.forwarderFor()
 	if fw == nil {
@@ -330,7 +341,13 @@ func (d *Dispatcher) executeStaged(bound *Dispatch, fw Forwarder, payload Infere
 		return InferenceResult{}, false
 	}
 	d.recordTrace(stageEventFor(bound, TracePrefill, plan.PrefillWorker))
+	if q := d.stageQueuesFor(); q != nil {
+		q.Enter(StagePrefill, bound.Request.ID)
+	}
 	kvHandle, err := sf.SendPrefill(prefillAddr, payload)
+	if q := d.stageQueuesFor(); q != nil {
+		q.Leave(StagePrefill, bound.Request.ID)
+	}
 	if err != nil {
 		return InferenceResult{}, false
 	}
@@ -339,7 +356,18 @@ func (d *Dispatcher) executeStaged(bound *Dispatch, fw Forwarder, payload Infere
 		return InferenceResult{}, false
 	}
 	d.recordTrace(stageEventFor(bound, TraceTransfer, plan.DecodeWorker))
+	if q := d.stageQueuesFor(); q != nil {
+		q.Enter(StageTransfer, bound.Request.ID)
+	}
 	res, err := sf.SendDecode(decodeAddr, kvHandle, payload)
+	if q := d.stageQueuesFor(); q != nil {
+		q.Leave(StageTransfer, bound.Request.ID)
+		if err == nil {
+			// Decode admission through completion rides the decode stage.
+			q.Enter(StageDecode, bound.Request.ID)
+			q.Leave(StageDecode, bound.Request.ID)
+		}
+	}
 	if err != nil {
 		return InferenceResult{}, false
 	}

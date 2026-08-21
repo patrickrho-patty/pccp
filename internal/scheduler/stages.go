@@ -27,11 +27,13 @@ const (
 // ever adds a separate prefill stage upstream of the router's chosen
 // decode worker — it never overrides the router's placement.
 type StagePlanner struct {
-	pd            *PDPlanner
-	oracle        NetworkOracle
-	controller    *PDController
-	bytesPerToken int64   // KV size per token for transfer pricing
-	maxTransferMs float64 // TTFT budget guard: transfers priced above this fall back co-located
+	pd               *PDPlanner
+	oracle           NetworkOracle
+	controller       *PDController
+	queues           *StageQueues
+	bytesPerToken    int64   // KV size per token for transfer pricing
+	maxTransferMs    float64 // TTFT budget guard: transfers priced above this fall back co-located
+	maxTransferDepth int     // backpressure: measured transfer-queue depth that restores co-located
 }
 
 // NewStagePlanner builds a planner over the P/D role view and the network
@@ -39,13 +41,18 @@ type StagePlanner struct {
 // threshold (no hysteresis).
 func NewStagePlanner(pd *PDPlanner, oracle NetworkOracle, controller *PDController) *StagePlanner {
 	return &StagePlanner{
-		pd:            pd,
-		oracle:        oracle,
-		controller:    controller,
-		bytesPerToken: 128,   // conservative KV bytes/token until engine-reported
-		maxTransferMs: 250.0, // transfers beyond this never improve TTFT enough
+		pd:               pd,
+		oracle:           oracle,
+		controller:       controller,
+		bytesPerToken:    128,   // conservative KV bytes/token until engine-reported
+		maxTransferMs:    250.0, // transfers beyond this never improve TTFT enough
+		maxTransferDepth: 4,     // deep transfer queues restore co-located execution
 	}
 }
+
+// SetQueues installs the stage measurement plane (PAT-1445 criterion 7):
+// transfer-queue depth feeds backpressure decisions.
+func (p *StagePlanner) SetQueues(q *StageQueues) { p.queues = q }
 
 // disaggregating reports whether the model is engaged for disaggregation:
 // the controller's hysteresis state when present, else the planner's raw
@@ -74,6 +81,13 @@ func (p *StagePlanner) Plan(model, decodeWorker string, inputTokens int) StagePl
 		return plan
 	}
 	if !p.disaggregating(model) {
+		return plan
+	}
+	// Backpressure: a deep measured transfer queue means network
+	// contention is already hurting — co-located execution beats adding
+	// another flow (WS2: network congestion after placement re-evaluates
+	// and falls back conservatively).
+	if p.queues != nil && p.queues.Depth(StageTransfer) >= p.maxTransferDepth {
 		return plan
 	}
 	prefill := ""

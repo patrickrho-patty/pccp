@@ -119,14 +119,15 @@ type RequestPayload struct {
 // Submit/Cancel manage the pending-waiter side of the dispatch loop.
 // The S3 cost router supersedes capability-only selection when installed.
 type Dispatcher struct {
-	mu       sync.Mutex
-	queue    *queue.Queue
-	selector *WorkerSelector
-	policy   OverloadPolicy
-	est      *OutputEstimator
-	router   *CostRouter
-	planner  *StagePlanner
-	programs *ProgramRegistry
+	mu          sync.Mutex
+	queue       *queue.Queue
+	selector    *WorkerSelector
+	policy      OverloadPolicy
+	est         *OutputEstimator
+	router      *CostRouter
+	planner     *StagePlanner
+	programs    *ProgramRegistry
+	stageQueues *StageQueues
 
 	fwMu      sync.Mutex
 	forwarder Forwarder
@@ -226,9 +227,15 @@ func (d *Dispatcher) assignLocked(workerID string) *Dispatch {
 		if out.Request != nil {
 			switch out.Outcome {
 			case queue.OutcomeExpiredTTL:
+				if q := d.stageQueues; q != nil {
+					q.Leave(StageLookup, out.Request.ID)
+				}
 				d.recordTrace(traceEventFor(*out.Request, TraceExpired))
 				d.submitResult(out.Request.ID, InferenceResult{Err: "scheduler: queued request expired; retry", Cancelled: true})
 			case queue.OutcomeDrained:
+				if q := d.stageQueues; q != nil {
+					q.Leave(StageLookup, out.Request.ID)
+				}
 				d.recordTrace(traceEventFor(*out.Request, TraceDrained))
 				d.submitResult(out.Request.ID, InferenceResult{Err: "scheduler: shutting down", Cancelled: true})
 			}
@@ -264,6 +271,9 @@ func (d *Dispatcher) assignLocked(workerID string) *Dispatch {
 			// transient miss keeps late binding and requeues.
 			var rerr *RouteError
 			if errors.As(err, &rerr) && rerr.Permanent {
+				if q := d.stageQueues; q != nil {
+					q.Leave(StageLookup, out.Request.ID)
+				}
 				d.recordTrace(traceEventFor(*out.Request, TraceRejected))
 				d.submitResult(out.Request.ID, InferenceResult{Err: err.Error(), Retryable: true})
 				return nil
@@ -300,6 +310,9 @@ func (d *Dispatcher) assignLocked(workerID string) *Dispatch {
 	boundEvent := traceEventFor(*out.Request, TraceBound)
 	boundEvent.WorkerID = selected
 	boundEvent.QueueWaitMs = time.Since(out.Request.ArrivedAt).Milliseconds()
+	if q := d.stageQueues; q != nil {
+		q.Leave(StageLookup, out.Request.ID)
+	}
 	var plan StagePlan
 	if d.planner != nil {
 		plan = d.planner.Plan(model, selected, out.Request.InputTokens)
@@ -342,6 +355,22 @@ func (d *Dispatcher) SetPrograms(p *ProgramRegistry) {
 	d.mu.Lock()
 	d.programs = p
 	d.mu.Unlock()
+}
+
+// SetStageQueues installs the stage measurement plane (criterion 7):
+// lookup/prefill/transfer/decode depths and waits are recorded at
+// lifecycle boundaries.
+func (d *Dispatcher) SetStageQueues(q *StageQueues) {
+	d.mu.Lock()
+	d.stageQueues = q
+	d.mu.Unlock()
+}
+
+// stageQueuesFor returns the measurement plane (nil-safe).
+func (d *Dispatcher) stageQueuesFor() *StageQueues {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.stageQueues
 }
 
 // programsFor returns the installed registry (nil = WS3 off) with the

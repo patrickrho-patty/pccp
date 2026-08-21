@@ -24,6 +24,7 @@ type Scheduler struct {
 	Canary    *CanaryController
 	Regions   *RegionRegistry
 	Migration *MigrationCoordinator
+	Stages    *StageQueues
 }
 
 // NewScheduler assembles the full S1–S12 scheduler with the given trust
@@ -43,6 +44,7 @@ func NewScheduler(trust Trust, policy PolicySource, ttl, grace time.Duration, ev
 		Topology:  NewTopologyInventory(),
 		Fleet:     NewWorkerFleet(),
 		Regions:   NewRegionRegistry(),
+		Stages:    NewStageQueues(),
 	}
 	svc.PD = NewPDController(NewPDPlanner(svc.Fleet),
 		NewLatencyPredictorPair(DefaultPredictorConfig()))
@@ -79,9 +81,12 @@ func (s *Scheduler) wireServingStack() {
 	// WS2 stage planning: every binding records its execution path as
 	// trace evidence; execution stays co-located until the PIA stage
 	// protocol lands (PAT-1445 rollout: decide in shadow first).
-	s.Serving.Dispatcher.SetStagePlanner(
-		NewStagePlanner(s.PD.planner, NewStaticTopologyOracle(s.Topology), s.PD))
+	topology := s.Topology
+	planner := NewStagePlanner(s.PD.planner, NewStaticTopologyOracle(topology), s.PD)
+	planner.SetQueues(s.Stages)
+	s.Serving.Dispatcher.SetStagePlanner(planner)
 	s.Serving.Dispatcher.SetPrograms(s.Programs)
+	s.Serving.Dispatcher.SetStageQueues(s.Stages)
 }
 
 // SyncRouter refreshes the shared worker fleet from the live registry —
