@@ -52,7 +52,7 @@ func TestProgramRegistryPauseLifecycle(t *testing.T) {
 
 	id := testIdentity
 	// First turn: registers continuity and the program's cache key.
-	if act := r.Turn("p1", "tenant-a", "ph", id, "w1", 1); act != KVActionNone {
+	if act := r.Turn("p1", "tenant-a", "ph", id, "w1", 1, 0); act != KVActionNone {
 		t.Fatalf("first turn action = %s", act)
 	}
 	// First pause, no history: retain (short/unknown estimate).
@@ -64,7 +64,7 @@ func TestProgramRegistryPauseLifecycle(t *testing.T) {
 	}
 	// Short pause, continuation: prefetch back + first calibration sample.
 	now = now.Add(2 * time.Second)
-	if act := r.Turn("p1", "tenant-a", "ph", id, "w1", 2); act != KVActionPrefetch {
+	if act := r.Turn("p1", "tenant-a", "ph", id, "w1", 2, 0); act != KVActionPrefetch {
 		t.Fatalf("continuation = %s, want prefetch", act)
 	}
 	if r.Paused("p1") {
@@ -75,10 +75,10 @@ func TestProgramRegistryPauseLifecycle(t *testing.T) {
 	// retain/demote threshold).
 	r.ToolPaused("p1")
 	now = now.Add(60 * time.Second)
-	r.Turn("p1", "tenant-a", "ph", id, "w1", 3)
+	r.Turn("p1", "tenant-a", "ph", id, "w1", 3, 0)
 	r.ToolPaused("p1")
 	now = now.Add(60 * time.Second)
-	r.Turn("p1", "tenant-a", "ph", id, "w1", 4)
+	r.Turn("p1", "tenant-a", "ph", id, "w1", 4, 0)
 	// Now the estimate is long: the next pause must demote HBM → L2.
 	if act := r.ToolPaused("p1"); act != KVActionDemote {
 		t.Fatalf("long-estimated pause = %s, want demote", act)
@@ -89,7 +89,7 @@ func TestProgramRegistryPauseLifecycle(t *testing.T) {
 	}
 	// Continuation restores to L1.
 	now = now.Add(5 * time.Second)
-	if act := r.Turn("p1", "tenant-a", "ph", id, "w1", 5); act != KVActionPrefetch {
+	if act := r.Turn("p1", "tenant-a", "ph", id, "w1", 5, 0); act != KVActionPrefetch {
 		t.Fatalf("continuation after demote = %s, want prefetch", act)
 	}
 	locs = dir.Locations("tenant-a", "ph", id)
@@ -103,14 +103,14 @@ func TestProgramRegistryCalibrationCounter(t *testing.T) {
 	now := time.Now()
 	r.SetNow(func() time.Time { return now })
 	// Establish a long estimate: pause 60s, continue.
-	r.Turn("p1", "tenant-a", "ph", testIdentity, "w1", 1)
+	r.Turn("p1", "tenant-a", "ph", testIdentity, "w1", 1, 0)
 	r.ToolPaused("p1")
 	now = now.Add(60 * time.Second)
-	r.Turn("p1", "tenant-a", "ph", testIdentity, "w1", 2)
+	r.Turn("p1", "tenant-a", "ph", testIdentity, "w1", 2, 0)
 	// Pause again and resume far earlier than the estimate predicts.
 	r.ToolPaused("p1")
 	now = now.Add(500 * time.Millisecond)
-	r.Turn("p1", "tenant-a", "ph", testIdentity, "w1", 3)
+	r.Turn("p1", "tenant-a", "ph", testIdentity, "w1", 3, 0)
 	_, _, errs, _ := r.Stats()
 	if errs != 1 {
 		t.Fatalf("prediction errors = %d, want 1 (early continuation)", errs)

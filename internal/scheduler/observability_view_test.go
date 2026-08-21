@@ -76,7 +76,7 @@ func TestPDView(t *testing.T) {
 
 func TestProgramsAndShadowViews(t *testing.T) {
 	svc := viewTestScheduler()
-	svc.Programs.Turn("p1", "tenant-a", "", CacheIdentity{}, "", 1)
+	svc.Programs.Turn("p1", "tenant-a", "", CacheIdentity{}, "", 1, 0)
 	svc.Programs.ToolPaused("p1")
 
 	rs := NewReceiptStore(16)

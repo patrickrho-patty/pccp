@@ -38,6 +38,9 @@ type programState struct {
 	identity     CacheIdentity
 	workerID     string // worker holding the program's KV residence
 	predictErrs  int    // pause-duration mispredictions (calibration)
+	budgetMs     int64  // task SLO budget (0 = none)
+	startedAt    time.Time
+	overBudget   bool
 }
 
 // ProgramRegistry tracks agent-program scheduling state. Safe for
@@ -62,11 +65,12 @@ func NewProgramRegistry(dir *KVDirectory) *ProgramRegistry {
 // SetNow injects a clock (deterministic tests).
 func (r *ProgramRegistry) SetNow(fn func() time.Time) { r.now = fn }
 
-// Turn records one program turn's scheduling metadata. When the program
+// Turn records one program turn's scheduling metadata (including the
+// task SLO budget the verified envelope authorized). When the program
 // was tool-paused, the turn is a continuation: the registry restores the
 // program's KV residence (prefetch) and folds the observed pause into
 // the bounded estimate (WS3 predicted-vs-actual calibration).
-func (r *ProgramRegistry) Turn(programID, namespace, prefixHash string, id CacheIdentity, workerID string, turnSeq int) KVAction {
+func (r *ProgramRegistry) Turn(programID, namespace, prefixHash string, id CacheIdentity, workerID string, turnSeq int, budget time.Duration) KVAction {
 	if programID == "" {
 		return KVActionNone
 	}
@@ -79,6 +83,15 @@ func (r *ProgramRegistry) Turn(programID, namespace, prefixHash string, id Cache
 	}
 	p.namespace = namespace
 	p.turns++
+	if budget > 0 {
+		if p.startedAt.IsZero() {
+			p.startedAt = r.now()
+			p.budgetMs = budget.Milliseconds()
+		}
+		if r.now().Sub(p.startedAt).Milliseconds() > p.budgetMs {
+			p.overBudget = true
+		}
+	}
 	if prefixHash != "" {
 		p.prefixHash = prefixHash
 		p.identity = id
@@ -161,4 +174,17 @@ func (r *ProgramRegistry) Stats() (programs, paused, predictErrs, turns int) {
 		turns += p.turns
 	}
 	return programs, paused, predictErrs, turns
+}
+
+// OverBudget returns the count of programs past their task SLO budget.
+func (r *ProgramRegistry) OverBudget() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, p := range r.programs {
+		if p.overBudget {
+			n++
+		}
+	}
+	return n
 }

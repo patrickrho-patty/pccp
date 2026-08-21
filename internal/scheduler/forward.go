@@ -103,7 +103,7 @@ func (d *Dispatcher) Submit(qr queue.Request) (<-chan InferenceResult, error) {
 		q.Enter(StageLookup, qr.ID)
 	}
 	if p := d.programsFor(); p != nil && qr.ProgramID != "" {
-		p.Turn(qr.ProgramID, qr.Tenant, "", CacheIdentity{}, "", qr.TurnSeq)
+		p.Turn(qr.ProgramID, qr.Tenant, "", CacheIdentity{}, "", qr.TurnSeq, qr.SLOBudget)
 	}
 	d.wakeDispatch()
 	return w.ch, nil

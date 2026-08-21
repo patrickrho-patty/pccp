@@ -182,7 +182,14 @@ func (g *Gateway) handleIngress(w http.ResponseWriter, r *http.Request, anthropi
 	}
 
 	inputTokens, mediaTokens := g.measureInput(req.Messages)
-	expected := g.dispatcher.Estimator().Estimate(inputTokens, 0, maxOut)
+	// Reserve by risk band (WS3: uncertain output length): when the
+	// estimator's learned error band is wide, the conservative high
+	// estimate drives the debit so capacity is never overcommitted.
+	est, _, high := g.dispatcher.Estimator().EstimateWithBand(inputTokens, 0, maxOut)
+	expected := est
+	if g.dispatcher.Estimator().Uncertain() {
+		expected = high
+	}
 
 	// Edge admission: shed overload before enqueue (spec §12.3.7).
 	sig := g.dispatcher.FleetSignalsFromRegistry()

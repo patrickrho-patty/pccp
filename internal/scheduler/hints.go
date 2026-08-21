@@ -48,10 +48,14 @@ func DefaultEstimatorConfig() EstimatorConfig {
 // OutputEstimator predicts expected output tokens per input size, learned
 // online from completions (spec §12.3.3 + llm-d output-length hints). A
 // per-request explicit hint wins; otherwise the learned ratio applies.
+// Alongside the ratio it learns the absolute ratio ERROR, which yields
+// an uncertainty band (PAT-1445 WS3 §edge cases: uncertain output length
+// — reserve by risk band, never unsafe overcommit).
 type OutputEstimator struct {
 	mu    sync.RWMutex
 	cfg   EstimatorConfig
 	ratio float64 // tokens out per token in, EMA
+	err   float64 // absolute ratio error, EMA (uncertainty band)
 }
 
 // NewOutputEstimator builds an estimator seeded with the default ratio.
@@ -62,39 +66,76 @@ func NewOutputEstimator(cfg EstimatorConfig) *OutputEstimator {
 	if cfg.LearningRate <= 0 || cfg.LearningRate > 1 {
 		cfg.LearningRate = 0.1
 	}
-	return &OutputEstimator{cfg: cfg, ratio: cfg.DefaultRatio}
+	return &OutputEstimator{cfg: cfg, ratio: cfg.DefaultRatio, err: cfg.DefaultRatio}
 }
 
 // Estimate returns the expected output length for an input of the given
 // size. An explicit hint (hint > 0) is honored; otherwise the learned
 // ratio applies. Results are always bounded by maxOutput.
 func (e *OutputEstimator) Estimate(inputTokens, hint, maxOutput int) int {
+	est, _, _ := e.EstimateWithBand(inputTokens, hint, maxOutput)
+	return est
+}
+
+// EstimateWithBand returns the point estimate plus the uncertainty band
+// [low, high] learned from recent absolute prediction errors (WS3:
+// output-length uncertainty bands — capacity reservation uses high when
+// the band is wide).
+func (e *OutputEstimator) EstimateWithBand(inputTokens, hint, maxOutput int) (est, low, high int) {
 	if maxOutput <= 0 {
 		maxOutput = e.cfg.MaxOutputTokens
 	}
-	est := hint
+	est = hint
+	e.mu.RLock()
+	r, band := e.ratio, e.err
+	e.mu.RUnlock()
 	if est <= 0 {
-		e.mu.RLock()
-		r := e.ratio
-		e.mu.RUnlock()
 		est = int(float64(inputTokens) * r)
 		if est <= 0 {
 			est = 1
 		}
 	}
-	if est > maxOutput {
-		return maxOutput
+	width := int(float64(est) * band)
+	low = est - width
+	if low < 1 {
+		low = 1
 	}
-	return est
+	high = est + width
+	if est > maxOutput {
+		est = maxOutput
+	}
+	if high > maxOutput {
+		high = maxOutput
+	}
+	return est, low, high
 }
 
-// ObserveCompletion folds one (input, output) observation into the EMA.
+// Uncertain reports whether the learned error band is wide relative to
+// the estimate (≥50% relative error) — conservative reservation applies
+// then.
+func (e *OutputEstimator) Uncertain() bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	r := e.ratio
+	if r < 0.05 {
+		r = 0.05
+	}
+	return e.err/r >= 0.5
+}
+
+// ObserveCompletion folds one (input, output) observation into the ratio
+// EMA and the absolute-error EMA (uncertainty tracking).
 func (e *OutputEstimator) ObserveCompletion(inputTokens, outputTokens int) {
 	if inputTokens <= 0 {
 		return
 	}
 	ratio := float64(outputTokens) / float64(inputTokens)
 	e.mu.Lock()
+	err := ratio - e.ratio
+	if err < 0 {
+		err = -err
+	}
+	e.err = e.err*(1-e.cfg.LearningRate) + err*e.cfg.LearningRate
 	e.ratio = e.ratio*(1-e.cfg.LearningRate) + ratio*e.cfg.LearningRate
 	e.mu.Unlock()
 }

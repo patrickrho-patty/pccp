@@ -262,6 +262,7 @@ func (o *Observability) ProgramsView() interface{} {
 		"tool_paused":             paused,
 		"pause_prediction_errors": predictErrs,
 		"turns":                   turns,
+		"over_budget":             o.svc.Programs.OverBudget(),
 	}
 }
 

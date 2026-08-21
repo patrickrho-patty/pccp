@@ -119,7 +119,7 @@ func TestPauseRetainDoesNotInflateHits(t *testing.T) {
 	now := time.Now()
 	reg.SetNow(func() time.Time { return now })
 
-	reg.Turn("p1", "tenant-a", "ph", testIdentity, "w1", 1)
+	reg.Turn("p1", "tenant-a", "ph", testIdentity, "w1", 1, 0)
 	if act := reg.ToolPaused("p1"); act != KVActionRetain {
 		t.Fatalf("first pause = %s, want retain", act)
 	}
