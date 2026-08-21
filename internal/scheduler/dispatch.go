@@ -139,12 +139,13 @@ func NewDispatcher(q *queue.Queue) *Dispatcher {
 	if q == nil {
 		q = queue.New(queue.DefaultLimits())
 	}
-	return &Dispatcher{
+	d := &Dispatcher{
 		queue:   q,
 		policy:  DefaultOverloadPolicy(),
 		est:     NewOutputEstimator(DefaultEstimatorConfig()),
 		pending: make(map[string]*pendingWaiter),
 	}
+	return d
 }
 
 // Queue exposes the underlying global queue (enqueue path).

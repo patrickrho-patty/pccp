@@ -2,6 +2,10 @@ package scheduler
 
 import (
 	"crypto/ed25519"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -110,6 +114,68 @@ func TestProgramRegistryCalibrationCounter(t *testing.T) {
 	_, _, errs, _ := r.Stats()
 	if errs != 1 {
 		t.Fatalf("prediction errors = %d, want 1 (early continuation)", errs)
+	}
+}
+
+// setTestTrafficProgram attaches a signed envelope carrying program
+// metadata for the given tenant (the relay's production shape).
+func setTestTrafficProgram(t *testing.T, g *Gateway, req *http.Request, tenant, class string, meta ProgramMeta) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.SetTrafficIssuer(pub)
+	env := NewTrafficEnvelope(req.Header.Get("X-Correlation-ID"), tenant, class, time.Minute)
+	env.SetProgram(meta)
+	if err := env.Sign(priv); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(env)
+	req.Header.Set("X-Traffic-Envelope", string(raw))
+}
+
+// TestEnvelopeProgramFlowEndToEnd: signed program metadata flows from
+// the envelope through the gateway and queue into the program registry
+// — a tool-paused completion pauses the program.
+func TestEnvelopeProgramFlowEndToEnd(t *testing.T) {
+	d := NewDispatcher(nil)
+	reg := NewProgramRegistry(nil)
+	d.SetPrograms(reg)
+	rec := NewTraceRecorder(16)
+	d.SetTraceRecorder(rec)
+	d.SetForwarder(&fakeForwarder{result: InferenceResult{Text: "ok", Usage: map[string]int{"prompt_tokens": 10, "completion_tokens": 5}}})
+	sel := NewWorkerSelector()
+	sel.Upsert(mkWorker("w1", "model-a", 4), 1)
+	d.SetSelector(sel)
+	startLoop(t, d)
+
+	g := NewGateway(d, nil)
+	g.Rewriter().SetAlias("ko-coder", "model-a")
+	g.Rewriter().SetTenantModels("tenant-1", []string{"model-a"})
+
+	body := `{"model":"ko-coder","messages":[{"role":"user","content":"안녕"}],"max_tokens":50}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "tenant-1")
+	setTestTrafficProgram(t, g, req, "tenant-1", "interactive-paid",
+		ProgramMeta{ProgramID: "prog-e2e", TurnSeq: 2, ToolPaused: true, TaskSLOMs: 45000})
+	w := httptest.NewRecorder()
+	g.HandleChatCompletions(w, req)
+	if w.Code != 200 {
+		t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+	}
+
+	if !reg.Paused("prog-e2e") {
+		t.Fatal("tool-paused completion did not pause the program")
+	}
+	var arrived *TraceEvent
+	for i, e := range rec.Export().Events {
+		if e.Stage == TraceArrived {
+			arrived = &rec.Export().Events[i]
+		}
+	}
+	if arrived == nil || arrived.ProgramID != "prog-e2e" {
+		t.Fatalf("arrived event = %+v, want program prog-e2e", arrived)
 	}
 }
 

@@ -77,16 +77,13 @@ func (d *Dispatcher) wakeDispatch() {
 }
 
 // Submit enqueues a request and returns a channel delivering exactly one
-// terminal result (completion, forward error, or cancellation). Returns an
-// error only when the queue rejects the request (capacity limits).
+// terminal result (completion, forward error, or cancellation). The
+// waiter is registered BEFORE the request enters the queue: the dispatch
+// loop also drains on the 500ms reap ticker, so a request enqueued first
+// could be completed before its waiter existed — the result would drop
+// silently and the caller would strand for the full TTL. Registration
+// first, enqueue second, roll back on failure.
 func (d *Dispatcher) Submit(qr queue.Request) (<-chan InferenceResult, error) {
-	if err := d.queue.Enqueue(qr); err != nil {
-		return nil, err
-	}
-	d.recordTrace(traceEventFor(qr, TraceArrived))
-	if p := d.programsFor(); p != nil && qr.ProgramID != "" {
-		p.Turn(qr.ProgramID, qr.Tenant, "", CacheIdentity{}, "", qr.TurnSeq)
-	}
 	w := &pendingWaiter{
 		ch:     make(chan InferenceResult, 1),
 		cancel: make(chan struct{}, 1),
@@ -94,6 +91,16 @@ func (d *Dispatcher) Submit(qr queue.Request) (<-chan InferenceResult, error) {
 	d.fwMu.Lock()
 	d.pending[qr.ID] = w
 	d.fwMu.Unlock()
+	if err := d.queue.Enqueue(qr); err != nil {
+		d.fwMu.Lock()
+		delete(d.pending, qr.ID)
+		d.fwMu.Unlock()
+		return nil, err
+	}
+	d.recordTrace(traceEventFor(qr, TraceArrived))
+	if p := d.programsFor(); p != nil && qr.ProgramID != "" {
+		p.Turn(qr.ProgramID, qr.Tenant, "", CacheIdentity{}, "", qr.TurnSeq)
+	}
 	d.wakeDispatch()
 	return w.ch, nil
 }
@@ -101,11 +108,8 @@ func (d *Dispatcher) Submit(qr queue.Request) (<-chan InferenceResult, error) {
 // SubmitStream is Submit with streaming: token deltas flow to the caller
 // as the forwarder emits them; the result channel still delivers exactly
 // one terminal result. The deltas channel closes when the request ends.
+// Same registration-first ordering as Submit.
 func (d *Dispatcher) SubmitStream(qr queue.Request) (<-chan InferenceResult, <-chan string, error) {
-	if err := d.queue.Enqueue(qr); err != nil {
-		return nil, nil, err
-	}
-	d.recordTrace(traceEventFor(qr, TraceArrived))
 	w := &pendingWaiter{
 		ch:     make(chan InferenceResult, 1),
 		cancel: make(chan struct{}, 1),
@@ -114,6 +118,13 @@ func (d *Dispatcher) SubmitStream(qr queue.Request) (<-chan InferenceResult, <-c
 	d.fwMu.Lock()
 	d.pending[qr.ID] = w
 	d.fwMu.Unlock()
+	if err := d.queue.Enqueue(qr); err != nil {
+		d.fwMu.Lock()
+		delete(d.pending, qr.ID)
+		d.fwMu.Unlock()
+		return nil, nil, err
+	}
+	d.recordTrace(traceEventFor(qr, TraceArrived))
 	d.wakeDispatch()
 	return w.ch, w.deltas, nil
 }
@@ -177,6 +188,8 @@ func (d *Dispatcher) RunDispatchLoop(ctx context.Context) {
 		case <-dispatchWake:
 		case <-reap.C:
 		}
+		if d.queue.Pending() > 0 {
+		}
 		d.drainDispatch(ctx)
 	}
 }
@@ -205,7 +218,10 @@ func (d *Dispatcher) AssignAnyFreeWorker() *Dispatch {
 	if d.selector == nil {
 		return nil
 	}
-	for _, workerID := range d.selector.FreeWorkers() {
+	free := d.selector.FreeWorkers()
+	if len(free) == 0 && d.queue.Pending() > 0 {
+	}
+	for _, workerID := range free {
 		if bound := d.assignLocked(workerID); bound != nil {
 			return bound
 		}
@@ -375,6 +391,8 @@ func (d *Dispatcher) submitResult(id string, res InferenceResult) {
 		delete(d.pending, id)
 	}
 	d.fwMu.Unlock()
+	if !ok {
+	}
 	if w != nil {
 		select {
 		case w.ch <- res:
