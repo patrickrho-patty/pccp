@@ -425,6 +425,10 @@ type InferenceRequest struct {
 	Messages       []map[string]string `json:"messages"`
 	MaxTokens      int                 `json:"max_tokens,omitempty"`
 	Temperature    float64             `json:"temperature,omitempty"`
+	// Program carries optional WS3 agent-program scheduling metadata
+	// (opaque, bounded identifiers only — the relay validates and signs
+	// it; the harness never self-asserts priority through it).
+	Program *scheduler.ProgramMeta `json:"program,omitempty"`
 }
 
 // RouteInference finds a valid endpoint and forwards the request to PIA.
@@ -576,7 +580,7 @@ func (s *Service) defaultForwarder(ctx context.Context, req InferenceRequest, en
 			envUserID = ex.UserID
 		}
 		s.mu.RUnlock()
-		if env, err := s.signTrafficEnvelope(req.OrganizationID, envUserID, req.ExchangeID); err == nil {
+		if env, err := s.signTrafficEnvelope(req.OrganizationID, envUserID, req.ExchangeID, req.Program); err == nil {
 			raw, _ := json.Marshal(env)
 			httpReq.Header.Set("X-Traffic-Envelope", string(raw))
 		}

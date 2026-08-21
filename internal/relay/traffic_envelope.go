@@ -36,13 +36,22 @@ func (s *Service) trafficIssuerKey() (ed25519.PrivateKey, error) {
 	return priv, nil
 }
 
+// maxProgramIDLen bounds opaque program identifiers (WS3: bounded
+// metadata only — never content, paths, or repository identifiers).
+const maxProgramIDLen = 64
+
 // signTrafficEnvelope issues a short-lived traffic envelope binding the
 // tenant to its authorized class. The default class for a tenant without
 // an elevated entitlement is interactive-normal; batch/background are
 // downgrades, interactive-paid requires an entitlement check upstream
 // (capability lease) — the scheduler's resolver treats absence/invalid
 // as batch, so mis-signing here only degrades, never elevates.
-func (s *Service) signTrafficEnvelope(tenantID, userID, requestID string) (*scheduler.TrafficEnvelope, error) {
+//
+// program is optional WS3 scheduling metadata (opaque IDs only); it is
+// validated for boundedness and bound into the signature. Invalid or
+// absent metadata degrades to an unsigned-metadata envelope, never to
+// rejected traffic.
+func (s *Service) signTrafficEnvelope(tenantID, userID, requestID string, program *scheduler.ProgramMeta) (*scheduler.TrafficEnvelope, error) {
 	priv, err := s.trafficIssuerKey()
 	if err != nil {
 		return nil, err
@@ -62,6 +71,10 @@ func (s *Service) signTrafficEnvelope(tenantID, userID, requestID string) (*sche
 		}
 	}
 	env := scheduler.NewTrafficEnvelope(requestID, tenantID, class, 2*time.Minute)
+	if program != nil && program.ProgramID != "" &&
+		len(program.ProgramID) <= maxProgramIDLen && len(program.ParentID) <= maxProgramIDLen {
+		env.SetProgram(*program)
+	}
 	if err := env.Sign(priv); err != nil {
 		return nil, err
 	}
