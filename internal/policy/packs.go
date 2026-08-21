@@ -319,16 +319,22 @@ func (s *Service) ListExceptionsRanked(orgID string) ([]models.PolicyException, 
 	s.db.Where("organization_id = ?", orgID).Find(&exceptions)
 	rankSeverity := func(sev string) int {
 		switch sev {
-		case "high": return 0
-		case "medium": return 1
-		case "low": return 2
-		default: return 1
+		case "high":
+			return 0
+		case "medium":
+			return 1
+		case "low":
+			return 2
+		default:
+			return 1
 		}
 	}
 	sort.SliceStable(exceptions, func(i, j int) bool {
 		pi := exceptions[i].Status == "pending"
 		pj := exceptions[j].Status == "pending"
-		if pi != pj { return pi }
+		if pi != pj {
+			return pi
+		}
 		if pi && pj {
 			if rankSeverity(exceptions[i].SeverityLabel) != rankSeverity(exceptions[j].SeverityLabel) {
 				return rankSeverity(exceptions[i].SeverityLabel) < rankSeverity(exceptions[j].SeverityLabel)
@@ -366,18 +372,18 @@ func (s *Service) sweepExpiredExceptions(orgID, now string) {
 // approver never sees a summary-only row.
 type ExceptionInput struct {
 	Scope, ScopeID, ScopeName, RequestedBy, Reason string
-	RuleIDs                                            []string
-	JustificationKo                                    string
-	Evidence                                           []map[string]string
-	CompensatingControls                                string
-	ResourceDestination                                 string
-	SeverityLabel                                       string
-	CurrentRuleValues                                   []map[string]string
-	ProposedRuleValues                                  []map[string]string
-	Conditions                                          []map[string]string
-	RequestedStart                                      string
-	ExpiresAt                                           string
-	RequiredApproverRoles                               []string
+	RuleIDs                                        []string
+	JustificationKo                                string
+	Evidence                                       []map[string]string
+	CompensatingControls                           string
+	ResourceDestination                            string
+	SeverityLabel                                  string
+	CurrentRuleValues                              []map[string]string
+	ProposedRuleValues                             []map[string]string
+	Conditions                                     []map[string]string
+	RequestedStart                                 string
+	ExpiresAt                                      string
+	RequiredApproverRoles                          []string
 }
 
 // CreateException files a scoped, evidence-backed exception request.
@@ -399,15 +405,15 @@ func (s *Service) CreateException(orgID string, in ExceptionInput) (*models.Poli
 	reqRoles := strings.Join(in.RequiredApproverRoles, ",")
 	ex := &models.PolicyException{
 		OrganizationID: orgID,
-		Scope: in.Scope, ScopeID: in.ScopeID, ScopeName: in.ScopeName,
+		Scope:          in.Scope, ScopeID: in.ScopeID, ScopeName: in.ScopeName,
 		RuleIDsJSON: string(idsJSON), RequestedBy: in.RequestedBy, Reason: in.Reason,
-		Status: "pending",
+		Status:          "pending",
 		JustificationKo: in.JustificationKo, EvidenceJSON: string(evJSON),
-		CompensatingControls: in.CompensatingControls,
-		ResourceDestination:  in.ResourceDestination,
-		SeverityLabel:        in.SeverityLabel,
+		CompensatingControls:  in.CompensatingControls,
+		ResourceDestination:   in.ResourceDestination,
+		SeverityLabel:         in.SeverityLabel,
 		CurrentRuleValuesJSON: string(curJSON), ProposedRuleValuesJSON: string(proJSON),
-		ConditionsJSON:        string(condJSON),
+		ConditionsJSON: string(condJSON),
 		RequestedStart: in.RequestedStart, ExpiresAt: in.ExpiresAt,
 		RequiredApproverRoles: reqRoles,
 	}
@@ -486,19 +492,25 @@ func (s *Service) DecideException(orgID, exceptionID string, d ExceptionDecision
 			ex.ApproversJSON = string(appJSON)
 			if len(d.Conditions) > 0 {
 				var existing []map[string]string
-				if ex.ConditionsJSON != "" { _ = json.Unmarshal([]byte(ex.ConditionsJSON), &existing) }
+				if ex.ConditionsJSON != "" {
+					_ = json.Unmarshal([]byte(ex.ConditionsJSON), &existing)
+				}
 				existing = append(existing, d.Conditions...)
 				cj, _ := json.Marshal(existing)
 				ex.ConditionsJSON = string(cj)
 			}
-			if err := tx.Save(&ex).Error; err != nil { return err }
+			if err := tx.Save(&ex).Error; err != nil {
+				return err
+			}
 			s.recordAudit(orgID, "cp.policy.exception_decided", "admin", "policy_exception", ex.ID,
 				fmt.Sprintf(`{"status":"denied","by":%q,"role":%q,"reason":%q}`, d.DecidedBy, d.DecidedByRole, d.Reason))
 			result = &ex
 			return nil
 		}
 		var existing []map[string]string
-		if ex.ConditionsJSON != "" { _ = json.Unmarshal([]byte(ex.ConditionsJSON), &existing) }
+		if ex.ConditionsJSON != "" {
+			_ = json.Unmarshal([]byte(ex.ConditionsJSON), &existing)
+		}
 		if len(d.Conditions) > 0 {
 			existing = append(existing, d.Conditions...)
 		}
@@ -508,19 +520,31 @@ func (s *Service) DecideException(orgID, exceptionID string, d ExceptionDecision
 		required := splitCSV(ex.RequiredApproverRoles)
 		approved := []string{}
 		for _, a := range approvers {
-			if a["vote"] == "true" { approved = append(approved, a["role"]) }
+			if a["vote"] == "true" {
+				approved = append(approved, a["role"])
+			}
 		}
 		allApproved := true
 		for _, r := range required {
 			found := false
-			for _, x := range approved { if x == r { found = true; break } }
-			if !found { allApproved = false; break }
+			for _, x := range approved {
+				if x == r {
+					found = true
+					break
+				}
+			}
+			if !found {
+				allApproved = false
+				break
+			}
 		}
 		appJSON, _ := json.Marshal(approvers)
 		ex.ApproversJSON = string(appJSON)
 		if !allApproved {
 			ex.DecidedAt = now
-			if err := tx.Save(&ex).Error; err != nil { return err }
+			if err := tx.Save(&ex).Error; err != nil {
+				return err
+			}
 			s.recordAudit(orgID, "cp.policy.exception_partial_approval", "admin", "policy_exception", ex.ID,
 				fmt.Sprintf(`{"role":%q,"approved":%v}`, d.DecidedByRole, true))
 			result = &ex
@@ -539,10 +563,14 @@ func (s *Service) DecideException(orgID, exceptionID string, d ExceptionDecision
 				EffectiveAt:    now,
 				Status:         "active",
 			}
-			if err := tx.Create(epoch).Error; err != nil { return err }
+			if err := tx.Create(epoch).Error; err != nil {
+				return err
+			}
 			ex.PublishedEpochID = epoch.EpochID
 		}
-		if err := tx.Save(&ex).Error; err != nil { return err }
+		if err := tx.Save(&ex).Error; err != nil {
+			return err
+		}
 		s.recordAudit(orgID, "cp.policy.exception_decided", "admin", "policy_exception", ex.ID,
 			fmt.Sprintf(`{"status":"approved","by":%q,"epoch_id":%q}`, d.DecidedBy, ex.PublishedEpochID))
 		result = &ex
@@ -573,17 +601,23 @@ func (s *Service) RevokeException(orgID, exceptionID, decidedBy, reason string) 
 }
 
 func boolStr(b bool) string {
-	if b { return "true" }
+	if b {
+		return "true"
+	}
 	return "false"
 }
 
 func splitCSV(s string) []string {
-	if s == "" { return nil }
+	if s == "" {
+		return nil
+	}
 	parts := strings.Split(s, ",")
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
-		if p != "" { out = append(out, p) }
+		if p != "" {
+			out = append(out, p)
+		}
 	}
 	return out
 }

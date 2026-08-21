@@ -115,4 +115,3 @@ func (s *Service) VerifyToolDigest(tool models.Tool, reportedDigest string) (boo
 }
 
 var _ = json.Marshal
-

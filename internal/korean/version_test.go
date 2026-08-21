@@ -13,9 +13,9 @@ func TestIsVersionBelowFloor(t *testing.T) {
 		{"2.0.0", "1.9.9", false},
 		{"0.9.5", "1.0.0", true},
 		{"1.0", "1.0.1", true},
-		{"", "1.0.0", true},     // unknown version fails closed
-		{"1.0.0", "", false},    // no floor → never blocked
-		{"1.2", "1.2.1", true},  // missing patch treated as 0
+		{"", "1.0.0", true},    // unknown version fails closed
+		{"1.0.0", "", false},   // no floor → never blocked
+		{"1.2", "1.2.1", true}, // missing patch treated as 0
 		{"1.2.10", "1.2.9", false},
 		{"v1.0.0", "1.1.0", true}, // leading v tolerated
 	}

@@ -10,7 +10,7 @@ import {
   assessAllowlistImpact, assessGateChange, effectiveAllowlist,
   summarizeRisk, isStaleBase,
 } from '../toolGovernance'
-import { approvalView, rankApprovals } from '../approvalView'
+import { approvalView, approvalTypeKo, approvalRiskKo, rankApprovals } from '../approvalView'
 
 // Tools page (web/14 plan): the Tool Registry — governance metadata
 // that the relay enforces on the live path (A). Includes the approvals
@@ -139,10 +139,22 @@ export default function Tools() {
   // 허용 상태는 로드 시 캐시한 projectAllowlists를 읽는다 — 모달을 열 때마다 재조회하지 않는다.
   const openDetail = (t: any) => setDetailTool(t)
 
-  const decide = async (a: any, decision: string) => {
+  // 승인/거절은 즉시 실행이 아니라 사유 필수 확인 모달을 거친다 (PAT-1497).
+  const [decisionTarget, setDecisionTarget] = useState<{ approval: any; decision: 'approved' | 'denied' } | null>(null)
+  const [decisionReason, setDecisionReason] = useState('')
+
+  const openDecision = (a: any, decision: 'approved' | 'denied') => {
+    setDecisionTarget({ approval: a, decision })
+    setDecisionReason('')
+  }
+
+  const confirmDecision = async () => {
+    if (!decisionTarget) return
+    if (!decisionReason.trim()) { showToast('결정 사유를 입력하세요 (감사 기록에 남습니다)', 'error'); return }
     try {
-      await api.decideToolApproval(a.id, decision, 'admin')
-      showToast(decision === 'approved' ? '승인 완료' : '거절 완료', 'success')
+      await api.decideToolApproval(decisionTarget.approval.id, decisionTarget.decision, decisionReason.trim())
+      showToast(decisionTarget.decision === 'approved' ? '승인 완료 — 사유가 감사 기록되었습니다' : '거절 완료 — 사유가 감사 기록되었습니다', 'success')
+      setDecisionTarget(null)
       load()
     } catch (e: any) { showToast(e?.message || '실패', 'error') }
   }
@@ -289,8 +301,8 @@ export default function Tools() {
                   </div>
                 </div>
                 <div className="flex gap-1 shrink-0">
-                  <button className="text-[10px] px-2 py-1 rounded bg-green-50 text-green-600" onClick={() => decide(a, 'approved')}>승인</button>
-                  <button className="text-[10px] px-2 py-1 rounded bg-red-50 text-red-600" onClick={() => decide(a, 'denied')}>거절</button>
+                  <button className="text-[10px] px-2 py-1 rounded bg-green-50 text-green-600" onClick={() => openDecision(a, 'approved')}>승인</button>
+                  <button className="text-[10px] px-2 py-1 rounded bg-red-50 text-red-600" onClick={() => openDecision(a, 'denied')}>거절</button>
                 </div>
               </div>
             )
@@ -427,6 +439,34 @@ export default function Tools() {
           </div>
         )}
       </Modal>
+
+      {/* 도구 승인 결정 — 사유 필수 확인 (PAT-1497) */}
+      {decisionTarget && (() => {
+        const v = approvalView(decisionTarget.approval)
+        const denying = decisionTarget.decision === 'denied'
+        return (
+          <GovernedActionModal
+            open={!!decisionTarget}
+            title={denying ? '승인 요청 거절 — 사유 확인' : '승인 요청 승인 — 사유 확인'}
+            subtitle={v.title}
+            warnings={denying ? [{ kind: 'medium' as const, text: '거절 시 요청한 세션은 해당 도구 호출을 진행할 수 없습니다.' }] : []}
+            preview={<>
+              <div className="border rounded-lg p-3 space-y-1">
+                <div className="text-[10px] text-gray-400 font-semibold">요청 상세</div>
+                <div>요청자 {v.requestedBy}{v.harnessId ? ` · 하네스 ${v.harnessId}` : ''}{v.sessionTitle ? ` · 세션 ${v.sessionTitle}` : ''}</div>
+                <div>{approvalTypeKo((decisionTarget.approval as any).type)} · 위험도 {approvalRiskKo((decisionTarget.approval as any).risk || (decisionTarget.approval as any).danger_level)} · 대기 {v.ageLabel}{v.expiresLabel ? ` · ${v.expiresLabel}` : ''}</div>
+              </div>
+            </>}
+            reason={decisionReason}
+            onReasonChange={setDecisionReason}
+            reasonPlaceholder="예: 보안 검토 완료 / 요청 범위 초과"
+            confirmLabel={denying ? '거절 확정' : '승인 확정'}
+            onCancel={() => setDecisionTarget(null)}
+            onConfirm={confirmDecision}
+            danger={denying}
+          />
+        )
+      })()}
 
       {/* 승인 정책 변경 — 초안 diff + 영향 확인 (PAT-1509) */}
       {gateTarget && (() => {

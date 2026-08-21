@@ -532,10 +532,10 @@ type wireDLPRuleScope struct {
 func BuildDLPRulePack(epochID, orgID string, rules []SecurityRuleView, now time.Time) *wireDLPRulePack {
 	pack := &wireDLPRulePack{
 		Version: 1, EpochID: epochID, OrgID: orgID,
-		NotAfterMs: now.Add(24 * time.Hour).UnixMilli(),
-		Rules:      make([]wireDLPRule, 0, len(rules)),
+		NotAfterMs:    now.Add(24 * time.Hour).UnixMilli(),
+		Rules:         make([]wireDLPRule, 0, len(rules)),
 		RuleOverrides: make([]wireDLPRuleOverride, 0, len(rules)),
-		Scope:      wireDLPRuleScope{Level: wireScopeOrg, ID: orgID},
+		Scope:         wireDLPRuleScope{Level: wireScopeOrg, ID: orgID},
 	}
 	for _, r := range rules {
 		pack.Rules = append(pack.Rules, wireDLPRule{

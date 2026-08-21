@@ -29,7 +29,7 @@ func TestBuildScopedDLPOverridePack(t *testing.T) {
 
 	pack := BuildScopedDLPOverridePack("e", "org-1", "user", "u1", []security.ScopedOverride{
 		{RuleID: "pii-kr-rrn", Enabled: &off, Severity: "low", Action: "mask"},
-		{RuleID: "pii-kr-phone", Enabled: &on}, // severity/action inherited
+		{RuleID: "pii-kr-phone", Enabled: &on},                                  // severity/action inherited
 		{RuleID: "pii-kr-passport", Enabled: inherit, Severity: "", Action: ""}, // inherit-only
 	}, time.Now())
 

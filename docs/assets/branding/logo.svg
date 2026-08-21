@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="180" viewBox="0 0 700 180" role="img" aria-label="Patty Code Control Plane — Patty Code 제품군의 공유 운영 커널">
+  <title>Patty Code Control Plane</title>
+  <defs>
+    <!-- Patty 브랜드 시그니처 그라디언트 (cyan → violet → fuchsia).
+         patty-code 워드마크와 같은 팔레트로, GitHub 다크/라이트 양쪽에서 잘 보인다. -->
+    <linearGradient id="pccp-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#5eead4"/>
+      <stop offset="15%" stop-color="#67e8f9"/>
+      <stop offset="30%" stop-color="#7dd3fc"/>
+      <stop offset="45%" stop-color="#93c5fd"/>
+      <stop offset="60%" stop-color="#a5b4fc"/>
+      <stop offset="75%" stop-color="#c4b5fd"/>
+      <stop offset="90%" stop-color="#d8b4fe"/>
+      <stop offset="100%" stop-color="#f0abfc"/>
+    </linearGradient>
+    <linearGradient id="pccp-grad-mark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5eead4"/>
+      <stop offset="50%" stop-color="#93c5fd"/>
+      <stop offset="100%" stop-color="#c4b5fd"/>
+    </linearGradient>
+    <filter id="pccp-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- ◈ 브랜드 마크: 동심원 다이아몬드. 느린 회전과 맥박 — 스피너처럼이 아니라
+       심장박동처럼. patty-code 로고와 같은 마크로 제품군 일체감을 만든다. -->
+  <g transform="translate(90, 90)" filter="url(#pccp-glow)">
+    <g>
+      <animateTransform attributeName="transform" type="rotate"
+                        from="0" to="360" dur="18s" repeatCount="indefinite"/>
+      <path d="M 0,-46 L 46,0 L 0,46 L -46,0 Z"
+            fill="none"
+            stroke="url(#pccp-grad-mark)"
+            stroke-width="3.5"
+            stroke-linejoin="round">
+        <animate attributeName="stroke-width"
+                 values="3.5;5.5;3.5"
+                 dur="2.4s"
+                 repeatCount="indefinite"/>
+      </path>
+      <path d="M 0,-26 L 26,0 L 0,26 L -26,0 Z"
+            fill="none"
+            stroke="url(#pccp-grad-mark)"
+            stroke-width="2"
+            stroke-linejoin="round"
+            opacity="0.7">
+        <animate attributeName="opacity"
+                 values="0.4;0.9;0.4"
+                 dur="2.4s"
+                 begin="0.8s"
+                 repeatCount="indefinite"/>
+      </path>
+      <path d="M 0,-11 L 11,0 L 0,11 L -11,0 Z"
+            fill="url(#pccp-grad-mark)">
+        <animate attributeName="opacity"
+                 values="0.75;1;0.75"
+                 dur="2.4s"
+                 repeatCount="indefinite"/>
+      </path>
+    </g>
+  </g>
+
+  <!-- 워드마크: PATTY_CODE 위, CONTROL_PLANE 아래. 그라디언트가 천천히 흘러간다. -->
+  <text x="170" y="78"
+        font-family="ui-monospace, SFMono-Regular, 'Cascadia Code', Menlo, Consolas, 'DejaVu Sans Mono', monospace"
+        font-size="44"
+        font-weight="800"
+        fill="url(#pccp-grad)"
+        letter-spacing="4">PATTY_CODE
+    <animate attributeName="opacity"
+             values="0.9;1;0.9"
+             dur="3.2s"
+             repeatCount="indefinite"/>
+  </text>
+
+  <text x="172" y="114"
+        font-family="ui-monospace, SFMono-Regular, 'Cascadia Code', Menlo, Consolas, 'DejaVu Sans Mono', monospace"
+        font-size="23"
+        font-weight="700"
+        fill="#94a3b8"
+        letter-spacing="9">CONTROL_PLANE</text>
+
+  <!-- 태그라인. slate-500은 다크/라이트 양쪽 테마에서 충분한 대비를 가진다. -->
+  <text x="173" y="150"
+        font-family="ui-monospace, SFMono-Regular, 'Cascadia Code', Menlo, Consolas, 'DejaVu Sans Mono', monospace"
+        font-size="14"
+        fill="#64748b"
+        letter-spacing="0.5">one kernel · three profiles · DARI only</text>
+</svg>

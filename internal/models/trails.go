@@ -26,26 +26,26 @@ type TrailNode struct {
 	ProjectID        string `json:"project_id"`
 	RepositoryID     string `json:"repository_id"`
 	// Bounded safe label (never raw content).
-	LabelKo        string `gorm:"type:varchar(255)" json:"label_ko"`
-	Status         string `json:"status"` // ok|denied|failed|rolled_back|degraded
-	OccurredAt     string `gorm:"index" json:"occurred_at"`
+	LabelKo         string `gorm:"type:varchar(255)" json:"label_ko"`
+	Status          string `json:"status"` // ok|denied|failed|rolled_back|degraded
+	OccurredAt      string `gorm:"index" json:"occurred_at"`
 	IntegrityDigest string `json:"integrity_digest"`
-	GroupingKey    string `gorm:"index" json:"grouping_key"` // collapse repeated same-purpose ops
-	CollapsedCount int    `json:"collapsed_count"`
+	GroupingKey     string `gorm:"index" json:"grouping_key"` // collapse repeated same-purpose ops
+	CollapsedCount  int    `json:"collapsed_count"`
 }
 
 // TrailEdge is an explicit recorded causal relationship. Chronological
 // adjacency alone NEVER creates an edge (PAT-1450 causality rule).
 type TrailEdge struct {
 	gorm.Model
-	OrganizationID string `gorm:"index:idx_trail_edge_org" json:"organization_id"`
-	FromSourceType string `gorm:"index:idx_trail_edge_from" json:"from_source_type"`
-	FromSourceID   string `gorm:"index:idx_trail_edge_from" json:"from_source_id"`
-	ToSourceType   string `gorm:"index:idx_trail_edge_to" json:"to_source_type"`
-	ToSourceID     string `gorm:"index:idx_trail_edge_to" json:"to_source_id"`
-	EdgeType       string `json:"edge_type"` // initiated|delegated|authorized|blocked|produced|caused|rolled_back
-	SourceEvidence string `json:"source_evidence"` // the recorded field that proves this edge
-	OccurredAt     string `json:"occurred_at"`
+	OrganizationID  string `gorm:"index:idx_trail_edge_org" json:"organization_id"`
+	FromSourceType  string `gorm:"index:idx_trail_edge_from" json:"from_source_type"`
+	FromSourceID    string `gorm:"index:idx_trail_edge_from" json:"from_source_id"`
+	ToSourceType    string `gorm:"index:idx_trail_edge_to" json:"to_source_type"`
+	ToSourceID      string `gorm:"index:idx_trail_edge_to" json:"to_source_id"`
+	EdgeType        string `json:"edge_type"`       // initiated|delegated|authorized|blocked|produced|caused|rolled_back
+	SourceEvidence  string `json:"source_evidence"` // the recorded field that proves this edge
+	OccurredAt      string `json:"occurred_at"`
 	IntegrityDigest string `json:"integrity_digest"`
 }
 

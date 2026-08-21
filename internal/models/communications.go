@@ -79,8 +79,8 @@ type FileTransfer struct {
 	// Delivery evidence (PAT-1511): accepted/downloaded timestamps
 	// persist who pulled the file and when so admins can audit
 	// exfiltration paths.
-	AcceptedAt   string `gorm:"type:timestamp" json:"accepted_at,omitempty"`
-	DownloadedAt string `gorm:"type:timestamp" json:"downloaded_at,omitempty"`
+	AcceptedAt    string `gorm:"type:timestamp" json:"accepted_at,omitempty"`
+	DownloadedAt  string `gorm:"type:timestamp" json:"downloaded_at,omitempty"`
 	DownloadCount int    `gorm:"default:0" json:"download_count"`
 }
 

@@ -1,7 +1,7 @@
 # Patty Code Control Plane — Master Plan
 
 **Repo:** `patrickrho-patty/pccp` (this repo)
-**Status:** Draft v1 — derived from the frozen PRDs and harness inspection on 2026-08-11
+**Status:** Revised 2026-08-21 for PRD v2 alignment and the shipped implementation. Original draft v1 derived from the frozen PRDs and harness inspection on 2026-08-11.
 **Owner:** PCCP team
 **Audience:** Anyone implementing, reviewing, or operating PCCP
 
@@ -9,7 +9,7 @@
 
 ## 1. What we're building
 
-**Patty Code Control Plane (PCCP)** is the governance, identity, security, provenance, communication, and operational backbone of the Patty Code product line. It is the enterprise control plane that pairs with the **Patty Code Harness** to turn AI-assisted software development into something a regulated organisation can actually buy.
+**Patty Code Control Plane (PCCP)** is the governance, identity, security, provenance, communication, and operational backbone of the Patty Code product line. Since PRD v2 it is a **single shared kernel** that powers every deployment profile — Public Cloud, Enterprise, and Government/Sovereign — pairing with the **Patty Code Harness** to turn AI-assisted software development into something from an individual subscriber to a regulated organisation can actually buy.
 
 Concretely, PCCP is six systems stitched into one product:
 
@@ -26,8 +26,8 @@ This is the same product across three deployment profiles:
 
 | Profile | Where it runs | What changes |
 |---|---|---|
-| **Individual / Public** | Patty cloud | Service-internal CP; no admin console |
-| **Enterprise** | Patty SaaS, customer private cloud, or on-prem | Full admin console, organisation hierarchy |
+| **Patty Public Cloud** | Patty cloud | First-class profile since v2: subscriber Account Portal plus the internal Patty Ops console; scale, fair use, and abuse resistance are its hardest problems |
+| **Enterprise** | Patty SaaS, customer private cloud, or on-prem | Full customer console, organisation hierarchy |
 | **Government / Sovereign** | On-prem, closed network, air-gapped | Same core, stricter policy defaults, offline updates, local KMS/HSM/PKI |
 
 The three profiles share one codebase, one protocol, one provenance schema, one policy engine. Differences are **policy defaults and deployment topology**, not feature forks.
@@ -40,25 +40,31 @@ The three profiles share one codebase, one protocol, one provenance schema, one 
 pccp/                                    ← this repo (the control plane product + protocol)
 ├── docs/
 │   ├── MASTER_PLAN.md                   ← you are here
+│   ├── CURRENT_STATE.md                 ← living implementation status (updated per milestone)
+│   ├── V2_DOD_AUDIT.md                  ← PRD v2 Definition of Done, criterion by criterion
+│   ├── pccp_v2/
+│   │   └── Patty_Code_Control_Plane_PCCP_PRD_v2.0.md  ← authoritative PRD (supersedes v1)
 │   └── plans/
-│       ├── Patty_Code_Control_Plane_PRD_v1.md    ← the product PRD
+│       ├── Patty_Code_Control_Plane_PRD_v1.md    ← the v1 product PRD
 │       └── DARI/
 │           ├── DARI_Comprehensive_PRD_v1.0.md   ← the protocol's PRD
 │           ├── DARI_Protocol_Specification_v1.0.md  ← the wire protocol
 │           └── DARI_arXiv_Paper_v1.0.md         ← the research manuscript
-├── src/                                 ← (TBD) control plane implementation
-├── relay/                               ← (TBD) DARI Relay data plane
-├── pia/                                 ← (TBD) Patty Inference Agent
-└── patty-code-pccp/                     ← .gitignored: worktree of the harness repo
-    └── docs/GongCode_Master_Plan.md     ← harness's existing master plan (security/govt baseline)
+├── cmd/                                 ← binary entrypoints: server · relay · scheduler · pia · bench · alert-backfill
+├── internal/                            ← Go packages: dari protocol, scheduler, relay, pia, api, models, …
+├── web/                                 ← React admin console (three consoles)
+├── conformance/                         ← DARI conformance suite
+├── adapters/ · sdk/ · registry/         ← open-source protocol deliverables
+├── deployments/                         ← Docker · Kubernetes
+└── patty-code -> ../patty-code          ← symlink to the sibling harness repo
 ```
 
 ### Repo responsibilities
 
 | Repo | Owns | Does not own |
 |---|---|---|
-| **`pccp`** (this) | Control Plane, DARI Relay, PIA, protocol spec, schema, conformance suite, public docs | The Harness binary itself |
-| **`patty-code`** (via `patty-code-pccp/` worktree) | The Harness — terminal/IDE agent, the thing developers actually run | Inline policy enforcement at the Relay level (the Harness enforces at the application boundary) |
+| **`pccp`** (this) | Control Plane, DARI Relay, Model Scheduler, PIA, protocol spec, schema, conformance suite, public docs | The Harness binary itself |
+| **`patty-code`** (sibling repo, symlinked at `./patty-code`) | The Harness — terminal/IDE agent, the thing developers actually run | Inline policy enforcement at the Relay level (the Harness enforces at the application boundary) |
 
 The boundary is intentional: PCCP is authoritative. The Harness is an enrolled peer that asks for permission, never grants it.
 
@@ -70,66 +76,49 @@ The boundary is intentional: PCCP is authoritative. The Harness is an enrolled p
 ┌──────────────────────────────────────────────────────────────────┐
 │                  Patty Code Control Plane (PCCP)                 │
 │                                                                  │
-│   identity / policy / registry / audit / provenance / admin     │
-│                  / comms / work intelligence                     │
-│                                                                  │
-│   ┌────────────────────────────────────────────────────────┐     │
-│   │              DARI Relay (data plane)                 │     │
-│   │   inline auth · lease · policy · DLP · verdict · evi  │     │
-│   └────────────────────────────────────────────────────────┘     │
-│                  ▲                          ▲                    │
-│      DARI       │                          │  DARI             │
-│   (QUIC/TCP)     │                          │                    │
-└──────────────────┼──────────────────────────┼────────────────────┘
-                   │                          │
-                   │                          ▼
-            ┌──────┴───────┐         ┌─────────────────┐
-            │   Harness    │         │      PIA        │ ← only DARI peer
-            │  (HARNESS    │         │   (INFERENCE)   │    allowed to call
-            │   profile)   │         │                 │    vLLM / SGLang
-            └──────────────┘         └────────┬────────┘
-            developer machine                │  localhost / unix socket
-                                             ▼
-                                       vLLM / SGLang
-                                       Patty-signed PMP
+│     identity / model catalog / policy / registry / audit         │
+│        / provenance / comms / metering / work intelligence       │
+└───────────────────────────────┬──────────────────────────────────┘
+                                │  signed hot state — leases, policy
+                                │  epochs, catalog snapshots, keys
+                                ▼
+ ┌──────────┐  DARI   ┌────────┐       ┌───────────┐  DARI   ┌──────┐
+ │ Harness  │ ──────► │ Relay  │ ────► │ Scheduler │ ──────► │ PIA  │ ──► vLLM / SGLang
+ │ HARNESS  │         │ :8090  │       │  :8455    │         │:9090 │       GPU
+ │ profile  │         └────────┘       └───────────┘         └──────┘
+ └──────────┘
+ developer machine
 ```
 
-The Harness talks **only** to the Relay. vLLM/SGLang is **never** reachable from the Harness network. Raw model-serving ports are an internal detail of PIA.
+The Harness talks **only** to the Relay. The hot path is signed-state driven: Relay authenticates and judges, Scheduler places, PIA verifies its lease before touching a serving engine. Raw model-serving ports are an internal detail of PIA.
 
 ### Component summaries
 
-- **Control Plane (PCCP proper).** Authoritative for orgs, users, harness identities, projects, repositories, model registry, endpoint registry, policy packs, approvals, provenance store, evidence, audit, billing, admin, comms. Not in the hot token path.
-- **DARI Relay.** Horizontally scalable data plane. Authenticates peers, validates capability leases, binds policy epochs, performs DLP/injection/security checks inline, routes to enrolled PIA, emits evidence receipts. May be decomposed into connection/inspection/routing/evidence services as long as external protocol behaviour remains conformant.
-- **PIA (Patty Inference Agent).** A small, signed, registered INFERENCE peer. Stands between the Relay and vLLM/SGLang. Holds a workload identity, verifies the PMP at startup, holds an `EndpointLease`, and re-attests periodically. The only thing the Harness sees as a model endpoint.
-- **Patty Code Harness.** The developer-facing terminal/IDE agent. Already exists as `patty-code-pccp` (worktree). Adds DARI enrolment, lease-aware sessions, and evidence emission on top of its existing capability/evidence/control machinery.
+- **Control Plane (PCCP proper).** Authoritative for orgs, users, harness identities, projects, repositories, model registry and catalog, endpoint registry, policy packs, approvals, provenance store, evidence, audit, billing, admin, comms. Not in the hot token path.
+- **DARI Relay.** Horizontally scalable data plane entry point. Authenticates peers, validates capability leases, binds policy epochs, performs DLP/injection/security checks inline, forwards to the scheduler with signed traffic envelopes, emits evidence receipts.
+- **Model Scheduler.** The traffic director between Relay and the PIA fleet (`internal/scheduler`, `cmd/pccp-scheduler`). Owns admission and queueing, KV-cache-aware placement, prefill/decode disaggregated execution, shadow/canary rollout of routing capabilities, region selection with preauthorized failover honoring data residency, and per-stage SLO measurement.
+- **PIA (Patty Inference Agent).** A small, signed, registered INFERENCE peer. Stands between the Scheduler and vLLM/SGLang. Holds a workload identity, verifies the PMP at startup, holds an `EndpointLease`, and re-attests periodically. The only thing the Harness sees as a model endpoint.
+- **Patty Code Harness.** The developer-facing terminal/IDE agent, developed in the sibling `patty-code` repository. Speaks DARI for all Patty service inference; no provider/base-URL configuration exists on the official route.
 
 The full protocol surface is defined in [`docs/plans/DARI/DARI_Protocol_Specification_v1.0.md`](plans/DARI/DARI_Protocol_Specification_v1.0.md). The protocol's own PRD is [`docs/plans/DARI/DARI_Comprehensive_PRD_v1.0.md`](plans/DARI/DARI_Comprehensive_PRD_v1.0.md). The research narrative is [`docs/plans/DARI/DARI_arXiv_Paper_v1.0.md`](plans/DARI/DARI_arXiv_Paper_v1.0.md).
 
 ---
 
-## 4. Current state (as of 2026-08-11)
+## 4. Current state (as of 2026-08-21)
 
-### What exists
+The original §4 (2026-08-11) recorded the greenfield moment: no source code, no protocol
+implementation, nothing deployed. That era is over — the table below is today's reality, and
+point-in-time status now lives in [`docs/CURRENT_STATE.md`](CURRENT_STATE.md).
 
 | Component | Status | Evidence |
 |---|---|---|
-| Product PRD (PCCP) | v1.0 draft, all 55 sections + 8 appendices | `docs/plans/Patty_Code_Control_Plane_PRD_v1.md` |
-| Protocol PRD (DARI) | v1.0, 67 sections + 8 appendices | `docs/plans/DARI/DARI_Comprehensive_PRD_v1.0.md` |
-| Protocol specification | v1.0, normative Peer Profiles, Transport, Capability Leases, Policy Epochs, Relay Verdicts, Provenance Spine, Evidence Receipts | `docs/plans/DARI/DARI_Protocol_Specification_v1.0.md` |
-| Research manuscript | v1.0, 5 design contributions, 6 research questions, threat model, security boundary | `docs/plans/DARI/DARI_arXiv_Paper_v1.0.md` |
-| Harness (worktree) | `patty-code-pccp/`, Go 1.25, 85 internal packages, ~hundreds of test files. Existing `capability`, `evidence`, `control`, `remote`, `provider/openai` packages are a strong substrate. | `patty-code-pccp/internal/` |
-| Harness master plan (security/govt baseline) | `patty-code-pccp/docs/GongCode_Master_Plan.md` (3,401 lines, 30 sections) | referenced as the security/government baseline by PRD §Appendix F |
-
-### What does not exist yet
-
-- **No PCCP source code.** `src/`, `relay/`, `pia/` directories are not yet created.
-- **No DARI protocol implementation.** The Harness today talks to OpenAI-compatible endpoints via `internal/provider/openai`; the model resolution path is `patty.example.toml → default_model = "patty/medium" → https://omni.agents.patty.io/v1`.
-- **No Control Plane admin console.**
-- **No enrolment / lease / attestation infrastructure.**
-- **No PIA.** vLLM (or `omni.agents.patty.io`) is the only reachable model endpoint today.
-- **No DARI reference implementation, conformance suite, or test vectors.**
-
-The current Harness has many of the *concepts* already (capability ledger, approval gates, session leases, evidence, projection, control) — but they are local to the harness and not yet wired to a control plane over a governed protocol. The integration job is to make those local concepts part of a *live protocol exchange* with PCCP.
+| Implementation | Shipped through PRD v2 Definition of Done — 26/30 criteria fully implemented | `docs/V2_DOD_AUDIT.md` |
+| Binaries | Six: server, relay, scheduler, pia, bench, alert-backfill | `cmd/` |
+| Tests | 1,157 passing across 57 packages, 0 failures | `go test ./...` |
+| Admin console | 54 React pages over three consoles (Patty Ops / Enterprise / Account Portal) | `web/src/pages/` |
+| REST surface | 451 registered routes | `internal/api/server.go` |
+| Scheduler evolution | PAT-1445 complete — KV-aware routing, P/D disaggregation, canary rollout, region failover | `docs/plans/2026-08-20-pat-1445-router-evolution-completion.md` |
+| Protocol deliverables | DARI spec + PRD + arXiv manuscript; vLLM/SGLang adapters; PIA SDK; registry CSVs | `docs/plans/DARI/`, `adapters/`, `sdk/`, `registry/` |
 
 ---
 
@@ -158,7 +147,13 @@ The first build slice (§7) is the smallest slice that begins to satisfy criteri
 
 ## 6. Phased roadmap
 
-The PRD §48 defines a 6-phase, 18-month roadmap spanning trust foundation → enterprise fleet → provenance/comms → work intelligence → sovereign hardening → scale. Each phase ends in a **gate**: a deployable, demonstrable, testable milestone that proves the phase's claims.
+> **Historical context.** The v1 phase gates below carried the build from zero to the
+> Enterprise fleet + Gateway milestone (Phases 0–1 shipped August 2026). PRD v2 then replaced
+> the greenfield roadmap with the migration/expansion roadmap in [PRD v2 §48](pccp_v2/Patty_Code_Control_Plane_PCCP_PRD_v2.0.md);
+> progress against v2 is tracked criterion-by-criterion in `docs/V2_DOD_AUDIT.md`. The table is kept
+> because the gate discipline — every phase ends deployable, demonstrable, testable — still governs how we work.
+
+The v1 roadmap was a 6-phase, 18-month plan spanning trust foundation → enterprise fleet → provenance/comms → work intelligence → sovereign hardening → scale:
 
 | Phase | Window | Theme | Gate (must pass before next phase starts) |
 |---|---|---|---|
@@ -255,18 +250,20 @@ These are non-negotiable for the team. They prevent the failure mode where the w
 
 ### In this repo
 
-- Product PRD: [`docs/plans/Patty_Code_Control_Plane_PRD_v1.md`](plans/Patty_Code_Control_Plane_PRD_v1.md)
+- PRD v2 (authoritative): [`docs/pccp_v2/Patty_Code_Control_Plane_PCCP_PRD_v2.0.md`](pccp_v2/Patty_Code_Control_Plane_PCCP_PRD_v2.0.md)
+- Product PRD v1: [`docs/plans/Patty_Code_Control_Plane_PRD_v1.md`](plans/Patty_Code_Control_Plane_PRD_v1.md)
 - Protocol PRD: [`docs/plans/DARI/DARI_Comprehensive_PRD_v1.0.md`](plans/DARI/DARI_Comprehensive_PRD_v1.0.md)
 - Protocol specification: [`docs/plans/DARI/DARI_Protocol_Specification_v1.0.md`](plans/DARI/DARI_Protocol_Specification_v1.0.md)
 - Research manuscript: [`docs/plans/DARI/DARI_arXiv_Paper_v1.0.md`](plans/DARI/DARI_arXiv_Paper_v1.0.md)
+- Living status: [`docs/CURRENT_STATE.md`](CURRENT_STATE.md) · DoD audit: [`docs/V2_DOD_AUDIT.md`](V2_DOD_AUDIT.md)
 
-### In the harness repo (worktree)
+### In the harness repo (sibling checkout, symlinked at `./patty-code`)
 
-- Harness security/government baseline: `patty-code-pccp/docs/GongCode_Master_Plan.md`
-- Harness capability substrate: `patty-code-pccp/internal/capability/`
-- Harness evidence substrate: `patty-code-pccp/internal/evidence/`
-- Harness control substrate: `patty-code-pccp/internal/control/`
-- Harness provider abstraction (today's OpenAI-compatible path): `patty-code-pccp/internal/provider/`
+- Harness security/government baseline: `patty-code/docs/GongCode_Master_Plan.md`
+- Harness provider abstraction (legacy OpenAI-compatible path): `patty-code/internal/provider/`
+
+> The original references to `patty-code-pccp/` described a worktree layout that predates the
+> current sibling-repo arrangement; harness internals move independently of this doc.
 
 ### External (PRD §Appendix G)
 
@@ -279,4 +276,4 @@ These are non-negotiable for the team. They prevent the failure mode where the w
 
 - This master plan is a **navigation document**, not a spec. The PRDs and the protocol spec are the source of truth for any decision this doc summarises. When in doubt, the PRD wins.
 - This doc will be revised in place each time **scope, repo layout, phase order, or the first build slice** changes. Smaller details are tracked in tickets.
-- The next concrete update lands after Phase 0 ships, when the team has real evidence to back the "current state" table.
+- Last full revision: 2026-08-21 — aligned to PRD v2, real repo layout, and the shipped implementation. Point-in-time status belongs in `docs/CURRENT_STATE.md`, not here.

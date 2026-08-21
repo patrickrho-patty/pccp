@@ -23,7 +23,7 @@ type IncidentNotifyPolicy struct {
 	//        "low":{"channels":[]}}
 	RoutingJSON string `gorm:"type:text" json:"routing_json"`
 	// JSON: {"email":"patty","sms":"customer","slack":"customer"}
-	ManagedByJSON string `gorm:"type:text" json:"managed_by_json"`
+	ManagedByJSON      string `gorm:"type:text" json:"managed_by_json"`
 	AckDeadlineMinutes int    `json:"ack_deadline_minutes"`
 	EscalationSteps    int    `json:"escalation_steps"`
 	QuietHoursStart    string `json:"quiet_hours_start"` // "23:00" — noncritical only
@@ -37,9 +37,9 @@ type IncidentNotifyRecipientGroup struct {
 	OrganizationID string `gorm:"index" json:"organization_id"`
 	Name           string `json:"name"`
 	// JSON array: [{\"kind\":\"email\",\"target\":\"oncall@a.io\",\"verified\":true}, ...]
-	MembersJSON string `gorm:"type:text" json:"members_json"`
-	EscalationOrder int  `json:"escalation_order"`
-	Timezone    string `json:"timezone"`
+	MembersJSON     string `gorm:"type:text" json:"members_json"`
+	EscalationOrder int    `json:"escalation_order"`
+	Timezone        string `json:"timezone"`
 }
 
 // IncidentNotifyChannel is one configured outbound channel endpoint.
@@ -47,9 +47,9 @@ type IncidentNotifyRecipientGroup struct {
 type IncidentNotifyChannel struct {
 	gorm.Model
 	OrganizationID string `gorm:"index" json:"organization_id"`
-	Channel        string `json:"channel"` // email | sms | slack
-	ManagedBy      string `json:"managed_by"` // patty | customer
-	CredentialRef  string `json:"credential_ref"` // encrypted secret reference (never exported)
+	Channel        string `json:"channel"`         // email | sms | slack
+	ManagedBy      string `json:"managed_by"`      // patty | customer
+	CredentialRef  string `json:"credential_ref"`  // encrypted secret reference (never exported)
 	MaskedEndpoint string `json:"masked_endpoint"` // e.g. on***@a.io
 	Verified       bool   `json:"verified"`
 	Healthy        bool   `json:"healthy"`
@@ -61,23 +61,23 @@ type IncidentNotifyChannel struct {
 // → resolution. Source events attach here instead of creating storms.
 type IncidentNotifyIncident struct {
 	gorm.Model
-	OrganizationID string `gorm:"index" json:"organization_id"`
-	Fingerprint    string `gorm:"uniqueIndex" json:"fingerprint"` // org+source+service+rule digest
-	SourceType     string `json:"source_type"` // security_finding|outage|degradation|system_failure|notification_health
-	Service        string `json:"service"`
-	Rule           string `json:"rule"`
-	Severity       string `json:"severity"` // critical|high|medium|low
-	TitleKo        string `json:"title_ko"`
-	SafeSummaryKo  string `json:"safe_summary_ko"`
-	ScopeRef       string `json:"scope_ref"` // resource reference (evidence stays in PCCP)
-	State          string `json:"state"` // open|acknowledged|escalated|resolved|suppressed
-	FirstSeenAt    string `json:"first_seen_at"`
-	LastSeenAt     string `json:"last_seen_at"`
-	AckedBy        string `json:"acked_by"`
-	AckedVia       string `json:"acked_via"`
-	AckedAt        string `json:"acked_at"`
-	EscalationStep int    `json:"escalation_step"`
-	ResolvedAt     string `json:"resolved_at"`
+	OrganizationID  string `gorm:"index" json:"organization_id"`
+	Fingerprint     string `gorm:"uniqueIndex" json:"fingerprint"` // org+source+service+rule digest
+	SourceType      string `json:"source_type"`                    // security_finding|outage|degradation|system_failure|notification_health
+	Service         string `json:"service"`
+	Rule            string `json:"rule"`
+	Severity        string `json:"severity"` // critical|high|medium|low
+	TitleKo         string `json:"title_ko"`
+	SafeSummaryKo   string `json:"safe_summary_ko"`
+	ScopeRef        string `json:"scope_ref"` // resource reference (evidence stays in PCCP)
+	State           string `json:"state"`     // open|acknowledged|escalated|resolved|suppressed
+	FirstSeenAt     string `json:"first_seen_at"`
+	LastSeenAt      string `json:"last_seen_at"`
+	AckedBy         string `json:"acked_by"`
+	AckedVia        string `json:"acked_via"`
+	AckedAt         string `json:"acked_at"`
+	EscalationStep  int    `json:"escalation_step"`
+	ResolvedAt      string `json:"resolved_at"`
 	SuppressedUntil string `json:"suppressed_until"`
 }
 
@@ -86,30 +86,30 @@ type IncidentNotifyIncident struct {
 // duplicate detector emissions cannot repeat a delivery.
 type IncidentNotifyJob struct {
 	gorm.Model
-	OrganizationID string `gorm:"index" json:"organization_id"`
-	IncidentID     uint   `gorm:"index" json:"incident_id"`
-	Kind           string `json:"kind"` // notify|update|resolution|escalation|test
-	Channel        string `json:"channel"`
-	Target         string `json:"target"`
-	IdempotencyKey string `gorm:"uniqueIndex" json:"idempotency_key"`
-	State          string `json:"state"` // queued|sent|failed|dead_letter|cancelled|suppressed
-	Attempts       int    `json:"attempts"`
-	MaxAttempts    int    `json:"max_attempts"`
-	NextRetryAt    string `json:"next_retry_at"`
+	OrganizationID    string `gorm:"index" json:"organization_id"`
+	IncidentID        uint   `gorm:"index" json:"incident_id"`
+	Kind              string `json:"kind"` // notify|update|resolution|escalation|test
+	Channel           string `json:"channel"`
+	Target            string `json:"target"`
+	IdempotencyKey    string `gorm:"uniqueIndex" json:"idempotency_key"`
+	State             string `json:"state"` // queued|sent|failed|dead_letter|cancelled|suppressed
+	Attempts          int    `json:"attempts"`
+	MaxAttempts       int    `json:"max_attempts"`
+	NextRetryAt       string `json:"next_retry_at"`
 	ProviderMessageID string `json:"provider_message_id"`
-	LastError      string `json:"last_error"`
-	EnvelopeJSON   string `gorm:"type:text" json:"envelope_json"` // the exact safe fields sent
-	SentAt         string `json:"sent_at"`
+	LastError         string `json:"last_error"`
+	EnvelopeJSON      string `gorm:"type:text" json:"envelope_json"` // the exact safe fields sent
+	SentAt            string `json:"sent_at"`
 }
 
 // IncidentNotifyReceipt normalizes provider delivery state per job.
 // Provider acceptance is never treated as human acknowledgement.
 type IncidentNotifyReceipt struct {
 	gorm.Model
-	JobID    uint   `gorm:"index" json:"job_id"`
-	State    string `json:"state"` // accepted|delivered|deferred|bounced|rejected|expired|unknown
+	JobID             uint   `gorm:"index" json:"job_id"`
+	State             string `json:"state"` // accepted|delivered|deferred|bounced|rejected|expired|unknown
 	ProviderMessageID string `json:"provider_message_id"`
-	OccurredAt string `json:"occurred_at"`
+	OccurredAt        string `json:"occurred_at"`
 }
 
 // IncidentNotifyAcknowledgement records ack through PCCP, protected
@@ -118,12 +118,12 @@ type IncidentNotifyReceipt struct {
 type IncidentNotifyAcknowledgement struct {
 	gorm.Model
 	OrganizationID string `gorm:"index" json:"organization_id"`
-	IncidentID      uint   `gorm:"index" json:"incident_id"`
-	ActionToken     string `gorm:"uniqueIndex" json:"-"`
-	AckedBy         string `json:"acked_by"`
-	Via             string `json:"via"` // pccp|email|sms|slack
-	ExpiresAt       string `json:"expires_at"`
-	UsedAt          string `json:"used_at"`
+	IncidentID     uint   `gorm:"index" json:"incident_id"`
+	ActionToken    string `gorm:"uniqueIndex" json:"-"`
+	AckedBy        string `json:"acked_by"`
+	Via            string `json:"via"` // pccp|email|sms|slack
+	ExpiresAt      string `json:"expires_at"`
+	UsedAt         string `json:"used_at"`
 }
 
 // IncidentNotifyAudit is the tenant-scoped audit row for configuration
@@ -142,11 +142,11 @@ type IncidentNotifyAudit struct {
 // notification failure is itself visible (PAT-1454).
 type IncidentNotifyHealthSum struct {
 	gorm.Model
-	OrganizationID string `gorm:"index" json:"organization_id"`
-	QueueDepth     int    `json:"queue_depth"`
-	DeadLetters    int    `json:"dead_letters"`
-	Failures24h    int    `json:"failures_24h"`
-	UnhealthyChannels string `json:"unhealthy_channels"`
-	CheckedAt      string `json:"checked_at"`
-	CreatedAt      time.Time `json:"created_at"`
+	OrganizationID    string    `gorm:"index" json:"organization_id"`
+	QueueDepth        int       `json:"queue_depth"`
+	DeadLetters       int       `json:"dead_letters"`
+	Failures24h       int       `json:"failures_24h"`
+	UnhealthyChannels string    `json:"unhealthy_channels"`
+	CheckedAt         string    `json:"checked_at"`
+	CreatedAt         time.Time `json:"created_at"`
 }

@@ -29,15 +29,15 @@ type Repository struct {
 	Status        string `gorm:"type:varchar(32);default:'active'" json:"status"`
 	// SCM integration state (repositories C1/UX9): populated by the
 	// sync pipeline, not enroll-time metadata.
-	LastSyncAt    string `gorm:"type:timestamp" json:"last_sync_at,omitempty"`
-	LastCommitAt  string `gorm:"type:timestamp" json:"last_commit_at,omitempty"`
-	SyncStatus    string `gorm:"type:varchar(32)" json:"sync_status,omitempty"` // never, syncing, synced, failed
+	LastSyncAt   string `gorm:"type:timestamp" json:"last_sync_at,omitempty"`
+	LastCommitAt string `gorm:"type:timestamp" json:"last_commit_at,omitempty"`
+	SyncStatus   string `gorm:"type:varchar(32)" json:"sync_status,omitempty"` // never, syncing, synced, failed
 	// Latest-attempt evidence (PAT-1493): distinct from last_sync_at, which
 	// only records the last *successful* sync.
 	LastSyncAttemptAt string `gorm:"type:timestamp" json:"last_sync_attempt_at,omitempty"`
 	LastSyncHead      string `gorm:"type:varchar(64)" json:"last_sync_head,omitempty"`
 	LastSyncError     string `gorm:"type:text" json:"last_sync_error,omitempty"`
-	WebhookSecret string `gorm:"type:varchar(128)" json:"-"`
+	WebhookSecret     string `gorm:"type:varchar(128)" json:"-"`
 }
 
 // Branch tracks a repository branch for governance (PRD §18.5).

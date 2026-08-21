@@ -1,6 +1,10 @@
 # PCCP v2 Implementation Progress
 
-**Last updated:** Admin UX improvements round 3 (18 gaps remaining)
+**Last updated:** 2026-08-21 — Admin UX round 3 audit, re-verified against the current tree.
+This checklist covers the page groups from that audit round; pages added since (scheduler
+panels, marketplace/campaign consoles, trails, skills, and other post-Aug-12 screens — 54 pages
+now ship in total) are documented in [FEATURE_DOCUMENTATION.md](FEATURE_DOCUMENTATION.md) rather
+than duplicated here.
 
 ## Page-by-Page Status (Admin Perspective)
 
@@ -107,7 +111,7 @@
 - ✅ Functional chat interface
 - ✅ Broadcast creation
 - ✅ File transfer placeholder
-- ❌ Real-time WebSocket updates
+- ✅ Real-time updates (SSE via `/api/realtime/sse` with download tickets)
 - ✅ Presence indicators (online dots in comms)
 
 ### Model Catalog (§10A)

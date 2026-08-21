@@ -47,15 +47,15 @@ type EnterpriseFeatureViolation struct {
 	// Investigation workflow (PAT-1516): disposition, owner, reason,
 	// evidence JSON, and an expiry for risk-accepted resolutions so
 	// accepted-risk windows do not stay open forever.
-	Disposition    string `gorm:"type:varchar(32)" json:"disposition,omitempty"` // fixed, false_positive, risk_accepted, duplicate, suppressed
+	Disposition       string `gorm:"type:varchar(32)" json:"disposition,omitempty"` // fixed, false_positive, risk_accepted, duplicate, suppressed
 	DispositionReason string `gorm:"type:text" json:"disposition_reason,omitempty"`
-	EvidenceJSON   string `gorm:"type:text" json:"evidence,omitempty"` // [{type,ref,title}]
-	OwnerID        string `gorm:"type:varchar(64);index" json:"owner_id,omitempty"`
-	ResolvedBy     string `gorm:"type:varchar(64)" json:"resolved_by,omitempty"`
-	ResolvedAt     string `gorm:"type:timestamp" json:"resolved_at,omitempty"`
-	ExpiresAt      string `gorm:"type:timestamp;index" json:"expires_at,omitempty"` // for risk_accepted
-	RecurrenceCount int   `gorm:"default:0" json:"recurrence_count"`
-	OccurredAt     string `gorm:"type:timestamp" json:"occurred_at"`
+	EvidenceJSON      string `gorm:"type:text" json:"evidence,omitempty"` // [{type,ref,title}]
+	OwnerID           string `gorm:"type:varchar(64);index" json:"owner_id,omitempty"`
+	ResolvedBy        string `gorm:"type:varchar(64)" json:"resolved_by,omitempty"`
+	ResolvedAt        string `gorm:"type:timestamp" json:"resolved_at,omitempty"`
+	ExpiresAt         string `gorm:"type:timestamp;index" json:"expires_at,omitempty"` // for risk_accepted
+	RecurrenceCount   int    `gorm:"default:0" json:"recurrence_count"`
+	OccurredAt        string `gorm:"type:timestamp" json:"occurred_at"`
 }
 
 func (EnterpriseFeatureViolation) TableName() string { return "enterprise_feature_violations" }

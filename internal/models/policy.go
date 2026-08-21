@@ -76,22 +76,22 @@ type PolicyException struct {
 	DecidedAt      string `gorm:"type:timestamp" json:"decided_at,omitempty"`
 
 	// Evidence-backed approval payload (PAT-1506).
-	JustificationKo      string `gorm:"type:text" json:"justification_ko,omitempty"`
-	EvidenceJSON         string `gorm:"type:text" json:"evidence,omitempty"`         // [{type, ref, title}]
-	CompensatingControls  string `gorm:"type:text" json:"compensating_controls,omitempty"` // free-text Korean list
-	ResourceDestination   string `gorm:"type:varchar(255)" json:"resource_destination,omitempty"`
-	SeverityLabel         string `gorm:"type:varchar(32)" json:"severity_label,omitempty"` // informational risk label
-	CurrentRuleValuesJSON string `gorm:"type:text" json:"current_rule_values,omitempty"`  // [{rule_id, value}]
-	ProposedRuleValuesJSON string `gorm:"type:text" json:"proposed_rule_values,omitempty"` // [{rule_id, value}]
-	ConditionsJSON        string `gorm:"type:text" json:"conditions,omitempty"`           // [{type, text}]
-	RequestedStart        string `gorm:"type:varchar(32)" json:"requested_start,omitempty"` // ISO instant
-	ExpiresAt             string `gorm:"type:timestamp;index" json:"expires_at,omitempty"`
-	RenewedFromID         string `gorm:"type:varchar(64);index" json:"renewed_from_id,omitempty"` // links renewal chain
-	RequiredApproverRoles string `gorm:"type:varchar(255)" json:"required_approver_roles,omitempty"` // CSV role list (multi-party)
-	ApproversJSON         string `gorm:"type:text" json:"approvers,omitempty"`          // [{role, user_id, at}]
+	JustificationKo        string `gorm:"type:text" json:"justification_ko,omitempty"`
+	EvidenceJSON           string `gorm:"type:text" json:"evidence,omitempty"`              // [{type, ref, title}]
+	CompensatingControls   string `gorm:"type:text" json:"compensating_controls,omitempty"` // free-text Korean list
+	ResourceDestination    string `gorm:"type:varchar(255)" json:"resource_destination,omitempty"`
+	SeverityLabel          string `gorm:"type:varchar(32)" json:"severity_label,omitempty"`  // informational risk label
+	CurrentRuleValuesJSON  string `gorm:"type:text" json:"current_rule_values,omitempty"`    // [{rule_id, value}]
+	ProposedRuleValuesJSON string `gorm:"type:text" json:"proposed_rule_values,omitempty"`   // [{rule_id, value}]
+	ConditionsJSON         string `gorm:"type:text" json:"conditions,omitempty"`             // [{type, text}]
+	RequestedStart         string `gorm:"type:varchar(32)" json:"requested_start,omitempty"` // ISO instant
+	ExpiresAt              string `gorm:"type:timestamp;index" json:"expires_at,omitempty"`
+	RenewedFromID          string `gorm:"type:varchar(64);index" json:"renewed_from_id,omitempty"`    // links renewal chain
+	RequiredApproverRoles  string `gorm:"type:varchar(255)" json:"required_approver_roles,omitempty"` // CSV role list (multi-party)
+	ApproversJSON          string `gorm:"type:text" json:"approvers,omitempty"`                       // [{role, user_id, at}]
 	// Affected scope counters computed at approval time (denormalized so
 	// detail reads don't have to walk the graph).
-	AffectedSessions int `gorm:"default:0" json:"affected_sessions"`
+	AffectedSessions  int `gorm:"default:0" json:"affected_sessions"`
 	AffectedHarnesses int `gorm:"default:0" json:"affected_harnesses"`
 	// New epoch propagated on approval — list/ack clients can roll to it.
 	PublishedEpochID string `gorm:"type:varchar(64);index" json:"published_epoch_id,omitempty"`
@@ -104,7 +104,11 @@ func (PolicyException) TableName() string { return "policy_exceptions" }
 // and not past its expiry). Used by listing/detail to surface expired
 // exceptions clearly without mutating the row.
 func (e PolicyException) Active(now string) bool {
-	if e.Status != "approved" { return false }
-	if e.ExpiresAt == "" { return true }
+	if e.Status != "approved" {
+		return false
+	}
+	if e.ExpiresAt == "" {
+		return true
+	}
 	return now < e.ExpiresAt
 }

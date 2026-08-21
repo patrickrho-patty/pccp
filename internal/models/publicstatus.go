@@ -24,12 +24,12 @@ type PublicStatusComponent struct {
 
 	// Machine-controlled measured state (PAT-1439: machines control
 	// measured status; humans control public explanations).
-	MeasuredColor       string `json:"measured_color"` // green|yellow|orange|red|blue|gray
-	LastImpact          string `json:"last_impact"`    // none|partial|severe|widespread of last failing sample
-	ConsecutiveFailures int    `json:"consecutive_failures"`
+	MeasuredColor        string `json:"measured_color"` // green|yellow|orange|red|blue|gray
+	LastImpact           string `json:"last_impact"`    // none|partial|severe|widespread of last failing sample
+	ConsecutiveFailures  int    `json:"consecutive_failures"`
 	ConsecutiveSuccesses int    `json:"consecutive_successes"`
-	LastObservationAt   string `json:"last_observation_at"`
-	LastHealthyAt       string `json:"last_healthy_at"`
+	LastObservationAt    string `json:"last_observation_at"`
+	LastHealthyAt        string `json:"last_healthy_at"`
 
 	// Operator override (healthier overrides must expire; worsening
 	// overrides apply immediately).
@@ -112,11 +112,11 @@ type PublicStatusDailyRollup struct {
 // valid snapshot and flags staleness at read time.
 type PublicStatusSnapshot struct {
 	gorm.Model
-	Version      int    `json:"version"`
-	PayloadJSON  string `gorm:"type:text" json:"payload_json"`
-	Signature    string `json:"signature"`
-	KeyID        string `json:"key_id"`
-	GeneratedAt  string `json:"generated_at"`
+	Version     int    `json:"version"`
+	PayloadJSON string `gorm:"type:text" json:"payload_json"`
+	Signature   string `json:"signature"`
+	KeyID       string `json:"key_id"`
+	GeneratedAt string `json:"generated_at"`
 }
 
 // PublicStatusSubscriber is an anonymous subscription (email/SMS/RSS/
@@ -124,29 +124,29 @@ type PublicStatusSnapshot struct {
 // payloads are HMAC-signed with the per-subscriber secret.
 type PublicStatusSubscriber struct {
 	gorm.Model
-	ComponentID       string `gorm:"index" json:"component_id"`
-	Channel           string `json:"channel"` // email|sms|webhook|rss
-	Destination       string `json:"destination"`
-	Verified          bool   `json:"verified"`
-	VerifyToken       string `gorm:"uniqueIndex" json:"-"`
-	UnsubscribeToken  string `gorm:"uniqueIndex" json:"-"`
-	WebhookSecret     string `json:"-"`
-	Bounced           bool   `json:"bounced"`
-	FailureCount      int    `json:"failure_count"`
-	LastNotifiedAt    string `json:"last_notified_at"`
-	RateLimitedUntil  string `json:"rate_limited_until"`
+	ComponentID      string `gorm:"index" json:"component_id"`
+	Channel          string `json:"channel"` // email|sms|webhook|rss
+	Destination      string `json:"destination"`
+	Verified         bool   `json:"verified"`
+	VerifyToken      string `gorm:"uniqueIndex" json:"-"`
+	UnsubscribeToken string `gorm:"uniqueIndex" json:"-"`
+	WebhookSecret    string `json:"-"`
+	Bounced          bool   `json:"bounced"`
+	FailureCount     int    `json:"failure_count"`
+	LastNotifiedAt   string `json:"last_notified_at"`
+	RateLimitedUntil string `json:"rate_limited_until"`
 }
 
 // PublicStatusNotification is the durable outbound notification record for
 // subscriber delivery (idempotent per subscriber+incident+transition).
 type PublicStatusNotification struct {
 	gorm.Model
-	SubscriberID uint   `gorm:"index" json:"subscriber_id"`
-	IncidentID   uint   `gorm:"index" json:"incident_id"`
-	Transition   string `json:"transition"` // published|update|resolved|maintenance
+	SubscriberID   uint   `gorm:"index" json:"subscriber_id"`
+	IncidentID     uint   `gorm:"index" json:"incident_id"`
+	Transition     string `json:"transition"` // published|update|resolved|maintenance
 	IdempotencyKey string `gorm:"uniqueIndex" json:"idempotency_key"`
-	State         string `json:"state"` // queued|sent|failed|suppressed
-	Attempts      int    `json:"attempts"`
-	LastError     string `json:"last_error"`
-	SentAt        string `json:"sent_at"`
+	State          string `json:"state"` // queued|sent|failed|suppressed
+	Attempts       int    `json:"attempts"`
+	LastError      string `json:"last_error"`
+	SentAt         string `json:"sent_at"`
 }

@@ -1,5 +1,10 @@
 # PCCP API Reference
 
+> **Scope (revised 2026-08-21).** This reference documents the core control-plane entity APIs and
+> the data-plane entry points. The full REST surface is larger — 451 registered routes live in
+> `internal/api/server.go`, which is the source of truth for exact paths; per-screen usage is
+> mapped in [FEATURE_DOCUMENTATION.md](FEATURE_DOCUMENTATION.md).
+
 ## Authentication
 
 All API endpoints (except `/api/auth/*`) require a JWT bearer token in the `Authorization` header.
@@ -9,13 +14,14 @@ Authorization: Bearer <token>
 ```
 
 ### POST /api/auth/bootstrap
-Initial setup — creates the first organization and admin account.
+Initial setup — creates the first organization and admin account. Default credentials come from
+`PCCP_ADMIN_EMAIL` / `PCCP_ADMIN_PASSWORD` (defaults `admin@patty.dev` / `changeme`).
 
 **Request:**
 ```json
 {
   "email": "admin@patty.dev",
-  "password": "admin123",
+  "password": "changeme",
   "org_name": "Patty Enterprise"
 }
 ```
@@ -27,7 +33,7 @@ Authenticate and receive a JWT token.
 ```json
 {
   "email": "admin@patty.dev",
-  "password": "admin123"
+  "password": "changeme"
 }
 ```
 
@@ -168,6 +174,39 @@ Issue a capability lease for a session.
 
 ### GET /api/audit
 List recent audit events.
+
+---
+
+## Model Catalog
+
+### GET /api/catalog
+Get the current model catalog snapshot (server-authoritative model discovery).
+
+### POST /api/catalog/refresh
+Advance the catalog epoch and republish the snapshot to connected harnesses.
+
+---
+
+## SRE / Public Operations
+
+### GET /api/sre/probes
+Health probes for the service operations console (control plane, relay, scheduler, endpoint fleet).
+
+---
+
+## Scheduler API (port 8455)
+
+The model traffic director exposes an HTTP admin/gateway surface (`PCCP_SCHED_HTTP_ADDR`) plus a
+DARI worker listener on `:8445`. Admin auth is via `PCCP_SCHED_ADMIN_TOKEN` when set.
+
+### GET /healthz
+Scheduler liveness.
+
+### GET /api/v1/{workers,fleet,queue,routing,stages,pd,kvdir,cache,programs,shadow,batch,scaling,perf}
+Read-only operational views backing the web console panels: worker registry and load, queue
+depths, routing decisions, stage queues, P/D capacity balance, KV directory occupancy, program
+tool-pause state, shadow/canary rollout state (canary status is part of the shadow view), batch
+jobs, autoscaling, and performance/SLO views.
 
 ---
 
