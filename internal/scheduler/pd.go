@@ -31,10 +31,10 @@ type PDPlanner struct {
 }
 
 // NewPDPlanner builds an empty planner over the given fleet (or a
-// private one when omitted).
+// private one when omitted). The first supplied fleet wins.
 func NewPDPlanner(fleets ...*WorkerFleet) *PDPlanner {
 	f := NewWorkerFleet()
-	if len(fleets) == 1 && fleets[0] != nil {
+	if len(fleets) > 0 && fleets[0] != nil {
 		f = fleets[0]
 	}
 	return &PDPlanner{
