@@ -115,6 +115,22 @@ func TestUsageLedgerMigrationIsOneTimeAndLeavesCleanSchemaEmpty(t *testing.T) {
 	}
 }
 
+func TestPublicAccountAuthorityRevisionMigrationAddsIntegerColumn(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open("file:account-authority-revision?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Exec(`CREATE TABLE subscriptions (id text primary key, revision varchar(64))`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := migratePublicAccountAuthorityRevision(database); err != nil {
+		t.Fatal(err)
+	}
+	if !database.Migrator().HasColumn(&models.Subscription{}, "AuthorityRevision") {
+		t.Fatal("authority_revision column was not added")
+	}
+}
+
 func TestPostgresUsageLedgerMigrationIsOnlineAndBatched(t *testing.T) {
 	capture := &migrationSQLLogger{Interface: logger.Default.LogMode(logger.Info)}
 	database, err := gorm.Open(postgres.New(postgres.Config{
@@ -288,5 +304,135 @@ func TestIdentityNormalizationNeverLinksPrivilegedCredentialsByEmail(t *testing.
 	}
 	if credential.UserID != "" {
 		t.Fatalf("migration linked a privileged credential to a mutable email identity: %q", credential.UserID)
+	}
+}
+
+func TestSSOMigrationUniqueIndexesAreTenantScoped(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open("file:sso-migration-tenant-indexes?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	statements := []string{
+		`CREATE TABLE sso_identity_links (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, legacy_issuer TEXT NOT NULL, legacy_subject TEXT NOT NULL)`,
+		`CREATE UNIQUE INDEX idx_sso_link_legacy ON sso_identity_links (legacy_issuer, legacy_subject)`,
+		`CREATE TABLE sso_migration_manifests (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, manifest_id TEXT NOT NULL, import_id TEXT NOT NULL)`,
+		`CREATE UNIQUE INDEX idx_sso_migration_manifests_manifest_id ON sso_migration_manifests (manifest_id)`,
+		`CREATE UNIQUE INDEX idx_sso_migration_manifests_import_id ON sso_migration_manifests (import_id)`,
+		`INSERT INTO sso_identity_links (id, organization_id, legacy_issuer, legacy_subject) VALUES ('link-1', 'org-1', 'https://issuer.example', 'subject-1')`,
+		`INSERT INTO sso_migration_manifests (id, organization_id, manifest_id, import_id) VALUES ('manifest-1', 'org-1', 'manifest-key', 'import-key')`,
+	}
+	for _, statement := range statements {
+		if err := database.Exec(statement).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrateSSOMigrationTenantIndexes(database); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Exec(`INSERT INTO sso_identity_links (id, organization_id, legacy_issuer, legacy_subject) VALUES ('link-2', 'org-2', 'https://issuer.example', 'subject-1')`).Error; err != nil {
+		t.Fatalf("cross-tenant identity key was rejected: %v", err)
+	}
+	if err := database.Exec(`INSERT INTO sso_identity_links (id, organization_id, legacy_issuer, legacy_subject) VALUES ('link-3', 'org-1', 'https://issuer.example', 'subject-1')`).Error; err == nil {
+		t.Fatal("same-tenant identity duplicate was accepted")
+	}
+	if err := database.Exec(`INSERT INTO sso_migration_manifests (id, organization_id, manifest_id, import_id) VALUES ('manifest-2', 'org-2', 'manifest-key', 'import-key')`).Error; err != nil {
+		t.Fatalf("cross-tenant manifest/import keys were rejected: %v", err)
+	}
+	if err := database.Exec(`INSERT INTO sso_migration_manifests (id, organization_id, manifest_id, import_id) VALUES ('manifest-3', 'org-1', 'manifest-key', 'different-import')`).Error; err == nil {
+		t.Fatal("same-tenant manifest key duplicate was accepted")
+	}
+	if err := database.Exec(`INSERT INTO sso_migration_manifests (id, organization_id, manifest_id, import_id) VALUES ('manifest-4', 'org-1', 'different-manifest', 'import-key')`).Error; err == nil {
+		t.Fatal("same-tenant import key duplicate was accepted")
+	}
+}
+
+func TestSSOCanonicalIssuerMigrationBackfillsOnlyExplicitURLSources(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open("file:sso-canonical-issuer?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AutoMigrate(&models.SSOIdentityLink{}, &models.SSOMigrationManifest{}); err != nil {
+		t.Fatal(err)
+	}
+	urlManifest := models.SSOMigrationManifest{OrganizationID: "org-1", ManifestID: "url", ImportID: "url", Source: "https://idp.example/"}
+	namedManifest := models.SSOMigrationManifest{OrganizationID: "org-1", ManifestID: "named", ImportID: "named", Source: "keycloak-estate"}
+	if err := database.Create(&urlManifest).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&namedManifest).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateSSOCanonicalIssuer(database); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.First(&urlManifest, "id = ?", urlManifest.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.First(&namedManifest, "id = ?", namedManifest.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if urlManifest.SourceIssuer != "https://idp.example" || namedManifest.SourceIssuer != "" {
+		t.Fatalf("unsafe issuer backfill: url=%q named=%q", urlManifest.SourceIssuer, namedManifest.SourceIssuer)
+	}
+}
+
+func TestPostgresSSOMigrationIndexesReplaceGlobalConstraintWithoutGap(t *testing.T) {
+	statements := ssoMigrationTenantIndexStatements(true)
+	if len(statements) != 8 {
+		t.Fatalf("unexpected migration statement count: %d", len(statements))
+	}
+	if !strings.Contains(statements[0], "CREATE UNIQUE INDEX CONCURRENTLY") || !strings.Contains(statements[0], "idx_sso_link_legacy_tenant_v1") {
+		t.Fatalf("tenant replacement must be built first: %q", statements[0])
+	}
+	for _, name := range ssoMigrationConcurrentIndexNames {
+		found := false
+		for _, statement := range statements {
+			if strings.HasPrefix(statement, "CREATE ") && strings.Contains(statement, name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("concurrent index %q is not covered by retry recovery statements: %#v", name, statements)
+		}
+	}
+	dropAt, renameAt := -1, -1
+	for i, statement := range statements {
+		if strings.Contains(statement, "DROP INDEX CONCURRENTLY IF EXISTS idx_sso_link_legacy") {
+			dropAt = i
+		}
+		if strings.Contains(statement, "ALTER INDEX idx_sso_link_legacy_tenant_v1 RENAME") {
+			renameAt = i
+		}
+	}
+	if dropAt <= 0 || renameAt <= dropAt {
+		t.Fatalf("unsafe replacement order: %#v", statements)
+	}
+}
+
+func TestAccountAuthorityIndexAllowsEmailCollisionsButRejectsAuthorityCollisions(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open("file:account-authority-index?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AutoMigrate(&models.Account{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateAccountAuthorityIDIndex(database); err != nil {
+		t.Fatal(err)
+	}
+	for _, account := range []models.Account{
+		{Email: "shared@example.com", AuthorityID: "authority-1"},
+		{Email: "shared@example.com", AuthorityID: "authority-2"},
+		{Email: "legacy-one@example.com"},
+		{Email: "legacy-two@example.com"},
+	} {
+		if err := database.Create(&account).Error; err != nil {
+			t.Fatalf("valid account rejected: %v", err)
+		}
+	}
+	duplicate := models.Account{Email: "other@example.com", AuthorityID: "authority-1"}
+	if err := database.Create(&duplicate).Error; err == nil {
+		t.Fatal("duplicate immutable authority id was accepted")
 	}
 }

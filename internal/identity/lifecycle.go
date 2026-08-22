@@ -110,6 +110,14 @@ func TransitionUserLifecycle(db *gorm.DB, mutation UserLifecycleMutation) (*User
 	result := &UserLifecycleResult{}
 	var sessionOutcomes []sessionlifecycle.Outcome
 	err := db.Transaction(func(tx *gorm.DB) error {
+		var admissionOrg *models.Organization
+		if mutation.To == models.UserStatusActive {
+			var err error
+			admissionOrg, err = LockOrganizationForAdmission(tx, mutation.OrganizationID)
+			if err != nil {
+				return err
+			}
+		}
 		user, err := LockLifecycleUser(tx, mutation.OrganizationID, mutation.UserID)
 		if err != nil {
 			if errors.Is(err, ErrUserNotFound) {
@@ -119,6 +127,11 @@ func TransitionUserLifecycle(db *gorm.DB, mutation UserLifecycleMutation) (*User
 		}
 		result.User = *user
 		result.From = user.Status
+		if mutation.To == models.UserStatusActive {
+			if err := requireUserSeatWithDB(tx, *admissionOrg, user.ID); err != nil {
+				return err
+			}
+		}
 		if user.Status == mutation.To && mutation.Idempotent {
 			if mutation.To == models.UserStatusOffboarded {
 				if err := revokeUserAccess(tx, mutation.OrganizationID, mutation.UserID, result, lifecycle, &sessionOutcomes, mutation); err != nil {

@@ -169,6 +169,10 @@ func (s *Server) handleEnrollHarness(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "organization_id, harness_id, public_key_hex, and user_id are required")
 		return
 	}
+	if err := s.svc.ensureDevBootstrapEnrollmentUser(req.OrganizationID, req.UserID); err != nil {
+		writeError(w, http.StatusInternalServerError, "development enrollment bootstrap failed: "+err.Error())
+		return
+	}
 	harness, cred, err := s.svc.Identity().EnrollHarness(req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "enrollment failed: "+err.Error())

@@ -81,6 +81,65 @@ func TestSuspendedUserCannotEnrollHarnessOrOpenSession(t *testing.T) {
 	}
 }
 
+func TestOpenProtocolSessionWithDBPersistsRequestedAuthorityBinding(t *testing.T) {
+	service, db := lifecycleTestService(t)
+	org := models.Organization{Name: "Protocol", Slug: "protocol-session", Status: "active"}
+	db.Create(&org)
+	user := models.User{AuditBase: models.AuditBase{OrganizationID: org.ID}, Email: "protocol@corp.kr", Name: "Protocol", Status: models.UserStatusActive}
+	db.Create(&user)
+	harness := models.Harness{OrganizationID: org.ID, HarnessID: "hrn-protocol", Status: "enrolled", AllowedUsers: `["` + user.ID + `"]`}
+	db.Create(&harness)
+
+	var opened *models.Session
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		opened, err = service.OpenProtocolSessionWithDB(tx, org.ID, harness.HarnessID, user.ID,
+			"sess-from-wire", "repo-1", "feature/protocol", "model-1")
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened.SessionID != "sess-from-wire" || opened.HarnessID != harness.HarnessID || opened.UserID != user.ID || opened.Status != "active" {
+		t.Fatalf("unexpected protocol session binding: %+v", opened)
+	}
+
+	var persisted models.Session
+	if err := db.Where("organization_id = ? AND session_id = ?", org.ID, "sess-from-wire").First(&persisted).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persisted.RepositoryID != "repo-1" || persisted.Branch != "feature/protocol" || persisted.ModelClass != "model-1" {
+		t.Fatalf("protocol metadata not persisted: %+v", persisted)
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		refreshed, err := service.OpenProtocolSessionWithDB(tx, org.ID, harness.HarnessID, user.ID,
+			"sess-from-wire", "repo-1", "feature/protocol", "model-1")
+		if err == nil && refreshed.ID != opened.ID {
+			t.Fatalf("refresh created a second session: %s != %s", refreshed.ID, opened.ID)
+		}
+		return err
+	}); err != nil {
+		t.Fatalf("matching wire session refresh failed: %v", err)
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		_, err := service.OpenProtocolSessionWithDB(tx, org.ID, "other-harness", user.ID,
+			"sess-from-wire", "repo-1", "feature/protocol", "model-1")
+		return err
+	}); err == nil {
+		t.Fatal("wire session ID was rebound to another harness")
+	}
+	if err := db.Model(&models.Session{}).Where("id = ?", opened.ID).Update("status", "closed").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		_, err := service.OpenProtocolSessionWithDB(tx, org.ID, harness.HarnessID, user.ID,
+			"sess-from-wire", "repo-1", "feature/protocol", "model-1")
+		return err
+	}); err == nil {
+		t.Fatal("terminal wire session was reopened")
+	}
+}
+
 func TestExpiredContractorSweepCannotResurrectConcurrentOffboard(t *testing.T) {
 	service, db := lifecycleTestService(t)
 	org := models.Organization{Name: "Contractors", Slug: "contractor-race", Status: "active"}
@@ -119,6 +178,34 @@ func TestExpiredContractorSweepCannotResurrectConcurrentOffboard(t *testing.T) {
 	db.Model(&models.AuditEvent{}).Where("resource_id = ? AND event_type = ?", user.ID, "cp.user.contract_expired").Count(&auditCount)
 	if auditCount != 0 {
 		t.Fatalf("lost expiry race emitted %d success audits", auditCount)
+	}
+}
+
+func TestExpiredContractorSweepOffboardsAndRevokesRuntimeAccess(t *testing.T) {
+	service, db := lifecycleTestService(t)
+	org := models.Organization{Name: "Contractors", Slug: "contractor-end", Status: "active"}
+	if err := db.Create(&org).Error; err != nil {
+		t.Fatal(err)
+	}
+	user := models.User{AuditBase: models.AuditBase{OrganizationID: org.ID}, Email: "ended@corp.kr", Name: "Ended", Status: models.UserStatusActive, ContractorInfo: `{"contract_end":"2020-01-01"}`}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.Session{AuditBase: models.AuditBase{OrganizationID: org.ID}, UserID: user.ID, SessionID: "contract-session", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if changed := service.SweepExpiredContractors(); changed != 1 {
+		t.Fatalf("expired contractor transitions = %d, want 1", changed)
+	}
+	var reloaded models.User
+	db.First(&reloaded, "id = ?", user.ID)
+	if reloaded.Status != models.UserStatusOffboarded {
+		t.Fatalf("expired contractor status = %s, want offboarded", reloaded.Status)
+	}
+	var session models.Session
+	db.First(&session, "session_id = ?", "contract-session")
+	if session.Status != "terminated" {
+		t.Fatalf("expired contractor session = %s, want terminated", session.Status)
 	}
 }
 

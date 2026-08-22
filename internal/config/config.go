@@ -49,6 +49,13 @@ func LoadFromEnv() ServerConfig {
 	}
 }
 
+// SovereignDeploymentID is the immutable identity of this air-gapped
+// installation. Signed offline entitlements are unusable when it is absent or
+// when their deployment_id names a different installation.
+func SovereignDeploymentID() string {
+	return strings.TrimSpace(os.Getenv("PCCP_SOVEREIGN_DEPLOYMENT_ID"))
+}
+
 // ValidateJWTSecret prevents production from silently signing administrator
 // sessions with a source-known or brute-forceable HMAC key. Insecure values are
 // accepted only behind the explicit development mode used by local tooling.

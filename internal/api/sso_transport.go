@@ -3,10 +3,15 @@ package api
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/patrickrho-patty/pccp/internal/models"
+	"github.com/patrickrho-patty/pccp/internal/sso"
+	"gorm.io/gorm"
 )
 
 const (
@@ -68,4 +73,38 @@ func publicSSORateKey(r *http.Request, endpoint string) string {
 	// attacker could otherwise rotate arbitrary organization strings to obtain a
 	// fresh budget for every public SSO request.
 	return endpoint + "|" + host
+}
+
+func redeemSSOHandoff(
+	w http.ResponseWriter,
+	r *http.Request,
+	ext *AdditionalServices,
+	endpoint, code, provider string,
+	complete func(tx *gorm.DB, handoff *models.SSOLoginHandoff, user *models.User) error,
+) bool {
+	if provider != "oidc" && provider != "saml" {
+		writeError(w, http.StatusBadRequest, "invalid SSO handoff provider")
+		return false
+	}
+	release, allowed := ext.SSO.BeginPublicRequest(publicSSORateKey(r, endpoint))
+	if !allowed {
+		writeError(w, http.StatusTooManyRequests, "SSO request rate exceeded")
+		return false
+	}
+	defer release()
+	binding, err := readSSOTransactionCookie(r, provider)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "SSO transaction cookie is missing")
+		return false
+	}
+	if err := ext.SSO.RedeemLoginHandoff(code, provider, binding, complete); err != nil {
+		status := http.StatusUnauthorized
+		if errors.Is(err, sso.ErrInvalidLoginHandoff) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return false
+	}
+	clearSSOTransactionCookie(w, provider)
+	return true
 }

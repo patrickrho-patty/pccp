@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"testing"
+	"time"
 )
 
 func TestTrustBundleImport(t *testing.T) {
@@ -15,12 +16,24 @@ func TestTrustBundleImport(t *testing.T) {
 		LocalCAIdentity:  "local-ca",
 		LocalCAPublicKey: hex.EncodeToString(pub),
 		ModelSigningKeys: []string{hex.EncodeToString(pub)},
+		ExpiresAt:        time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if bundle.ImportedAt == "" {
 		t.Fatal("expected imported_at")
+	}
+}
+
+func TestTrustBundleImportRejectsExpiredRoot(t *testing.T) {
+	pub, _, _ := ed25519.GenerateKey(nil)
+	_, err := New().ImportTrustBundle(TrustBundle{
+		OrganizationID: "org-1", LocalCAPublicKey: hex.EncodeToString(pub),
+		ExpiresAt: time.Now().Add(-time.Minute).Format(time.RFC3339),
+	})
+	if err == nil {
+		t.Fatal("expired trust root was imported")
 	}
 }
 
@@ -88,6 +101,7 @@ func TestModelSignatureVerification(t *testing.T) {
 		OrganizationID:   "org-1",
 		LocalCAPublicKey: pubHex,
 		ModelSigningKeys: []string{pubHex},
+		ExpiresAt:        time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 	})
 
 	digest := "sha256:model_hash_123"
@@ -113,6 +127,7 @@ func TestRevocationCheck(t *testing.T) {
 		OrganizationID:   "org-1",
 		LocalCAPublicKey: hex.EncodeToString(pub),
 		RevocationList:   []string{"key-revoked-1", "key-revoked-2"},
+		ExpiresAt:        time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 	})
 
 	revoked, _ := svc.CheckRevocation("org-1", "key-revoked-1")

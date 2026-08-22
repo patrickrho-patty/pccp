@@ -11,11 +11,13 @@ import (
 	"os"
 	"time"
 
+	"github.com/patrickrho-patty/pccp/internal/config"
 	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/policy"
 	"github.com/patrickrho-patty/pccp/internal/provenance"
+	"github.com/patrickrho-patty/pccp/internal/sovereign"
 	"gorm.io/gorm"
 )
 
@@ -234,12 +236,54 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 		}
 	}
 
-	// Issue the capability lease (A3) and push LEASE_ISSUE (0x0210).
-	lease, err := pl.svc.Policy().IssueCapabilityLease(pl.leaseRequest(connID, orgID, so.SessionID, so.UserID, epoch.EpochID, so.Model))
+	// Persist the authenticated protocol session and its capability lease in
+	// one transaction before either artifact authorizes AI_OPEN. The harness
+	// chooses the wire session ID, so the control-plane row must carry that
+	// exact value rather than minting a second, unrelated ID.
+	var lease *models.CapabilityLease
+	err = pl.svc.db.Transaction(func(tx *gorm.DB) error {
+		var organization models.Organization
+		if err := tx.Select("id", "profile").Where("id = ?", orgID).First(&organization).Error; err != nil {
+			return err
+		}
+		if config.GetProfile(organization.Profile).Name == "sovereign" {
+			if _, err := sovereign.ValidateActiveEntitlementWithDB(tx, orgID, config.SovereignDeploymentID(), "offline-inference", pkg.EntitlementClass, time.Now().UTC()); err != nil {
+				return err
+			}
+		}
+		session, err := pl.svc.Identity().OpenProtocolSessionWithDB(tx, orgID, harnessID, so.UserID,
+			so.SessionID, so.RepositoryID, so.Branch, so.Model)
+		if err != nil {
+			return err
+		}
+		lease, err = pl.svc.Policy().IssueCapabilityLeaseWithDB(tx,
+			pl.leaseRequest(connID, orgID, so.SessionID, so.UserID, epoch.EpochID, []string{so.Model, pkg.PackageID}))
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&models.Session{}).Where("id = ? AND organization_id = ?", session.ID, orgID).
+			Updates(map[string]interface{}{"policy_epoch_id": epoch.EpochID, "lease_id": lease.LeaseID}).Error; err != nil {
+			return err
+		}
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: orgID,
+			EventType:      "relay.session.opened",
+			ActorID:        harnessID,
+			ActorType:      "harness",
+			Action:         "open_protocol_session",
+			ResourceType:   "session",
+			ResourceID:     session.ID,
+			Details:        fmt.Sprintf(`{"session_id":%q,"user_id":%q,"model":%q}`, so.SessionID, so.UserID, so.Model),
+			Result:         "success",
+			OccurredAt:     time.Now().UTC().Format(time.RFC3339),
+		}).Error
+	})
 	if err != nil {
-		pl.sendJSONError(conn, connID, "lease issuance failed: "+err.Error())
+		pl.sendJSONError(conn, connID, "session persistence or lease issuance failed: "+err.Error())
 		return
 	}
+
+	// Push LEASE_ISSUE (0x0210) only after the session/lease commit.
 	wireLeaseObj, err := buildWireLease(lease, "pccp-policy")
 	if err != nil {
 		pl.sendJSONError(conn, connID, "lease encode failed: "+err.Error())
@@ -314,10 +358,18 @@ func (pl *DARIListener) setupSession(ctx context.Context, conn *dari.TransportCo
 // leaseRequest builds the issuance request. The lease's allowed-models
 // list carries MODEL IDs — the connector's AuthorizeExchange compares
 // the requested model ID against exactly these.
-func (pl *DARIListener) leaseRequest(connID, orgID, sessionID, userID, epochID, model string) policy.IssueLeaseRequest {
-	allowed := []string{model}
-	if model == "" && pl.svc != nil {
-		allowed = nil // relay-side validation catches an unnamed model
+func (pl *DARIListener) leaseRequest(connID, orgID, sessionID, userID, epochID string, allowedModels []string) policy.IssueLeaseRequest {
+	allowed := make([]string, 0, len(allowedModels))
+	seen := make(map[string]struct{}, len(allowedModels))
+	for _, model := range allowedModels {
+		if model == "" {
+			continue
+		}
+		if _, exists := seen[model]; exists {
+			continue
+		}
+		seen[model] = struct{}{}
+		allowed = append(allowed, model)
 	}
 	peerID := pl.peerIDForConn(connID)
 	return policy.IssueLeaseRequest{

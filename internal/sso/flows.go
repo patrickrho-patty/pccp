@@ -24,6 +24,7 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/samlsp"
+	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -422,6 +423,12 @@ func (s *Service) loadOrganizationSSOConfigWithDB(db *gorm.DB, orgRef, mode stri
 // PutOrganizationSSOSecret seals one organization-scoped SSO credential. The
 // plaintext is never stored in Organization.SSOConfig or returned by an API.
 func (s *Service) PutOrganizationSSOSecret(orgID, name, plaintext string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		return s.putOrganizationSSOSecretWithDB(tx, orgID, name, plaintext)
+	})
+}
+
+func (s *Service) putOrganizationSSOSecretWithDB(db *gorm.DB, orgID, name, plaintext string) error {
 	orgID, name = strings.TrimSpace(orgID), strings.TrimSpace(name)
 	if orgID == "" || name == "" || plaintext == "" {
 		return fmt.Errorf("sso: organization, secret name, and value are required")
@@ -434,7 +441,7 @@ func (s *Service) PutOrganizationSSOSecret(orgID, name, plaintext string) error 
 		return fmt.Errorf("sso: seal organization secret: %w", err)
 	}
 	row := models.SSOSecret{OrganizationID: orgID, Name: name, Ciphertext: encoded, KEKID: kekID}
-	return s.db.Clauses(clause.OnConflict{
+	return db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "organization_id"}, {Name: "name"}},
 		DoUpdates: clause.AssignmentColumns([]string{"ciphertext", "kek_id", "updated_at"}),
 	}).Create(&row).Error
@@ -504,8 +511,9 @@ func (s *Service) consumeSSOFlow(provider, state, browserBinding string) (*model
 	return &consumed, nil
 }
 
-func (s *Service) CreateLoginHandoff(orgID, userID, provider, browserBindingHash, configDigest string) (string, error) {
-	if orgID == "" || userID == "" || browserBindingHash == "" || configDigest == "" {
+func (s *Service) CreateLoginHandoff(orgID, userID, provider, browserBindingHash, configDigest, sourceIssuer, sourceSubject string) (string, error) {
+	source := identity.NormalizeExternalIdentity(sourceIssuer, sourceSubject)
+	if orgID == "" || userID == "" || (provider != "oidc" && provider != "saml") || browserBindingHash == "" || configDigest == "" || source.Issuer == "" || source.Subject == "" {
 		return "", fmt.Errorf("sso: invalid login handoff")
 	}
 	code, err := randomURLToken(32)
@@ -516,6 +524,8 @@ func (s *Service) CreateLoginHandoff(orgID, userID, provider, browserBindingHash
 		OrganizationID: orgID,
 		UserID:         userID,
 		Provider:       provider,
+		SourceIssuer:   source.Issuer,
+		SourceSubject:  source.Subject,
 		CodeHash:       hashSSOState(code),
 		BrowserBinding: browserBindingHash,
 		ConfigDigest:   configDigest,
@@ -629,7 +639,7 @@ func (s *Service) LoginCompletionURL(orgID, provider, handoffCode string) (strin
 		callbackURL = cfg.ACSURL
 	}
 	completion, err := url.Parse(callbackURL)
-	if err != nil || !secureSSOURL(completion) {
+	if err != nil || !validSSOURL(completion, true) {
 		return "", fmt.Errorf("sso: %s completion URL is invalid", strings.ToUpper(provider))
 	}
 	completion.Path = "/login"
@@ -664,7 +674,7 @@ func samlServiceProvider(cfg OrganizationSSOConfig) (*saml.ServiceProvider, erro
 		return nil, fmt.Errorf("sso: SAML metadata issuer does not match configured issuer")
 	}
 	acs, err := url.Parse(cfg.ACSURL)
-	if err != nil || !secureSSOURL(acs) {
+	if err != nil || !validSSOURL(acs, true) {
 		return nil, fmt.Errorf("sso: SAML ACS URL is invalid")
 	}
 	key, cert, signatureMethod, err := parseSAMLSigningCredential(cfg.SPPrivateKeyPEM, cfg.SPCertificatePEM)
@@ -676,7 +686,7 @@ func samlServiceProvider(cfg OrganizationSSOConfig) (*saml.ServiceProvider, erro
 		Key: key, Certificate: cert, SignatureMethod: signatureMethod,
 	}
 	idpRedirect, err := url.Parse(sp.GetSSOBindingLocation(saml.HTTPRedirectBinding))
-	if err != nil || !secureSSOURL(idpRedirect) {
+	if err != nil || !validSSOURL(idpRedirect, true) {
 		return nil, fmt.Errorf("sso: SAML HTTP-Redirect SSO endpoint is invalid")
 	}
 	return sp, nil
@@ -693,7 +703,7 @@ func validateOIDCConfig(cfg OrganizationSSOConfig) error {
 		"token endpoint": cfg.TokenURL, "redirect URI": cfg.RedirectURI,
 	} {
 		parsed, err := url.Parse(raw)
-		if err != nil || !secureSSOURL(parsed) {
+		if err != nil || !validSSOURL(parsed, true) {
 			return fmt.Errorf("sso: OIDC %s is invalid", name)
 		}
 	}
@@ -790,14 +800,14 @@ func (s *Service) cleanupExpiredSSOTransactions() error {
 	return nil
 }
 
-func secureSSOURL(parsed *url.URL) bool {
-	if parsed == nil || !parsed.IsAbs() || parsed.Hostname() == "" {
+func validSSOURL(parsed *url.URL, allowLoopbackHTTP bool) bool {
+	if parsed == nil || !parsed.IsAbs() || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" {
 		return false
 	}
 	if strings.EqualFold(parsed.Scheme, "https") {
 		return true
 	}
-	if !strings.EqualFold(parsed.Scheme, "http") {
+	if !allowLoopbackHTTP || !strings.EqualFold(parsed.Scheme, "http") {
 		return false
 	}
 	host := strings.TrimSpace(parsed.Hostname())

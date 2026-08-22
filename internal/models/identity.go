@@ -94,6 +94,8 @@ type SSOLoginHandoff struct {
 	OrganizationID string     `gorm:"type:varchar(64);index;not null" json:"-"`
 	UserID         string     `gorm:"type:varchar(64);index;not null" json:"-"`
 	Provider       string     `gorm:"type:varchar(16);not null" json:"-"`
+	SourceIssuer   string     `gorm:"type:varchar(512);not null;default:''" json:"-"`
+	SourceSubject  string     `gorm:"type:varchar(255);not null;default:''" json:"-"`
 	CodeHash       string     `gorm:"type:varchar(64);uniqueIndex;not null" json:"-"`
 	BrowserBinding string     `gorm:"type:varchar(64);not null" json:"-"`
 	ConfigDigest   string     `gorm:"type:varchar(64);not null" json:"-"`
@@ -183,7 +185,11 @@ type Harness struct {
 	EnrollmentMode   string `gorm:"type:varchar(32)" json:"enrollment_mode"` // sso, pre_approved, offline
 	EnrolledAt       string `gorm:"type:timestamp" json:"enrolled_at,omitempty"`
 	LastHeartbeat    string `gorm:"type:timestamp" json:"last_heartbeat,omitempty"`
-	LastAttestation  string `gorm:"type:timestamp" json:"last_attestation,omitempty"`
+	// LastHeartbeatSignedAt is replay state for client-signed control-plane
+	// heartbeats. It is deliberately separate from LastHeartbeat, which relay
+	// traffic may update as a server-observed liveness signal.
+	LastHeartbeatSignedAt string `gorm:"type:varchar(30)" json:"-"`
+	LastAttestation       string `gorm:"type:timestamp" json:"last_attestation,omitempty"`
 	// Network
 	CPEndpoint  string `gorm:"type:varchar(255)" json:"cp_endpoint,omitempty"`
 	NetworkZone string `gorm:"type:varchar(128)" json:"network_zone,omitempty"`
@@ -195,6 +201,9 @@ type EnrollmentCode struct {
 	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
 	Code           string `gorm:"type:varchar(128);uniqueIndex;not null" json:"-"`
 	UserID         string `gorm:"type:varchar(64)" json:"user_id,omitempty"`
+	HarnessID      string `gorm:"type:varchar(64)" json:"harness_id,omitempty"`
+	PublicKeyHash  string `gorm:"type:varchar(64)" json:"-"`
+	Purpose        string `gorm:"type:varchar(32);default:'admin'" json:"purpose,omitempty"`
 	ExpiresAt      string `gorm:"type:timestamp" json:"expires_at"`
 	Used           bool   `gorm:"default:false" json:"used"`
 	UsedBy         string `gorm:"type:varchar(64)" json:"used_by,omitempty"` // harness ID

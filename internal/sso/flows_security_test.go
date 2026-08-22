@@ -27,6 +27,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/patrickrho-patty/pccp/internal/keymgmt"
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"github.com/patrickrho-patty/pccp/internal/policy"
 	"gorm.io/gorm"
 )
 
@@ -167,6 +168,36 @@ func TestOIDCLoginBindsStateNoncePKCEAndOrganizationConfig(t *testing.T) {
 	if _, err := svc.CompleteOIDCLogin(context.Background(), "code", state, browserBinding); err == nil {
 		t.Fatal("OIDC state replay was accepted")
 	}
+
+	// 기존에 발급된 lease는 IdP 장애와 분리되어 만료 시각까지 유효해야 한다.
+	lease := models.CapabilityLease{
+		OrganizationID: org.ID, LeaseID: "lease-before-idp-outage", SubjectPeerID: "peer-1",
+		UserID: "user-1", SessionID: "session-1", PolicyEpochID: "epoch-1",
+		NotBefore: time.Now().Add(-time.Minute).Format(time.RFC3339),
+		NotAfter:  time.Now().Add(time.Hour).Format(time.RFC3339), Status: "active",
+	}
+	if err := db.Create(&lease).Error; err != nil {
+		t.Fatal(err)
+	}
+	leasePolicy, err := policy.New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authURL, err = svc.BeginOIDCLogin(org.Slug, browserBinding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err = url.Parse(authURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idp.Close()
+	if _, err := svc.CompleteOIDCLogin(context.Background(), "code", parsed.Query().Get("state"), browserBinding); err == nil || !strings.Contains(err.Error(), "token endpoint unreachable") {
+		t.Fatalf("new login during IdP outage error = %v, want token endpoint unreachable", err)
+	}
+	if _, err := leasePolicy.ValidateCapabilityLease(lease.LeaseID, lease.SubjectPeerID, lease.SessionID); err != nil {
+		t.Fatalf("valid pre-outage lease was rejected: %v", err)
+	}
 }
 
 func TestRedeemLoginHandoffLocksCurrentConfigAndConsumesOnlyAfterCommit(t *testing.T) {
@@ -189,7 +220,7 @@ func TestRedeemLoginHandoffLocksCurrentConfigAndConsumesOnlyAfterCommit(t *testi
 		t.Fatal(err)
 	}
 	const browserBinding = "atomic-browser-binding"
-	code, err := svc.CreateLoginHandoff(org.ID, user.ID, "oidc", hashSSOState(browserBinding), digest)
+	code, err := svc.CreateLoginHandoff(org.ID, user.ID, "oidc", hashSSOState(browserBinding), digest, "https://idp.example", "subject-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +250,7 @@ func TestRedeemLoginHandoffLocksCurrentConfigAndConsumesOnlyAfterCommit(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	rollbackCode, err := svc.CreateLoginHandoff(org.ID, user.ID, "oidc", hashSSOState(browserBinding), currentDigest)
+	rollbackCode, err := svc.CreateLoginHandoff(org.ID, user.ID, "oidc", hashSSOState(browserBinding), currentDigest, "https://idp.example", "subject-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +423,7 @@ func TestExternalIdentityIsScopedByMethodAndVerifiedIssuer(t *testing.T) {
 func TestSSOHandoffAndPublicLimitsAreBrowserBoundAndBounded(t *testing.T) {
 	db := setupDB(t)
 	svc := New(db, "test-secret")
-	code, err := svc.CreateLoginHandoff("org-1", "user-1", "saml", hashSSOState("browser-one"), "config-digest")
+	code, err := svc.CreateLoginHandoff("org-1", "user-1", "saml", hashSSOState("browser-one"), "config-digest", "https://idp.example", "subject-1")
 	if err != nil {
 		t.Fatal(err)
 	}

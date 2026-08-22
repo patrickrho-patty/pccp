@@ -1,19 +1,51 @@
 package api
 
-// PAT-1442 SSO Keycloak→Authentik migration — API adapter over the
+// PAT-1564 SSO realm-to-realm migration — API adapter over the
 // ssomigrate compatibility service: immutable identity links, bridge
 // authentication (never copies Keycloak tokens — always issues a new session),
 // idempotent discovery manifests, reconciliation reports, and wave sign-off.
 
 import (
+	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"gorm.io/gorm"
 
+	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
 	"github.com/patrickrho-patty/pccp/internal/ssomigrate"
 )
+
+const (
+	ssoMigrationWaveBodyLimit    = 64 << 10
+	ssoMigrationWaveMaxApps      = 200
+	ssoMigrationWaveStringLimit  = 256
+	ssoMigrationRollbackMaxBytes = 2048
+	ssoMigrationListDefaultLimit = 50
+	ssoMigrationListMaxLimit     = 200
+)
+
+type ssoMigrationPage[T any] struct {
+	Items      []T    `json:"items"`
+	NextCursor string `json:"next_cursor,omitempty"`
+	HasMore    bool   `json:"has_more"`
+}
+
+func ssoMigrationPageLimit(r *http.Request) int {
+	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+	if err != nil || limit <= 0 {
+		return ssoMigrationListDefaultLimit
+	}
+	if limit > ssoMigrationListMaxLimit {
+		return ssoMigrationListMaxLimit
+	}
+	return limit
+}
 
 // handleSSOMigrateLinks lists registered identity links.
 func (s *Server) handleSSOMigrateLinks(w http.ResponseWriter, r *http.Request) {
@@ -22,9 +54,25 @@ func (s *Server) handleSSOMigrateLinks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "organization context required")
 		return
 	}
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
 	var links []models.SSOIdentityLink
-	s.db.Where("organization_id = ?", orgID).Order("legacy_issuer, legacy_subject").Find(&links)
-	writeJSON(w, http.StatusOK, links)
+	limit, cursor := ssoMigrationPageLimit(r), strings.TrimSpace(r.URL.Query().Get("cursor"))
+	query := s.db.Where("organization_id = ?", orgID)
+	if cursor != "" {
+		query = query.Where("id > ?", cursor)
+	}
+	if err := query.Order("id").Limit(limit + 1).Find(&links).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list identity links")
+		return
+	}
+	hasMore, next := len(links) > limit, ""
+	if hasMore {
+		links = links[:limit]
+		next = links[len(links)-1].ID
+	}
+	writeJSON(w, http.StatusOK, ssoMigrationPage[models.SSOIdentityLink]{Items: links, NextCursor: next, HasMore: hasMore})
 }
 
 // handleSSOMigrateLink creates/updates an immutable identity mapping.
@@ -38,7 +86,7 @@ func (s *Server) handleSSOMigrateLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ssomigrate.IdentityLinkRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
@@ -55,22 +103,35 @@ func (s *Server) handleSSOMigrateLink(w http.ResponseWriter, r *http.Request) {
 // handleSSOMigrateBridge resolves a legacy identity and issues a NEW session
 // decision — never copying a Keycloak token. Fails closed on ambiguity.
 func (s *Server) handleSSOMigrateBridge(w http.ResponseWriter, r *http.Request) {
-	orgID := getOrgID(r)
-	if orgID == "" {
-		writeError(w, http.StatusForbidden, "organization context required")
-		return
+	var req struct {
+		ssomigrate.BridgeEvent
+		Code     string `json:"code"`
+		Provider string `json:"provider"`
 	}
-	if !requireGovernanceAdmin(w, r) {
-		return
-	}
-	var req ssomigrate.BridgeEvent
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
-	row, err := s.ssoMigrate.BridgeLegacy(orgID, req)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	var token string
+	var row *models.SSOMigrationBridgeEvent
+	if !redeemSSOHandoff(w, r, s.ext(), "sso-bridge", req.Code, req.Provider, func(tx *gorm.DB, handoff *models.SSOLoginHandoff, user *models.User) error {
+		requested := identity.NormalizeExternalIdentity(req.LegacyIssuer, req.LegacySubject)
+		if subtle.ConstantTimeCompare([]byte(requested.Issuer), []byte(handoff.SourceIssuer)) != 1 ||
+			subtle.ConstantTimeCompare([]byte(requested.Subject), []byte(handoff.SourceSubject)) != 1 {
+			return fmt.Errorf("SSO bridge source identity does not match the verified login")
+		}
+		var bridgeErr error
+		row, bridgeErr = s.ssoMigrate.BridgeLegacyWithDB(tx, handoff.OrganizationID, req.BridgeEvent,
+			identity.ExternalIdentity{Issuer: handoff.SourceIssuer, Subject: handoff.SourceSubject}, user, func(tx *gorm.DB, locked *models.User) error {
+				issued, issueErr := s.auth.IssueTokenForLockedUserWithDB(tx, locked, "member")
+				if issueErr != nil {
+					return issueErr
+				}
+				token = issued
+				return nil
+			})
+		return bridgeErr
+	}) {
 		return
 	}
 	if !row.NewSessionIssued {
@@ -86,7 +147,10 @@ func (s *Server) handleSSOMigrateBridge(w http.ResponseWriter, r *http.Request) 
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, row)
+	writeJSON(w, http.StatusOK, struct {
+		*models.SSOMigrationBridgeEvent
+		Token string `json:"token"`
+	}{SSOMigrationBridgeEvent: row, Token: token})
 }
 
 // handleSSOMigrateManifests lists manifests or imports a discovery snapshot.
@@ -106,21 +170,26 @@ func (s *Server) handleSSOMigrateManifests(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req struct {
-		Name     string                    `json:"name"`
-		Source   string                    `json:"source"`
-		Wave     int                       `json:"wave"`
-		ImportID string                    `json:"import_id"`
-		Items    []ssomigrate.ManifestItem `json:"items"`
+		Name         string                    `json:"name"`
+		Source       string                    `json:"source"`
+		SourceIssuer string                    `json:"source_issuer"`
+		Wave         int                       `json:"wave"`
+		ImportID     string                    `json:"import_id"`
+		Items        []ssomigrate.ManifestItem `json:"items"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<20)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
-	if req.ImportID == "" || len(req.Items) == 0 {
-		writeError(w, http.StatusBadRequest, "import_id and items[] required")
+	if req.ImportID == "" || strings.TrimSpace(req.SourceIssuer) == "" || len(req.Items) == 0 {
+		writeError(w, http.StatusBadRequest, "import_id, source_issuer, and items[] required")
 		return
 	}
-	m, err := s.ssoMigrate.ImportManifest(orgID, req.Name, req.Source, req.Wave, req.ImportID, getActorID(r), req.Items)
+	if len(req.Items) > 5000 {
+		writeError(w, http.StatusRequestEntityTooLarge, "manifest supports at most 5000 items")
+		return
+	}
+	m, err := s.ssoMigrate.ImportManifest(orgID, req.Name, req.Source, req.SourceIssuer, req.Wave, req.ImportID, getActorID(r), req.Items)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -136,15 +205,15 @@ func (s *Server) handleSSOMigrateReconcile(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "organization context and manifest id required")
 		return
 	}
-	m, err := s.ssoMigrate.Reconcile(orgID, manifestID)
+	if !requireGovernanceAdmin(w, r) {
+		return
+	}
+	report, err := s.ssoMigrate.Reconcile(orgID, manifestID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	// Include the item list for review.
-	var items []models.SSOMigrationItem
-	s.db.Where("manifest_id = ?", m.ManifestID).Order("kind, legacy_key").Find(&items)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"manifest": m, "items": items})
+	writeJSON(w, http.StatusOK, report)
 }
 
 // handleSSOMigrateWaves lists/creates migration waves and signs off.
@@ -159,8 +228,21 @@ func (s *Server) handleSSOMigrateWaves(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet {
 		var waves []models.SSOMigrationWave
-		s.db.Where("organization_id = ?", orgID).Order("wave").Find(&waves)
-		writeJSON(w, http.StatusOK, waves)
+		limit, cursor := ssoMigrationPageLimit(r), strings.TrimSpace(r.URL.Query().Get("cursor"))
+		query := s.db.Where("organization_id = ?", orgID)
+		if cursor != "" {
+			query = query.Where("id > ?", cursor)
+		}
+		if err := query.Order("id").Limit(limit + 1).Find(&waves).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "could not list migration waves")
+			return
+		}
+		hasMore, next := len(waves) > limit, ""
+		if hasMore {
+			waves = waves[:limit]
+			next = waves[len(waves)-1].ID
+		}
+		writeJSON(w, http.StatusOK, ssoMigrationPage[models.SSOMigrationWave]{Items: waves, NextCursor: next, HasMore: hasMore})
 		return
 	}
 	var req struct {
@@ -170,8 +252,12 @@ func (s *Server) handleSSOMigrateWaves(w http.ResponseWriter, r *http.Request) {
 		OwnerID    string   `json:"owner_id"`
 		Apps       []string `json:"apps"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, ssoMigrationWaveBodyLimit)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	if err := validateSSOMigrationWaveRequest(req.ManifestID, req.Name, req.OwnerID, req.Apps); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	apps, _ := json.Marshal(req.Apps)
@@ -201,10 +287,37 @@ func (s *Server) handleSSOMigrateWaveSignOff(w http.ResponseWriter, r *http.Requ
 	if !requireGovernanceAdmin(w, r) {
 		return
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	if len(req.RollbackWindow) > ssoMigrationRollbackMaxBytes {
+		writeError(w, http.StatusBadRequest, "rollback_window exceeds 2048 bytes")
+		return
+	}
 	if err := s.ssoMigrate.SignOffWave(orgID, id, getActorID(r), req.RollbackWindow); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "status": "signed_off"})
+}
+
+func validateSSOMigrationWaveRequest(manifestID, name, ownerID string, apps []string) error {
+	for field, value := range map[string]string{"manifest_id": manifestID, "name": name, "owner_id": ownerID} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s is required", field)
+		}
+		if len(value) > ssoMigrationWaveStringLimit {
+			return fmt.Errorf("%s exceeds %d bytes", field, ssoMigrationWaveStringLimit)
+		}
+	}
+	if len(apps) == 0 || len(apps) > ssoMigrationWaveMaxApps {
+		return fmt.Errorf("apps must contain 1..%d entries", ssoMigrationWaveMaxApps)
+	}
+	for _, app := range apps {
+		if strings.TrimSpace(app) == "" || len(app) > ssoMigrationWaveStringLimit {
+			return fmt.Errorf("each app must contain 1..%d bytes", ssoMigrationWaveStringLimit)
+		}
+	}
+	return nil
 }

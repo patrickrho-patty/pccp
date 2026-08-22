@@ -25,7 +25,6 @@ spec:
               name: dari-native
             - containerPort: 8445
               name: dari-web
-              name: relay-http
           env:
             - name: PCCP_RELAY_HTTP_ADDR
               value: ":8090"
@@ -36,6 +35,14 @@ spec:
                 secretKeyRef:
                   name: pccp-db-secret
                   key: dsn
+            - name: PCCP_RELAY_TLS_CERT
+              value: /etc/pccp/relay-tls/tls.crt
+            - name: PCCP_RELAY_TLS_KEY
+              value: /etc/pccp/relay-tls/tls.key
+          volumeMounts:
+            - name: relay-tls
+              mountPath: /etc/pccp/relay-tls
+              readOnly: true
           resources:
             requests:
               memory: "256Mi"
@@ -43,6 +50,10 @@ spec:
             limits:
               memory: "1Gi"
               cpu: "2000m"
+      volumes:
+        - name: relay-tls
+          secret:
+            secretName: pccp-relay-tls
 ---
 apiVersion: v1
 kind: Service
@@ -55,10 +66,14 @@ spec:
   ports:
     - port: 8090
       targetPort: 8090
-      name: relay
+      name: relay-admin
+    - port: 8444
+      targetPort: 8444
+      name: dari-native
   # dari.web/1 browser carrier (Task 13): WebTransport/HTTP-3 on 8445
   # with the constrained WebSocket fallback on the same listener.
   # Origin allowlist is explicit; credentials never appear in manifests.
   # Env (set via the secret/system references above, not inline):
   #   DARI_WEB_ORIGIN_ALLOWLIST=https://app.example
-  #   PCCP_RELAY_TLS_CERT / PCCP_RELAY_TLS_KEY (H3 certificate)
+  # The pccp-relay-tls Secret must contain tls.crt and tls.key for the
+  # externally advertised DARI relay DNS name.

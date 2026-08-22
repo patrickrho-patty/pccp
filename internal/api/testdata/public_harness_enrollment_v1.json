@@ -1,0 +1,9 @@
+{
+  "grant_request": {"harness_id":"hrn_fixture_001","public_key_hex":"0000000000000000000000000000000000000000000000000000000000000000","organization":"acme"},
+  "grant_response": {"enrollment_code":"grant_fixture_001","organization_id":"org_fixture_001","user_id":"user_fixture_001","plan":"enterprise","expires_at":"2026-08-23T04:24:15Z"},
+  "enrollment_request": {"organization_id":"org_fixture_001","user_id":"user_fixture_001","enrollment_code":"grant_fixture_001","harness_id":"hrn_fixture_001","public_key_hex":"0000000000000000000000000000000000000000000000000000000000000000","binary_version":"1.2.3","binary_hash":"sha256:fixture","extension_version":"1.2.3","cli_version":"1.2.3","device_hostname":"fixture-host","device_os":"darwin","device_os_version":"15.0","device_arch":"arm64"},
+  "enrollment_response": {"credential":{"signed_credential":"c2lnbmVkLXBwYy12MQ=="}},
+  "renewal_request": {"harness_id":"hrn_fixture_001","credential_sha256":"1111111111111111111111111111111111111111111111111111111111111111","signed_at":"2026-08-23T04:14:15.123456789Z","signature_hex":"abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"},
+  "renewal_response": {"credential":{"signed_credential":"cmVuZXdlZC1wcGMtdjE="}},
+  "renewal_signing_bytes_hex": "706363702d6861726e6573732d63726564656e7469616c2d72656e6577616c2d76310068726e5f666978747572655f303031003131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313100323032362d30382d32335430343a31343a31352e3132333435363738395a"
+}

@@ -1,0 +1,184 @@
+{
+  "realm": "patty",
+  "displayName": "Patty",
+  "displayNameHtml": "Patty",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": true,
+  "rememberMe": true,
+  "verifyEmail": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "maxDeltaTimeSeconds": 43200,
+  "minimumQuickLoginWaitSeconds": 60,
+  "passwordPolicy": "length(12) and upperCase(1) and lowerCase(1) and digits(1) and specialChars(1) and notUsername(undefined) and passwordHistory(5)",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+  "internationalizationEnabled": true,
+  "supportedLocales": ["en", "ko"],
+  "defaultLocale": "ko",
+  "loginTheme": "patty",
+  "accountTheme": "keycloak.v3",
+  "emailTheme": "keycloak",
+  "browserSecurityHeaders": {
+    "contentSecurityPolicyReportOnly": "",
+    "xContentTypeOptions": "nosniff",
+    "referrerPolicy": "no-referrer",
+    "xRobotsTag": "none",
+    "xFrameOptions": "SAMEORIGIN",
+    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self'; object-src 'none';",
+    "strictTransportSecurity": "max-age=31536000; includeSubDomains"
+  },
+  "clientScopes": [
+    {
+      "name": "harness-enroll",
+      "description": "Allows a first-party native client to request a short-lived Harness enrollment grant.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "Enroll a Patty Code Harness"
+      }
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "patty-account",
+      "name": "Patty Account",
+      "description": "Public web account sign-in; authorization code with PKCE only.",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "redirectUris": ["https://id.patty.io/auth/callback"],
+      "webOrigins": ["https://id.patty.io"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://id.patty.io/*"
+      },
+      "defaultClientScopes": ["web-origins", "acr", "roles", "profile", "email"],
+      "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"]
+    },
+    {
+      "clientId": "patcode-device",
+      "name": "Patty Code CLI and Desktop",
+      "description": "RFC 8628 device authorization and system-browser PKCE client.",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [],
+      "webOrigins": [],
+      "attributes": {
+        "oauth2.device.authorization.grant.enabled": "true"
+      },
+      "defaultClientScopes": ["acr", "roles", "profile", "email", "harness-enroll"],
+      "optionalClientScopes": ["offline_access"],
+      "protocolMappers": [{
+        "name": "patcode-device-audience",
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-audience-mapper",
+        "consentRequired": false,
+        "config": {"included.client.audience": "patcode-device", "id.token.claim": "false", "access.token.claim": "true"}
+      }]
+    },
+    {
+      "clientId": "patcode-pkce",
+      "name": "Patty Code Native PKCE",
+      "description": "CLI, Desktop, and mobile system-browser authorization code flow.",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://127.0.0.1/*", "http://localhost/*", "patty-code://oauth/callback"],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "defaultClientScopes": ["acr", "roles", "profile", "email", "harness-enroll"],
+      "optionalClientScopes": ["offline_access"],
+      "protocolMappers": [{
+        "name": "patcode-pkce-audience",
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-audience-mapper",
+        "consentRequired": false,
+        "config": {"included.client.audience": "patcode-pkce", "id.token.claim": "false", "access.token.claim": "true"}
+      }]
+    }
+  ],
+  "identityProviders": [
+    {
+      "alias": "google",
+      "displayName": "Google",
+      "providerId": "google",
+      "enabled": false,
+      "trustEmail": false,
+      "storeToken": false,
+      "linkOnly": false,
+      "firstBrokerLoginFlowAlias": "first broker login",
+      "config": {"clientId": "", "clientSecret": "", "defaultScope": "openid profile email", "useJwksUrl": "true"}
+    },
+    {
+      "alias": "apple",
+      "displayName": "Apple",
+      "providerId": "apple",
+      "enabled": false,
+      "trustEmail": false,
+      "storeToken": false,
+      "linkOnly": false,
+      "firstBrokerLoginFlowAlias": "first broker login",
+      "config": {"clientId": "", "clientSecret": "", "defaultScope": "openid email name"}
+    },
+    {
+      "alias": "kakao",
+      "displayName": "Kakao",
+      "providerId": "oidc",
+      "enabled": false,
+      "trustEmail": false,
+      "storeToken": false,
+      "linkOnly": false,
+      "firstBrokerLoginFlowAlias": "first broker login",
+      "config": {
+        "issuer": "https://kauth.kakao.com",
+        "authorizationUrl": "https://kauth.kakao.com/oauth/authorize",
+        "tokenUrl": "https://kauth.kakao.com/oauth/token",
+        "userInfoUrl": "https://kapi.kakao.com/v1/oidc/userinfo",
+        "jwksUrl": "https://kauth.kakao.com/.well-known/jwks.json",
+        "clientId": "",
+        "clientSecret": "",
+        "clientAuthMethod": "client_secret_post",
+        "defaultScope": "openid profile account_email",
+        "useJwksUrl": "true",
+        "validateSignature": "true"
+      }
+    },
+    {
+      "alias": "naver",
+      "displayName": "Naver",
+      "providerId": "naver",
+      "enabled": false,
+      "trustEmail": false,
+      "storeToken": false,
+      "linkOnly": false,
+      "firstBrokerLoginFlowAlias": "first broker login",
+      "config": {"clientId": "", "clientSecret": "", "defaultScope": "name email profile_image"}
+    }
+  ]
+}

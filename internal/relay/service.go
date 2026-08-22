@@ -88,6 +88,39 @@ type governResolution struct {
 // SetForwarder overrides the PIA forwarder (for tests).
 func (s *Service) SetForwarder(f inferenceForwarder) { s.forwarder = f }
 
+// ensureDevBootstrapEnrollmentUser completes the explicitly enabled local
+// bootstrap identity chain. Production leaves unknown actors unresolved so
+// EnrollHarness continues to fail closed. FirstOrCreate never reactivates an
+// existing suspended or offboarded user.
+func (s *Service) ensureDevBootstrapEnrollmentUser(orgID, userID string) error {
+	if !devBootstrap() {
+		return nil
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		org := &models.Organization{
+			Base: models.Base{ID: orgID}, Name: orgID, Slug: orgID,
+			Profile: "enterprise", Status: "active", MaxUserSeats: 50, MaxHarnessSeats: 100,
+		}
+		if err := tx.Where("id = ?", orgID).FirstOrCreate(org).Error; err != nil {
+			return err
+		}
+		user := &models.User{
+			AuditBase: models.AuditBase{
+				Base:           models.Base{ID: userID},
+				OrganizationID: orgID,
+				Classification: "internal",
+			},
+			Email:      userID + "@bootstrap.invalid",
+			Name:       userID,
+			Status:     models.UserStatusActive,
+			AuthMethod: "local",
+			Locale:     "ko-KR",
+			Timezone:   "Asia/Seoul",
+		}
+		return tx.Where("organization_id = ? AND id = ?", orgID, userID).FirstOrCreate(user).Error
+	})
+}
+
 // Exchange tracks a governed exchange in progress.
 type Exchange struct {
 	ID              string             `json:"id"`

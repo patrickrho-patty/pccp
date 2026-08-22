@@ -63,16 +63,15 @@ and what is genuinely new.
   registry, retrieval API/MCP contract, version resolver, hybrid BM25 ranking,
   4 deployment paths, admin package-management UI. Very large.
 
-## PAT-1442 — company-wide SSO Keycloak→Authentik
+## PAT-1442 — superseded SSO migration design
 - **Exists:** `internal/sso/` (service.go, flows.go, oidc_verify_test.go). It
   implements initial OIDC/SAML service behavior.
 - **Reusable:** OIDC/SAML verify + flows foundations, account worker, device-
   auth seed.
-- **Needed (remainder):** this is an **org-wide migration** — discovery of the
-  deployed Keycloak estate (not fully in-repo), Authentik deployments per trust
-  domain, blueprints, identity import + reconciliation, compatibility bridge,
-  staged cutover waves, retirement. Mostly infra/ops + a compatibility adapter.
-  Largest-scope item of the 8.
+- **Superseded by PAT-1564:** Patty remains on Keycloak. The compatibility
+  machinery is retained for the `sso` → `patty` realm move: inventory,
+  issuer+subject reconciliation, fresh-session bridge, staged waves, and
+  retirement evidence. No Authentik deployment remains planned.
 
 ## PAT-1443 — GPU queue / inference QoS ops analytics
 - **Exists:** `internal/scheduler/` is extensive — `queue/queue.go` `Request`

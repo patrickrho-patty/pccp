@@ -349,6 +349,11 @@ func getPlanConfig(plan string) PlanConfig {
 	}
 }
 
+// PlanConfigFor returns the canonical Public Cloud limits for an authority-
+// synchronized plan. External account systems send plan identity, never
+// enforcement quotas.
+func PlanConfigFor(plan string) PlanConfig { return getPlanConfig(plan) }
+
 func getPlanPriority(plan string) int {
 	switch plan {
 	case "enterprise":

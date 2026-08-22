@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	stdctx "context"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -11,7 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/patrickrho-patty/pccp/internal/config"
 	"io"
 	"log"
 	"math"
@@ -30,6 +30,7 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/patrickrho-patty/pccp/internal/audit"
 	"github.com/patrickrho-patty/pccp/internal/communications"
+	"github.com/patrickrho-patty/pccp/internal/config"
 	"github.com/patrickrho-patty/pccp/internal/context"
 	"github.com/patrickrho-patty/pccp/internal/dari"
 	"github.com/patrickrho-patty/pccp/internal/events"
@@ -51,6 +52,7 @@ import (
 	"github.com/patrickrho-patty/pccp/internal/sandboxlife"
 	"github.com/patrickrho-patty/pccp/internal/security"
 	"github.com/patrickrho-patty/pccp/internal/sessionlifecycle"
+	"github.com/patrickrho-patty/pccp/internal/sso"
 	"github.com/patrickrho-patty/pccp/internal/ssomigrate"
 	"github.com/patrickrho-patty/pccp/internal/workintel"
 	"gorm.io/gorm"
@@ -58,11 +60,13 @@ import (
 )
 
 var (
-	errUserEmailExists      = errors.New("user email already exists")
-	errUserSeatLimit        = errors.New("user seat limit reached")
-	errHarnessSeatLimit     = errors.New("harness seat limit reached")
-	errBootstrapNotPristine = errors.New("bootstrap is available only before any organization or identity exists")
+	errUserEmailExists        = errors.New("user email already exists")
+	errHarnessHeartbeatAuth   = errors.New("harness heartbeat proof rejected")
+	errHarnessHeartbeatReplay = errors.New("harness heartbeat proof is stale or replayed")
+	errBootstrapNotPristine   = errors.New("bootstrap is available only before any organization or identity exists")
 )
+
+const heartbeatSignedAtLayout = "2006-01-02T15:04:05.000000000Z"
 
 // Server is the Control Plane HTTP API server.
 type Server struct {
@@ -100,7 +104,14 @@ type Server struct {
 	// modelPublishedHook is invoked after a successful model publish
 	// (Task 15 catalog push). Deployments link it to the relay's
 	// OnModelPublished so connected sessions receive the delta.
-	modelPublishedHook func(packageID string)
+	modelPublishedHook  func(packageID string)
+	publicTokenVerifier PublicTokenVerifier
+}
+
+// PublicTokenVerifier is the narrow bootstrap trust seam. Production uses the
+// server-owned Keycloak verifier; tests may inject deterministic verified claims.
+type PublicTokenVerifier interface {
+	VerifyAccessToken(stdctx.Context, string) (*sso.FirstPartyAccessClaims, error)
 }
 
 // SetModelPublishedHook installs the post-publish hook.
@@ -110,6 +121,10 @@ func (s *Server) SetModelPublishedHook(hook func(packageID string)) {
 
 // New creates a new API server.
 func New(db *gorm.DB, jwtSecret string) (*Server, error) {
+	publicTokenVerifier, err := sso.NewFirstPartyTokenVerifierFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("api: configure first-party OIDC trust: %w", err)
+	}
 	idSvc, err := identity.New(db)
 	if err != nil {
 		return nil, fmt.Errorf("api: init identity: %w", err)
@@ -145,36 +160,40 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 	}
 
 	s := &Server{
-		db:               db,
-		identity:         idSvc,
-		auth:             authSvc,
-		registry:         regSvc,
-		policy:           polSvc,
-		provenance:       provSvc,
-		security:         secSvc,
-		comms:            commsSvc,
-		workintel:        wiSvc,
-		leaderboardSV:    lbSvc,
-		refSV:            refSvc,
-		ssoMigrate:       ssoMigSvc,
-		qosSV:            qosSvc,
-		sandboxLife:      sbLifeSvc,
-		events:           evtSvc,
-		gitscm:           gitSvc,
-		impact:           impactSvc,
-		fleet:            fleetSvc,
-		context:          ctxSvc,
-		sandbox:          sandboxSvc,
-		sessionLifecycle: lifecycleSvc,
-		korean:           koreanSvc,
-		jwtSecret:        jwtSecret,
-		alertHTTPClient:  secSvc.AlertHTTPClient(),
-		alertNow:         time.Now,
+		db:                  db,
+		identity:            idSvc,
+		auth:                authSvc,
+		registry:            regSvc,
+		policy:              polSvc,
+		provenance:          provSvc,
+		security:            secSvc,
+		comms:               commsSvc,
+		workintel:           wiSvc,
+		leaderboardSV:       lbSvc,
+		refSV:               refSvc,
+		ssoMigrate:          ssoMigSvc,
+		qosSV:               qosSvc,
+		sandboxLife:         sbLifeSvc,
+		events:              evtSvc,
+		gitscm:              gitSvc,
+		impact:              impactSvc,
+		fleet:               fleetSvc,
+		context:             ctxSvc,
+		sandbox:             sandboxSvc,
+		sessionLifecycle:    lifecycleSvc,
+		korean:              koreanSvc,
+		jwtSecret:           jwtSecret,
+		alertHTTPClient:     secSvc.AlertHTTPClient(),
+		alertNow:            time.Now,
+		publicTokenVerifier: publicTokenVerifier,
 	}
 	idSvc.SetSessionLifecycle(lifecycleSvc)
 	fleetSvc.SetHarnessRevoker(idSvc.RevokeHarnessByActor)
 	if err := s.ext().Realtime.SetSharedBusSecret(os.Getenv("PCCP_CP_TOKEN")); err != nil {
 		return nil, fmt.Errorf("api: configure realtime bus: %w", err)
+	}
+	if err := s.ext().Sovereign.ConfigureEntitlementAuthoritiesJSON(os.Getenv("PCCP_SOVEREIGN_ENTITLEMENT_AUTHORITIES")); err != nil {
+		return nil, fmt.Errorf("api: configure sovereign entitlement authority: %w", err)
 	}
 	s.ext().SSO.SetSessionLifecycle(lifecycleSvc)
 	lifecycleSvc.SetCleanup(func(orgID, sessionID string) []string {
@@ -199,6 +218,13 @@ func New(db *gorm.DB, jwtSecret string) (*Server, error) {
 	lifecycleSvc.SetScopeNotifier(s.ext().Realtime.NotifySessionScopeUpdate)
 	s.setupRouter()
 	return s, nil
+}
+
+// SetPublicTokenVerifier overrides the public bootstrap verifier. It is used by
+// integration tests and by deployments that provide an equivalent HSM-backed
+// verifier; inference routes never consult it.
+func (s *Server) SetPublicTokenVerifier(verifier PublicTokenVerifier) {
+	s.publicTokenVerifier = verifier
 }
 
 // SetKeyProvider injects the envelope-encryption provider used by
@@ -262,6 +288,12 @@ func (s *Server) setupRouter() {
 		r.Post("/mfa/setup", s.handleMFASetup)
 		r.Post("/mfa/verify", s.handleMFAVerify)
 	})
+	r.Post("/api/me/harness-enroll-grant", s.handlePublicHarnessEnrollmentGrant)
+	r.Post("/api/public/harnesses/enroll", s.handlePublicHarnessEnrollment)
+	r.Post("/api/public/harnesses/renew", s.handlePublicHarnessRenewal)
+	r.Get("/api/internal/public-harnesses", s.handleInternalPublicHarnesses)
+	r.Post("/api/internal/public-harnesses/{id}/revoke", s.handleInternalPublicHarnessRevoke)
+	r.Post("/api/internal/public-accounts/sync", s.handleInternalPublicAccountSync)
 
 	// Realtime SSE (no middleware — HandleSSE does its own JWT check via query param)
 	r.Get("/api/realtime/sse", s.ext().Realtime.HandleSSE(s.jwtSecret))
@@ -284,6 +316,7 @@ func (s *Server) setupRouter() {
 			r.Post("/session", s.wrapSSOSessionExchange(ext))
 			r.Get("/oidc/auth-url", s.wrapSSOOIDCAuthURL(ext))
 			r.Get("/oidc/callback", s.wrapSSOOIDCCallback(ext))
+			r.Post("/bridge", s.handleSSOMigrateBridge)
 		})
 		// SCIM has its own tenant-bound bearer authentication and must remain
 		// outside console-JWT middleware so standards-compliant IdPs can call it.
@@ -327,7 +360,9 @@ func (s *Server) setupRouter() {
 			r.Get("/seats", s.handleGetSeatUsage)
 			r.Post("/", s.handleCreateOrganization)
 			r.Get("/{id}", s.handleGetOrganization)
+			r.Put("/{id}/sso-template", s.handleApplySSOTemplate)
 		})
+		r.Get("/sso/templates", s.handleSSOTemplates)
 
 		// Users
 		r.Route("/users", func(r chi.Router) {
@@ -368,6 +403,8 @@ func (s *Server) setupRouter() {
 		// Harnesses
 		r.Route("/harnesses", func(r chi.Router) {
 			r.Get("/", s.handleListHarnesses)
+			r.Get("/enrollment-policy", s.handleHarnessEnrollmentPolicy)
+			r.Put("/enrollment-policy", s.handleHarnessEnrollmentPolicy)
 			r.Post("/enroll", s.handleEnrollHarness)
 			r.Post("/heartbeat", s.handleHarnessHeartbeat)
 			r.Get("/{id}", s.handleGetHarness)
@@ -855,14 +892,13 @@ func (s *Server) setupRouter() {
 			r.Post("/catalog", s.handleReferenceCatalog)
 		})
 
-		// SSO Keycloak→Authentik migration (PAT-1442)
+		// SSO realm-to-realm migration (PAT-1564)
 		r.Route("/sso-migrate", func(r chi.Router) {
 			r.Get("/links", s.handleSSOMigrateLinks)
 			r.Post("/links", s.handleSSOMigrateLink)
-			r.Post("/bridge", s.handleSSOMigrateBridge)
 			r.Get("/manifests", s.handleSSOMigrateManifests)
 			r.Post("/manifests", s.handleSSOMigrateManifests)
-			r.Get("/manifests/{id}/reconcile", s.handleSSOMigrateReconcile)
+			r.Post("/manifests/{id}/reconcile", s.handleSSOMigrateReconcile)
 			r.Get("/waves", s.handleSSOMigrateWaves)
 			r.Post("/waves", s.handleSSOMigrateWaves)
 			r.Post("/waves/{id}/signoff", s.handleSSOMigrateWaveSignOff)
@@ -931,6 +967,62 @@ func (s *Server) setupRouter() {
 	r.Handle("/*", spaHandler("web/dist"))
 
 	s.router = r
+}
+
+func (s *Server) handleHarnessEnrollmentPolicy(w http.ResponseWriter, r *http.Request) {
+	if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+		return
+	}
+	orgID := getOrgID(r)
+	var org models.Organization
+	if err := s.db.Where("id = ?", orgID).First(&org).Error; err != nil {
+		writeError(w, http.StatusNotFound, "organization not found")
+		return
+	}
+	if r.Method == http.MethodGet {
+		policy, err := identity.LoadEnrollmentPolicy(s.db, org)
+		if err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, policy)
+		return
+	}
+	var policy identity.EnrollmentPolicy
+	if err := decodeJSON(r, &policy); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid enrollment policy")
+		return
+	}
+	if err := identity.ValidateEnrollmentPolicyConfiguration(org.Profile, policy); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	encoded, err := json.Marshal(policy)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		var lockedOrg models.Organization
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&lockedOrg, "id = ?", orgID).Error; err != nil {
+			return err
+		}
+		setting := models.OrgSetting{OrganizationID: orgID, Key: identity.EnrollmentPolicySettingKey}
+		if err := tx.Where("organization_id = ? AND key = ?", orgID, identity.EnrollmentPolicySettingKey).
+			Assign(models.OrgSetting{Value: string(encoded)}).FirstOrCreate(&setting).Error; err != nil {
+			return err
+		}
+		return tx.Create(&models.AuditEvent{
+			OrganizationID: orgID, EventType: "cp.harness.enrollment_policy_updated", ActorID: getActorID(r), ActorType: "admin",
+			Action: "update_harness_enrollment_policy", ResourceType: "organization", ResourceID: orgID,
+			Details: string(encoded), Result: "success", OccurredAt: time.Now().UTC().Format(time.RFC3339),
+		}).Error
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, policy)
 }
 
 // spaHandler serves static files from the given directory with SPA fallback.
@@ -1135,7 +1227,7 @@ func (s *Server) ListenAndServe(addr string) error {
 			// Auto-disable contractors past their contract window
 			// (web/01 A5).
 			if n := s.identity.SweepExpiredContractors(); n > 0 {
-				log.Printf("api: suspended %d expired contractors", n)
+				log.Printf("api: offboarded %d expired contractors", n)
 			}
 			// Continuous compliance re-assessment (web/08 C3): orgs
 			// with a recent snapshot get re-assessed weekly so statuses
@@ -1707,20 +1799,6 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		if duplicate > 0 {
 			return errUserEmailExists
 		}
-		// Enforce user seat limit in the same transaction as creation.
-		var org models.Organization
-		if err := tx.First(&org, "id = ?", orgID).Error; err != nil {
-			return err
-		}
-		if org.MaxUserSeats > 0 {
-			var userCount int64
-			if err := tx.Model(&models.User{}).Where("organization_id = ? AND status != 'offboarded'", orgID).Count(&userCount).Error; err != nil {
-				return err
-			}
-			if userCount >= int64(org.MaxUserSeats) {
-				return fmt.Errorf("%w:%d:%d", errUserSeatLimit, userCount, org.MaxUserSeats)
-			}
-		}
 		created, err := s.identity.CreateUserWithDB(tx, orgID, req.Email, req.Name, req.NameKo, req.AuthMethod, "")
 		if err != nil {
 			return err
@@ -1752,7 +1830,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "이미 등록된 이메일입니다 · Email already exists: "+req.Email)
 		return
 	}
-	if errors.Is(err, errUserSeatLimit) {
+	if errors.Is(err, identity.ErrUserSeatLimit) {
 		writeError(w, http.StatusPaymentRequired, "사용자 좌석 한도 초과 · User seat limit reached")
 		return
 	}
@@ -1878,51 +1956,29 @@ func (s *Server) handleEnrollHarness(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.EnrollmentCode) != "" {
 		req.EnrollmentMode = "code"
 	}
-	// Forced-version floor (harnesses C2): vulnerable builds below the
-	// org's minimum version are blocked at enrollment.
-	if fv := s.ext().Korean.GetForcedHarnessVersion(req.OrganizationID); fv != nil {
-		if korean.IsVersionBelowFloor(req.BinaryVersion, fv.MinVersion) {
-			writeError(w, http.StatusForbidden, fmt.Sprintf(
-				"하네스 버전이 최소 요구 버전 미만입니다 · Harness version %s below forced minimum %s (ring %s)",
-				req.BinaryVersion, fv.MinVersion, fv.ReleaseRing))
+	// A one-time code is already bound to its intended user. Direct SSO
+	// enrollment must bind to the authenticated subject unless the caller has
+	// explicit authority to manage another user's sessions.
+	if req.EnrollmentMode != "code" {
+		claims, ok := claimsFromCtx(r.Context())
+		if !ok {
+			writeError(w, http.StatusForbidden, "authenticated user binding is required")
+			return
+		}
+		if strings.TrimSpace(req.UserID) == "" {
+			if strings.TrimSpace(claims.Subject) == "" {
+				writeError(w, http.StatusForbidden, "authenticated user binding is required")
+				return
+			}
+			req.UserID = claims.Subject
+		} else if req.UserID != claims.Subject && !hasConsolePermission(r, permissionSessionsManage) {
+			writeError(w, http.StatusForbidden, "sessions:manage permission is required to enroll for another user")
 			return
 		}
 	}
-	var harness *models.Harness
-	var cred *dari.PeerCredential
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		var hOrg models.Organization
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&hOrg, "id = ?", req.OrganizationID).Error; err != nil {
-			return err
-		}
-		if hOrg.MaxHarnessSeats > 0 {
-			var harnessCount int64
-			if err := tx.Model(&models.Harness{}).Where("organization_id = ? AND status != 'revoked'", req.OrganizationID).Count(&harnessCount).Error; err != nil {
-				return err
-			}
-			if harnessCount >= int64(hOrg.MaxHarnessSeats) {
-				return fmt.Errorf("%w:%d:%d", errHarnessSeatLimit, harnessCount, hOrg.MaxHarnessSeats)
-			}
-		}
-		if code := strings.TrimSpace(req.EnrollmentCode); code != "" {
-			if err := s.consumeEnrollmentCodeWithDB(tx, req.OrganizationID, code, req.UserID, req.HarnessID); err != nil {
-				return err
-			}
-		}
-		var enrollErr error
-		harness, cred, enrollErr = s.identity.EnrollHarnessWithDB(tx, req)
-		if enrollErr != nil {
-			return enrollErr
-		}
-		return tx.Create(&models.AuditEvent{
-			OrganizationID: req.OrganizationID, EventType: "cp.harness.enrolled", ActorID: getActorID(r), ActorType: "admin",
-			Action: "enroll_harness", ResourceType: "harness", ResourceID: harness.ID,
-			Details: fmt.Sprintf("harness_id: %s, user_id: %s", req.HarnessID, req.UserID),
-			Result:  "success", OccurredAt: time.Now().Format(time.RFC3339),
-		}).Error
-	})
+	harness, cred, err := s.enrollHarnessOperation(req, getActorID(r))
 	if err != nil {
-		if errors.Is(err, errHarnessSeatLimit) {
+		if errors.Is(err, identity.ErrHarnessSeatLimit) {
 			writeError(w, http.StatusPaymentRequired, "하네스 좌석 한도 초과 · Harness seat limit reached")
 			return
 		}
@@ -1930,13 +1986,56 @@ func (s *Server) handleEnrollHarness(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, err.Error())
 			return
 		}
+		if errors.Is(err, identity.ErrEnrollmentPolicyDenied) {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		if errors.Is(err, identity.ErrEnrollmentCodeBinding) {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"harness":    harness,
-		"credential": cred,
+	if publicResponse, _ := r.Context().Value(publicHarnessEnrollmentResponseV1Key{}).(bool); publicResponse {
+		writeJSON(w, http.StatusCreated, publicHarnessEnrollmentResponseV1{
+			Credential: publicHarnessCredentialV1{SignedCredential: cred.SignedCredential},
+		})
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]interface{}{"harness": harness, "credential": cred})
+}
+
+// enrollHarnessOperation is the typed enrollment seam shared by authenticated
+// console and one-time public-code HTTP adapters.
+func (s *Server) enrollHarnessOperation(req identity.EnrollHarnessRequest, actorID string) (*models.Harness, *dari.PeerCredential, error) {
+	if fv := s.ext().Korean.GetForcedHarnessVersion(req.OrganizationID); fv != nil && korean.IsVersionBelowFloor(req.BinaryVersion, fv.MinVersion) {
+		return nil, nil, fmt.Errorf("%w: 하네스 버전이 최소 요구 버전 미만입니다 · Harness version %s below forced minimum %s (ring %s)", identity.ErrEnrollmentPolicyDenied, req.BinaryVersion, fv.MinVersion, fv.ReleaseRing)
+	}
+	prepared, err := s.identity.PrepareHarnessEnrollment(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	var harness *models.Harness
+	var cred *dari.PeerCredential
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		var org models.Organization
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&org, "id = ?", req.OrganizationID).Error; err != nil {
+			return err
+		}
+		if code := strings.TrimSpace(req.EnrollmentCode); code != "" {
+			if err := s.consumeEnrollmentCodeWithDB(tx, req.OrganizationID, code, req.UserID, req.HarnessID, req.PublicKeyHex); err != nil {
+				return err
+			}
+		}
+		var enrollErr error
+		harness, cred, enrollErr = s.identity.EnrollPreparedHarnessWithDB(tx, org, prepared)
+		if enrollErr != nil {
+			return enrollErr
+		}
+		return tx.Create(&models.AuditEvent{OrganizationID: req.OrganizationID, EventType: "cp.harness.enrolled", ActorID: actorID, ActorType: "admin", Action: "enroll_harness", ResourceType: "harness", ResourceID: harness.ID, Details: fmt.Sprintf("harness_id: %s, user_id: %s", req.HarnessID, req.UserID), Result: "success", OccurredAt: time.Now().Format(time.RFC3339)}).Error
 	})
+	return harness, cred, err
 }
 
 func (s *Server) handleGetHarness(w http.ResponseWriter, r *http.Request) {
@@ -1995,7 +2094,7 @@ const harnessStaleAfter = 10 * time.Minute
 // consumeEnrollmentCode validates and burns a one-time enrollment code
 // (harnesses B3). Unused + unexpired codes are consumed by the
 // enrolling harness ID; anything else fails closed.
-func (s *Server) consumeEnrollmentCodeWithDB(tx *gorm.DB, orgID, code, userID, harnessID string) error {
+func (s *Server) consumeEnrollmentCodeWithDB(tx *gorm.DB, orgID, code, userID, harnessID, publicKeyHex string) error {
 	if userID == "" {
 		return fmt.Errorf("enrollment code flow requires user_id")
 	}
@@ -2011,6 +2110,21 @@ func (s *Server) consumeEnrollmentCodeWithDB(tx *gorm.DB, orgID, code, userID, h
 	}
 	if ec.UserID != "" && ec.UserID != userID {
 		return fmt.Errorf("등록 코드가 다른 사용자에게 발급되었습니다 · Code issued to a different user")
+	}
+	if ec.HarnessID != "" && ec.HarnessID != harnessID {
+		return fmt.Errorf("%w: enrollment code was issued to a different harness", identity.ErrEnrollmentCodeBinding)
+	}
+	if ec.PublicKeyHash != "" {
+		// Public bootstrap grants cannot be moved to a key generated after
+		// authorization; the exact Ed25519 key is committed at grant issuance.
+		publicKey, err := hex.DecodeString(strings.TrimSpace(publicKeyHex))
+		if err != nil || len(publicKey) != ed25519.PublicKeySize {
+			return fmt.Errorf("%w: invalid enrollment public key", identity.ErrEnrollmentCodeBinding)
+		}
+		digest := sha256.Sum256(publicKey)
+		if !hmac.Equal([]byte(ec.PublicKeyHash), []byte(hex.EncodeToString(digest[:]))) {
+			return fmt.Errorf("%w: enrollment code was issued to a different public key", identity.ErrEnrollmentCodeBinding)
+		}
 	}
 	// Atomic single-use consume: the UPDATE itself is the gate, so two
 	// concurrent redeems cannot both win the read-then-write window.
@@ -2031,44 +2145,111 @@ func (s *Server) consumeEnrollmentCodeWithDB(tx *gorm.DB, orgID, code, userID, h
 // device's live facts so stale detection + the fleet view reflect
 // reality instead of enroll-time snapshots.
 func (s *Server) handleHarnessHeartbeat(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		OrganizationID string `json:"organization_id"`
-		HarnessID      string `json:"harness_id"`
-		BinaryVersion  string `json:"binary_version,omitempty"`
-		DeviceHostname string `json:"device_hostname,omitempty"`
-		DeviceOS       string `json:"device_os,omitempty"`
-		DeviceOSVer    string `json:"device_os_version,omitempty"`
-		DeviceArch     string `json:"device_arch,omitempty"`
-		IPAddress      string `json:"ip_address,omitempty"`
-		Attestation    string `json:"attestation,omitempty"`
-	}
+	var req identity.HarnessHeartbeatProof
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	orgID := req.OrganizationID
+	orgID := getOrgID(r)
 	if orgID == "" {
-		orgID = getOrgID(r)
+		writeError(w, http.StatusForbidden, "organization-scoped authentication is required")
+		return
 	}
+	if req.OrganizationID != "" && req.OrganizationID != orgID {
+		writeError(w, http.StatusForbidden, "cannot heartbeat a harness in another organization")
+		return
+	}
+	req.OrganizationID = orgID
 	if req.HarnessID == "" {
 		writeError(w, http.StatusBadRequest, "harness_id is required")
 		return
 	}
-	var harness models.Harness
-	if err := s.db.Where("harness_id = ? AND organization_id = ?", req.HarnessID, orgID).First(&harness).Error; err != nil {
+	serverNow := time.Now().UTC()
+	signedAt, err := identity.ParseFreshSignedAt(req.SignedAt, serverNow)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "fresh signed_at is required")
+		return
+	}
+	signature, err := identity.DecodeEd25519Signature(req.Signature)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "valid heartbeat signature is required")
+		return
+	}
+	var observedOrganization models.Organization
+	if err := s.db.First(&observedOrganization, "id = ?", orgID).Error; err != nil {
 		writeError(w, http.StatusNotFound, "harness not found")
 		return
 	}
-	now := time.Now().Format(time.RFC3339)
-	updates := map[string]interface{}{"last_heartbeat": now}
+	observedPolicy, err := identity.LoadEnrollmentPolicy(s.db, observedOrganization)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	observedPolicyFingerprint, err := identity.EnrollmentPolicyFingerprint(observedOrganization.Profile, observedPolicy)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var observedHarness models.Harness
+	if err := s.db.Where("harness_id = ? AND organization_id = ?", req.HarnessID, orgID).First(&observedHarness).Error; err != nil {
+		writeError(w, http.StatusNotFound, "harness not found")
+		return
+	}
+	if !models.HarnessStatusPermitted(observedHarness.Status) {
+		writeError(w, http.StatusUnauthorized, errHarnessHeartbeatAuth.Error())
+		return
+	}
+	publicKey, keyErr := hex.DecodeString(observedHarness.PublicKey)
+	if keyErr != nil || len(publicKey) != ed25519.PublicKeySize ||
+		!dari.VerifyEd25519(ed25519.PublicKey(publicKey), req.SigningBytes(), signature) {
+		writeError(w, http.StatusUnauthorized, errHarnessHeartbeatAuth.Error())
+		return
+	}
+	if err := identity.ValidateHeartbeatAttestationAt(observedPolicy, req, serverNow); err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	now := serverNow.Format(time.RFC3339)
+	acceptedSignedAt := signedAt.UTC().Format(heartbeatSignedAtLayout)
+	updates := map[string]interface{}{
+		"last_heartbeat":           now,
+		"last_heartbeat_signed_at": acceptedSignedAt,
+	}
 	if req.Attestation != "" {
 		updates["last_attestation"] = now
 	}
 	if req.BinaryVersion != "" {
 		updates["binary_version"] = req.BinaryVersion
 	}
-	s.db.Model(&harness).Updates(updates)
-	if harness.DeviceID != "" {
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		updated := tx.Model(&models.Harness{}).
+			Where("id = ? AND organization_id = ? AND public_key = ? AND device_id = ? AND status IN ?", observedHarness.ID, orgID, observedHarness.PublicKey, observedHarness.DeviceID, models.HarnessPermittedStatuses()).
+			Where("(last_heartbeat_signed_at IS NULL OR last_heartbeat_signed_at = '' OR last_heartbeat_signed_at < ?)", acceptedSignedAt).
+			Updates(updates)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return errHarnessHeartbeatReplay
+		}
+		var organization models.Organization
+		if err := tx.First(&organization, "id = ?", orgID).Error; err != nil {
+			return gorm.ErrRecordNotFound
+		}
+		policy, policyErr := identity.LoadEnrollmentPolicy(tx, organization)
+		if policyErr != nil {
+			return policyErr
+		}
+		policyFingerprint, policyErr := identity.EnrollmentPolicyFingerprint(organization.Profile, policy)
+		if policyErr != nil {
+			return policyErr
+		}
+		if policyFingerprint != observedPolicyFingerprint {
+			return fmt.Errorf("%w: enrollment policy changed during heartbeat", identity.ErrEnrollmentPolicyDenied)
+		}
+		if observedHarness.DeviceID == "" {
+			return nil
+		}
 		devUpdates := map[string]interface{}{"last_seen": now}
 		if req.DeviceHostname != "" {
 			devUpdates["hostname"] = req.DeviceHostname
@@ -2076,8 +2257,8 @@ func (s *Server) handleHarnessHeartbeat(w http.ResponseWriter, r *http.Request) 
 		if req.DeviceOS != "" {
 			devUpdates["os"] = req.DeviceOS
 		}
-		if req.DeviceOSVer != "" {
-			devUpdates["os_version"] = req.DeviceOSVer
+		if req.DeviceOSVersion != "" {
+			devUpdates["os_version"] = req.DeviceOSVersion
 		}
 		if req.DeviceArch != "" {
 			devUpdates["arch"] = req.DeviceArch
@@ -2085,7 +2266,18 @@ func (s *Server) handleHarnessHeartbeat(w http.ResponseWriter, r *http.Request) 
 		if req.IPAddress != "" {
 			devUpdates["ip_address"] = req.IPAddress
 		}
-		s.db.Model(&models.Device{}).Where("id = ?", harness.DeviceID).Updates(devUpdates)
+		return tx.Model(&models.Device{}).Where("organization_id = ? AND id = ?", orgID, observedHarness.DeviceID).Updates(devUpdates).Error
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			writeError(w, http.StatusNotFound, "harness not found")
+		case errors.Is(err, errHarnessHeartbeatAuth), errors.Is(err, errHarnessHeartbeatReplay), errors.Is(err, identity.ErrEnrollmentPolicyDenied):
+			writeError(w, http.StatusUnauthorized, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "heartbeat_at": now})
 }

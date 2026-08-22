@@ -283,10 +283,10 @@ func (s *Service) EvaluateScopedEntitlementWithDB(db *gorm.DB, orgID, userID, pe
 	return false, nil
 }
 
-// SweepExpiredContractors auto-disables users whose contract window has
-// ended (web/01 A5). Returns the number of users disabled.
+// SweepExpiredContractors terminally offboards users whose contract window
+// has ended and returns the number whose complete access graph was revoked.
 //
-// INVARIANT: this system actor only ever performs active → suspended,
+// INVARIANT: this system actor only ever performs active → offboarded,
 // which is a legal edge in the canonical user lifecycle table
 // (internal/models/user_lifecycle.go, shared by all status writers).
 // If that table changes, this sweep must change with it.
@@ -305,12 +305,12 @@ func (s *Service) SweepExpiredContractors() int {
 			if _, err := TransitionUserLifecycle(s.db, UserLifecycleMutation{
 				OrganizationID:   u.OrganizationID,
 				UserID:           u.ID,
-				To:               models.UserStatusSuspended,
+				To:               models.UserStatusOffboarded,
 				Reason:           fmt.Sprintf("contract expired on %s", profile.ContractEnd),
 				ActorID:          "contractor-expiry-sweep",
 				ActorType:        "system",
 				EventType:        "cp.user.contract_expired",
-				Action:           "suspend_expired_contractor",
+				Action:           "offboard_expired_contractor",
 				SessionLifecycle: s.lifecycle,
 			}); err == nil {
 				n++

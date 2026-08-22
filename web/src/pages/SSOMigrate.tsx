@@ -1,37 +1,39 @@
 import { useState, useEffect } from 'react'
-import { api } from '../api'
+import { api, pendingSSOBridge } from '../api'
 import { Modal, ModalFooter } from '../components/Modal'
 import { showToast } from '../components/Toast'
 import { useConfirm } from '../components/useConfirm'
+import { useAuth } from '../hooks/useAuth'
 
-// SSO 마이그레이션 (PAT-1442) — Keycloak → Authentik 호환성 레이어.
+// SSO 마이그레이션 (PAT-1564) — Keycloak realm-to-realm 호환성 레이어.
 // 불변 issuer+subject→Patty 사용자 매핑, 브리지 인증(토큰 복사 금지, 새 세션 발급),
 // 멱등 발견 매니페스트 + 조정 보고, 단계별 컷오버 웨이브 서명. 신뢰 도메인/인프라
 // 배포 자체는 인프라 작업으로 별도 범위.
 
 type Link = { id: string; legacy_issuer: string; legacy_subject: string; patty_user_id: string; status: string; target_issuer?: string; target_subject?: string }
-type Manifest = { id: string; manifest_id: string; name?: string; source?: string; wave: number; status: string; source_count: number; linked_count: number; ambiguous_count: number; excluded_count: number }
+type Manifest = { id: string; manifest_id: string; name?: string; source?: string; source_issuer: string; wave: number; status: string; source_count: number; linked_count: number; ambiguous_count: number; excluded_count: number }
 type Wave = { id: string; wave: number; name?: string; owner_id?: string; status: string }
 
 export default function SSOMigrate() {
-  const confirm = useConfirm()
+	const confirm = useConfirm()
+	const { orgId } = useAuth()
   const [links, setLinks] = useState<Link[]>([])
   const [manifests, setManifests] = useState<Manifest[]>([])
   const [waves, setWaves] = useState<Wave[]>([])
   const [recon, setRecon] = useState<any>(null)
   // Modals
   const [linkModal, setLinkModal] = useState(false)
-  const [linkForm, setLinkForm] = useState({ legacy_issuer: 'https://kc.patty.io/realms/work', legacy_subject: '', patty_user_id: '', target_issuer: '', target_subject: '', note: '' })
-  const [bridgeForm, setBridgeForm] = useState({ legacy_issuer: 'https://kc.patty.io/realms/work', legacy_subject: '' })
-  const [bridgeResult, setBridgeResult] = useState<any>(null)
+  const [linkForm, setLinkForm] = useState({ legacy_issuer: 'https://login.patty.io/realms/sso', legacy_subject: '', patty_user_id: '', target_issuer: 'https://login.patty.io/realms/patty', target_subject: '', note: '' })
+  const [bridgeForm, setBridgeForm] = useState({ legacy_issuer: 'https://login.patty.io/realms/sso', legacy_subject: '' })
+	const [bridgeProvider, setBridgeProvider] = useState<'oidc' | 'saml'>('oidc')
   const [manifestModal, setManifestModal] = useState(false)
-  const [manifestForm, setManifestForm] = useState({ name: '', source: '', import_id: '', wave: 1, itemsJson: '' })
+  const [manifestForm, setManifestForm] = useState({ name: '', source: '', source_issuer: 'https://login.patty.io/realms/sso', import_id: '', wave: 1, itemsJson: '' })
   const [busy, setBusy] = useState(false)
 
   const reload = () => {
-    api.ssoMigrateLinks().then(setLinks).catch(() => {})
+    api.ssoMigrateLinks().then((page) => setLinks(page.items)).catch(() => {})
     api.ssoMigrateManifests().then(setManifests).catch(() => {})
-    api.ssoMigrateWaves().then(setWaves).catch(() => {})
+    api.ssoMigrateWaves().then((page) => setWaves(page.items)).catch(() => {})
   }
   useEffect(() => { reload() }, [])
 
@@ -45,25 +47,33 @@ export default function SSOMigrate() {
     } catch (e: any) { showToast(e.message || '갈등 (수동 해결 필요)', 'error') }
   }
 
-  const bridge = async () => {
-    setBusy(true)
-    try {
-      const out = await api.ssoMigrateBridge(bridgeForm)
-      setBridgeResult(out)
-      showToast(out.new_session_issued ? '새 세션 발급 (토큰 미복사)' : `브리지 결과: ${out.decision}`, out.new_session_issued ? 'success' : 'error')
-    } catch (e: any) {
-      // 422 = fail-closed decision (message carries the decision, never a secret).
-      setBridgeResult(bridgeForm)
-      showToast(e.message || '브리지 실패(클로즈드)', 'error')
-    } finally { setBusy(false) }
+	const bridge = async () => {
+		if (!bridgeForm.legacy_issuer || !bridgeForm.legacy_subject || !orgId) {
+			showToast('issuer, subject, 조직 컨텍스트 필요', 'error')
+			return
+		}
+		setBusy(true)
+		try {
+			pendingSSOBridge.set(bridgeForm)
+			if (bridgeProvider === 'oidc') {
+				const { auth_url } = await api.ssoOIDCAuthUrl(orgId)
+				window.location.assign(auth_url)
+			} else {
+				const { redirect_url } = await api.ssoSAMLRedirect(orgId)
+				window.location.assign(redirect_url)
+			}
+		} catch (e: any) {
+			pendingSSOBridge.clear()
+			showToast(e.message || '브리지 실패(클로즈드)', 'error')
+		} finally { setBusy(false) }
   }
 
   const importManifest = async () => {
-    if (!manifestForm.import_id || !manifestForm.itemsJson.trim()) { showToast('import_id와 items JSON 필요', 'error'); return }
+    if (!manifestForm.import_id || !manifestForm.source_issuer || !manifestForm.itemsJson.trim()) { showToast('import_id, canonical source issuer와 items JSON 필요', 'error'); return }
     let items: any[] = []
     try { items = JSON.parse(manifestForm.itemsJson) } catch { showToast('items JSON 형식 오류', 'error'); return }
     try {
-      await api.ssoMigrateManifests({ name: manifestForm.name, source: manifestForm.source, wave: manifestForm.wave, import_id: manifestForm.import_id, items })
+      await api.ssoMigrateManifests({ name: manifestForm.name, source: manifestForm.source, source_issuer: manifestForm.source_issuer, wave: manifestForm.wave, import_id: manifestForm.import_id, items })
       showToast('매니페스트 임포트됨 (멱등)', 'success')
       setManifestModal(false)
       reload()
@@ -83,10 +93,10 @@ export default function SSOMigrate() {
     <div className="p-6">
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <div>
-          <h1 className="text-xl font-semibold">SSO 마이그레이션 <span className="text-sm text-gray-400">(Keycloak → Authentik)</span></h1>
+          <h1 className="text-xl font-semibold">SSO 마이그레이션 <span className="text-sm text-gray-400">(source realm → target realm)</span></h1>
           <p className="text-xs text-gray-500 mt-1">
             호환 우선 · 단계적 · 복귀 가능한 마이그레이션. 인증은 불변 issuer+subject와 Patty 사용자 ID로 매핑되며,
-            브리지는 Keycloak 토큰·비밀번호를 절대 복사하지 않고 새 세션만 발급합니다. 자격 증명은 저장되지 않습니다.
+            브리지는 source realm 토큰·비밀번호를 절대 복사하지 않고 target realm에서 새 세션만 발급합니다. 자격 증명은 저장되지 않습니다.
           </p>
         </div>
         <div className="flex gap-2">
@@ -99,19 +109,16 @@ export default function SSOMigrate() {
         <div className="card p-4">
           <h2 className="text-sm font-medium mb-2">브리지 인증 (새 세션만 발급)</h2>
           <div className="flex gap-2 mb-2">
-            <input className="input text-xs flex-1 font-mono" placeholder="legacy issuer" value={bridgeForm.legacy_issuer} onChange={e => setBridgeForm({ ...bridgeForm, legacy_issuer: e.target.value })} />
+            <input className="input text-xs flex-1 font-mono" placeholder="source realm issuer" value={bridgeForm.legacy_issuer} onChange={e => setBridgeForm({ ...bridgeForm, legacy_issuer: e.target.value })} />
           </div>
-          <div className="flex gap-2 mb-2">
-            <input className="input text-xs flex-1 font-mono" placeholder="legacy subject (불변)" value={bridgeForm.legacy_subject} onChange={e => setBridgeForm({ ...bridgeForm, legacy_subject: e.target.value })} />
-            <button className="btn-sm btn-primary" onClick={bridge} disabled={busy}>{busy ? '…' : '브리지 실행'}</button>
-          </div>
-          {bridgeResult && (
-            <div className={`text-[11px] border rounded p-2 ${bridgeResult.new_session_issued ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
-              <div>결정: <span className="font-mono">{bridgeResult.decision}</span>{bridgeResult.new_session_issued ? ' · ✅ 새 세션 발급 (토큰 미복사)' : ' · ⛔ 새 세션 없음'}</div>
-              {bridgeResult.patty_user_id && <div>Patty 사용자: <span className="font-mono">{bridgeResult.patty_user_id}</span></div>}
-            </div>
-          )}
-          <p className="text-[10px] text-gray-400 mt-2">미연결/모호/비활성은 즉시 실패(클로즈드) — 이메일만으로 자동 연결하지 않습니다.</p>
+			<div className="flex gap-2 mb-2">
+				<input className="input text-xs flex-1 font-mono" placeholder="legacy subject (불변)" value={bridgeForm.legacy_subject} onChange={e => setBridgeForm({ ...bridgeForm, legacy_subject: e.target.value })} />
+				<select className="input text-xs w-24" value={bridgeProvider} onChange={e => setBridgeProvider(e.target.value as 'oidc' | 'saml')}>
+					<option value="oidc">OIDC</option><option value="saml">SAML</option>
+				</select>
+				<button className="btn-sm btn-primary" onClick={bridge} disabled={busy}>{busy ? '…' : '브리지 실행'}</button>
+			</div>
+			<p className="text-[10px] text-gray-400 mt-2">대상 IdP에서 다시 인증한 사용자와 매핑이 정확히 일치할 때만 새 세션을 발급합니다. 미연결/모호/비활성은 실패(클로즈드)합니다.</p>
         </div>
 
         <div className="card p-4">
@@ -119,7 +126,7 @@ export default function SSOMigrate() {
           {links.length === 0 ? <p className="text-xs text-gray-400">등록된 매핑 없음</p> : (
             <table className="w-full text-xs">
               <thead><tr className="text-left text-gray-500 border-b border-gray-100">
-                <th className="py-1 px-1">legacy issuer</th><th className="py-1 px-1">subject</th><th className="py-1 px-1">Patty 사용자</th><th className="py-1 px-1">상태</th>
+                <th className="py-1 px-1">source issuer</th><th className="py-1 px-1">subject</th><th className="py-1 px-1">Patty 사용자</th><th className="py-1 px-1">상태</th>
               </tr></thead>
               <tbody>
                 {links.map(l => (
@@ -196,12 +203,13 @@ export default function SSOMigrate() {
         <Modal title="불변 매핑 등록" onClose={() => setLinkModal(false)}>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-xs text-gray-500">legacy issuer</label><input className="input text-xs font-mono" value={linkForm.legacy_issuer} onChange={e => setLinkForm({ ...linkForm, legacy_issuer: e.target.value })} /></div>
-              <div><label className="text-xs text-gray-500">legacy subject (불변)</label><input className="input text-xs font-mono" value={linkForm.legacy_subject} onChange={e => setLinkForm({ ...linkForm, legacy_subject: e.target.value })} /></div>
+              <div><label className="text-xs text-gray-500">source realm issuer</label><input className="input text-xs font-mono" value={linkForm.legacy_issuer} onChange={e => setLinkForm({ ...linkForm, legacy_issuer: e.target.value })} /></div>
+              <div><label className="text-xs text-gray-500">source subject (불변)</label><input className="input text-xs font-mono" value={linkForm.legacy_subject} onChange={e => setLinkForm({ ...linkForm, legacy_subject: e.target.value })} /></div>
               <div><label className="text-xs text-gray-500">Patty 사용자 ID</label><input className="input text-xs font-mono" value={linkForm.patty_user_id} onChange={e => setLinkForm({ ...linkForm, patty_user_id: e.target.value })} /></div>
+			  <div><label className="text-xs text-gray-500">target issuer (Patty)</label><input className="input text-xs font-mono" value={linkForm.target_issuer} onChange={e => setLinkForm({ ...linkForm, target_issuer: e.target.value })} /></div>
               <div><label className="text-xs text-gray-500">target subject (인증키)</label><input className="input text-xs font-mono" value={linkForm.target_subject} onChange={e => setLinkForm({ ...linkForm, target_subject: e.target.value })} /></div>
             </div>
-            <p className="text-[10px] text-gray-400">같은 legacy issuer+subject는 정확히 한 명의 Patty 사용자에만 매핑됩니다. 충돌은 모호로 표시되어 수동 해결됩니다.</p>
+            <p className="text-[10px] text-gray-400">같은 source issuer+subject는 정확히 한 명의 Patty 사용자에만 매핑됩니다. 충돌은 모호로 표시되어 수동 해결됩니다. API의 legacy_* 필드명은 기존 클라이언트 호환성을 위해 유지됩니다.</p>
           </div>
           <ModalFooter>
             <button className="btn-sm btn-secondary" onClick={() => setLinkModal(false)}>취소</button>
@@ -216,6 +224,7 @@ export default function SSOMigrate() {
             <div className="grid grid-cols-2 gap-3">
               <div><label className="text-xs text-gray-500">이름</label><input className="input text-xs" value={manifestForm.name} onChange={e => setManifestForm({ ...manifestForm, name: e.target.value })} /></div>
               <div><label className="text-xs text-gray-500">source</label><input className="input text-xs" value={manifestForm.source} onChange={e => setManifestForm({ ...manifestForm, source: e.target.value })} /></div>
+			  <div><label className="text-xs text-gray-500">canonical source issuer</label><input className="input text-xs font-mono" value={manifestForm.source_issuer} onChange={e => setManifestForm({ ...manifestForm, source_issuer: e.target.value })} /></div>
               <div><label className="text-xs text-gray-500">import_id (멱등 키)</label><input className="input text-xs font-mono" value={manifestForm.import_id} onChange={e => setManifestForm({ ...manifestForm, import_id: e.target.value })} /></div>
               <div><label className="text-xs text-gray-500">웨이브</label><input type="number" className="input text-xs" value={manifestForm.wave} onChange={e => setManifestForm({ ...manifestForm, wave: +e.target.value })} /></div>
             </div>

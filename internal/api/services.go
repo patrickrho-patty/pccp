@@ -106,7 +106,7 @@ func (s *Server) initAdditional() *AdditionalServices {
 		KeyMgmt:     keymgmt.New(),
 		MCPMarket:   mcpmarket.New(),
 		Realtime:    realtime.New(s.db),
-		Sovereign:   sovereign.New(),
+		Sovereign:   sovereign.New(s.db),
 		SSO:         sso.New(s.db, "pccp-sso-secret"),
 		Catalog:     mustCatalog(s.db),
 		PublicCloud: mustPublicCloud(s.db),
@@ -300,6 +300,8 @@ func (s *Server) setupAdditionalRoutes(r chi.Router, ext *AdditionalServices) {
 	// Sovereign
 	r.Route("/sovereign", func(r chi.Router) {
 		r.Post("/trust-bundle", s.wrapSovImportBundle(ext))
+		r.Post("/entitlements/{deploymentID}", s.wrapSovImportEntitlement(ext))
+		r.Get("/entitlements/{deploymentID}", s.wrapSovGetEntitlement(ext))
 		r.Post("/updates", s.wrapSovImportUpdate(ext))
 		r.Post("/updates/{id}/apply", s.wrapSovApplyUpdate(ext))
 		r.Get("/updates/pending", s.wrapSovPendingUpdates(ext))
@@ -1502,7 +1504,7 @@ func (s *Server) wrapSSOSAMLCallback(ext *AdditionalServices) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
-		code, handoffErr := ext.SSO.CreateLoginHandoff(orgID, user.ID, "saml", resp.BrowserBinding, resp.ConfigDigest)
+		code, handoffErr := ext.SSO.CreateLoginHandoff(orgID, user.ID, "saml", resp.BrowserBinding, resp.ConfigDigest, resp.Issuer, resp.User.UserID)
 		if handoffErr != nil {
 			writeError(w, http.StatusInternalServerError, handoffErr.Error())
 			return
@@ -1572,7 +1574,7 @@ func (s *Server) wrapSSOOIDCCallback(ext *AdditionalServices) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
-		code, handoffErr := ext.SSO.CreateLoginHandoff(orgID, user.ID, "oidc", resp.BrowserBinding, resp.ConfigDigest)
+		code, handoffErr := ext.SSO.CreateLoginHandoff(orgID, user.ID, "oidc", resp.BrowserBinding, resp.ConfigDigest, resp.Issuer, resp.User.Sub)
 		if handoffErr != nil {
 			writeError(w, http.StatusInternalServerError, handoffErr.Error())
 			return
@@ -1597,48 +1599,26 @@ func (s *Server) wrapSSOSessionExchange(ext *AdditionalServices) http.HandlerFun
 			writeError(w, http.StatusBadRequest, "invalid SSO handoff body")
 			return
 		}
-		release, allowed := ext.SSO.BeginPublicRequest(publicSSORateKey(r, "sso-session"))
-		if !allowed {
-			writeError(w, http.StatusTooManyRequests, "SSO request rate exceeded")
-			return
-		}
-		defer release()
-		if req.Provider != "oidc" && req.Provider != "saml" {
-			writeError(w, http.StatusBadRequest, "invalid SSO handoff provider")
-			return
-		}
-		binding, cookieErr := readSSOTransactionCookie(r, req.Provider)
-		if cookieErr != nil {
-			writeError(w, http.StatusBadRequest, "SSO transaction cookie is missing")
-			return
-		}
 		var token, email, orgID string
-		err := ext.SSO.RedeemLoginHandoff(req.Code, req.Provider, binding, func(tx *gorm.DB, handoff *models.SSOLoginHandoff, user *models.User) error {
+		if !redeemSSOHandoff(w, r, ext, "sso-session", req.Code, req.Provider, func(tx *gorm.DB, handoff *models.SSOLoginHandoff, user *models.User) error {
 			orgID, email = handoff.OrganizationID, user.Email
 			if err := tx.Create(&models.AuditEvent{
 				OrganizationID: handoff.OrganizationID, EventType: "cp.auth.sso_login",
 				ActorType: "user", Action: "sso_login", ResourceType: "user",
-				ResourceID: user.ID, Details: "method=" + handoff.Provider + " email=" + user.Email,
+				ResourceID: user.ID, Details: "method=" + handoff.Provider + " issuer=" + handoff.SourceIssuer + " subject=" + handoff.SourceSubject + " email=" + user.Email,
 				Result: "success", OccurredAt: time.Now().Format(time.RFC3339),
 			}).Error; err != nil {
 				return fmt.Errorf("could not persist SSO login audit: %w", err)
 			}
-			issued, err := s.auth.IssueTokenForUserWithDB(tx, user.ID, handoff.OrganizationID, "member")
+			issued, err := s.auth.IssueTokenForLockedUserWithDB(tx, user, "member")
 			if err != nil {
 				return err
 			}
 			token = issued
 			return nil
-		})
-		if err != nil {
-			status := http.StatusUnauthorized
-			if errors.Is(err, sso.ErrInvalidLoginHandoff) {
-				status = http.StatusBadRequest
-			}
-			writeError(w, status, err.Error())
+		}) {
 			return
 		}
-		clearSSOTransactionCookie(w, req.Provider)
 		writeJSON(w, http.StatusOK, map[string]string{"token": token, "email": email, "org_id": orgID})
 	}
 }
@@ -1653,11 +1633,20 @@ func (s *Server) wrapSSOSCIM(ext *AdditionalServices) http.HandlerFunc {
 
 func (s *Server) wrapSovImportBundle(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+			return
+		}
 		var bundle sovereign.TrustBundle
 		if err := decodeJSON(r, &bundle); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
+		orgID := getOrgID(r)
+		if bundle.OrganizationID != "" && bundle.OrganizationID != orgID {
+			writeError(w, http.StatusForbidden, "cannot import a sovereign trust bundle for another organization")
+			return
+		}
+		bundle.OrganizationID = orgID
 		result, err := ext.Sovereign.ImportTrustBundle(bundle)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -1669,6 +1658,9 @@ func (s *Server) wrapSovImportBundle(ext *AdditionalServices) http.HandlerFunc {
 
 func (s *Server) wrapSovImportUpdate(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+			return
+		}
 		var update sovereign.OfflineUpdate
 		if err := decodeJSON(r, &update); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
@@ -1683,8 +1675,44 @@ func (s *Server) wrapSovImportUpdate(ext *AdditionalServices) http.HandlerFunc {
 	}
 }
 
+func (s *Server) wrapSovImportEntitlement(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+			return
+		}
+		var signed sovereign.SignedOfflineEntitlement
+		if err := decodeJSON(r, &signed); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid signed entitlement")
+			return
+		}
+		result, err := ext.Sovereign.ImportOfflineEntitlement(signed, getOrgID(r), chi.URLParam(r, "deploymentID"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+	}
+}
+
+func (s *Server) wrapSovGetEntitlement(ext *AdditionalServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+			return
+		}
+		result, err := ext.Sovereign.GetOfflineEntitlement(getOrgID(r), chi.URLParam(r, "deploymentID"))
+		if err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	}
+}
+
 func (s *Server) wrapSovApplyUpdate(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+			return
+		}
 		id := chi.URLParam(r, "id")
 		if err := ext.Sovereign.ApplyUpdate(id); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -1702,6 +1730,9 @@ func (s *Server) wrapSovPendingUpdates(ext *AdditionalServices) http.HandlerFunc
 
 func (s *Server) wrapSovTimeProof(ext *AdditionalServices) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireConsolePermission(w, r, permissionSessionsManage) {
+			return
+		}
 		orgID := getOrgID(r)
 		proof := ext.Sovereign.GenerateTimeProof(orgID)
 		writeJSON(w, http.StatusOK, proof)

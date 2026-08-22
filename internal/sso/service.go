@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,7 @@ type Service struct {
 	scimTokens  map[[32]byte]string // bearer digest -> immutable organization
 	lifecycle   *sessionlifecycle.Service
 	publicSSO   map[string]ssoAttemptWindow
+	publicSweep time.Time
 	publicGate  chan struct{}
 	keyProvider keymgmt.KeyProvider
 }
@@ -80,6 +82,19 @@ func (s *Service) BeginPublicRequest(key string) (release func(), allowed bool) 
 	release = func() { <-s.publicGate }
 	now := time.Now().UTC()
 	s.mu.Lock()
+	if s.publicSweep.IsZero() || now.Sub(s.publicSweep) >= 10*time.Second {
+		for candidate, record := range s.publicSSO {
+			if now.Sub(record.Started) >= 2*time.Minute {
+				delete(s.publicSSO, candidate)
+			}
+		}
+		s.publicSweep = now
+	}
+	if _, exists := s.publicSSO[key]; !exists && len(s.publicSSO) >= 4096 {
+		s.mu.Unlock()
+		release()
+		return nil, false
+	}
 	window := s.publicSSO[key]
 	if window.Started.IsZero() || now.Sub(window.Started) >= time.Minute {
 		window = ssoAttemptWindow{Started: now}
@@ -91,11 +106,6 @@ func (s *Service) BeginPublicRequest(key string) (release func(), allowed bool) 
 	}
 	window.Count++
 	s.publicSSO[key] = window
-	for candidate, record := range s.publicSSO {
-		if now.Sub(record.Started) >= 2*time.Minute {
-			delete(s.publicSSO, candidate)
-		}
-	}
 	s.mu.Unlock()
 	return release, true
 }
@@ -118,10 +128,11 @@ type OIDCTokenResponse struct {
 }
 
 type OIDCUserInfo struct {
-	Sub    string `json:"sub"`
-	Email  string `json:"email"`
-	Name   string `json:"name"`
-	Locale string `json:"locale,omitempty"`
+	Sub           string `json:"sub"`
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"email_verified"`
+	Name          string `json:"name"`
+	Locale        string `json:"locale,omitempty"`
 }
 
 func parseOIDCJWKS(jwksJSON []byte) (map[string][]crypto.PublicKey, error) {
@@ -147,7 +158,7 @@ func parseOIDCJWKS(jwksJSON []byte) (map[string][]crypto.PublicKey, error) {
 		if k.Use != "" && k.Use != "sig" {
 			continue
 		}
-		if len(k.KeyOps) > 0 && !containsString(k.KeyOps, "verify") {
+		if len(k.KeyOps) > 0 && !slices.Contains(k.KeyOps, "verify") {
 			continue
 		}
 		switch k.Kty {
@@ -210,15 +221,6 @@ func parseOIDCJWKS(jwksJSON []byte) (map[string][]crypto.PublicKey, error) {
 		return nil, fmt.Errorf("sso: JWKS carries no usable keys")
 	}
 	return parsed, nil
-}
-
-func containsString(values []string, expected string) bool {
-	for _, value := range values {
-		if value == expected {
-			return true
-		}
-	}
-	return false
 }
 
 // decompressP256 recovers the even-parity y for x on P-256.
@@ -318,10 +320,11 @@ func parseOIDCIDToken(idToken, issuer, clientID, expectedNonce string, jwks map[
 		return nil, fmt.Errorf("sso: ID token issued-at time is invalid")
 	}
 	info := &OIDCUserInfo{
-		Sub:    getStringClaim(claims, "sub"),
-		Email:  getStringClaim(claims, "email"),
-		Name:   getStringClaim(claims, "name"),
-		Locale: getStringClaim(claims, "locale"),
+		Sub:           getStringClaim(claims, "sub"),
+		Email:         getStringClaim(claims, "email"),
+		EmailVerified: claims["email_verified"] == true,
+		Name:          getStringClaim(claims, "name"),
+		Locale:        getStringClaim(claims, "locale"),
 	}
 	if info.Sub == "" {
 		return nil, fmt.Errorf("sso: ID token carries no subject")
@@ -339,6 +342,11 @@ func parseOIDCIDToken(idToken, issuer, clientID, expectedNonce string, jwks map[
 }
 
 func (s *Service) ProvisionUserFromSSO(orgID, issuer string, saml *SAMLResponse) (*models.User, error) {
+	external := identity.NormalizeExternalIdentity(issuer, saml.UserID)
+	issuer, saml.UserID = external.Issuer, external.Subject
+	if issuer == "" || saml.UserID == "" {
+		return nil, fmt.Errorf("sso: SAML identity carries no immutable issuer and subject")
+	}
 	user, err := s.findExternalUser(orgID, "saml", issuer, saml.UserID)
 	if err == gorm.ErrRecordNotFound {
 		created := models.User{
@@ -354,16 +362,24 @@ func (s *Service) ProvisionUserFromSSO(orgID, issuer string, saml *SAMLResponse)
 			Locale:                 "ko-KR",
 			Timezone:               "Asia/Seoul",
 		}
-		create := s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&created)
-		if create.Error != nil {
-			return nil, fmt.Errorf("sso: create user: %w", create.Error)
+		var createdNow bool
+		var concurrent *models.User
+		if err := s.db.Transaction(func(tx *gorm.DB) error {
+			var admitErr error
+			concurrent, createdNow, admitErr = identity.AdmitExternalUserWithDB(tx, &created, true)
+			return admitErr
+		}); err != nil {
+			return nil, fmt.Errorf("sso: create user: %w", err)
 		}
-		if create.RowsAffected == 1 {
+		if concurrent != nil {
+			user, err = concurrent, nil
+		} else if createdNow {
 			return &created, nil
-		}
-		user, err = s.findExternalUser(orgID, "saml", issuer, saml.UserID)
-		if err != nil {
-			return nil, fmt.Errorf("sso: external identity conflicts with an existing account")
+		} else {
+			user, err = s.findExternalUser(orgID, "saml", issuer, saml.UserID)
+			if err != nil {
+				return nil, fmt.Errorf("sso: external identity conflicts with an existing account")
+			}
 		}
 	}
 	if err != nil {
@@ -602,9 +618,11 @@ func (s *Service) provisionSCIMUser(orgID string, scimUser *SCIMUser) (*models.U
 			Timezone:               "Asia/Seoul",
 		}
 		err := s.db.Transaction(func(tx *gorm.DB) error {
-			if err := tx.Create(&created).Error; err != nil {
+			admitted, _, err := identity.AdmitExternalUserWithDB(tx, &created, false)
+			if err != nil {
 				return err
 			}
+			created = *admitted
 			if initialStatus != models.UserStatusOffboarded {
 				return nil
 			}
@@ -682,7 +700,7 @@ func scimLifecycleHTTPStatus(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, identity.ErrLifecycleInvalid), errors.Is(err, identity.ErrLifecycleStateChanged),
 		errors.Is(err, identity.ErrLifecycleLastAdmin), errors.Is(err, identity.ErrLifecycleAccessRemain),
-		errors.Is(err, identity.ErrUserReadOnly):
+		errors.Is(err, identity.ErrUserReadOnly), errors.Is(err, identity.ErrUserSeatLimit):
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
@@ -703,34 +721,84 @@ func getStringClaim(claims jwt.MapClaims, key string) string {
 // ProvisionOIDCUser finds or creates the console user for a verified
 // OIDC identity (mirrors ProvisionUserFromSSO for the OIDC flow).
 func (s *Service) ProvisionOIDCUser(orgID, issuer string, info *OIDCUserInfo) (*models.User, error) {
-	externalID := strings.TrimSpace(info.Sub)
-	if externalID == "" {
+	external := identity.NormalizeExternalIdentity(issuer, info.Sub)
+	issuer, externalID := external.Issuer, external.Subject
+	if externalID == "" || issuer == "" {
 		return nil, fmt.Errorf("sso: oidc identity carries no immutable subject")
 	}
 	user, err := s.findExternalUser(orgID, "oidc", issuer, externalID)
 	if err == gorm.ErrRecordNotFound {
-		created := models.User{
-			AuditBase:              models.AuditBase{OrganizationID: orgID},
-			Email:                  info.Email,
-			Name:                   info.Name,
-			Status:                 "active",
-			AuthMethod:             "oidc",
-			ExternalID:             externalID,
-			ExternalIssuer:         issuer,
-			ExternalIssuerVerified: true,
-			Locale:                 "ko-KR",
-			Timezone:               "Asia/Seoul",
+		user = nil
+		// A previously resolved OIDC identity may point at a SCIM-owned user,
+		// whose canonical provisioning identity remains auth_method=scim.
+		_, linkedUser, linkErr := identity.ResolveLinkedSourceIdentity(s.db, orgID, external)
+		if linkErr == nil {
+			user = linkedUser
 		}
-		create := s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&created)
-		if create.Error != nil {
-			return nil, fmt.Errorf("sso: create user: %w", create.Error)
+		if linkErr != nil && !errors.Is(linkErr, identity.ErrExternalIdentityUnlinked) {
+			return nil, fmt.Errorf("sso: external identity requires administrator resolution: %w", linkErr)
 		}
-		if create.RowsAffected == 1 {
-			return &created, nil
+
+		if user == nil && errors.Is(linkErr, identity.ErrExternalIdentityUnlinked) {
+			var enrolled models.User
+			qerr := s.db.Select("id").Where("organization_id = ? AND auth_method = ?", orgID, "scim").Limit(1).Take(&enrolled).Error
+			if qerr != nil && !errors.Is(qerr, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("sso: inspect SCIM enrollment: %w", qerr)
+			}
+			if qerr == nil {
+				resolution := models.SSOIdentityLink{
+					OrganizationID: orgID, LegacyIssuer: issuer, LegacySubject: externalID,
+					Status:         models.SSOLinkStatusUnlinked,
+					ResolutionNote: "SCIM-managed organization requires an explicit issuer+subject identity link",
+				}
+				createErr := s.db.Transaction(func(tx *gorm.DB) error {
+					var organization models.Organization
+					if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&organization, "id = ?", orgID).Error; err != nil {
+						return err
+					}
+					return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&resolution).Error
+				})
+				if createErr != nil {
+					return nil, fmt.Errorf("sso: record identity resolution: %w", createErr)
+				}
+				return nil, fmt.Errorf("sso: external identity requires administrator resolution")
+			}
 		}
-		user, err = s.findExternalUser(orgID, "oidc", issuer, externalID)
-		if err != nil {
-			return nil, fmt.Errorf("sso: external identity conflicts with an existing account")
+
+		if user != nil {
+			err = nil
+		} else {
+			created := models.User{
+				AuditBase:              models.AuditBase{OrganizationID: orgID},
+				Email:                  info.Email,
+				Name:                   info.Name,
+				Status:                 "active",
+				AuthMethod:             "oidc",
+				ExternalID:             externalID,
+				ExternalIssuer:         issuer,
+				ExternalIssuerVerified: true,
+				Locale:                 "ko-KR",
+				Timezone:               "Asia/Seoul",
+			}
+			var createdNow bool
+			var concurrent *models.User
+			if err := s.db.Transaction(func(tx *gorm.DB) error {
+				var admitErr error
+				concurrent, createdNow, admitErr = identity.AdmitExternalUserWithDB(tx, &created, true)
+				return admitErr
+			}); err != nil {
+				return nil, fmt.Errorf("sso: create user: %w", err)
+			}
+			if concurrent != nil {
+				user, err = concurrent, nil
+			} else if createdNow {
+				return &created, nil
+			} else {
+				user, err = s.findExternalUser(orgID, "oidc", issuer, externalID)
+				if err != nil {
+					return nil, fmt.Errorf("sso: external identity conflicts with an existing account")
+				}
+			}
 		}
 	}
 	if err != nil {
@@ -759,12 +827,5 @@ func (s *Service) ProvisionOIDCUser(orgID, issuer string, info *OIDCUserInfo) (*
 // Issuer-less legacy rows are migrated from the organization's authoritative
 // configuration; a runtime login may never claim them using a new issuer.
 func (s *Service) findExternalUser(orgID, authMethod, issuer, externalID string) (*models.User, error) {
-	issuer = strings.TrimSpace(issuer)
-	if issuer == "" || strings.TrimSpace(externalID) == "" {
-		return nil, gorm.ErrRecordNotFound
-	}
-	var user models.User
-	err := s.db.Where("organization_id = ? AND auth_method = ? AND external_issuer = ? AND external_id = ?",
-		orgID, authMethod, issuer, externalID).First(&user).Error
-	return &user, err
+	return identity.FindUserByExternalIdentity(s.db, orgID, authMethod, identity.NormalizeExternalIdentity(issuer, externalID))
 }

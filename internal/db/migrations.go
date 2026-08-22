@@ -65,9 +65,210 @@ func runMigrations(db *gorm.DB) error {
 		if err := runPostgresMigration(db, "20260818_billing_fx_report_index_v1", migrateBillingFXReportIndex); err != nil {
 			return err
 		}
-		return runPostgresMigration(db, "20260818_session_due_indexes_v1", migrateSessionDueIndexes)
+		if err := runPostgresMigration(db, "20260818_session_due_indexes_v1", migrateSessionDueIndexes); err != nil {
+			return err
+		}
+		if err := runPostgresMigration(db, "20260822_sso_migration_tenant_indexes_v1", migrateSSOMigrationTenantIndexes); err != nil {
+			return err
+		}
+		if err := runPostgresMigration(db, "20260823_sso_canonical_issuer_v1", migrateSSOCanonicalIssuer); err != nil {
+			return err
+		}
+		if err := runPostgresMigration(db, "20260823_account_oauth_identity_index_v1", migrateAccountOAuthIdentityIndex); err != nil {
+			return err
+		}
+		if err := runPostgresMigration(db, "20260823_account_authority_id_index_v1", migrateAccountAuthorityIDIndex); err != nil {
+			return err
+		}
+		return runPostgresMigration(db, "20260823_public_account_authority_revision_v1", migratePublicAccountAuthorityRevision)
 	}
-	return runMigration(db, "20260818_billing_fx_report_index_v1", migrateBillingFXReportIndex)
+	if err := runMigration(db, "20260818_billing_fx_report_index_v1", migrateBillingFXReportIndex); err != nil {
+		return err
+	}
+	if err := runMigration(db, "20260822_sso_migration_tenant_indexes_v1", migrateSSOMigrationTenantIndexes); err != nil {
+		return err
+	}
+	if err := runMigration(db, "20260823_sso_canonical_issuer_v1", migrateSSOCanonicalIssuer); err != nil {
+		return err
+	}
+	if err := runMigration(db, "20260823_account_oauth_identity_index_v1", migrateAccountOAuthIdentityIndex); err != nil {
+		return err
+	}
+	if err := runMigration(db, "20260823_account_authority_id_index_v1", migrateAccountAuthorityIDIndex); err != nil {
+		return err
+	}
+	return runMigration(db, "20260823_public_account_authority_revision_v1", migratePublicAccountAuthorityRevision)
+}
+
+func migratePublicAccountAuthorityRevision(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&models.Subscription{}) {
+		return nil
+	}
+	if !db.Migrator().HasColumn(&models.Subscription{}, "AuthorityRevision") {
+		return db.Migrator().AddColumn(&models.Subscription{}, "AuthorityRevision")
+	}
+	return nil
+}
+
+func migrateSSOCanonicalIssuer(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&models.SSOIdentityLink{}) || !db.Migrator().HasTable(&models.SSOMigrationManifest{}) {
+		return nil
+	}
+	for _, field := range []string{"SourceIssuer"} {
+		if !db.Migrator().HasColumn(&models.SSOMigrationManifest{}, field) {
+			if err := db.Migrator().AddColumn(&models.SSOMigrationManifest{}, field); err != nil {
+				return err
+			}
+		}
+	}
+	for _, field := range []string{"TargetIssuer", "TargetSubject"} {
+		if !db.Migrator().HasColumn(&models.SSOIdentityLink{}, field) {
+			if err := db.Migrator().AddColumn(&models.SSOIdentityLink{}, field); err != nil {
+				return err
+			}
+		}
+	}
+	if err := db.Model(&models.SSOMigrationManifest{}).
+		Where("TRIM(source_issuer) = '' AND (LOWER(source) LIKE 'https://%' OR LOWER(source) LIKE 'http://%')").
+		Update("source_issuer", gorm.Expr("RTRIM(TRIM(source), '/')")).Error; err != nil {
+		return err
+	}
+	if db.Dialector.Name() == "postgres" {
+		return db.Exec("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_sso_link_target_identity ON sso_identity_links (organization_id, target_issuer, target_subject) WHERE target_issuer <> '' AND target_subject <> ''").Error
+	}
+	return db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_sso_link_target_identity ON sso_identity_links (organization_id, target_issuer, target_subject) WHERE target_issuer <> '' AND target_subject <> ''").Error
+}
+
+func migrateAccountAuthorityIDIndex(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&models.Account{}) {
+		return nil
+	}
+	if !db.Migrator().HasColumn(&models.Account{}, "AuthorityID") {
+		if err := db.Migrator().AddColumn(&models.Account{}, "AuthorityID"); err != nil {
+			return err
+		}
+	}
+	if db.Dialector.Name() == "postgres" {
+		for _, statement := range []string{
+			"DROP INDEX CONCURRENTLY IF EXISTS idx_accounts_email",
+			"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_accounts_email ON accounts (email)",
+			"DROP INDEX CONCURRENTLY IF EXISTS idx_account_authority_id_v1",
+			"CREATE UNIQUE INDEX CONCURRENTLY idx_account_authority_id_v1 ON accounts (authority_id) WHERE authority_id <> ''",
+			"DROP INDEX CONCURRENTLY IF EXISTS idx_account_authority_id",
+			"ALTER INDEX idx_account_authority_id_v1 RENAME TO idx_account_authority_id",
+		} {
+			if err := db.Exec(statement).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, statement := range []string{
+		"DROP INDEX IF EXISTS idx_accounts_email",
+		"CREATE INDEX idx_accounts_email ON accounts (email)",
+		"DROP INDEX IF EXISTS idx_account_authority_id",
+		"CREATE UNIQUE INDEX idx_account_authority_id ON accounts (authority_id) WHERE authority_id <> ''",
+	} {
+		if err := db.Exec(statement).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func migrateAccountOAuthIdentityIndex(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&models.Account{}) {
+		return nil
+	}
+	if db.Dialector.Name() == "postgres" {
+		for _, statement := range []string{
+			"DROP INDEX CONCURRENTLY IF EXISTS idx_account_oauth_identity_v1",
+			"CREATE UNIQUE INDEX CONCURRENTLY idx_account_oauth_identity_v1 ON accounts (oauth_provider, oauth_subject) WHERE oauth_provider <> '' AND oauth_subject <> ''",
+			"DROP INDEX CONCURRENTLY IF EXISTS idx_account_oauth_identity",
+			"ALTER INDEX idx_account_oauth_identity_v1 RENAME TO idx_account_oauth_identity",
+		} {
+			if err := db.Exec(statement).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, statement := range []string{
+		"DROP INDEX IF EXISTS idx_account_oauth_identity",
+		"CREATE UNIQUE INDEX idx_account_oauth_identity ON accounts (oauth_provider, oauth_subject) WHERE oauth_provider <> '' AND oauth_subject <> ''",
+	} {
+		if err := db.Exec(statement).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func migrateSSOMigrationTenantIndexes(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&models.SSOIdentityLink{}) || !db.Migrator().HasTable(&models.SSOMigrationManifest{}) {
+		return nil
+	}
+	if !db.Migrator().HasColumn(&models.SSOMigrationManifest{}, "InventoryDigest") {
+		if err := db.Migrator().AddColumn(&models.SSOMigrationManifest{}, "InventoryDigest"); err != nil {
+			return err
+		}
+	}
+	if db.Dialector.Name() == "postgres" {
+		for _, name := range ssoMigrationConcurrentIndexNames {
+			if err := dropInvalidPostgresIndex(db, name); err != nil {
+				return err
+			}
+		}
+	}
+	statements := ssoMigrationTenantIndexStatements(db.Dialector.Name() == "postgres")
+	for _, statement := range statements {
+		if err := db.Exec(statement).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var ssoMigrationConcurrentIndexNames = []string{
+	"idx_sso_link_legacy_tenant_v1",
+	"idx_sso_link_org_subject",
+	"idx_sso_manifest_org_manifest",
+	"idx_sso_manifest_org_import",
+}
+
+func dropInvalidPostgresIndex(db *gorm.DB, name string) error {
+	var invalid bool
+	if err := db.Raw(`SELECT COALESCE((SELECT NOT indisvalid FROM pg_index WHERE indexrelid = to_regclass(?)), FALSE)`, name).Scan(&invalid).Error; err != nil {
+		return err
+	}
+	if !invalid {
+		return nil
+	}
+	return db.Exec(fmt.Sprintf("DROP INDEX CONCURRENTLY IF EXISTS %q", name)).Error
+}
+
+func ssoMigrationTenantIndexStatements(postgres bool) []string {
+	if postgres {
+		return []string{
+			"CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_sso_link_legacy_tenant_v1 ON sso_identity_links (organization_id, legacy_issuer, legacy_subject)",
+			"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sso_link_org_subject ON sso_identity_links (organization_id, legacy_subject)",
+			"CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_sso_manifest_org_manifest ON sso_migration_manifests (organization_id, manifest_id)",
+			"CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_sso_manifest_org_import ON sso_migration_manifests (organization_id, import_id)",
+			"DROP INDEX CONCURRENTLY IF EXISTS idx_sso_migration_manifests_manifest_id",
+			"DROP INDEX CONCURRENTLY IF EXISTS idx_sso_migration_manifests_import_id",
+			"DROP INDEX CONCURRENTLY IF EXISTS idx_sso_link_legacy",
+			"ALTER INDEX idx_sso_link_legacy_tenant_v1 RENAME TO idx_sso_link_legacy",
+		}
+	}
+	return []string{
+		"DROP INDEX IF EXISTS idx_sso_link_legacy",
+		"DROP INDEX IF EXISTS idx_sso_migration_manifests_manifest_id",
+		"DROP INDEX IF EXISTS idx_sso_migration_manifests_import_id",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_sso_link_legacy ON sso_identity_links (organization_id, legacy_issuer, legacy_subject)",
+		"CREATE INDEX IF NOT EXISTS idx_sso_link_org_subject ON sso_identity_links (organization_id, legacy_subject)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_sso_manifest_org_manifest ON sso_migration_manifests (organization_id, manifest_id)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_sso_manifest_org_import ON sso_migration_manifests (organization_id, import_id)",
+	}
 }
 
 func migrateSessionDueIndexes(db *gorm.DB) error {

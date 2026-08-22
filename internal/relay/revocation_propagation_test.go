@@ -50,6 +50,9 @@ func TestRevokeHarnessTerminatesActiveStreams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Create(&models.Organization{Base: models.Base{ID: orgID}, Name: "Revocation Test", Slug: "revocation-test", Profile: "enterprise", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
 	user := models.User{
 		AuditBase: models.AuditBase{OrganizationID: orgID},
 		Email:     "revoke-test@example.com",

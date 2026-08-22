@@ -1,6 +1,6 @@
 package models
 
-// SSO migration compatibility layer (PAT-1442): Keycloak → Authentik
+// SSO realm-to-realm migration compatibility layer (PAT-1564).
 // identity mapping, migration manifests, waves, and reconciliation results.
 // Authorization always uses immutable provider subject + issuer + Patty user
 // ID; email is an attribute, never a durable identity key. No password,
@@ -12,10 +12,10 @@ package models
 type SSOIdentityLink struct {
 	Base
 	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
-	// Legacy provider identity (Keycloak realm issuer + immutable subject).
-	LegacyIssuer  string `gorm:"type:varchar(512);uniqueIndex:idx_sso_link_legacy,priority:1;not null" json:"legacy_issuer"`
-	LegacySubject string `gorm:"type:varchar(255);uniqueIndex:idx_sso_link_legacy,priority:2;not null" json:"legacy_subject"`
-	// Target provider identity (Authentik issuer + subject) established at cutover.
+	// Source-realm identity. legacy_* names remain part of the persisted/wire contract.
+	LegacyIssuer  string `gorm:"type:varchar(512);not null" json:"legacy_issuer"`
+	LegacySubject string `gorm:"type:varchar(255);not null" json:"legacy_subject"`
+	// Target-realm issuer + subject established at cutover.
 	TargetIssuer  string `gorm:"type:varchar(512)" json:"target_issuer,omitempty"`
 	TargetSubject string `gorm:"type:varchar(255)" json:"target_subject,omitempty"`
 	// Patty user binding (stable internal user ID).
@@ -29,7 +29,7 @@ type SSOIdentityLink struct {
 
 func (SSOIdentityLink) TableName() string { return "sso_identity_links" }
 
-// SSOMigrationItem is one discovered Keycloak entity (realm/user/app/client)
+// SSOMigrationItem is one discovered source-realm entity (realm/user/app/client)
 // with owner, criticality, test/rollback plan, and migration status.
 // Stores ONLY non-secret metadata — never credentials.
 type SSOMigrationItem struct {
@@ -51,17 +51,43 @@ type SSOMigrationItem struct {
 
 func (SSOMigrationItem) TableName() string { return "sso_migration_items" }
 
+const (
+	SSOMigrationItemKindUser = "user"
+
+	SSOMigrationDispositionKeep         = "keep"
+	SSOMigrationDispositionCompatBridge = "compat_bridge"
+	SSOMigrationDispositionRetire       = "retire"
+
+	SSOLinkStatusLinked    = "linked"
+	SSOLinkStatusAmbiguous = "ambiguous"
+	SSOLinkStatusUnlinked  = "unlinked"
+	SSOLinkStatusDisabled  = "disabled"
+
+	SSOManifestStatusInventory  = "inventory"
+	SSOManifestStatusReconciled = "reconciled"
+	SSOManifestStatusWaveReady  = "wave_ready"
+
+	SSOWaveStatusSignedOff = "signed_off"
+
+	SSOBridgeDecisionLinkedSession = "linked_issued_session"
+	SSOBridgeDecisionAmbiguous     = "ambiguous"
+	SSOBridgeDecisionUnlinked      = "unlinked"
+	SSOBridgeDecisionDisabled      = "disabled"
+)
+
 // SSOMigrationManifest is one idempotent migration inventory + wave carrier.
 type SSOMigrationManifest struct {
 	Base
-	OrganizationID string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
-	ManifestID     string `gorm:"type:varchar(64);uniqueIndex;not null" json:"manifest_id"`
-	Name           string `gorm:"type:varchar(255)" json:"name"`
-	Source         string `gorm:"type:varchar(64)" json:"source,omitempty"` // e.g. "keycloak-estate-2026-08"
-	Wave           int    `gorm:"default:1" json:"wave"`
-	ImportID       string `gorm:"type:varchar(128);uniqueIndex" json:"import_id"` // idempotent replay key
-	CreatedBy      string `gorm:"type:varchar(64)" json:"created_by,omitempty"`
-	ItemCount      int    `json:"item_count,omitempty"`
+	OrganizationID  string `gorm:"type:varchar(64);index;not null" json:"organization_id"`
+	ManifestID      string `gorm:"type:varchar(64);not null" json:"manifest_id"`
+	Name            string `gorm:"type:varchar(255)" json:"name"`
+	Source          string `gorm:"type:varchar(64)" json:"source,omitempty"`                   // human-readable inventory source, e.g. "keycloak-estate-2026-08"
+	SourceIssuer    string `gorm:"type:varchar(512);not null;default:''" json:"source_issuer"` // canonical issuer used for every identity reconciliation
+	Wave            int    `gorm:"default:1" json:"wave"`
+	ImportID        string `gorm:"type:varchar(128)" json:"import_id"` // tenant-scoped idempotent replay key
+	InventoryDigest string `gorm:"type:varchar(64)" json:"-"`
+	CreatedBy       string `gorm:"type:varchar(64)" json:"created_by,omitempty"`
+	ItemCount       int    `json:"item_count,omitempty"`
 	// Reconciliation summary (non-secret counts only).
 	SourceCount    int    `json:"source_count,omitempty"`
 	TargetCount    int    `json:"target_count,omitempty"`

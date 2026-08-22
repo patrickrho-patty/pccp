@@ -1,0 +1,1 @@
+{"schema_version":"pccp.public-account-sync.v1","source_event_id":"identity:deauthorize-example","account_id":"patty-account:42","revision":8,"profile":{"email":"person@example.com","display_name":"Patty Example"},"identities":[],"subscription":{"plan":"free","status":"lapsed","expires_at":null}}

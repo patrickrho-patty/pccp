@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { api } from '../api'
+import { api, pendingSSOBridge } from '../api'
 import { useAuth } from '../hooks/useAuth'
 
 export default function Login() {
@@ -30,7 +30,13 @@ export default function Login() {
     const cleanup = () => window.history.replaceState({}, '', '/login')
 
 	if (ssoHandoff && (ssoProvider === 'oidc' || ssoProvider === 'saml')) {
-	  api.ssoSessionExchange(ssoHandoff, ssoProvider)
+	  const pendingBridge = pendingSSOBridge.get()
+	  let exchange: Promise<any> | undefined
+	  if (pendingBridge) {
+		exchange = api.ssoMigrateBridge({ code: ssoHandoff, provider: ssoProvider, legacy_issuer: pendingBridge.legacy_issuer, legacy_subject: pendingBridge.legacy_subject })
+	  }
+	  const finalExchange = exchange ?? api.ssoSessionExchange(ssoHandoff, ssoProvider)
+	  finalExchange
 		.then((resp: any) => {
 		  if (resp?.token) {
 			login(resp.token)
@@ -39,7 +45,10 @@ export default function Login() {
 		  }
 		})
 		.catch(err => setSsoError('SSO 콜백 실패: ' + err.message))
-		.finally(cleanup)
+		.finally(() => {
+		  pendingSSOBridge.clear()
+		  cleanup()
+		})
 	}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

@@ -236,6 +236,15 @@ func (a *AuthService) IssueTokenForUserWithDB(db *gorm.DB, userID, orgID, role s
 		Where("id = ? AND organization_id = ?", userID, orgID).First(&user).Error; err != nil {
 		return "", fmt.Errorf("auth: resolve managed SSO user: %w", err)
 	}
+	return a.IssueTokenForLockedUserWithDB(db, &user, role)
+}
+
+// IssueTokenForLockedUserWithDB signs for a managed user already locked and
+// validated by a broader authentication transaction.
+func (a *AuthService) IssueTokenForLockedUserWithDB(db *gorm.DB, user *models.User, role string) (string, error) {
+	if user == nil || user.OrganizationID == "" {
+		return "", errors.New("auth: managed SSO user is unavailable")
+	}
 	if user.Status != models.UserStatusActive {
 		return "", fmt.Errorf("auth: account is %s", user.Status)
 	}
@@ -244,7 +253,7 @@ func (a *AuthService) IssueTokenForUserWithDB(db *gorm.DB, userID, orgID, role s
 	}
 	permissions := []string(nil)
 	var linked []AdminCredentials
-	if err := db.Where("organization_id = ? AND user_id = ?", orgID, user.ID).Limit(2).Find(&linked).Error; err != nil {
+	if err := db.Where("organization_id = ? AND user_id = ?", user.OrganizationID, user.ID).Limit(2).Find(&linked).Error; err != nil {
 		return "", fmt.Errorf("auth: resolve linked operator grants: %w", err)
 	}
 	if len(linked) > 1 {
@@ -260,7 +269,7 @@ func (a *AuthService) IssueTokenForUserWithDB(db *gorm.DB, userID, orgID, role s
 			}
 		}
 	}
-	return a.signToken(user.Email, orgID, role, permissions, user.ID, user.LifecycleEpoch)
+	return a.signToken(user.Email, user.OrganizationID, role, permissions, user.ID, user.LifecycleEpoch)
 }
 
 // SetPermissions updates the durable grants consumed by password and SSO

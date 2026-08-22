@@ -102,9 +102,16 @@ func main() {
 	// A nil config makes the listener generate a self-signed dev cert;
 	// when real certs are configured they take precedence.
 	var paperTLS *tls.Config
-	if cert := os.Getenv("PCCP_RELAY_TLS_CERT"); cert != "" {
-		key := os.Getenv("PCCP_RELAY_TLS_KEY")
-		loaded, lerr := tls.LoadX509KeyPair(cert, key)
+	certFile := os.Getenv("PCCP_RELAY_TLS_CERT")
+	keyFile := os.Getenv("PCCP_RELAY_TLS_KEY")
+	if (certFile == "") != (keyFile == "") {
+		log.Fatal("PCCP_RELAY_TLS_CERT and PCCP_RELAY_TLS_KEY must both be configured")
+	}
+	if certFile == "" && os.Getenv("PCCP_DEV_BOOTSTRAP") != "1" {
+		log.Fatal("DARI relay TLS certificate is required outside PCCP_DEV_BOOTSTRAP=1")
+	}
+	if certFile != "" {
+		loaded, lerr := tls.LoadX509KeyPair(certFile, keyFile)
 		if lerr != nil {
 			log.Fatalf("failed to load DARI TLS cert/key: %v", lerr)
 		}

@@ -1,0 +1,15 @@
+:root {
+  --pf-v5-global--primary-color--100: #6d5bd0;
+  --pf-v5-global--primary-color--200: #5946be;
+}
+
+.login-pf body {
+  background: #121116;
+}
+
+#kc-header-wrapper {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-transform: none;
+}
+

@@ -2,6 +2,8 @@ package api
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +20,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/patrickrho-patty/pccp/internal/identity"
 	"github.com/patrickrho-patty/pccp/internal/models"
+	"github.com/patrickrho-patty/pccp/internal/sovereign"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -659,6 +662,72 @@ func TestUserAdministrationAndIdentityEntryPointsFailClosed(t *testing.T) {
 	rec = doUserJSONAs(t, srv, "POST", "/api/harnesses/enroll", `{"organization_id":"`+other.ID+`","harness_id":"cross-org"}`, org.ID, "admin", "admin@corp.kr")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("harness enrollment overrode tenant: got %d, want 403 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSovereignUserCreationUsesFreshSignedSeatAuthority(t *testing.T) {
+	t.Setenv("PCCP_SOVEREIGN_DEPLOYMENT_ID", "dep-user-seats")
+	srv, db := usersTestServer(t)
+	org := models.Organization{Name: "Agency", Slug: "sovereign-user-seats", Status: "active", Profile: "sovereign", MaxUserSeats: 100}
+	if err := db.Create(&org).Error; err != nil {
+		t.Fatal(err)
+	}
+	publicKey, privateKey, _ := ed25519.GenerateKey(nil)
+	if _, err := srv.ext().Sovereign.ImportTrustBundle(sovereign.TrustBundle{
+		OrganizationID:   org.ID,
+		LocalCAIdentity:  "local-ca",
+		LocalCAPublicKey: hex.EncodeToString(publicKey),
+		ExpiresAt:        time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.ext().Sovereign.InstallEntitlementAuthority(org.ID, hex.EncodeToString(publicKey)); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	signed := sovereign.SignedOfflineEntitlement{Entitlement: sovereign.OfflineEntitlement{
+		Version: 1, OrganizationID: org.ID, DeploymentID: "dep-user-seats", Profile: "sovereign", Sequence: 1,
+		IssuedAt: now.Add(-time.Hour).Format(time.RFC3339), NotBefore: now.Add(-time.Minute).Format(time.RFC3339),
+		NotAfter: now.Add(time.Hour).Format(time.RFC3339), MaxUserSeats: 1, MaxHarnessSeats: 10,
+		Features: []string{"user-management"},
+	}}
+	signed.Signature = hex.EncodeToString(ed25519.Sign(privateKey, signed.Entitlement.SigningBytes()))
+	if _, err := srv.ext().Sovereign.ImportOfflineEntitlementAt(signed, org.ID, "dep-user-seats", now); err != nil {
+		t.Fatal(err)
+	}
+
+	created := doUserJSONAs(t, srv, http.MethodPost, "/api/users", `{"email":"first@agency.test","name":"First"}`, org.ID, "admin", "admin@agency.test")
+	if created.Code != http.StatusCreated {
+		t.Fatalf("first signed seat = %d, want 201: %s", created.Code, created.Body.String())
+	}
+	exceeded := doUserJSONAs(t, srv, http.MethodPost, "/api/users", `{"email":"second@agency.test","name":"Second"}`, org.ID, "admin", "admin@agency.test")
+	if exceeded.Code != http.StatusPaymentRequired {
+		t.Fatalf("signed seat limit = %d, want 402: %s", exceeded.Code, exceeded.Body.String())
+	}
+
+	expiredOrg := models.Organization{Name: "Expired", Slug: "sovereign-expired-seats", Status: "active", Profile: "sovereign", MaxUserSeats: 100}
+	if err := db.Create(&expiredOrg).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.ext().Sovereign.ImportTrustBundle(sovereign.TrustBundle{
+		OrganizationID: expiredOrg.ID, LocalCAIdentity: "local-ca", LocalCAPublicKey: hex.EncodeToString(publicKey), ExpiresAt: time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.ext().Sovereign.InstallEntitlementAuthority(expiredOrg.ID, hex.EncodeToString(publicKey)); err != nil {
+		t.Fatal(err)
+	}
+	expired := signed
+	expired.Entitlement.OrganizationID = expiredOrg.ID
+	expired.Entitlement.NotBefore = now.Add(-2 * time.Hour).Format(time.RFC3339)
+	expired.Entitlement.NotAfter = now.Add(-time.Hour).Format(time.RFC3339)
+	expired.Signature = hex.EncodeToString(ed25519.Sign(privateKey, expired.Entitlement.SigningBytes()))
+	if _, err := srv.ext().Sovereign.ImportOfflineEntitlementAt(expired, expiredOrg.ID, "dep-user-seats", now.Add(-90*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	denied := doUserJSONAs(t, srv, http.MethodPost, "/api/users", `{"email":"expired@agency.test","name":"Expired"}`, expiredOrg.ID, "admin", "admin@agency.test")
+	if denied.Code != http.StatusPaymentRequired {
+		t.Fatalf("expired signed seats = %d, want 402: %s", denied.Code, denied.Body.String())
 	}
 }
 

@@ -159,7 +159,7 @@ type ModelLifecycle struct {
 // For Enterprise, this maps to Organization. For Public, it's the subscriber.
 type Account struct {
 	Base
-	Email         string `gorm:"type:varchar(255);uniqueIndex" json:"email"`
+	Email         string `gorm:"type:varchar(255);index" json:"email"`
 	DisplayName   string `gorm:"type:varchar(255)" json:"display_name"`
 	DisplayNameKo string `gorm:"type:varchar(255)" json:"display_name_ko"`
 	Profile       string `gorm:"type:varchar(32);default:'public'" json:"profile"` // public, enterprise, government
@@ -179,12 +179,34 @@ type Account struct {
 	HeavyWorkSlots     int `gorm:"default:2" json:"heavy_work_slots"`
 	BackgroundSlots    int `gorm:"default:2" json:"background_slots"`
 	// OAuth
-	OAuthSubject  string `gorm:"type:varchar(255);index" json:"oauth_subject,omitempty"`
-	OAuthProvider string `gorm:"type:varchar(64)" json:"oauth_provider,omitempty"`
-	Locale        string `gorm:"type:varchar(10);default:'ko-KR'" json:"locale"`
-	Segment       string `gorm:"type:varchar(32)" json:"segment,omitempty"` // ops targeting tag (web/12 A8)
-	AccessToken   string `gorm:"type:varchar(64);index" json:"-"`           // portal access key (issued once, §6.6 no transferable creds)
-	Timezone      string `gorm:"type:varchar(64);default:'Asia/Seoul'" json:"timezone"`
+	OAuthSubject  string `gorm:"column:oauth_subject;type:varchar(255);uniqueIndex:idx_account_oauth_identity,priority:2,where:oauth_provider <> '' AND oauth_subject <> ''" json:"oauth_subject,omitempty"`
+	OAuthProvider string `gorm:"column:oauth_provider;type:varchar(512);uniqueIndex:idx_account_oauth_identity,priority:1,where:oauth_provider <> '' AND oauth_subject <> ''" json:"oauth_provider,omitempty"`
+	// AuthorityID is the immutable account identifier assigned by the Accounts
+	// service. It is bound only after an exact OAuth issuer/subject match.
+	AuthorityID string `gorm:"column:authority_id;type:varchar(64);index:idx_account_authority_id,unique,where:authority_id <> ''" json:"-"`
+	Locale      string `gorm:"type:varchar(10);default:'ko-KR'" json:"locale"`
+	Segment     string `gorm:"type:varchar(32)" json:"segment,omitempty"` // ops targeting tag (web/12 A8)
+	AccessToken string `gorm:"type:varchar(64);index" json:"-"`           // portal access key (issued once, §6.6 no transferable creds)
+	Timezone    string `gorm:"type:varchar(64);default:'Asia/Seoul'" json:"timezone"`
+}
+
+// AccountExternalIdentity is an immutable first-party identity bound by the
+// authenticated Accounts authority sync. Email is deliberately absent.
+type AccountExternalIdentity struct {
+	Base
+	AccountID string `gorm:"type:varchar(64);index;not null" json:"account_id"`
+	Issuer    string `gorm:"type:varchar(512);uniqueIndex:idx_account_external_identity,priority:1;not null" json:"issuer"`
+	Subject   string `gorm:"type:varchar(255);uniqueIndex:idx_account_external_identity,priority:2;not null" json:"subject"`
+}
+
+// PublicAccountSyncEvent is the durable idempotency ledger for authoritative
+// account mirror updates. A source event can never be reused with new bytes.
+type PublicAccountSyncEvent struct {
+	Base
+	SourceEventID string `gorm:"type:varchar(128);uniqueIndex;not null" json:"-"`
+	AccountID     string `gorm:"type:varchar(64);index;not null" json:"-"`
+	PayloadDigest string `gorm:"type:varchar(64);not null" json:"-"`
+	Revision      uint64 `gorm:"index;not null" json:"-"`
 }
 
 // Subscription represents a Public Cloud subscription (PCCP v2 §10C.2).
@@ -206,7 +228,8 @@ type Subscription struct {
 	NormalWorkSlots     int    `gorm:"default:5" json:"normal_work_slots"`
 	HeavyWorkSlots      int    `gorm:"default:2" json:"heavy_work_slots"`
 	// Revision tracking
-	Revision string `gorm:"type:varchar(64)" json:"revision"`
+	Revision          string `gorm:"type:varchar(64)" json:"revision"`
+	AuthorityRevision uint64 `gorm:"not null;default:0;index" json:"-"`
 }
 
 // AccountCapacityLease controls multi-Relay concurrency (PCCP v2 §10C.5).

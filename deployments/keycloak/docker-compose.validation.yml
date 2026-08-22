@@ -1,0 +1,18 @@
+services:
+  keycloak:
+    image: patty-keycloak:26.7.1-validation
+    build:
+      context: ../..
+      dockerfile: deployments/keycloak/Dockerfile
+    command: ["start-dev", "--import-realm", "--health-enabled=true"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: validation-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: validation-only-change-me
+    ports:
+      - "127.0.0.1:18080:8080"
+      - "127.0.0.1:19000:9000"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000; printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3; grep -q '200 OK' <&3"]
+      interval: 5s
+      timeout: 3s
+      retries: 30

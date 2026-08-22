@@ -60,6 +60,32 @@ async function requestCursorPage<T>(path: string): Promise<{ data: T; nextCursor
   return { data: await resp.json(), nextCursor: resp.headers.get('X-Next-Cursor') || '' }
 }
 
+export type PendingSSOBridge = { legacy_issuer: string; legacy_subject: string }
+export type SSOMigrateBridgeRequest = PendingSSOBridge & { code: string; provider: 'oidc' | 'saml' }
+
+const pendingSSOBridgeKey = 'pccp_sso_bridge'
+
+export const pendingSSOBridge = {
+  set(value: PendingSSOBridge) {
+    sessionStorage.setItem(pendingSSOBridgeKey, JSON.stringify(value))
+  },
+  get(): PendingSSOBridge | null {
+    const raw = sessionStorage.getItem(pendingSSOBridgeKey)
+    if (!raw) return null
+    try {
+      const value = JSON.parse(raw)
+      if (typeof value?.legacy_issuer === 'string' && typeof value?.legacy_subject === 'string') return value
+    } catch {
+      // Invalid browser-local state is discarded below.
+    }
+    sessionStorage.removeItem(pendingSSOBridgeKey)
+    return null
+  },
+  clear() {
+    sessionStorage.removeItem(pendingSSOBridgeKey)
+  },
+}
+
 export const api = {
   // Auth
   login: (email: string, password: string, mfaCode?: string) =>
@@ -858,17 +884,17 @@ export const api = {
   referenceCatalog: (data: any) =>
     data ? request<any>('/api/reference/catalog', { method: 'POST', body: JSON.stringify(data) }) : request<any>('/api/reference/catalog'),
 
-  // SSO Keycloak→Authentik migration (PAT-1442)
-  ssoMigrateLinks: () => request<any[]>('/api/sso-migrate/links'),
+  // SSO realm-to-realm migration (PAT-1564)
+  ssoMigrateLinks: (cursor = '', limit = 50) => request<{items: any[]; next_cursor?: string; has_more: boolean}>(`/api/sso-migrate/links?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
   ssoMigrateLink: (data: any) =>
     request<any>('/api/sso-migrate/links', { method: 'POST', body: JSON.stringify(data) }),
-  ssoMigrateBridge: (data: any) =>
-    request<any>('/api/sso-migrate/bridge', { method: 'POST', body: JSON.stringify(data) }),
+  ssoMigrateBridge: (data: SSOMigrateBridgeRequest) =>
+	request<any>('/api/sso/bridge', { method: 'POST', body: JSON.stringify(data) }),
   ssoMigrateManifests: (data?: any) =>
     data ? request<any>('/api/sso-migrate/manifests', { method: 'POST', body: JSON.stringify(data) }) : request<any[]>('/api/sso-migrate/manifests'),
-  ssoMigrateReconcile: (id: string) => request<any>(`/api/sso-migrate/manifests/${encodeURIComponent(id)}/reconcile`),
-  ssoMigrateWaves: (data?: any) =>
-    data ? request<any>('/api/sso-migrate/waves', { method: 'POST', body: JSON.stringify(data) }) : request<any[]>('/api/sso-migrate/waves'),
+  ssoMigrateReconcile: (id: string) => request<any>(`/api/sso-migrate/manifests/${encodeURIComponent(id)}/reconcile`, { method: 'POST', body: JSON.stringify({}) }),
+  ssoMigrateWaves: (data?: any, cursor = '', limit = 50) =>
+    data ? request<any>('/api/sso-migrate/waves', { method: 'POST', body: JSON.stringify(data) }) : request<{items: any[]; next_cursor?: string; has_more: boolean}>(`/api/sso-migrate/waves?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
   ssoMigrateSignOff: (id: string, rollbackWindow: string) =>
     request<any>(`/api/sso-migrate/waves/${encodeURIComponent(id)}/signoff`, { method: 'POST', body: JSON.stringify({ rollback_window: rollbackWindow }) }),
 

@@ -194,7 +194,7 @@ func AllModels() []interface{} {
 		&ReferencePackage{},
 		&ReferenceCatalogState{},
 		&ReferenceAuditEvent{},
-		// SSO Keycloak→Authentik migration (PAT-1442)
+		// SSO realm-to-realm migration (PAT-1564)
 		&SSOIdentityLink{},
 		&SSOMigrationItem{},
 		&SSOMigrationManifest{},
@@ -275,6 +275,8 @@ func AllModels() []interface{} {
 		&CatalogEpoch{},
 		// v2 Public Cloud (§10C)
 		&Account{},
+		&AccountExternalIdentity{},
+		&PublicAccountSyncEvent{},
 		&Subscription{},
 		&AccountCapacityLease{},
 		// Enterprise harness features (§33)
