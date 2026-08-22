@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
+import { useTabParam } from '../hooks/useTabParam'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../api'
 import { StatCard } from '../components/StatCard'
 import { FavoriteStar } from '../hooks/useFavorites'
+import { RouteTabs } from '../components/RouteTabs'
 import { formatUsageStateInteger, formatUsageAmount, UsageReport, UsageReportData } from '../components/UsageReport'
 import { allowedSessionActions, formatSessionTime, SESSION_STATUS_META } from '../sessionState'
 import { sessionActionView, changeSetView, findingView, decisionView, replayEventView } from '../evidenceView'
@@ -32,7 +34,7 @@ export default function SessionDetail() {
   const [usageReport, setUsageReport] = useState<UsageReportData | null>(null)
   const [usageLoading, setUsageLoading] = useState(true)
   const [usageError, setUsageError] = useState(false)
-  const [tab, setTab] = useState('timeline')
+  const [tab, setTab] = useTabParam('timeline', ['timeline', 'decisions', 'changes', 'findings', 'replay']) as [string, (t: string) => void]
   const [expandedRaw, setExpandedRaw] = useState<string | null>(null) // evidence key expanded to raw/technical detail (PAT-1498)
   const [loading, setLoading] = useState(true)
 
@@ -131,20 +133,13 @@ export default function SessionDetail() {
 
       {usageLoading ? <div className="card p-4 text-[11px] text-gray-400">사용량 원장을 불러오는 중입니다.</div> : usageError ? <div className="card p-4 text-[11px] text-red-600">사용량 원장을 조회할 권한이 없거나 조회 중 오류가 발생했습니다.</div> : <UsageReport report={usageReport} id="session-usage-ledger" title="세션 사용량 및 비용 원장" loadMore={(cursor, signal) => api.getSessionUsage(id!, '30d', cursor, signal)} />}
 
-      <div className="flex gap-1 border-b border-gray-200">
-        {[
-          { id: 'timeline', label: '타임라인' },
-          { id: 'decisions', label: '정책 결정' },
-          { id: 'changes', label: '변경셋' },
-          { id: 'findings', label: '보안 발견' },
-          { id: 'replay', label: '리플레이' },
-        ].map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            className={`px-3 py-2 text-xs ${tab === t.id ? 'border-b-2 border-blue-600 text-blue-600 font-semibold' : 'text-gray-500 hover:text-gray-700'}`}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <RouteTabs label="세션 상세 탭" size="xs" tabs={[
+        { id: 'timeline', label: '타임라인' },
+        { id: 'decisions', label: '정책 결정' },
+        { id: 'changes', label: '변경셋' },
+        { id: 'findings', label: '보안 발견' },
+        { id: 'replay', label: '리플레이' },
+      ]} />
 
       {tab === 'timeline' && (
         <div className="card p-4 space-y-1">
