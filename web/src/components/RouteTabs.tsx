@@ -15,20 +15,25 @@ export function RouteTabs({ tabs, label, size = 'sm' }: {
   label: string
   size?: 'xs' | 'sm'
 }) {
-  const [tab, setTab] = useTabParam(tabs[0].id, tabs.map(t => t.id)) as [string, (t: string) => void]
+  const firstId = tabs[0]?.id ?? ''
+  const [tab, setTab] = useTabParam(firstId, tabs.map(t => t.id)) as [string, (t: string) => void]
   const refs = useRef<(HTMLButtonElement | null)[]>([])
 
   const onKeyDown = (e: React.KeyboardEvent, i: number) => {
     let next = -1
     if (e.key === 'ArrowRight') next = (i + 1) % tabs.length
     if (e.key === 'ArrowLeft') next = (i - 1 + tabs.length) % tabs.length
-    if (next < 0) return
+    if (e.key === 'Home') next = 0
+    if (e.key === 'End') next = tabs.length - 1
+    if (next < 0 || tabs.length === 0) return
     e.preventDefault()
     setTab(tabs[next].id)
     refs.current[next]?.focus()
   }
 
   const pad = size === 'xs' ? 'px-3 py-2 text-xs' : 'px-4 py-2 text-sm'
+
+  if (tabs.length === 0) return null
 
   return (
     <div className={`flex gap-1 mb-6 border-b border-gray-200 flex-wrap`} role="tablist" aria-label={label}>
